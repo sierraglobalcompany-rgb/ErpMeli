@@ -298,6 +298,23 @@ final class MeliApiClient implements MeliReadClientInterface
                     )
                 );
             } catch (Throwable $transportBlocked) {
+                // La barrera del transporte OAuth se ejecuta dentro del
+                // adaptador pero todavía antes de curl_init/curl_exec. Una
+                // denegación de emergencia en ese punto certifica cero HTTP,
+                // aunque el cliente ya hubiera cedido control al adaptador.
+                if ($manualEmergencyOAuthRefresh
+                    && $transportBlocked instanceof ApiManualPauseException) {
+                    $budget->releaseReservation($budgetReservation);
+                    $rhythm->cancelBeforeTransport($rhythmPermit);
+                    if ($executionAttemptId > 0) {
+                        $executionJournal->dispatchCancelledBeforeRemote(
+                            $executionAttemptId,
+                            $executionLeaseGeneration
+                        );
+                    }
+                    ApiExecutionMetadataContext::markRemoteBlocked();
+                    throw $transportBlocked;
+                }
                 if (!$dispatchBoundaryCrossed) {
                     // La frontera remota no se cruzó: ambas reservas pueden
                     // devolverse sin riesgo de duplicar una consulta.

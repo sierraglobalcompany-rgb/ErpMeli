@@ -270,6 +270,9 @@ final class EmergencyOAuthRefreshService
 
     private function failureClass(Throwable $error): string
     {
+        if ($error instanceof RotatedCredentialRecoveryUnavailableException) {
+            return 'rotated_credential_recovery_unavailable';
+        }
         if ($error instanceof MeliApiException) {
             return match ((int) ($error->httpStatus ?? 0)) {
                 401 => 'http_401',

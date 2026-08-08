@@ -85,6 +85,7 @@ final class OAuthTokenRefreshService
             $previousRefreshVersion = (int) ($current['refresh_version'] ?? 0);
             $expectedMeliUserId = $this->manualEmergencyExpectedMeliUserId();
             $recoveryStaged = false;
+            $recoveryStageFailed = false;
             if ($expectedMeliUserId !== null) {
                 try {
                     $this->emergencyControl->stageEmergencyOAuthTokenRecovery(
@@ -101,6 +102,7 @@ final class OAuthTokenRefreshService
                     );
                     $recoveryStaged = true;
                 } catch (Throwable) {
+                    $recoveryStageFailed = true;
                     // El body sigue en memoria: se intenta el commit MariaDB
                     // inmediatamente. Nunca se descarta una respuesta OAuth
                     // conocida solo porque el escrow local no pudo escribirse.
@@ -108,8 +110,8 @@ final class OAuthTokenRefreshService
             }
 
             $pdo = Database::connectionFresh();
-            $pdo->beginTransaction();
             try {
+                $pdo->beginTransaction();
                 $update = $pdo->prepare(
                     'UPDATE meli_tokens
                      SET access_token_encrypted=?,refresh_token_encrypted=?,expires_at=?,scope=?,token_type=?,refresh_version=?
@@ -134,6 +136,13 @@ final class OAuthTokenRefreshService
             } catch (Throwable $error) {
                 if ($pdo->inTransaction()) {
                     $pdo->rollBack();
+                }
+                if ($expectedMeliUserId !== null && $recoveryStageFailed) {
+                    throw new RotatedCredentialRecoveryUnavailableException(
+                        'La credencial OAuth rotada no pudo conservarse en el escrow ni en MariaDB.',
+                        0,
+                        $error
+                    );
                 }
                 throw $error;
             }

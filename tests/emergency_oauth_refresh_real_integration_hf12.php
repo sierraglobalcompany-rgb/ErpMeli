@@ -157,6 +157,7 @@ try {
     $newRefresh = 'REFRESH_TOKEN_NEW_SENTINEL_HF12';
     $bodySentinel = 'OAUTH_BODY_SENTINEL_HF12';
     $nonceSentinel = hash('sha256', 'NONCE_SENTINEL_HF12');
+    $recoveryPath = $privateRoot . DIRECTORY_SEPARATOR . 'oauth-rotated-token-recovery.json';
 
     $resetAccount = static function (int $version = 7) use ($pdo, $oldAccess, $oldRefresh): void {
         $pdo->exec('DELETE FROM meli_tokens');
@@ -197,6 +198,46 @@ try {
     $tokenRow = static function () use ($pdo): array {
         return $pdo->query('SELECT * FROM meli_tokens WHERE meli_account_id=3')->fetch(PDO::FETCH_ASSOC) ?: [];
     };
+
+    // El storage específico del escrow se prueba en la última barrera. Una
+    // ruta no publicable conserva used_calls=0 y produce cero HTTP.
+    $resetAccount();
+    $clearEmergency();
+    $control = new EmergencyControlService(null, static fn (): string => $nonceSentinel);
+    $control->stopAll('hf12-integration', 'Preparar preflight de escrow no utilizable');
+    @mkdir($recoveryPath, 0700);
+    $preflightTransport = new class implements MeliHttpTransportInterface {
+        public int $calls = 0;
+        public function request(string $method, string $url, array $data, array $headers, bool $form, array $timeouts): array
+        {
+            (new MeliEmergencyStopService())->assertTransportAllowed($method, $url);
+            $this->calls++;
+            throw new RuntimeException('El preflight fallido no debe abrir transporte.');
+        }
+    };
+    $preflightService = new EmergencyOAuthRefreshService(
+        $control,
+        null,
+        static fn (int $accountId): array => (new MeliApiClient($accountId, $preflightTransport))->refreshOAuthToken()
+    );
+    try {
+        $preflightService->run(3, 'hf12-integration');
+    } catch (Throwable) {
+    }
+    $preflightState = $control->status();
+    $preflightOAuth = is_array($preflightState['oauth_refresh'] ?? null)
+        ? $preflightState['oauth_refresh']
+        : [];
+    $preflightToken = $tokenRow();
+    $check($preflightTransport->calls === 0 && (int) ($preflightOAuth['used_calls'] ?? -1) === 0,
+        'RECOVERY_PREFLIGHT_FAILURE_HTTP o used_calls fue distinto de cero.');
+    $check(Crypto::decrypt((string) $preflightToken['access_token_encrypted']) === $oldAccess
+        && Crypto::decrypt((string) $preflightToken['refresh_token_encrypted']) === $oldRefresh
+        && (int) $preflightToken['refresh_version'] === 7,
+        'El preflight fallido modificó meli_tokens.');
+    $check($control->apiStopped() && $control->automationStopped(),
+        'El preflight fallido retiró una barrera de emergencia.');
+    @rmdir($recoveryPath);
 
     // Flujo real: EmergencyOAuthRefreshService -> MeliApiClient -> OAuthTokenRefreshService.
     $resetAccount();
@@ -355,7 +396,6 @@ try {
     } catch (Throwable) {
         $dbFailureObserved = true;
     }
-    $recoveryPath = $privateRoot . DIRECTORY_SEPARATOR . 'oauth-rotated-token-recovery.json';
     $recoveryRaw = is_file($recoveryPath) ? (string) file_get_contents($recoveryPath) : '';
     $check($dbFailureObserved && $dbFailureTransport->calls === 1,
         'El fallo DB post-200 no quedó limitado a un único HTTP conocido.');
@@ -392,6 +432,70 @@ try {
     $check(!is_file($recoveryPath), 'El escrow durable no se retiró después del commit recuperado.');
     $check($control->apiStopped() && $control->automationStopped(),
         'La recuperación durable retiró una barrera de emergencia.');
+
+    // Carrera posterior al preflight: el destino del escrow falla después del
+    // HTTP y MariaDB también falla. La clase estable conserva el diagnóstico,
+    // mantiene ambos frenos y nunca hace un segundo transporte.
+    $resetAccount();
+    $clearEmergency();
+    $control = new EmergencyControlService(null, static fn (): string => $nonceSentinel);
+    $control->stopAll('hf12-integration', 'Preparar fallo combinado escrow y DB');
+    $doubleFailureTransport = new class($pdo, $recoveryPath, $newAccess, $newRefresh) implements MeliHttpTransportInterface {
+        public int $calls = 0;
+        public function __construct(
+            private readonly PDO $pdo,
+            private readonly string $recoveryPath,
+            private readonly string $access,
+            private readonly string $refresh
+        ) {}
+        public function request(string $method, string $url, array $data, array $headers, bool $form, array $timeouts): array
+        {
+            (new MeliEmergencyStopService())->assertTransportAllowed($method, $url);
+            $this->calls++;
+            @mkdir($this->recoveryPath, 0700);
+            $this->pdo->exec(
+                'ALTER TABLE meli_tokens CHANGE refresh_version refresh_version_broken INT UNSIGNED NOT NULL DEFAULT 0'
+            );
+            return [
+                'status' => 200, 'headers' => [], 'curl_error' => '', 'duration_ms' => 1,
+                'wire_bytes' => 120, 'decoded_bytes' => 120,
+                'body' => [
+                    'access_token' => $this->access,
+                    'refresh_token' => $this->refresh,
+                    'expires_in' => 21600,
+                    'token_type' => 'Bearer',
+                    'scope' => 'offline_access',
+                ],
+            ];
+        }
+    };
+    $doubleFailureService = new EmergencyOAuthRefreshService(
+        $control,
+        null,
+        static fn (int $accountId): array => (new MeliApiClient($accountId, $doubleFailureTransport))->refreshOAuthToken()
+    );
+    try {
+        $doubleFailureService->run(3, 'hf12-integration');
+    } catch (Throwable) {
+    }
+    $doubleFailureState = $control->status();
+    $doubleFailureOAuth = is_array($doubleFailureState['oauth_refresh'] ?? null)
+        ? $doubleFailureState['oauth_refresh']
+        : [];
+    $check($doubleFailureTransport->calls === 1
+        && ($doubleFailureOAuth['failure_class'] ?? '') === 'rotated_credential_recovery_unavailable',
+        'El fallo combinado no conservó ROTATED_CREDENTIAL_RECOVERY_UNAVAILABLE.');
+    $check($control->apiStopped() && $control->automationStopped(),
+        'El fallo combinado retiró una barrera de emergencia.');
+    @rmdir($recoveryPath);
+    $pdo->exec(
+        'ALTER TABLE meli_tokens CHANGE refresh_version_broken refresh_version INT UNSIGNED NOT NULL DEFAULT 0'
+    );
+    $doubleFailureToken = $tokenRow();
+    $check(Crypto::decrypt((string) $doubleFailureToken['access_token_encrypted']) === $oldAccess
+        && Crypto::decrypt((string) $doubleFailureToken['refresh_token_encrypted']) === $oldRefresh
+        && (int) $doubleFailureToken['refresh_version'] === 7,
+        'El fallo combinado alteró el token local anterior.');
 
     // Un 302 real no puede generar una segunda salida física.
     $clearEmergency();
@@ -581,6 +685,25 @@ PHP
     $check(!str_contains($transportSource, 'completeEmergencyOAuthRefreshTransport(')
         && !str_contains($controlSource, 'function completeEmergencyOAuthRefreshTransport('),
         'Permanece la transición OAuth obsoleta anterior a la persistencia.');
+    $durableStart = strpos($controlSource, 'private function durableAtomicJson(');
+    $durableEnd = strpos($controlSource, '/** @return array<string,mixed> */', (int) $durableStart);
+    $durableSource = $durableStart !== false && $durableEnd !== false
+        ? substr($controlSource, $durableStart, $durableEnd - $durableStart)
+        : '';
+    $flushPosition = strpos($durableSource, '@fflush(');
+    $fileSyncPosition = strpos($durableSource, '@fsync($handle)');
+    $renamePosition = strpos($durableSource, '@rename($temporary, $path)');
+    $directorySyncPosition = strpos($durableSource, 'syncDirectoryDurably($directory)');
+    $check($flushPosition !== false
+        && $fileSyncPosition !== false
+        && $renamePosition !== false
+        && $directorySyncPosition !== false
+        && $flushPosition < $fileSyncPosition
+        && $fileSyncPosition < $renamePosition
+        && $renamePosition < $directorySyncPosition
+        && str_contains($controlSource, "DIRECTORY_SEPARATOR !== '/'")
+        && str_contains($controlSource, 'fsync($handle)'),
+        'La secuencia durable write/fflush/fsync/rename/directory-fsync no está completa.');
 
     if ($failures !== []) {
         fwrite(STDERR, implode(PHP_EOL, $failures) . PHP_EOL);

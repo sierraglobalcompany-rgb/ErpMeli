@@ -627,6 +627,19 @@ final class EmergencyControlService
             if (($document['state'] ?? '') !== 'reserved' || (int) ($document['used_calls'] ?? 0) !== 0) {
                 throw new ApiManualPauseException('app', null, null, 'La autorización OAuth ya fue utilizada o no está reservada.');
             }
+            // Preflight real del mismo mecanismo durable que recibirá las
+            // credenciales rotadas. Se ejecuta antes de consumir used_calls y
+            // antes de permitir que cURL cruce la frontera física.
+            try {
+                $this->assertEmergencyOAuthRecoveryStorageReady();
+            } catch (Throwable) {
+                throw new ApiManualPauseException(
+                    'app',
+                    null,
+                    null,
+                    'El almacenamiento recuperable OAuth no está disponible; no se realizó HTTP.'
+                );
+            }
             $reservation = $this->readJson($this->oauthRefreshReservationPath());
             if (!is_array($reservation)) {
                 throw new ApiManualPauseException('app', null, null, 'La reserva OAuth privada no está disponible.');
@@ -664,6 +677,30 @@ final class EmergencyControlService
             $document['dispatched_at'] = gmdate(DATE_ATOM);
             return $document;
         });
+    }
+
+    /** Probe no consumidor y sin secretos del escrow OAuth durable. */
+    public function assertEmergencyOAuthRecoveryStorageReady(): void
+    {
+        $this->ensurePrivateDirectory();
+        $target = $this->oauthTokenRecoveryPath();
+        if (file_exists($target)) {
+            throw new RuntimeException('Existe una recuperación OAuth pendiente o una ruta de escrow no utilizable.');
+        }
+        $probe = $this->privateDirectory . '/.oauth-recovery-preflight-' . bin2hex(random_bytes(6)) . '.json';
+        try {
+            $this->durableAtomicJson($probe, [
+                'version' => 1,
+                'probe' => 'oauth_recovery_storage',
+                'created_at' => gmdate(DATE_ATOM),
+            ]);
+            if (!is_file($probe) || !@unlink($probe)) {
+                throw new RuntimeException('No se pudo retirar el probe OAuth durable.');
+            }
+            $this->syncDirectoryDurably($this->privateDirectory);
+        } finally {
+            @unlink($probe);
+        }
     }
 
     public function completeEmergencyOAuthRefreshSuccess(
@@ -1486,6 +1523,28 @@ final class EmergencyControlService
             throw new RuntimeException('No se pudo publicar el almacenamiento OAuth recuperable.');
         }
         @chmod($path, 0600);
+        $this->syncDirectoryDurably($directory);
+    }
+
+    private function syncDirectoryDurably(string $directory): void
+    {
+        if (DIRECTORY_SEPARATOR !== '/') {
+            return;
+        }
+        if (!function_exists('fsync')) {
+            throw new RuntimeException('La plataforma no permite certificar el directorio OAuth durable.');
+        }
+        $handle = @fopen($directory, 'r');
+        if (!is_resource($handle)) {
+            throw new RuntimeException('No se pudo abrir el directorio OAuth durable.');
+        }
+        try {
+            if (!@fsync($handle)) {
+                throw new RuntimeException('No se pudo sincronizar el directorio OAuth durable.');
+            }
+        } finally {
+            @fclose($handle);
+        }
     }
 
     /** @return array<string,mixed> */

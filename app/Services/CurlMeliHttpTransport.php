@@ -46,7 +46,8 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
                 return strlen($line);
             },
         ];
-        if ((string) (ApiExecutionMetadataContext::current()['source'] ?? '') === 'manual_emergency_canary') {
+        $emergencySource = (string) (ApiExecutionMetadataContext::current()['source'] ?? '');
+        if (in_array($emergencySource, ['manual_emergency_canary', 'manual_emergency_oauth_refresh'], true)) {
             // Un redirect también sería otra solicitud física. El canario no
             // puede seguirlo, ni siquiera cuando el servidor responda 301/302.
             $options[CURLOPT_FOLLOWLOCATION] = false;
@@ -66,10 +67,18 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         $curlError = curl_error($ch);
         unset($ch);
         $decoded = is_string($raw) ? json_decode($raw, true) : null;
-        (new EmergencyControlService())->completeCanaryTransport(
-            $curlError === '' && $status >= 200 && $status < 300,
-            $status > 0 ? $status : null
-        );
+        if ($emergencySource === 'manual_emergency_canary') {
+            (new EmergencyControlService())->completeCanaryTransport(
+                $curlError === '' && $status >= 200 && $status < 300,
+                $status > 0 ? $status : null
+            );
+        }
+
+        // OAuth es distinto al canario de lectura: una respuesta 2xx puede
+        // rotar el refresh token remoto. No debe existir ninguna escritura
+        // fallible de control-plane antes de devolver ese body al servicio que
+        // valida y persiste ambos tokens transaccionalmente. El estado OAuth se
+        // completa únicamente después de confirmar la persistencia.
 
         return [
             'status' => $status,

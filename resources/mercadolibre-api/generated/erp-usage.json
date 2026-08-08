@@ -1,0 +1,545 @@
+{
+    "generated_at": "2026-07-29T19:41:55+00:00",
+    "api_calls": [
+        {
+            "method": "GET",
+            "path_expression": "'/post-purchase/v1/claims/search', $params, ['job_type' => 'claims', 'bulk' => true]",
+            "normalized_path": "/post-purchase/v1/claims/search",
+            "file": "app/Services/ClaimSyncService.php",
+            "line": 74,
+            "module": "reclamos",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/post-purchase/v1/claims/search', ['status' => 'opened', 'limit' => $limit], ['job_type' => 'claims', 'bulk' => true]",
+            "normalized_path": "/post-purchase/v1/claims/search",
+            "file": "app/Services/ClaimSyncService.php",
+            "line": 87,
+            "module": "reclamos",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/post-purchase/v1/claims/' . rawurlencode((string) $id), [], ['job_type' => 'claims']",
+            "normalized_path": "/post-purchase/v1/claims/{id}",
+            "file": "app/Services/ClaimSyncService.php",
+            "line": 99,
+            "module": "reclamos",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/post-purchase/v1/claims/' . rawurlencode((string) $claimId), [], ['job_type' => 'claims']",
+            "normalized_path": "/post-purchase/v1/claims/{id}",
+            "file": "app/Services/ClaimSyncService.php",
+            "line": 121,
+            "module": "reclamos",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/post-purchase/v1/claims/' . rawurlencode($claimId) . '/detail', [], ['job_type' => 'claims']",
+            "normalized_path": "/post-purchase/v1/claims/{id}/detail",
+            "file": "app/Services/ClaimSyncService.php",
+            "line": 136,
+            "module": "reclamos",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/categories/' . rawurlencode($categoryId), [], ['job_type' => 'items_sync']",
+            "normalized_path": "/categories/{id}",
+            "file": "app/Services/MeliCategoryService.php",
+            "line": 44,
+            "module": "general",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/items/' . rawurlencode($externalId) . '/description', [], ['job_type' => 'description_job', 'bulk' => true]",
+            "normalized_path": "/items/{id}/description",
+            "file": "app/Services/MeliItemDescriptionService.php",
+            "line": 17,
+            "module": "productos_ml",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/user-products/' . rawurlencode($target['user_product_id']) . '/stock', [], ['job_type' => 'stock_origin']",
+            "normalized_path": "/user-products/{user_product_id}/stock",
+            "file": "app/Services/MeliItemStockService.php",
+            "line": 69,
+            "module": "productos_ml",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/users/' . $sellerId . '/items/search', $query, ['job_type' => 'items_sync', 'bulk' => true]",
+            "normalized_path": "/users/{seller_id}/items/search",
+            "file": "app/Services/MeliItemSyncJobService.php",
+            "line": 215,
+            "module": "productos_ml",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/users/' . $sellerId . '/items/search', $query, ['job_type' => 'items_sync', 'bulk' => true]",
+            "normalized_path": "/users/{seller_id}/items/search",
+            "file": "app/Services/MeliItemSyncService.php",
+            "line": 50,
+            "module": "productos_ml",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/users/' . $sellerId . '/items/search', ['offset' => $offset, 'limit' => $limit], ['job_type' => 'items_sync', 'bulk' => true]",
+            "normalized_path": "/users/{seller_id}/items/search",
+            "file": "app/Services/MeliItemSyncService.php",
+            "line": 54,
+            "module": "productos_ml",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/items/' . rawurlencode($externalId), [], ['job_type' => 'items_sync']",
+            "normalized_path": "/items/{id}",
+            "file": "app/Services/MeliItemSyncService.php",
+            "line": 88,
+            "module": "productos_ml",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/users/' . $sellerId . '/items/search', ['offset' => 0, 'limit' => 1], ['job_type' => 'items_sync']",
+            "normalized_path": "/users/{seller_id}/items/search",
+            "file": "app/Services/MeliItemSyncService.php",
+            "line": 246,
+            "module": "productos_ml",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/users/' . $sellerId . '/items/search', ['offset' => 0, 'limit' => 1], ['job_type' => 'product_review']",
+            "normalized_path": "/users/{seller_id}/items/search",
+            "file": "app/Services/MeliProductUpdateReviewService.php",
+            "line": 50,
+            "module": "general",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/users/' . $sellerId . '/items/search', $query, ['job_type' => 'product_review', 'bulk' => true]",
+            "normalized_path": "/users/{seller_id}/items/search",
+            "file": "app/Services/MeliProductUpdateReviewService.php",
+            "line": 65,
+            "module": "general",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/users/' . $sellerId . '/items/search', ['offset' => $offset, 'limit' => $limit], ['job_type' => 'product_review', 'bulk' => true]",
+            "normalized_path": "/users/{seller_id}/items/search",
+            "file": "app/Services/MeliProductUpdateReviewService.php",
+            "line": 68,
+            "module": "general",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/missed_feeds', $query, ['job_type' => 'webhook_recovery', 'bulk' => true]",
+            "normalized_path": "/missed_feeds",
+            "file": "app/Services/MissedFeedService.php",
+            "line": 38,
+            "module": "general",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/users/me', [], ['job_type' => 'oauth']",
+            "normalized_path": "/users/me",
+            "file": "app/Services/OAuthService.php",
+            "line": 106,
+            "module": "general",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/orders/' . rawurlencode((string) $externalOrderId), [], $meta",
+            "normalized_path": "/orders/{id}",
+            "file": "app/Services/OrderSyncService.php",
+            "line": 107,
+            "module": "ordenes",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/shipments/' . rawurlencode($externalShipmentId), [], $meta",
+            "normalized_path": "/shipments/{id}",
+            "file": "app/Services/OrderSyncService.php",
+            "line": 123,
+            "module": "ordenes",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/questions/search', $params, ['job_type' => 'questions', 'bulk' => true]",
+            "normalized_path": "/questions/search",
+            "file": "app/Services/QuestionSyncService.php",
+            "line": 94,
+            "module": "preguntas",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/payments/\") && !str_contains($sync, 'payments.expand_details_enabled=true')",
+            "normalized_path": "/payments/",
+            "file": "tests/run.php",
+            "line": 730,
+            "module": "general",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/payments/\"), 'OrderSyncService no debe consultar /payments/{id}.'",
+            "normalized_path": "/payments/",
+            "file": "tests/run.php",
+            "line": 1499,
+            "module": "general",
+            "context": "service"
+        },
+        {
+            "method": "GET",
+            "path_expression": "'/users/me'",
+            "normalized_path": "/users/me",
+            "file": "tests/run.php",
+            "line": 3927,
+            "module": "general",
+            "context": "service"
+        }
+    ],
+    "meli_references": [
+        {
+            "file": "app/Modules/Shared/Services/MeliReadGateway.php",
+            "line": 7,
+            "text": "use App\\Services\\MeliApiClient;"
+        },
+        {
+            "file": "app/Modules/Shared/Services/MeliReadGateway.php",
+            "line": 27,
+            "text": ": new MeliApiClient($accountId);"
+        },
+        {
+            "file": "app/Services/ClaimSyncService.php",
+            "line": 15,
+            "text": "private MeliApiClient $api;"
+        },
+        {
+            "file": "app/Services/ClaimSyncService.php",
+            "line": 19,
+            "text": "$this->api = new MeliApiClient($accountId);"
+        },
+        {
+            "file": "app/Services/HistoricalPackReconciliationService.php",
+            "line": 458,
+            "text": "$pack = (new MeliApiClient($accountId))->get("
+        },
+        {
+            "file": "app/Services/MeliApiClient.php",
+            "line": 16,
+            "text": "final class MeliApiClient implements MeliReadClientInterface"
+        },
+        {
+            "file": "app/Services/MeliApiKnowledgeService.php",
+            "line": 329,
+            "text": "if (str_contains($line, 'MeliApiClient')) {"
+        },
+        {
+            "file": "app/Services/MeliApiKnowledgeService.php",
+            "line": 338,
+            "text": "&& !str_contains($line, 'MeliApiClient')"
+        },
+        {
+            "file": "app/Services/MeliApiKnowledgeService.php",
+            "line": 585,
+            "text": "$risks[] = $this->risk('critico', 'Catálogo público referencia MeliApiClient', 'public_catalog', 'La vista pública no debe consultar API ni cargar clases de integración ML.', 'Eliminar la dependencia pública y usar solo snapshots locales.');"
+        },
+        {
+            "file": "app/Services/MeliApiKnowledgeService.php",
+            "line": 623,
+            "text": ". \"El ERP tiene una arquitectura correcta de protección API: `MeliApiClient`, `MeliEndpointRegistry`, `ApiGuardService` y `WriteGuard`. La mejora clave es mantener la documentación materializada como contrato verificable para que futuras versiones no agreguen endpoints o variables sin evidencia documental.\\n\\n\""
+        },
+        {
+            "file": "app/Services/MeliApiKnowledgeService.php",
+            "line": 710,
+            "text": "$out .= \"- [ ] Confirmar que la llamada pasa por `MeliApiClient`.\\n\";"
+        },
+        {
+            "file": "app/Services/MeliApiKnowledgeService.php",
+            "line": 970,
+            "text": "return 'Uso aceptable si pasa por MeliApiClient, ApiGuardService y no se ejecuta desde público.';"
+        },
+        {
+            "file": "app/Services/MeliCategoryService.php",
+            "line": 44,
+            "text": "$payload = (new MeliApiClient($accountId))->get('/categories/' . rawurlencode($categoryId), [], ['job_type' => 'items_sync']);"
+        },
+        {
+            "file": "app/Services/MeliItemDescriptionService.php",
+            "line": 17,
+            "text": "return (new MeliApiClient($this->accountId))->get('/items/' . rawurlencode($externalId) . '/description', [], ['job_type' => 'description_job', 'bulk' => true]);"
+        },
+        {
+            "file": "app/Services/MeliItemStockService.php",
+            "line": 58,
+            "text": "$api = new MeliApiClient($this->accountId);"
+        },
+        {
+            "file": "app/Services/MeliItemSyncJobService.php",
+            "line": 193,
+            "text": "$api = new MeliApiClient($accountId);"
+        },
+        {
+            "file": "app/Services/MeliItemSyncJobService.php",
+            "line": 266,
+            "text": "$probe = (new MeliApiClient($accountId))->get("
+        },
+        {
+            "file": "app/Services/MeliItemSyncService.php",
+            "line": 14,
+            "text": "private MeliApiClient $api;"
+        },
+        {
+            "file": "app/Services/MeliItemSyncService.php",
+            "line": 18,
+            "text": "$this->api = new MeliApiClient($accountId);"
+        },
+        {
+            "file": "app/Services/MeliProductUpdateReviewService.php",
+            "line": 50,
+            "text": "$probe = (new MeliApiClient($accountId))->get('/users/' . $sellerId . '/items/search', ['offset' => 0, 'limit' => 1], ['job_type' => 'product_review']);"
+        },
+        {
+            "file": "app/Services/MeliProductUpdateReviewService.php",
+            "line": 65,
+            "text": "$page = (new MeliApiClient($accountId))->get('/users/' . $sellerId . '/items/search', $query, ['job_type' => 'product_review', 'bulk' => true]);"
+        },
+        {
+            "file": "app/Services/MeliProductUpdateReviewService.php",
+            "line": 68,
+            "text": "$page = (new MeliApiClient($accountId))->get('/users/' . $sellerId . '/items/search', ['offset' => $offset, 'limit' => $limit], ['job_type' => 'product_review', 'bulk' => true]);"
+        },
+        {
+            "file": "app/Services/MissedFeedService.php",
+            "line": 38,
+            "text": "$response = (new MeliApiClient($accountId))->get('/missed_feeds', $query, ['job_type' => 'webhook_recovery', 'bulk' => true]);"
+        },
+        {
+            "file": "app/Services/OAuthService.php",
+            "line": 106,
+            "text": "$profile = (new MeliApiClient($accountId))->get('/users/me', [], ['job_type' => 'oauth']);"
+        },
+        {
+            "file": "app/Services/OrderBillingImportService.php",
+            "line": 59,
+            "text": "$response = (new MeliApiClient((int) $accountId))->get(self::ENDPOINT, ['order_ids' => implode(',', $externalIds)], ['job_type' => 'billing', 'bulk' => true, 'estimated_total' => count($externalIds)]);"
+        },
+        {
+            "file": "app/Services/OrderSyncService.php",
+            "line": 15,
+            "text": "private MeliApiClient $api;"
+        },
+        {
+            "file": "app/Services/OrderSyncService.php",
+            "line": 23,
+            "text": "$this->api = new MeliApiClient($accountId);"
+        },
+        {
+            "file": "app/Services/QuestionSyncService.php",
+            "line": 94,
+            "text": "$response = (new MeliApiClient($accountId))->get('/questions/search', $params, ['job_type' => 'questions', 'bulk' => true]);"
+        },
+        {
+            "file": "app/Services/QuestionSyncService.php",
+            "line": 126,
+            "text": "$row = (new MeliApiClient($accountId))->get("
+        },
+        {
+            "file": "app/Services/RuntimeProcessInventoryService.php",
+            "line": 34,
+            "text": "'remote_client_reference' => str_contains($source, 'MeliApiClient'),"
+        },
+        {
+            "file": "app/Services/SaleFinancialService.php",
+            "line": 323,
+            "text": "$api = new MeliApiClient((int) $job['meli_account_id']);"
+        },
+        {
+            "file": "app/Services/SalesAuditRunService.php",
+            "line": 339,
+            "text": "$client = new MeliApiClient((int) $job['meli_account_id']);"
+        },
+        {
+            "file": "app/Services/SalesAuditService.php",
+            "line": 360,
+            "text": "$page = (new MeliApiClient($accountId))->get('/orders/search', ["
+        },
+        {
+            "file": "app/Services/SalesAuditService.php",
+            "line": 373,
+            "text": "$api = new MeliApiClient($accountId);"
+        },
+        {
+            "file": "app/Services/SalesFiscalPreparationService.php",
+            "line": 146,
+            "text": "$payload = (new MeliApiClient((int) $job['meli_account_id']))->get("
+        },
+        {
+            "file": "app/Services/SyncDiagnosticService.php",
+            "line": 42,
+            "text": "$api = new MeliApiClient($accountId);"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 169,
+            "text": "$source = file_get_contents($root . '/app/Services/MeliApiClient.php');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 261,
+            "text": "$client = (string) file_get_contents($root . '/app/Services/MeliApiClient.php');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 556,
+            "text": "$client = (string) file_get_contents($root . '/app/Services/MeliApiClient.php');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 769,
+            "text": "$assert(!str_contains($publicCode, 'MeliApiClient'), 'El catalogo publico no debe instanciar MeliApiClient');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 805,
+            "text": "foreach (['MeliApiClient', 'meli_categories', 'resolveMany', 'path_from_root_json'] as $needle) {"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 828,
+            "text": "$assert(!str_contains($publicCode, 'MeliApiClient'), 'La vista publica no debe consultar API en vivo');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 928,
+            "text": "foreach (['/user-products/', 'MeliApiClient', 'meli_item_stock_locations', 'No modifica Mercado Libre'] as $needle) {"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 952,
+            "text": "$assert(!str_contains($publicCode, 'MeliApiClient'), 'El catálogo público no debe consultar Mercado Libre en vivo');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 989,
+            "text": "$assert(!str_contains($publicCode, 'MeliApiClient'), 'El catálogo público no debe consultar Mercado Libre en vivo');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 1222,
+            "text": "$apiClient = (string) file_get_contents($root . '/app/Services/MeliApiClient.php');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 1357,
+            "text": "$client = (string) file_get_contents($root . '/app/Services/MeliApiClient.php');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 1359,
+            "text": "$assert(str_contains($client, $needle), 'MeliApiClient debe reservar presupuesto antes de cURL: ' . $needle);"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 1696,
+            "text": "$assert(!str_contains($probe, 'MeliApiClient') && !str_contains($probe, 'processDue('), 'Probe no debe consultar Mercado Libre ni procesar colas.');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 1707,
+            "text": "$client = (string) file_get_contents($root . '/app/Services/MeliApiClient.php');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 1790,
+            "text": "$client = (string) file_get_contents($root . '/app/Services/MeliApiClient.php');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 1963,
+            "text": "$assert(!str_contains($code, 'new MeliApiClient'), 'Los módulos deben usar MeliReadGateway: ' . $relative);"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 2395,
+            "text": "$assert(!str_contains($sync, 'new MeliApiClient'), 'El módulo no debe instanciar MeliApiClient directamente.');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 2537,
+            "text": "$client = (string) file_get_contents($root . '/app/Services/MeliApiClient.php');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 2655,
+            "text": "$assert(!str_contains($javascript, '/MeliApiClient')"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 2840,
+            "text": "$api = (string) file_get_contents($root . '/app/Services/MeliApiClient.php');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 3777,
+            "text": "&& !str_contains($status, 'MeliApiClient'),"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 3927,
+            "text": "(new \\App\\Services\\MeliApiClient(1, $transport))->get('/users/me');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 4008,
+            "text": "$client = (string) file_get_contents($root . '/app/Services/MeliApiClient.php');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 4040,
+            "text": "'MeliApiClient debe reservar presupuesto y espaciar antes del transporte.');"
+        },
+        {
+            "file": "tests/run.php",
+            "line": 4150,
+            "text": "&& !str_contains($recovery, 'MeliApiClient'),"
+        },
+        {
+            "file": "tests/worker_oauth_mysql_integration.php",
+            "line": 156,
+            "text": "$expiryCheck = new ReflectionMethod(\\App\\Services\\MeliApiClient::class, 'tokenExpiresSoon');"
+        },
+        {
+            "file": "tests/worker_oauth_mysql_integration.php",
+            "line": 160,
+            "text": "$client = new \\App\\Services\\MeliApiClient(1);"
+        },
+        {
+            "file": "tests/worker_oauth_mysql_integration.php",
+            "line": 162,
+            "text": "throw new RuntimeException('MeliApiClient no interpretó expires_at como UTC.');"
+        }
+    ],
+    "public_catalog_api_hits": [],
+    "scanned_php_files": 565
+}

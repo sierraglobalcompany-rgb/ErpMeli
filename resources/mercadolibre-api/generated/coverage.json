@@ -1,0 +1,43 @@
+{
+    "generated_at": "2026-07-29T19:41:55+00:00",
+    "docs": {
+        "generated_at": "2026-07-25T06:19:57.009Z",
+        "cutoff_date": "2026-07-25",
+        "page_count": 199,
+        "endpoint_count": 1077
+    },
+    "erp": {
+        "scanned_php_files": 565,
+        "api_calls_detected": 24,
+        "public_catalog_api_hits": 0
+    },
+    "endpoint_status_counts": {
+        "documented_not_used": 719,
+        "confirmed_registered": 24,
+        "registered_not_documented": 4,
+        "confirmed_used": 13,
+        "unknown": 1,
+        "disabled": 1
+    },
+    "field_counts_by_module": {
+        "auditoria": 4,
+        "facturacion": 8,
+        "detalle_orden": 1,
+        "sync": 1,
+        "ventas": 2,
+        "pagos": 1,
+        "envios": 7,
+        "finanzas": 2,
+        "packs": 1,
+        "productos": 1,
+        "bodega": 1,
+        "conciliacion": 2,
+        "productos_ml": 4,
+        "catalogos": 20,
+        "inventario": 1,
+        "stock": 2,
+        "preguntas": 1,
+        "reclamos": 1,
+        "notificaciones": 1
+    }
+}

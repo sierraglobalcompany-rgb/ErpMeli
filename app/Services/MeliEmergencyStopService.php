@@ -1,0 +1,54 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Services;
+
+final class MeliEmergencyStopService
+{
+    public const MESSAGE = 'Consultas a Mercado Libre bloqueadas por mantenimiento. No se realizó ninguna solicitud remota.';
+
+    public function assertAllowed(): void
+    {
+        if (!$this->active()) {
+            return;
+        }
+
+        throw new ApiManualPauseException('app', null, null, self::MESSAGE);
+    }
+
+    /**
+     * Última barrera antes del transporte. Además del freno físico, consume
+     * de forma atómica el único permiso de una reactivación canaria.
+     */
+    public function assertTransportAllowed(): void
+    {
+        $this->assertAllowed();
+        (new EmergencyControlService())->claimCanaryTransport();
+    }
+
+    /** @return array{active:bool,label:string,reason:string,resume_at:null} */
+    public function status(): array
+    {
+        $safety = (new EmergencyControlService())->status();
+        $active = $safety['api'] === 'stopped';
+        $canary = $safety['api'] === 'canary';
+
+        return [
+            'active' => $active,
+            'label' => $active
+                ? 'Consultas a Mercado Libre bloqueadas por mantenimiento'
+                : ($canary ? 'Mercado Libre habilitado para una consulta canaria' : 'Bloqueo de emergencia inactivo'),
+            'reason' => $active
+                ? 'La protección se aplicó mediante un archivo local y no depende de Cron ni de la base de datos.'
+                : ($canary ? 'La siguiente salida remota será la única permitida hasta revisar el resultado.' : 'No existe un bloqueo local de emergencia.'),
+            'resume_at' => null,
+            'canary' => $canary,
+        ];
+    }
+
+    public function active(): bool
+    {
+        return (new EmergencyControlService())->apiStopped();
+    }
+}

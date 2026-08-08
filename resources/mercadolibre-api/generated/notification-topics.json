@@ -1,0 +1,122 @@
+{
+  "version": "2.11.1",
+  "generated_at": "2026-07-25",
+  "rules": [
+    {
+      "canonical": "order",
+      "aliases": ["orders", "orders_v2"],
+      "resource_type": "order",
+      "resource_patterns": ["~^/orders/(?<id>[0-9]+)$~"],
+      "endpoint": "/orders/{id}",
+      "policy": "sync_exact",
+      "priority": 10,
+      "actionable": true
+    },
+    {
+      "canonical": "shipment",
+      "aliases": ["shipments"],
+      "resource_type": "shipment",
+      "resource_patterns": ["~^/shipments/(?<id>[0-9]+)$~"],
+      "endpoint": "/shipments/{id}",
+      "policy": "sync_exact",
+      "priority": 20,
+      "actionable": true
+    },
+    {
+      "canonical": "claim",
+      "aliases": ["post_purchase", "claims", "claims_actions"],
+      "resource_type": "claim",
+      "resource_patterns": [
+        "~^/post-purchase/v1/claims/(?<id>[0-9]+)(?:/.*)?$~",
+        "~^/claims/(?<id>[0-9]+)(?:/.*)?$~"
+      ],
+      "endpoint": "/post-purchase/v1/claims/{id}",
+      "policy": "sync_exact",
+      "priority": 15,
+      "actionable": true
+    },
+    {
+      "canonical": "question",
+      "aliases": ["questions"],
+      "resource_type": "question",
+      "resource_patterns": ["~^/questions/(?<id>[0-9]+)$~"],
+      "endpoint": "/questions/{id}",
+      "policy": "sync_exact",
+      "priority": 15,
+      "actionable": true
+    },
+    {
+      "canonical": "item",
+      "aliases": ["items", "item", "item_prices", "prices"],
+      "resource_type": "item",
+      "resource_patterns": ["~^/items/(?<id>[A-Z]{2,4}[0-9]+)(?:/.*)?$~i"],
+      "endpoint": "/items/{id}",
+      "policy": "review_only",
+      "priority": 60,
+      "actionable": true
+    },
+    {
+      "canonical": "stock_location",
+      "aliases": ["stock_locations", "stock-location", "stock-locations"],
+      "resource_type": "stock_location",
+      "resource_patterns": [
+        "~^/user-products/(?<id>[A-Za-z0-9_-]+)/stock(?:/.*)?$~",
+        "~^/stock-locations/(?<id>[A-Za-z0-9_-]+)(?:/.*)?$~"
+      ],
+      "endpoint": "/user-products/{id}/stock",
+      "policy": "capability_sync",
+      "priority": 50,
+      "actionable": true
+    },
+    {
+      "canonical": "payment",
+      "aliases": ["payments"],
+      "resource_type": "payment",
+      "resource_patterns": ["~^/payments/(?<id>[0-9]+)$~"],
+      "endpoint": null,
+      "policy": "recognized_no_fetch",
+      "priority": 80,
+      "actionable": false
+    },
+    {
+      "canonical": "message",
+      "aliases": ["messages"],
+      "resource_type": "message",
+      "resource_patterns": ["~^/messages/(?<id>[A-Za-z0-9_-]+)(?:/.*)?$~"],
+      "endpoint": null,
+      "policy": "recognized_no_fetch",
+      "priority": 80,
+      "actionable": false
+    },
+    {
+      "canonical": "promotion_candidate",
+      "aliases": ["public_candidates", "public candidate"],
+      "resource_type": "promotion_candidate",
+      "resource_patterns": ["~^/seller-promotions/candidates/(?<id>CANDIDATE-[A-Z]{2,4}[0-9]+-[0-9]+)$~i"],
+      "endpoint": "/seller-promotions/candidates/{id}",
+      "policy": "module_event",
+      "priority": 55,
+      "actionable": false
+    },
+    {
+      "canonical": "promotion_offer",
+      "aliases": ["offers", "public_offers", "public offers"],
+      "resource_type": "promotion_offer",
+      "resource_patterns": ["~^/seller-promotions/offers/(?<id>OFFER-[A-Z]{2,4}[0-9]+-[0-9]+)$~i"],
+      "endpoint": "/seller-promotions/offers/{id}",
+      "policy": "module_event",
+      "priority": 55,
+      "actionable": false
+    },
+    {
+      "canonical": "informational",
+      "aliases": ["fbm_stock_operations", "price_suggestion", "promotions", "invoices"],
+      "resource_type": "informational",
+      "resource_patterns": [],
+      "endpoint": null,
+      "policy": "ignore",
+      "priority": 100,
+      "actionable": false
+    }
+  ]
+}

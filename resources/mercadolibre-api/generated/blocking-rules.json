@@ -1,0 +1,131 @@
+{
+  "generated_at": "2026-07-25T00:00:00-05:00",
+  "source": "Mercado Libre Developers documentation reviewed locally and via official pages on 2026-07-25",
+  "purpose": "Compact operational contract for ERP Meli API anti-blocking guardrails. No tokens, credentials, customer data, orders, raw production JSON, or secrets are included.",
+  "global_policy": {
+    "ml_write_enabled_required_for_mutations": true,
+    "public_catalog_api_usage": "forbidden",
+    "bulk_web_requests": "discouraged; must use queue when estimate exceeds safe web budget",
+    "retry_after": "must be respected before retrying any affected account/endpoint/job type",
+    "unknown_endpoint": "blocked unless registered in MeliEndpointRegistry and documented in generated/endpoints.json"
+  },
+  "documented_blocking_signals": [
+    {
+      "code_or_signal": "EXCESSIVE_API_CALL",
+      "classification": "app_blocked",
+      "severity": "critical",
+      "scope": "global_app",
+      "default_pause_minutes": 1440,
+      "action": "open global circuit, pause Mercado Libre jobs, show critical admin alert"
+    },
+    {
+      "code_or_signal": "unauthorized_scopes",
+      "classification": "app_blocked",
+      "severity": "critical",
+      "scope": "global_app",
+      "default_pause_minutes": 1440,
+      "action": "open global circuit and require admin review of app scopes/permissions"
+    },
+    {
+      "code_or_signal": "unauthorized_application",
+      "classification": "app_blocked",
+      "severity": "critical",
+      "scope": "global_app",
+      "default_pause_minutes": 1440,
+      "action": "open global circuit and stop all non-OAuth Mercado Libre jobs"
+    },
+    {
+      "http_status": 429,
+      "classification": "rate_limited",
+      "severity": "high",
+      "scope": "account_endpoint_job_type",
+      "action": "respect Retry-After, set cooldown, do not retry massively"
+    },
+    {
+      "http_status": 403,
+      "classification": "forbidden_or_missing_permission",
+      "severity": "high",
+      "scope": "account_endpoint",
+      "action": "classify permission vs critical block, open circuit for repeated failures"
+    },
+    {
+      "http_status": 400,
+      "classification": "bad_request",
+      "severity": "medium_high",
+      "scope": "account_endpoint",
+      "action": "open preventive circuit after repeated invalid requests; review parameters before retrying"
+    },
+    {
+      "http_status": 401,
+      "classification": "unauthorized_or_token_error",
+      "severity": "high",
+      "scope": "account_or_app",
+      "action": "attempt controlled refresh only when appropriate; invalid_grant marks account token invalid without massive retries"
+    }
+  ],
+  "endpoint_policy": {
+    "/payments/{id}": {
+      "status": "disabled",
+      "reason": "ERP uses orders[].payments[] as default source; direct payment detail remains disabled to avoid unreliable/legacy 404 flows."
+    },
+    "/items/{id}/description": {
+      "status": "confirmed_admin_job_only",
+      "job_type": "description_job",
+      "limits": "persistent queue with adaptive pause; never from public catalog"
+    },
+    "/user-products/{id}/stock": {
+      "status": "confirmed_permission_dependent",
+      "job_type": "stock_origin",
+      "on_403": "mark permission_required or unsupported; do not convert unknown stock into zero"
+    },
+    "/billing/integration/group/ML/order/details": {
+      "status": "confirmed_job_only",
+      "job_type": "billing",
+      "limits": "maximum 60 order IDs per request; ambiguous lines must not be used for definitive net"
+    },
+    "/questions/search": {
+      "status": "confirmed_read_only",
+      "job_type": "questions",
+      "required_parameters": ["seller_id", "status", "limit", "api_version=4"]
+    },
+    "/post-purchase/v1/claims/search": {
+      "status": "confirmed_read_only",
+      "job_type": "claims",
+      "recommended_parameters": ["players.user_id", "players.role=respondent", "status=opened", "limit"]
+    }
+  },
+  "budget_defaults": {
+    "window_seconds": 900,
+    "global_requests_per_15m": 300,
+    "account_requests_per_15m": 120,
+    "endpoint_requests_per_15m": 50,
+    "job_type_requests_per_15m": 80,
+    "web_request_api_limit": 10,
+    "max_400_per_window": 5,
+    "max_unknown_400_per_window": 3
+  },
+  "cron_priority_order": [
+    "oauth",
+    "api_health",
+    "orders_webhook_recovery",
+    "orders_sync",
+    "questions",
+    "billing",
+    "claims",
+    "description_job",
+    "stock_origin",
+    "sales_audit",
+    "items_sync",
+    "missed_feeds"
+  ],
+  "module_recommendations": {
+    "orders": "Use /orders/search and confirmed order/shipment/pack endpoints with idempotent chunks.",
+    "products": "Use offset/limit for small accounts and scan/scroll_id for large accounts; never mix scroll_id with offset in the same scan request.",
+    "sales_audit": "Keep quick limit=1 checks in web; queue exact long audits when range exceeds configured threshold.",
+    "catalog": "Use snapshots only; never instantiate MeliApiClient from public catalog controllers or views.",
+    "descriptions": "Use persistent catalog description jobs with checkpoints, 20-item batches and adaptive pauses.",
+    "stock_origin": "Treat unsupported or permission-required responses as unknown/unavailable, not as zero stock.",
+    "billing": "Use trusted classified billing lines for reconciled net; unknown lines force revision_manual.",
+    "claims_questions": "Read-only; pause safely if documented parameters are rejected by Mercado Libre."
+  }
+}

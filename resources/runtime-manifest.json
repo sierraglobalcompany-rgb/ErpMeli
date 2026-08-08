@@ -1,0 +1,557 @@
+{
+  "product": "erp-meli",
+  "version": "2.35.1",
+  "build_id": "erp-meli-2.35.1-cron-v3-fifo-legacy-finalizer-20260804",
+  "built_at": "2026-08-04T00:00:00Z",
+  "minimum_migration": "279_cron_v3_fifo_legacy_finalizer_2_35_1.sql",
+  "components": {
+    "cron_probe": {
+      "path": "jobs/cron_probe.php",
+      "sha256": "73031dd029984375812d5200ff3cb020a2719842d4bd6193dacaec694d82e720",
+      "sha256_lf": "73031dd029984375812d5200ff3cb020a2719842d4bd6193dacaec694d82e720"
+    },
+    "process_sync_queue": {
+      "path": "jobs/process_sync_queue.php",
+      "sha256": "4d9cd2822c3de52514662a14fc40d034dfebc1ca48159600453958ffae0e2630",
+      "sha256_lf": "4d9cd2822c3de52514662a14fc40d034dfebc1ca48159600453958ffae0e2630"
+    },
+    "cron_v3_local": {
+      "path": "jobs/cron_v3_local.php",
+      "sha256": "98fd935483bcde0f0e89b9ed719000cae8b0a63060b5077bb058597dde78641e",
+      "sha256_lf": "98fd935483bcde0f0e89b9ed719000cae8b0a63060b5077bb058597dde78641e"
+    },
+    "cron_v3_remote": {
+      "path": "jobs/cron_v3_remote.php",
+      "sha256": "0f1e322ce5e4fd44c6916f5fdc69c955018b6aeec8406db9aada7495852124ab",
+      "sha256_lf": "0f1e322ce5e4fd44c6916f5fdc69c955018b6aeec8406db9aada7495852124ab"
+    },
+    "cron_v3_setup_check": {
+      "path": "jobs/cron_v3_setup_check.php",
+      "sha256": "d816bf3655853090f5ec059940d9dbeee5af670b83f35729784fd2453e54d423",
+      "sha256_lf": "d816bf3655853090f5ec059940d9dbeee5af670b83f35729784fd2453e54d423"
+    },
+    "cron_v3_kernel": {
+      "path": "app/Services/CronV3.php",
+      "sha256": "86ce044d9713c552b54b66eb9d6872329cee86d636828544f572bdc2294c4566",
+      "sha256_lf": "86ce044d9713c552b54b66eb9d6872329cee86d636828544f572bdc2294c4566"
+    },
+    "cron_v3_cli": {
+      "path": "app/Services/CronV3Cli.php",
+      "sha256": "9e00d7928bd2d10b430ea722646148d9b0e68e2d47ae7d7e159a74107325103a",
+      "sha256_lf": "9e00d7928bd2d10b430ea722646148d9b0e68e2d47ae7d7e159a74107325103a"
+    },
+    "cron_v3_rate_gate": {
+      "path": "app/Services/CronV3RateGate.php",
+      "sha256": "709d41a806c8693a6d126511f265a3b965ab17677d29c3ddefe6936165c345b3",
+      "sha256_lf": "709d41a806c8693a6d126511f265a3b965ab17677d29c3ddefe6936165c345b3"
+    },
+    "cron_v3_doctor": {
+      "path": "app/Services/CronV3DoctorService.php",
+      "sha256": "9b1c9adf926ea5fc6940344197962594a6ea3c685f90ab0ded8f805d9ff301cb",
+      "sha256_lf": "9b1c9adf926ea5fc6940344197962594a6ea3c685f90ab0ded8f805d9ff301cb"
+    },
+    "cron_v3_setup_assistant": {
+      "path": "app/Services/CronV3SetupAssistantService.php",
+      "sha256": "3c35220338dd54396482f98ea580c802b74e72c712c3be5386ce0fead36b6506",
+      "sha256_lf": "3c35220338dd54396482f98ea580c802b74e72c712c3be5386ce0fead36b6506"
+    },
+    "cron_v3_canary_control": {
+      "path": "app/Services/CronV3CanaryControlService.php",
+      "sha256": "ab7205f273cef890488d19869f5d63a219c2ac858e081ad179fd5a3b31ecd682",
+      "sha256_lf": "ab7205f273cef890488d19869f5d63a219c2ac858e081ad179fd5a3b31ecd682"
+    },
+    "cron_v3_runner": {
+      "path": "app/Services/CronV3Runner.php",
+      "sha256": "2bcf96d2b04d08227ea3baa46e209a7f871f15cf1e29df0189c03aae9815ba9b",
+      "sha256_lf": "2bcf96d2b04d08227ea3baa46e209a7f871f15cf1e29df0189c03aae9815ba9b"
+    },
+    "cron_v3_repository": {
+      "path": "app/Services/CronV3WorkRepository.php",
+      "sha256": "3190b01e1be2476037b782e1ddc39acb5d61ed8c2dac6cb1bdec9be11aee1d98",
+      "sha256_lf": "3190b01e1be2476037b782e1ddc39acb5d61ed8c2dac6cb1bdec9be11aee1d98"
+    },
+    "cron_deadline_context": {
+      "path": "app/Services/CronDeadlineContext.php",
+      "sha256": "44baa58238dd6d63bc7762d89c22efb1e71e9beffa664ab0cb7cb21bd603a541",
+      "sha256_lf": "44baa58238dd6d63bc7762d89c22efb1e71e9beffa664ab0cb7cb21bd603a541"
+    },
+    "cron_v3_execution_context": {
+      "path": "app/Services/CronV3ExecutionContext.php",
+      "sha256": "e60ac46fc320e183645d2c812512c120a20f9cac4af9f4729eb1323777e00b41",
+      "sha256_lf": "e60ac46fc320e183645d2c812512c120a20f9cac4af9f4729eb1323777e00b41"
+    },
+    "migrator": {
+      "path": "app/Services/Migrator.php",
+      "sha256": "de8f8e1a1a106875ef83e7c82fa3e71850b20e45d1d6951f7bd9c9045cfa9db6",
+      "sha256_lf": "de8f8e1a1a106875ef83e7c82fa3e71850b20e45d1d6951f7bd9c9045cfa9db6"
+    },
+    "migration_015_sync_products_claims": {
+      "path": "database/migrations/015_sync_products_claims_2_1.sql",
+      "sha256": "68bd6b76fa0a37427cd59286638f4379919fd1bedd3e07fa9031805da72cac60",
+      "sha256_lf": "68bd6b76fa0a37427cd59286638f4379919fd1bedd3e07fa9031805da72cac60"
+    },
+    "frontend_app_js": {
+      "path": "public/assets/app.js",
+      "sha256": "14b4bf814d6a433c1db63fe5660c774555d4e340701db68bc43b1529722bd885",
+      "sha256_lf": "14b4bf814d6a433c1db63fe5660c774555d4e340701db68bc43b1529722bd885"
+    },
+    "frontend_app_css": {
+      "path": "public/assets/app.css",
+      "sha256": "b3e5de9147657643cba4fb7d516cccb11d3e87c9fd432fa8d3da44bd9ae0b8c9",
+      "sha256_lf": "b3e5de9147657643cba4fb7d516cccb11d3e87c9fd432fa8d3da44bd9ae0b8c9"
+    },
+    "recovery_kernel": {
+      "path": "app/Recovery/RecoveryKernel.php",
+      "sha256": "4e3e02463c7271b0ad31792e64419ee1ff78e8a0054274c469ead73e22b91cf4",
+      "text": true,
+      "sha256_lf": "4e3e02463c7271b0ad31792e64419ee1ff78e8a0054274c469ead73e22b91cf4"
+    },
+    "migration_254_cron_v3_canary_truth": {
+      "path": "database/migrations/254_cron_v3_canary_truth_2_29_10.sql",
+      "sha256": "ad60f6deb283302c025a1ad4bf018570e612f14ebd333b410318fe9899222e41",
+      "sha256_lf": "ad60f6deb283302c025a1ad4bf018570e612f14ebd333b410318fe9899222e41"
+    },
+    "migration_255_cron_v3_active_evidence_truth": {
+      "path": "database/migrations/255_cron_v3_active_evidence_truth_2_29_11.sql",
+      "sha256": "c949e9f442df897f32d9ade0219d4f484bc29e6e8ff69687cfdc2a4c17d3e8b6",
+      "sha256_lf": "c949e9f442df897f32d9ade0219d4f484bc29e6e8ff69687cfdc2a4c17d3e8b6"
+    },
+    "migration_256_cron_v3_certified_cutover": {
+      "path": "database/migrations/256_cron_v3_certified_cutover_2_29_12.sql",
+      "sha256": "9bbd2d47ddc31ebadafa4fbc34d349a314d366541ab950d6d4d98d571419d6c5",
+      "sha256_lf": "9bbd2d47ddc31ebadafa4fbc34d349a314d366541ab950d6d4d98d571419d6c5"
+    },
+    "cron_v3_certified_cutover": {
+      "path": "app/Services/CronV3CertifiedCutoverService.php",
+      "sha256": "ff32d3de1b8919e7e2312d5c2873f77c14c8c3a591db9327b4de1832e40d40ce",
+      "sha256_lf": "ff32d3de1b8919e7e2312d5c2873f77c14c8c3a591db9327b4de1832e40d40ce"
+    },
+    "cron_v3_operational_read": {
+      "path": "app/Services/CronV3OperationalReadService.php",
+      "sha256": "f080d766449625248eb58046f90290681d99d22bb7d821e2c9e99ec53a0113ca",
+      "sha256_lf": "f080d766449625248eb58046f90290681d99d22bb7d821e2c9e99ec53a0113ca"
+    },
+    "migration_244_cron_v3_rate_scope_authority": {
+      "path": "database/migrations/244_cron_v3_rate_scope_authority_2_29_1.sql",
+      "sha256": "29f629be1ca2277b4b3f39e971ee238c8b4786318a68b116373180dfce6d74a0",
+      "sha256_lf": "29f629be1ca2277b4b3f39e971ee238c8b4786318a68b116373180dfce6d74a0"
+    },
+    "cron_v3_operational_mode": {
+      "path": "app/Services/CronV3OperationalModeService.php",
+      "sha256": "7a16b38b10942f17a14b39b7039b205772947b89f8a849da2c340a7c0a44b1d6",
+      "sha256_lf": "7a16b38b10942f17a14b39b7039b205772947b89f8a849da2c340a7c0a44b1d6"
+    },
+    "cron_v3_operational_cutover": {
+      "path": "app/Services/CronV3OperationalCutoverService.php",
+      "sha256": "80db28b5123c9360eb144e06ca170cc71ea5a7f9d12a66baadf5c304af4a09f2",
+      "text": true,
+      "sha256_lf": "80db28b5123c9360eb144e06ca170cc71ea5a7f9d12a66baadf5c304af4a09f2"
+    },
+    "cron_v3_runtime_status": {
+      "path": "app/Services/CronV3RuntimeStatusService.php",
+      "sha256": "067b6d028bb6febe650442e9f67e0a8b06685effc6e5b912505c78a2d51857f7",
+      "sha256_lf": "067b6d028bb6febe650442e9f67e0a8b06685effc6e5b912505c78a2d51857f7"
+    },
+    "cron_v3_ownership": {
+      "path": "app/Services/CronV3OwnershipService.php",
+      "sha256": "c7c75eafb55363d29669b27eb598dbfb10ef768aa7b73c2ab53669b50e0fbf05",
+      "text": true,
+      "sha256_lf": "c7c75eafb55363d29669b27eb598dbfb10ef768aa7b73c2ab53669b50e0fbf05"
+    },
+    "settings_controller": {
+      "path": "app/Controllers/SettingsController.php",
+      "sha256": "bc010cc2034a78efea72bd6e7385112e4d192f4714c73e7c3405cd9c8025e8ce",
+      "sha256_lf": "bc010cc2034a78efea72bd6e7385112e4d192f4714c73e7c3405cd9c8025e8ce"
+    },
+    "public_router": {
+      "path": "public/index.php",
+      "sha256": "279da3a6422c218c924071e36a39d38b918f29807c2837c6152552eac768871c",
+      "sha256_lf": "279da3a6422c218c924071e36a39d38b918f29807c2837c6152552eac768871c"
+    },
+    "migration_253_applied_migration_015_drift_recovery": {
+      "path": "database/migrations/253_applied_migration_015_drift_recovery_2_29_9.sql",
+      "sha256": "3f4a1034470ee852aafdb601c737321bb4ceab506f697775c91a312a6629397a",
+      "sha256_lf": "3f4a1034470ee852aafdb601c737321bb4ceab506f697775c91a312a6629397a"
+    },
+    "migration_257_cron_v3_operational_cutover": {
+      "path": "database/migrations/257_cron_v3_operational_cutover_2_30_0.sql",
+      "sha256": "a27ef31f63f816f35ab7f750e19a1355ea44b124d9eaa8d87c78ca1a605fc589",
+      "sha256_lf": "a27ef31f63f816f35ab7f750e19a1355ea44b124d9eaa8d87c78ca1a605fc589"
+    },
+    "cron_v3_diagnose_legacy_cli": {
+      "path": "jobs/cron_v3_diagnose_legacy.php",
+      "sha256": "a98f71f4cb394c31f029a66763b34e9ead8b3708b930194fd2a35968b34f9e78",
+      "sha256_lf": "a98f71f4cb394c31f029a66763b34e9ead8b3708b930194fd2a35968b34f9e78"
+    },
+    "cron_v3_operational_snapshot": {
+      "path": "app/Services/CronV3OperationalSnapshotService.php",
+      "sha256": "f4217321d541387f0c5cc3f9c9a4b391b1f1a139c65549fdfad097702879568c",
+      "sha256_lf": "f4217321d541387f0c5cc3f9c9a4b391b1f1a139c65549fdfad097702879568c"
+    },
+    "cron_v3_certify_cli": {
+      "path": "jobs/cron_v3_certify.php",
+      "sha256": "2ef68e02679aaf4d966f0315c543582064cbac577dd8ee435f3d766d6b013054",
+      "sha256_lf": "2ef68e02679aaf4d966f0315c543582064cbac577dd8ee435f3d766d6b013054"
+    },
+    "migration_258_cron_v3_capability_matrix": {
+      "path": "database/migrations/258_cron_v3_capability_matrix_2_31_0.sql",
+      "sha256": "ea4078bbdf44beb39949be9cc260b336fea1d6cbb496e9d9466d60be948c7f33",
+      "sha256_lf": "ea4078bbdf44beb39949be9cc260b336fea1d6cbb496e9d9466d60be948c7f33"
+    },
+    "cron_v3_capability_matrix": {
+      "path": "app/Services/CronV3CapabilityMatrixService.php",
+      "sha256": "e2a02354c98bfab910a2523218b28bdeec327020c811cd617b2e32f441b1ad80",
+      "sha256_lf": "e2a02354c98bfab910a2523218b28bdeec327020c811cd617b2e32f441b1ad80"
+    },
+    "cron_v3_backlog_snapshot_cli": {
+      "path": "jobs/cron_v3_backlog_snapshot.php",
+      "sha256": "c8c9ccb3d7dc1f8a9a1c8583c6b1318072ee321285ffa3fc81f18b836d18aec8",
+      "sha256_lf": "c8c9ccb3d7dc1f8a9a1c8583c6b1318072ee321285ffa3fc81f18b836d18aec8"
+    },
+    "cron_v3_doctor_cli": {
+      "path": "jobs/cron_v3_doctor.php",
+      "sha256": "81c807925b6f934701b236595b16114783240ee5677fd7e888d511b2ace1e651",
+      "sha256_lf": "81c807925b6f934701b236595b16114783240ee5677fd7e888d511b2ace1e651"
+    },
+    "runtime_process_inventory": {
+      "path": "app/Services/RuntimeProcessInventoryService.php",
+      "sha256": "59d509d3bdca87c4674276e50cea38f8f84d942fc4ccc95c2483d6cc97655665",
+      "sha256_lf": "59d509d3bdca87c4674276e50cea38f8f84d942fc4ccc95c2483d6cc97655665"
+    },
+    "cron_v3_legacy_queue_adapter": {
+      "path": "app/Services/CronV3LegacyQueueAdapter.php",
+      "sha256": "6836741327714bab3ff91668cfe6b4f18cb063c72bc3169d0ed79e2854de0e7b",
+      "sha256_lf": "6836741327714bab3ff91668cfe6b4f18cb063c72bc3169d0ed79e2854de0e7b"
+    },
+    "api_health_js": {
+      "path": "public/assets/api-health.js",
+      "sha256": "63a33ac87d7aa122b0c0fb1d0e07746ddc35fb169413cce52b77ede526d9d59e",
+      "sha256_lf": "63a33ac87d7aa122b0c0fb1d0e07746ddc35fb169413cce52b77ede526d9d59e"
+    },
+    "api_health_shell": {
+      "path": "app/Views/settings/api_health_shell.php",
+      "sha256": "be178ecb047b2ec659b1d8a8d15a8a0dd338cda152cd47bf48051fb1e78ff2d7",
+      "sha256_lf": "be178ecb047b2ec659b1d8a8d15a8a0dd338cda152cd47bf48051fb1e78ff2d7"
+    },
+    "cron_shell": {
+      "path": "app/Views/settings/cron_shell.php",
+      "sha256": "53a51a342e75c65039c336d31516a24e2ea2cdb9e62a340b0ef941cbe7122cd2",
+      "sha256_lf": "53a51a342e75c65039c336d31516a24e2ea2cdb9e62a340b0ef941cbe7122cd2"
+    },
+    "migration_259_cron_v3_single_operational_truth": {
+      "path": "database/migrations/259_cron_v3_single_operational_truth_2_31_1.sql",
+      "sha256": "cba38bda209a2ea59371d73777381a0e0b171aaa1c679cf1a471edbdaa877205",
+      "sha256_lf": "cba38bda209a2ea59371d73777381a0e0b171aaa1c679cf1a471edbdaa877205"
+    },
+    "migration_260_cron_v3_legacy_bridge_contracts": {
+      "path": "database/migrations/260_cron_v3_legacy_bridge_contracts_2_31_2.sql",
+      "sha256": "cd153ee82286cda8c418f3144600d41224ac1fffaed8edec389e1364b02580f7",
+      "sha256_lf": "cd153ee82286cda8c418f3144600d41224ac1fffaed8edec389e1364b02580f7"
+    },
+    "migration_261_cron_v3_history_drainage_certification": {
+      "path": "database/migrations/261_cron_v3_history_drainage_certification_2_31_3.sql",
+      "sha256": "022abdb20b2fd7c129cec4730d998e7db4270e406ac0462603451a7248715008",
+      "sha256_lf": "022abdb20b2fd7c129cec4730d998e7db4270e406ac0462603451a7248715008"
+    },
+    "api_health_view": {
+      "path": "app/Views/settings/api_health.php",
+      "sha256": "5b750473252fdbed035ee8de1f33d1b0afdc9000cf30141f26d67edb5099f6b6",
+      "sha256_lf": "5b750473252fdbed035ee8de1f33d1b0afdc9000cf30141f26d67edb5099f6b6"
+    },
+    "work_queue_run_service": {
+      "path": "app/Services/WorkQueueRunService.php",
+      "sha256": "cdc92a0ed9866029121a988c1c6779d01f332570eeb24f4ac52e851f0d127e73",
+      "sha256_lf": "cdc92a0ed9866029121a988c1c6779d01f332570eeb24f4ac52e851f0d127e73"
+    },
+    "automation_history_view": {
+      "path": "app/Views/settings/automation_history.php",
+      "sha256": "d3bc9c6d5e708bbb4f5894a243e87b0ff6c0c1ab4a8be6982539507ea6334cfb",
+      "sha256_lf": "d3bc9c6d5e708bbb4f5894a243e87b0ff6c0c1ab4a8be6982539507ea6334cfb"
+    },
+    "migration_262_cron_v3_visual_truth_api_health": {
+      "path": "database/migrations/262_cron_v3_visual_truth_api_health_2_31_4.sql",
+      "sha256": "92ff5f30710ac314803d1467b30b17e463bf9c31506009676961ebff7e2ca99d",
+      "sha256_lf": "92ff5f30710ac314803d1467b30b17e463bf9c31506009676961ebff7e2ca99d"
+    },
+    "migration_263_cron_v3_queue_capability_owners": {
+      "path": "database/migrations/263_cron_v3_queue_capability_owners_2_31_5.sql",
+      "sha256": "37cee812f1fe20ce9994331eae982514d392ff1271aa087a4c37a5d42c8a7924",
+      "sha256_lf": "37cee812f1fe20ce9994331eae982514d392ff1271aa087a4c37a5d42c8a7924"
+    },
+    "migration_264_cron_v3_history_drainage_v3_truth": {
+      "path": "database/migrations/264_cron_v3_history_drainage_v3_truth_2_31_6.sql",
+      "sha256": "d36bdcd9a34f5593a28fb5a2ef67fb28efad68f80efe98e2c22806f65a87625b",
+      "sha256_lf": "d36bdcd9a34f5593a28fb5a2ef67fb28efad68f80efe98e2c22806f65a87625b"
+    },
+    "cron_v3_legacy_source_finalizer": {
+      "path": "app/Services/CronV3LegacySourceFinalizer.php",
+      "sha256": "8b363680e76da13fb580179cda3cc185b926de91d8cde8cd6ab274b63a257a27",
+      "sha256_lf": "8b363680e76da13fb580179cda3cc185b926de91d8cde8cd6ab274b63a257a27"
+    },
+    "cron_v3_default_handler_bootstrap": {
+      "path": "app/Services/CronV3DefaultHandlerBootstrap.php",
+      "sha256": "ff8d982da0774371a01e734fc772e3c8b9b3c8203f576e7a5da96ca8e0744bd1",
+      "text": true,
+      "sha256_lf": "ff8d982da0774371a01e734fc772e3c8b9b3c8203f576e7a5da96ca8e0744bd1"
+    },
+    "migration_265_cron_v3_full_operational_drainage": {
+      "path": "database/migrations/265_cron_v3_full_operational_drainage_2_32_0.sql",
+      "sha256": "585838b30d98f8e49b6bac1a80aec32e43dbb92ba887cac9a10bdf84eea60f4c",
+      "sha256_lf": "585838b30d98f8e49b6bac1a80aec32e43dbb92ba887cac9a10bdf84eea60f4c"
+    },
+    "automation_queue_view": {
+      "path": "app/Views/settings/automation_queue.php",
+      "sha256": "31bdce660af74eeceaef464444c307a49b8e846a09a2ea74f42ecbf90d034172",
+      "sha256_lf": "31bdce660af74eeceaef464444c307a49b8e846a09a2ea74f42ecbf90d034172"
+    },
+    "cron_v3_legacy_import_coordinator": {
+      "path": "app/Services/CronV3LegacyImportCoordinator.php",
+      "sha256": "ec957ef1b5dced55355cd0c13807dec1c411237ac59e22b69c6bb18d2d133a5d",
+      "sha256_lf": "ec957ef1b5dced55355cd0c13807dec1c411237ac59e22b69c6bb18d2d133a5d"
+    },
+    "cron_v3_monthly_report_maintenance_handler": {
+      "path": "app/Services/CronV3Handlers/MonthlyReportMaintenanceHandler.php",
+      "sha256": "0927fd4ff6d6b24dbac3b50b034d8496ffad18479f465c60501953c504b6002d",
+      "sha256_lf": "0927fd4ff6d6b24dbac3b50b034d8496ffad18479f465c60501953c504b6002d"
+    },
+    "cron_v3_maintenance_producer": {
+      "path": "app/Services/CronV3MaintenanceProducer.php",
+      "sha256": "5d8826317e568e91fd5fddf4273913cd5b9a3159f7990a1520a3b3490425422e",
+      "text": true,
+      "sha256_lf": "5d8826317e568e91fd5fddf4273913cd5b9a3159f7990a1520a3b3490425422e"
+    },
+    "cron_v3_operational_maintenance_handler": {
+      "path": "app/Services/CronV3Handlers/OperationalMaintenanceHandler.php",
+      "sha256": "e7b2023440be8ef7bb233ecac7758475545f00e652d91a9193baa680dd76e553",
+      "sha256_lf": "e7b2023440be8ef7bb233ecac7758475545f00e652d91a9193baa680dd76e553"
+    },
+    "migration_266_cron_v3_fifo_arrival_queue": {
+      "path": "database/migrations/266_cron_v3_fifo_arrival_queue_2_33_0.sql",
+      "sha256": "2ea709a7a0218977253c1cb728d32016d95c7f7274f00a3da312f64ac075bb73",
+      "sha256_lf": "2ea709a7a0218977253c1cb728d32016d95c7f7274f00a3da312f64ac075bb73"
+    },
+    "migration_267_cron_v3_editable_ramps": {
+      "path": "database/migrations/267_cron_v3_editable_ramps_2_33_0.sql",
+      "sha256": "92a074e9bb19c846e927d5f2dd89e49a0d0bc0234bf54141ec7d22420ca0bdce",
+      "sha256_lf": "92a074e9bb19c846e927d5f2dd89e49a0d0bc0234bf54141ec7d22420ca0bdce"
+    },
+    "migration_268_cron_v3_fifo_operational_snapshot": {
+      "path": "database/migrations/268_cron_v3_fifo_operational_snapshot_2_33_0.sql",
+      "sha256": "742abafaa2dd26ac4ee058aa4009646c3900fcfc86687311e5c9aec5531ba6ba",
+      "sha256_lf": "742abafaa2dd26ac4ee058aa4009646c3900fcfc86687311e5c9aec5531ba6ba"
+    },
+    "cron_v3_enqueuer": {
+      "path": "app/Services/CronV3Enqueuer.php",
+      "sha256": "f65dd900dd42cba00fc830d07a43375e17fdfb5e02dfe53a8ed48450bb71ba43",
+      "sha256_lf": "f65dd900dd42cba00fc830d07a43375e17fdfb5e02dfe53a8ed48450bb71ba43"
+    },
+    "cron_v3_work_type_registry": {
+      "path": "app/Services/CronV3WorkTypeRegistry.php",
+      "sha256": "69bfd79ea704cc8388b398615fbeb03ab04681333e77d318579b5fd4e3a392ef",
+      "text": true,
+      "sha256_lf": "69bfd79ea704cc8388b398615fbeb03ab04681333e77d318579b5fd4e3a392ef"
+    },
+    "api_rhythm_policy_service": {
+      "path": "app/Services/ApiRhythmPolicyService.php",
+      "sha256": "715e4b1ccefea7ea9f769424f6efc93719c5165a728e1104cfa5330756f8c17b",
+      "sha256_lf": "715e4b1ccefea7ea9f769424f6efc93719c5165a728e1104cfa5330756f8c17b"
+    },
+    "api_workload_view": {
+      "path": "app/Views/settings/api_workload.php",
+      "sha256": "b62112c4b6c4bda4f30309f9b56b6ec91f686142dba83c541209e4cc310449b8",
+      "sha256_lf": "b62112c4b6c4bda4f30309f9b56b6ec91f686142dba83c541209e4cc310449b8"
+    },
+    "cron_v3_parked_view": {
+      "path": "app/Views/settings/cron_v3_parked.php",
+      "sha256": "f0a7ebd33dff9ffd8db428358c88e0ad1020dff9bba7b95b03475856ddcc6035",
+      "sha256_lf": "f0a7ebd33dff9ffd8db428358c88e0ad1020dff9bba7b95b03475856ddcc6035"
+    },
+    "meli_api_client": {
+      "path": "app/Services/MeliApiClient.php",
+      "sha256": "e1baff2f673e15b666e51fa980aa5de50aba4f1ee5123c9c24516a5e09a66516",
+      "sha256_lf": "e1baff2f673e15b666e51fa980aa5de50aba4f1ee5123c9c24516a5e09a66516"
+    },
+    "cron_v3_rate_policy_service": {
+      "path": "app/Services/CronV3RatePolicyService.php",
+      "sha256": "6cd75614c7e072cdf23b12d9022f9c80a63e76ab6ffa41f846ef3bc441a6129f",
+      "sha256_lf": "6cd75614c7e072cdf23b12d9022f9c80a63e76ab6ffa41f846ef3bc441a6129f"
+    },
+    "migration_269_cron_v3_single_rate_authority": {
+      "path": "database/migrations/269_cron_v3_single_rate_authority_2_34_0.sql",
+      "sha256": "2a2bffa0bf4c23dc4c423e330eb74f5ccea292ad232b1ad74b4dbea8550a0b66",
+      "sha256_lf": "2a2bffa0bf4c23dc4c423e330eb74f5ccea292ad232b1ad74b4dbea8550a0b66"
+    },
+    "migration_270_cron_v3_fifo_producers_import_repair": {
+      "path": "database/migrations/270_cron_v3_fifo_producers_import_repair_2_34_0.sql",
+      "sha256": "903cc2f4199b5ca2efbc70894b242b2bf6338c7fb486309e2d2991d0c5bcc94a",
+      "sha256_lf": "903cc2f4199b5ca2efbc70894b242b2bf6338c7fb486309e2d2991d0c5bcc94a"
+    },
+    "migration_271_cron_v3_complete_producers": {
+      "path": "database/migrations/271_cron_v3_complete_producers_2_34_0.sql",
+      "sha256": "56c103ce7b02de3ca4ba5a2eaf1b3312c51f0d4f586792a2aabb340e453ba925",
+      "sha256_lf": "56c103ce7b02de3ca4ba5a2eaf1b3312c51f0d4f586792a2aabb340e453ba925"
+    },
+    "migration_272_cron_v3_operational_truth_snapshot": {
+      "path": "database/migrations/272_cron_v3_operational_truth_snapshot_2_34_0.sql",
+      "sha256": "9e5479e9c31fc938be58b6d78af9dc83f5c7b93881c52c1d32c2a1219d38dc63",
+      "sha256_lf": "9e5479e9c31fc938be58b6d78af9dc83f5c7b93881c52c1d32c2a1219d38dc63"
+    },
+    "migration_273_cron_v3_parking_action_center": {
+      "path": "database/migrations/273_cron_v3_parking_action_center_2_34_0.sql",
+      "sha256": "7c088e7a5f388e00301ef7636e2a5509b8a4f099af87008ff8712789bdab1edf",
+      "sha256_lf": "7c088e7a5f388e00301ef7636e2a5509b8a4f099af87008ff8712789bdab1edf"
+    },
+    "api_health_service": {
+      "path": "app/Services/ApiHealthService.php",
+      "sha256": "9311c809698256dc575b32b861a94d6bb0e01bbd4ac518eadc8d94eb70c3e991",
+      "sha256_lf": "9311c809698256dc575b32b861a94d6bb0e01bbd4ac518eadc8d94eb70c3e991"
+    },
+    "api_incident_read_model": {
+      "path": "app/Services/ApiIncidentReadModelService.php",
+      "sha256": "d7cc9460afe0d15f1361b2a73758dbfb8116c8e797b22668882ed351edebe7f1",
+      "sha256_lf": "d7cc9460afe0d15f1361b2a73758dbfb8116c8e797b22668882ed351edebe7f1"
+    },
+    "incident_action_resolver": {
+      "path": "app/Services/IncidentActionResolver.php",
+      "sha256": "bd7de19187cbe016df6390bbf79bd90f4217cc8bd84d18af4f6624faea4791ed",
+      "sha256_lf": "bd7de19187cbe016df6390bbf79bd90f4217cc8bd84d18af4f6624faea4791ed"
+    },
+    "api_health_incidents_view": {
+      "path": "app/Views/settings/api_health_incidents.php",
+      "sha256": "cf550687f7a6e513d9bef5e4b69965f007e8f6c34635b619f361331ec96ec139",
+      "sha256_lf": "cf550687f7a6e513d9bef5e4b69965f007e8f6c34635b619f361331ec96ec139"
+    },
+    "api_health_incident_show_view": {
+      "path": "app/Views/settings/api_health_incident_show.php",
+      "sha256": "94198c1c3abf8b4685a091650b52734738a1bcb8ea7a26bafe8b773d7ff9557a",
+      "sha256_lf": "94198c1c3abf8b4685a091650b52734738a1bcb8ea7a26bafe8b773d7ff9557a"
+    },
+    "migration_274_clean_release_api_health_429": {
+      "path": "database/migrations/274_clean_release_api_health_429_2_34_1.sql",
+      "sha256": "24ab401b0b14ddcb02bd8b32e6e20db9aaab5156b8e76cf2aacbc1d0d41f61ab",
+      "text": true,
+      "sha256_lf": "24ab401b0b14ddcb02bd8b32e6e20db9aaab5156b8e76cf2aacbc1d0d41f61ab"
+    },
+    "update_release_service": {
+      "path": "app/Services/UpdateReleaseService.php",
+      "sha256": "dfc866efc65381986a150b397edd698944dcb6a6c1d9e38f970bfa74041358c5",
+      "sha256_lf": "dfc866efc65381986a150b397edd698944dcb6a6c1d9e38f970bfa74041358c5"
+    },
+    "migration_275_recover_274_app_settings_key": {
+      "path": "database/migrations/275_recover_274_app_settings_key_2_34_2.sql",
+      "sha256": "bd1b9392699fb1c0a8b2e893e4ad03e291009f90a6f9843ca5d6885eb763c5a2",
+      "text": true,
+      "sha256_lf": "bd1b9392699fb1c0a8b2e893e4ad03e291009f90a6f9843ca5d6885eb763c5a2"
+    },
+    "migration_replacements": {
+      "path": "resources/migration-replacements.json",
+      "sha256": "fca5903cfb2505cbeb14020489fc092dde90245cd3b41a73ec485399d7c0d87f",
+      "sha256_lf": "f529148948bc1de6d7839e808ad80a3d629c886d867e9444f4cc242a2f1a027e"
+    },
+    "emergency_control_kernel": {
+      "path": "app/Recovery/EmergencyControlKernel.php",
+      "sha256": "1688055d696a7736659aa9ae9cf0cdcb3650ff1c7143227bbb3efcd2eafeb4a1",
+      "text": true,
+      "sha256_lf": "8ecf89a8889824643663ec375cc2cfbf1e9e8faf75dec6c677b2c87f54b8e9cc"
+    },
+    "emergency_control_service": {
+      "path": "app/Services/EmergencyControlService.php",
+      "sha256": "5dc784d1d0bc847f382836cebce3c7a78f4031f549c220d6ddfeb808bdb57e32",
+      "text": true,
+      "sha256_lf": "5dc784d1d0bc847f382836cebce3c7a78f4031f549c220d6ddfeb808bdb57e32"
+    },
+    "emergency_control_js": {
+      "path": "public/assets/emergency-control.js",
+      "sha256": "bf9e5be7781686e2d2cf2beea0c19e49d849e94869df148f8ba224a940056635",
+      "text": true,
+      "sha256_lf": "bf9e5be7781686e2d2cf2beea0c19e49d849e94869df148f8ba224a940056635"
+    },
+    "migration_276_emergency_v3_api_start_without_canary": {
+      "path": "database/migrations/276_emergency_v3_api_start_without_canary_2_34_3.sql",
+      "sha256": "aa1097799d8e7842e243a3d14919b25a87fe92fc078c2c168006b502d34ec2ec",
+      "text": true,
+      "sha256_lf": "aa1097799d8e7842e243a3d14919b25a87fe92fc078c2c168006b502d34ec2ec"
+    },
+    "release_integrity": {
+      "path": "app/Services/ReleaseIntegrityService.php",
+      "sha256": "76a4adba14c719bddc4192eed061b5f27aeb1d100bbe9400848a9f0b71e4bb67",
+      "text": true,
+      "sha256_lf": "76a4adba14c719bddc4192eed061b5f27aeb1d100bbe9400848a9f0b71e4bb67"
+    },
+    "migration_277_release_integrity_text_hash_recovery": {
+      "path": "database/migrations/277_release_integrity_text_hash_recovery_2_34_4.sql",
+      "sha256": "19df97207b37a456fbf82eaad56fe9286a83e057cf292dfae4444c7be08524a2",
+      "text": true,
+      "sha256_lf": "19df97207b37a456fbf82eaad56fe9286a83e057cf292dfae4444c7be08524a2"
+    },
+    "version_file": {
+      "path": "VERSION",
+      "sha256": "f046a1ebe4a6d41f69ebfe520a9153e727d72be3335f7694847b194093cdfa95",
+      "sha256_lf": "f046a1ebe4a6d41f69ebfe520a9153e727d72be3335f7694847b194093cdfa95"
+    },
+    "cron_v3_notification_spool_handler": {
+      "path": "app/Services/CronV3Handlers/NotificationSpoolHandler.php",
+      "sha256": "bfca29eea1f2dec966b9940f21502cefa41926c320058b4f0ba7a76cda2f5135",
+      "text": true,
+      "sha256_lf": "bfca29eea1f2dec966b9940f21502cefa41926c320058b4f0ba7a76cda2f5135"
+    },
+    "cron_v3_notification_normalize_handler": {
+      "path": "app/Services/CronV3Handlers/NotificationNormalizeHandler.php",
+      "sha256": "5ab86a0c98c8ca9399b17214e3dce1d9fbf47a1558b042d95856ec8078929511",
+      "text": true,
+      "sha256_lf": "5ab86a0c98c8ca9399b17214e3dce1d9fbf47a1558b042d95856ec8078929511"
+    },
+    "cron_v3_notification_backfill_handler": {
+      "path": "app/Services/CronV3Handlers/NotificationBackfillHandler.php",
+      "sha256": "366f18ef67f849955433eaec38ad43137aa1255a3f02242d99ae47dcbdbf0cb6",
+      "text": true,
+      "sha256_lf": "366f18ef67f849955433eaec38ad43137aa1255a3f02242d99ae47dcbdbf0cb6"
+    },
+    "cron_v3_recurring_schedule_handler": {
+      "path": "app/Services/CronV3Handlers/RecurringScheduleHandler.php",
+      "sha256": "57eda3a2c85e57f4275c076c93cb34ad2f14bdef476e8579e8c07e55a0e83b3e",
+      "text": true,
+      "sha256_lf": "57eda3a2c85e57f4275c076c93cb34ad2f14bdef476e8579e8c07e55a0e83b3e"
+    },
+    "cron_v3_sale_pack_reconciliation_handler": {
+      "path": "app/Services/CronV3Handlers/SalePackReconciliationExactHandler.php",
+      "sha256": "64dae8866dfe5d18e30f0f749173cf4adc26db4cc3bef4dc2f99571ab6e93cb9",
+      "text": true,
+      "sha256_lf": "64dae8866dfe5d18e30f0f749173cf4adc26db4cc3bef4dc2f99571ab6e93cb9"
+    },
+    "cron_v3_sales_audit_page_handler": {
+      "path": "app/Services/CronV3Handlers/SalesAuditPageHandler.php",
+      "sha256": "d7e73fb27c9126bda0babe751abd3148732bf7008a9c889f064d2d2b7431fab5",
+      "text": true,
+      "sha256_lf": "d7e73fb27c9126bda0babe751abd3148732bf7008a9c889f064d2d2b7431fab5"
+    },
+    "cron_v3_sales_repair_exact_handler": {
+      "path": "app/Services/CronV3Handlers/SalesRepairExactHandler.php",
+      "sha256": "131bdf74832e98d962cf6c56224eb777a94708abb7f581ae5c9f01ee89c0a314",
+      "text": true,
+      "sha256_lf": "131bdf74832e98d962cf6c56224eb777a94708abb7f581ae5c9f01ee89c0a314"
+    },
+    "migration_278_cron_v3_full_queue_coverage": {
+      "path": "database/migrations/278_cron_v3_full_queue_coverage_2_35_0.sql",
+      "sha256": "2657e3c3100d467dea399b4d19297aefa24538cee668419c928e8cb7c5270c6c",
+      "sha256_lf": "2657e3c3100d467dea399b4d19297aefa24538cee668419c928e8cb7c5270c6c",
+      "text": true
+    },
+    "cron_v3_orders_search_page_handler": {
+      "path": "app/Services/CronV3Handlers/OrdersSearchPageHandler.php",
+      "sha256": "efebd94544ee2b23a13dc12a6a74ebc365b125ddd8350c050c2dbaea84db785f",
+      "sha256_lf": "efebd94544ee2b23a13dc12a6a74ebc365b125ddd8350c050c2dbaea84db785f"
+    },
+    "cron_v3_items_search_page_handler": {
+      "path": "app/Services/CronV3Handlers/ItemsSearchPageHandler.php",
+      "sha256": "a1d9b575a482e5ec6772676b8f365fefeb975523321a45f998353b4e62d5dc6d",
+      "sha256_lf": "a1d9b575a482e5ec6772676b8f365fefeb975523321a45f998353b4e62d5dc6d"
+    },
+    "migration_279_cron_v3_fifo_legacy_finalizer": {
+      "path": "database/migrations/279_cron_v3_fifo_legacy_finalizer_2_35_1.sql",
+      "sha256": "f0b9ea893f65ff116ee640f181cdaa2d84ba65003263cdcb6cc2e6dfc1fd81ac",
+      "sha256_lf": "f0b9ea893f65ff116ee640f181cdaa2d84ba65003263cdcb6cc2e6dfc1fd81ac",
+      "text": true
+    }
+  }
+}

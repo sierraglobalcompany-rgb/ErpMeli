@@ -1,0 +1,166 @@
+{
+  "name": "sierraglobalcompany/erp-meli",
+  "description": "ERP multicuenta de solo lectura para Mercado Libre",
+  "license": "proprietary",
+  "type": "project",
+  "require": {
+    "php": ">=8.3 <8.6",
+    "ext-curl": "*",
+    "ext-iconv": "*",
+    "ext-json": "*",
+    "ext-mbstring": "*",
+    "ext-openssl": "*",
+    "ext-pdo": "*",
+    "ext-pdo_mysql": "*",
+    "ext-session": "*",
+    "ext-sodium": "*"
+  },
+  "require-dev": {
+    "phpstan/phpstan": "^2.1"
+  },
+  "autoload": {
+    "psr-4": { "App\\": "app/" }
+  },
+  "scripts": {
+    "test": [
+      "@php -d error_reporting=-1 -d display_errors=1 tests/run.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/route_contract.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/query_performance_report_test.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/commercial_path_foundation_2280.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/sales_audit_temporal_coverage_2281.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/sales_temporal_coverage_2281.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/cron_execution_truth_22810.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/cron_read_model_ux_22810.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/cron_observability_ux.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/cron_scope_exactness_22812.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/module_work_projection_scope_22812.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/module_dashboard_read_scope_adversarial_22812.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/query_tenant_scope_adversarial_22812.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/cron_adversarial_22812.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/cron_api_read_performance_qa.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/sync_hard_caps_api_health_qa.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/endpoint_contract_production_gate_22814.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/order_enrichment_scope_diagnostics_22815.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/api_rhythm_scheduler_22815.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/cron_health_human_22816.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/cron_deadline_recovery_22817.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/manual_campaign_recovery_22817.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/exact_work_remediation_22817.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/manual_campaign_browser_ux_22817.php",
+        "@php -d error_reporting=-1 -d display_errors=1 tests/cron_truth_api_health_22818.php",
+        "@php -d error_reporting=-1 -d display_errors=1 tests/tenant_scope_core_22818.php",
+        "@php -d error_reporting=-1 -d display_errors=1 tests/human_operations_ux_22819.php",
+        "@php -d error_reporting=-1 -d display_errors=1 tests/cron_measured_backlog_fair_scheduler_22821.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/progressive_operations_22822.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/cron_remote_fencing_window_22823.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/api_health_incident_truth_22824.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/api_health_scope_protocol_22827.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/cron_observed_human_monitor_22825.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/cron_directed_debt_scope_truth_22826.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/cron_fairness_30_cycles_22828.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/cron_incremental_execution_planner_22829.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/cron_action_center_22830.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/api_health_scoped_progressive_22830.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/configurable_adaptive_http_scheduler_22831.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/http_resource_backlog_health_truth_22832.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/cron_human_rhythm_capacity_22833.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/installed_version_authority_22834.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/cron_capacity_planner_truth_22835.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/historical_intervention_scope_22836.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/progressive_read_models_retention_22837.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/read_model_cache_swr_22837.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/progressive_cron_api_shell_22837.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/release_22837_contract.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/cron_useful_campaign_source_22838.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/operational_snapshots_retention_22839.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/technical_retention_fencing_22839.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/cron_rebuilt_scheduler_22848.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/cron_reconstruction_doctor_22858.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/sales_detail_recovery_22859.php",
+    "@php -d error_reporting=-1 -d display_errors=1 tests/human_frontend_accessibility_22828.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/web_mutation_scope_22812.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/webhook_spool_bounded_22811.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_security_2290.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_scope_containment_2290.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_engine_2290.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_handlers_2290.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_handlers_catalog_2290.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_legacy_import_2290.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_ownership_fence_2290.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_producers_2290.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_panel_2290.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/financial_state_v3_2290.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/claims_unit_work_2290.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/oauth_refresh_isolated_2290.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_task_generation_fence_2290.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/manual_single_step_2290.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/module_job_capability_gate_2290.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2290_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_deadline_2291.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_doctor_2291.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_rate_scope_2291.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_rate_concurrency_contract_2291.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_result_fence_2291.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_shadow_60_mysql_2291.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2291_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_config_authority_2292.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2292_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_activation_assistant_2293.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2293_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_canary_control_2294.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2294_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_canary_actionable_ui_2295.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2295_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/updater_safe_transition_2296.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2296_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/asset_hash_stable_2297.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2297_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/migration_line_ending_drift_2298.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2298_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/applied_migration_015_drift_2299.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2299_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_canary_truth_22910.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_22910_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_active_evidence_truth_22911.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_22911_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_certified_cutover_22912.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_22912_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_operational_cutover_2300.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2300_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_capability_matrix_2310.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2310_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_single_operational_truth_2311.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_legacy_bridge_contracts_2312.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_history_drainage_2313.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2313_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_visual_truth_api_health_2314.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_capability_owners_2315.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_history_drainage_truth_2316.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2316_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_full_operational_drainage_2320.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2320_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_fifo_arrival_queue_2330.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_editable_ramps_2330.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2330_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/cron_v3_fifo_rate_human_2340.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2340_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2341_contract.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_integrity_text_hash_2344.php"
+    ],
+    "test:sales-control": "@php -d error_reporting=-1 -d display_errors=1 tests/sales_control_2211_mysql_integration.php",
+    "test:release-db": "@php -d error_reporting=-1 -d display_errors=1 tests/release_gate.php",
+    "lint": "php bin/lint.php",
+    "compat": "php bin/php_compat.php",
+    "analyse": "phpstan analyse --configuration=phpstan.neon --no-progress --memory-limit=1G",
+    "qa": [
+      "@lint",
+      "@compat",
+      "@analyse",
+      "@test"
+    ],
+    "qa:release": [
+      "@qa",
+      "@test:release-db"
+    ]
+  }
+}

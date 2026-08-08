@@ -1,0 +1,794 @@
+[
+    {
+        "endpoint": "/orders/search",
+        "remote_field": "id",
+        "expected_type": "string|int",
+        "nullable": false,
+        "example": "123",
+        "local_target": "meli_orders.external_order_id",
+        "service": "OrderSyncService::persistOrder",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "auditoria",
+            "facturacion",
+            "detalle_orden"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "alto",
+        "recommendation": "Identificador externo de orden. Clave de idempotencia por cuenta."
+    },
+    {
+        "endpoint": "/orders/search",
+        "remote_field": "date_created",
+        "expected_type": "datetime ISO-8601",
+        "nullable": false,
+        "example": "2026-07-25T10:15:00.000-04:00",
+        "local_target": "meli_orders.date_created / date_created_local",
+        "service": "MeliDateTimeNormalizer",
+        "normalizer": "MeliDateTimeNormalizer / DateTimeImmutable UTC",
+        "timezone_rule": "Guardar UTC; mostrar America/Bogota con DateTimePresenter.",
+        "data_kind": "fecha_operativa",
+        "affects": [
+            "auditoria",
+            "facturacion",
+            "sync"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Guardar UTC y normalizado local para reportes; usar rangos half-open."
+    },
+    {
+        "endpoint": "/orders/search",
+        "remote_field": "date_closed",
+        "expected_type": "datetime ISO-8601|null",
+        "nullable": true,
+        "example": "2026-07-25T10:15:00.000-04:00",
+        "local_target": "meli_orders.date_closed",
+        "service": "MeliDateTimeNormalizer",
+        "normalizer": "MeliDateTimeNormalizer / DateTimeImmutable UTC",
+        "timezone_rule": "Guardar UTC; mostrar America/Bogota con DateTimePresenter.",
+        "data_kind": "fecha_operativa",
+        "affects": [
+            "auditoria"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Puede venir nulo; no usar como única fecha de auditoría."
+    },
+    {
+        "endpoint": "/orders/search",
+        "remote_field": "status",
+        "expected_type": "string",
+        "nullable": false,
+        "example": "valor_ejemplo",
+        "local_target": "meli_orders.status",
+        "service": "OrderSyncService::persistOrder",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "ventas",
+            "auditoria"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Afecta filtros y facturación; documentar exclusiones de canceladas."
+    },
+    {
+        "endpoint": "/orders/search",
+        "remote_field": "payments[]",
+        "expected_type": "array",
+        "nullable": false,
+        "example": "[]",
+        "local_target": "meli_payments.*",
+        "service": "OrderSyncService::persistPayment",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "financiero_historico",
+        "affects": [
+            "pagos",
+            "facturacion"
+        ],
+        "contains_sensitive_data": true,
+        "duplicate_risk": "normal",
+        "recommendation": "Fuente principal de pagos; no usar /payments/{id} por defecto."
+    },
+    {
+        "endpoint": "/orders/search",
+        "remote_field": "shipping.id",
+        "expected_type": "string|int|null",
+        "nullable": true,
+        "example": "123",
+        "local_target": "meli_orders.external_shipping_id / meli_shipments.external_shipment_id",
+        "service": "OrderSyncService::persistRelated",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "envios",
+            "finanzas"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Permite obtener envío; puede venir dentro de pack."
+    },
+    {
+        "endpoint": "/orders/search",
+        "remote_field": "pack_id",
+        "expected_type": "string|int|null",
+        "nullable": true,
+        "example": "123",
+        "local_target": "meli_orders.external_pack_id / meli_packs.external_pack_id",
+        "service": "OrderSyncService::persistPack",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "packs",
+            "envios"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Si existe, consultar pack para resolver shipment."
+    },
+    {
+        "endpoint": "/orders/search",
+        "remote_field": "order_items[].item.id",
+        "expected_type": "string",
+        "nullable": false,
+        "example": "MCO123456789",
+        "local_target": "meli_order_items.external_item_id",
+        "service": "OrderSyncService::persistItems",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "productos",
+            "facturacion"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Debe cruzar con publicaciones ML sin duplicar."
+    },
+    {
+        "endpoint": "/orders/search",
+        "remote_field": "order_items[].item.title",
+        "expected_type": "string",
+        "nullable": false,
+        "example": "valor_ejemplo",
+        "local_target": "meli_order_items.title",
+        "service": "OrderSyncService::persistItems",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "snapshot_actualizable",
+        "affects": [
+            "ventas"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Clave para buscador por producto."
+    },
+    {
+        "endpoint": "/orders/search",
+        "remote_field": "order_items[].item.seller_sku",
+        "expected_type": "string|null",
+        "nullable": true,
+        "example": "valor_ejemplo",
+        "local_target": "meli_order_items.seller_sku",
+        "service": "OrderSyncService::persistItems",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "bodega",
+            "facturacion"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Puede faltar; complementar con publicaciones/atributos."
+    },
+    {
+        "endpoint": "/orders/search",
+        "remote_field": "order_items[].quantity",
+        "expected_type": "int",
+        "nullable": false,
+        "example": "123",
+        "local_target": "meli_order_items.quantity",
+        "service": "OrderSyncService::persistItems",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "facturacion"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Usar entero para unidades."
+    },
+    {
+        "endpoint": "/orders/search",
+        "remote_field": "order_items[].unit_price",
+        "expected_type": "decimal",
+        "nullable": false,
+        "example": "19990.00",
+        "local_target": "meli_order_items.unit_price",
+        "service": "OrderSyncService::persistItems",
+        "normalizer": "decimal(12,2) / redondeo financiero",
+        "timezone_rule": "No aplica.",
+        "data_kind": "snapshot_actualizable",
+        "affects": [
+            "facturacion"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Precio de venta por unidad."
+    },
+    {
+        "endpoint": "/orders/search",
+        "remote_field": "order_items[].sale_fee",
+        "expected_type": "decimal|null",
+        "nullable": true,
+        "example": "19990.00",
+        "local_target": "meli_order_items.sale_fee",
+        "service": "OrderSyncService::persistItems",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "conciliacion"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Cargo/comisión local parcial; billing puede mejorar exactitud."
+    },
+    {
+        "endpoint": "/users/{seller_id}/items/search",
+        "remote_field": "results[]",
+        "expected_type": "array<string>",
+        "nullable": false,
+        "example": "[]",
+        "local_target": "meli_items.external_item_id",
+        "service": "MeliItemSyncService::sync",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "productos_ml",
+            "catalogos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "alto",
+        "recommendation": "Usa offset actualmente; evaluar scan/scroll_id para catálogos grandes."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "id",
+        "expected_type": "string",
+        "nullable": false,
+        "example": "MCO123456789",
+        "local_target": "meli_items.external_item_id",
+        "service": "MeliItemSyncService::persistItem",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "catalogos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "alto",
+        "recommendation": "Clave por cuenta + publicación."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "title",
+        "expected_type": "string",
+        "nullable": false,
+        "example": "valor_ejemplo",
+        "local_target": "meli_items.title / catalog_items.title_snapshot",
+        "service": "MeliItemSyncService + CatalogSnapshotService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "snapshot_actualizable",
+        "affects": [
+            "catalogos",
+            "productos_ml"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Snapshot para catálogo público."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "price",
+        "expected_type": "decimal",
+        "nullable": false,
+        "example": "19990.00",
+        "local_target": "meli_items.price / catalog_items.price_snapshot",
+        "service": "MeliItemSyncService + CatalogSnapshotService",
+        "normalizer": "decimal(12,2) / redondeo financiero",
+        "timezone_rule": "No aplica.",
+        "data_kind": "snapshot_actualizable",
+        "affects": [
+            "catalogos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Puede cambiar; revisión requiere aprobación antes de aplicar."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "base_price",
+        "expected_type": "decimal|null",
+        "nullable": true,
+        "example": "19990.00",
+        "local_target": "meli_items.base_price",
+        "service": "MeliItemSyncService::persistItem",
+        "normalizer": "decimal(12,2) / redondeo financiero",
+        "timezone_rule": "No aplica.",
+        "data_kind": "snapshot_actualizable",
+        "affects": [
+            "productos_ml"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Útil para comparar descuentos/precio base."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "original_price",
+        "expected_type": "decimal|null",
+        "nullable": true,
+        "example": "19990.00",
+        "local_target": "meli_items.original_price",
+        "service": "MeliItemSyncService::persistItem",
+        "normalizer": "decimal(12,2) / redondeo financiero",
+        "timezone_rule": "No aplica.",
+        "data_kind": "snapshot_actualizable",
+        "affects": [
+            "productos_ml"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Puede venir nulo."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "condition",
+        "expected_type": "string|null",
+        "nullable": true,
+        "example": "valor_ejemplo",
+        "local_target": "meli_items.condition / catalog_items.condition_snapshot",
+        "service": "MeliItemSyncService + CatalogSnapshotService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "catalogos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Filtro nuevo/usado en catálogo."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "available_quantity",
+        "expected_type": "int",
+        "nullable": false,
+        "example": "123",
+        "local_target": "meli_items.available_quantity / catalog_items.stock_available",
+        "service": "MeliItemSyncService + CatalogSnapshotService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "snapshot_actualizable",
+        "affects": [
+            "catalogos",
+            "inventario"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Stock total si no hay stock multi-origen."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "sold_quantity",
+        "expected_type": "int",
+        "nullable": false,
+        "example": "123",
+        "local_target": "meli_items.sold_quantity / catalog_items.sold_quantity",
+        "service": "MeliItemSyncService + CatalogSnapshotService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "catalogos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Mostrar vendidos solo si catálogo lo permite."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "status",
+        "expected_type": "string",
+        "nullable": false,
+        "example": "valor_ejemplo",
+        "local_target": "meli_items.status / catalog_items.status",
+        "service": "MeliItemSyncService + CatalogSnapshotService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "catalogos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Controla visibilidad pública configurable."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "permalink",
+        "expected_type": "url|null",
+        "nullable": true,
+        "example": "valor_ejemplo",
+        "local_target": "meli_items.permalink / catalog_items.permalink",
+        "service": "MeliItemSyncService + CatalogSnapshotService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "catalogos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Link público opcional a ML."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "thumbnail",
+        "expected_type": "url|null",
+        "nullable": true,
+        "example": "valor_ejemplo",
+        "local_target": "meli_items.thumbnail / catalog_items.thumbnail_url",
+        "service": "MeliItemSyncService + CatalogSnapshotService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "catalogos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Solo fallback; galería debe preferir meli_item_pictures."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "pictures[]",
+        "expected_type": "array",
+        "nullable": false,
+        "example": "[]",
+        "local_target": "meli_item_pictures.*",
+        "service": "MeliItemSyncService::persistPictures",
+        "normalizer": "normalización de arrays + hash para diferencias",
+        "timezone_rule": "No aplica.",
+        "data_kind": "snapshot_actualizable",
+        "affects": [
+            "catalogos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "alto",
+        "recommendation": "Usar secure_url/url y position; evitar miniaturas -I como principal si hay -O."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "variations[]",
+        "expected_type": "array",
+        "nullable": false,
+        "example": "[]",
+        "local_target": "meli_item_variations.*",
+        "service": "MeliItemSyncService::persistVariations",
+        "normalizer": "normalización de arrays + hash para diferencias",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "catalogos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "alto",
+        "recommendation": "Público consolida por publicación; privado puede expandir variaciones."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "attributes[]",
+        "expected_type": "array",
+        "nullable": false,
+        "example": "[]",
+        "local_target": "meli_item_attributes.*",
+        "service": "MeliItemSyncService::persistAttributes",
+        "normalizer": "normalización de arrays + hash para diferencias",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "catalogos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "alto",
+        "recommendation": "Usado para SKU y características públicas sanitizadas."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "shipping.mode",
+        "expected_type": "string|null",
+        "nullable": true,
+        "example": "valor_ejemplo",
+        "local_target": "meli_items.shipping_mode / catalog_items.shipping_methods_json",
+        "service": "MeliItemSyncService + CatalogSnapshotService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "catalogos",
+            "envios"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "No confundir logística principal con métodos disponibles."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "shipping.logistic_type",
+        "expected_type": "string|null",
+        "nullable": true,
+        "example": "valor_ejemplo",
+        "local_target": "meli_items.logistic_type / catalog_items.shipping_methods_json",
+        "service": "MeliItemSyncService + CatalogSnapshotService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "catalogos",
+            "envios"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "fulfillment, self_service, cross_docking, xd_drop_off, drop_off."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "shipping.tags",
+        "expected_type": "array|null",
+        "nullable": true,
+        "example": "[]",
+        "local_target": "meli_items.raw_json / catalog_items.shipping_methods_json",
+        "service": "CatalogSnapshotService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "catalogos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Puede evidenciar Flex adicional; no inventar si no viene localmente."
+    },
+    {
+        "endpoint": "/items/{id}",
+        "remote_field": "user_product_id",
+        "expected_type": "string|null",
+        "nullable": true,
+        "example": "MCO123456789",
+        "local_target": "meli_items.user_product_id / meli_item_variations.user_product_id",
+        "service": "MeliItemSyncService::userProductId",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "stock",
+            "catalogos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Necesario para stock multi-origen."
+    },
+    {
+        "endpoint": "/items/{id}/description",
+        "remote_field": "plain_text",
+        "expected_type": "string|null",
+        "nullable": true,
+        "example": "valor_ejemplo",
+        "local_target": "meli_item_descriptions.plain_text",
+        "service": "MeliItemDescriptionService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "catalogos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Cache local; catálogo público no consulta API."
+    },
+    {
+        "endpoint": "/categories/{id}",
+        "remote_field": "name",
+        "expected_type": "string",
+        "nullable": false,
+        "example": "valor_ejemplo",
+        "local_target": "meli_categories.name / catalog_categories.visible_name",
+        "service": "MeliCategoryService + CatalogSnapshotService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "catalogos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Evita mostrar MCO... como categoría pública."
+    },
+    {
+        "endpoint": "/user-products/{user_product_id}/stock",
+        "remote_field": "locations[]",
+        "expected_type": "array",
+        "nullable": false,
+        "example": "[]",
+        "local_target": "meli_item_stock_locations.*",
+        "service": "MeliItemStockService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "catalogos",
+            "stock"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Endpoint requiere validación de permisos; cacheado por admin/job."
+    },
+    {
+        "endpoint": "/shipments/{id}",
+        "remote_field": "status",
+        "expected_type": "string",
+        "nullable": false,
+        "example": "valor_ejemplo",
+        "local_target": "meli_shipments.status",
+        "service": "OrderSyncService::persistShipment",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "envios"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Base de filtros de envíos."
+    },
+    {
+        "endpoint": "/shipments/{id}",
+        "remote_field": "substatus",
+        "expected_type": "string|null",
+        "nullable": true,
+        "example": "valor_ejemplo",
+        "local_target": "meli_shipments.substatus",
+        "service": "OrderSyncService::persistShipment",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "envios"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Importante para pendientes/listos."
+    },
+    {
+        "endpoint": "/shipments/{id}",
+        "remote_field": "logistic_type",
+        "expected_type": "string|null",
+        "nullable": true,
+        "example": "valor_ejemplo",
+        "local_target": "meli_shipments.logistic_type",
+        "service": "OrderSyncService::persistShipment",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "envios"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Full/Flex/Colecta en envíos reales."
+    },
+    {
+        "endpoint": "/shipments/{id}",
+        "remote_field": "shipping_option.cost",
+        "expected_type": "decimal|null",
+        "nullable": true,
+        "example": "19990.00",
+        "local_target": "meli_shipments.buyer_cost/gross_cost",
+        "service": "OrderSyncService::persistShipment",
+        "normalizer": "decimal(12,2) / redondeo financiero",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "finanzas"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "No siempre equivale al cargo vendedor financiero."
+    },
+    {
+        "endpoint": "/questions/search",
+        "remote_field": "questions[]",
+        "expected_type": "array",
+        "nullable": false,
+        "example": "[]",
+        "local_target": "meli_questions.*",
+        "service": "QuestionSyncService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "preguntas"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Solo lectura; revisar api_version=4 y estado UNANSWERED."
+    },
+    {
+        "endpoint": "/post-purchase/v1/claims/search",
+        "remote_field": "data[]|claims[]",
+        "expected_type": "array",
+        "nullable": false,
+        "example": "[]",
+        "local_target": "meli_claims.*",
+        "service": "ClaimSyncService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "reclamos"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Revisar filtros players.user_id/role según documentación."
+    },
+    {
+        "endpoint": "/billing/integration/group/ML/order/details",
+        "remote_field": "billing lines",
+        "expected_type": "array",
+        "nullable": false,
+        "example": "[]",
+        "local_target": "meli_order_billing_details.* / meli_order_financials.*",
+        "service": "OrderBillingImportService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "financiero_historico",
+        "affects": [
+            "conciliacion",
+            "facturacion"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "alto",
+        "recommendation": "Parser actual es heurístico; validar estructura oficial y clasificaciones."
+    },
+    {
+        "endpoint": "/missed_feeds",
+        "remote_field": "messages[]|results[]",
+        "expected_type": "array",
+        "nullable": false,
+        "example": "[]",
+        "local_target": "webhook_events / internal_notifications",
+        "service": "WebhookService",
+        "normalizer": "casting defensivo según tipo",
+        "timezone_rule": "No aplica.",
+        "data_kind": "operativo",
+        "affects": [
+            "notificaciones"
+        ],
+        "contains_sensitive_data": false,
+        "duplicate_risk": "normal",
+        "recommendation": "Recuperación de notificaciones perdidas."
+    }
+]

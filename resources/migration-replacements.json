@@ -1,0 +1,176 @@
+{
+  "replacements": [
+    {
+      "migration_key": "087_module_runtime_jobs_hardening_2_17_0.sql",
+      "old_checksum": "f2b58e5df23ff3c9c14534a449bb60b1853cada388eb89b55b65433445bd5046",
+      "new_checksum": "3091de2752312006f59567effe7100d9993e2dde5f7260c967782c4afc958397",
+      "required_state": "failed",
+      "required_stage": "sql_execution",
+      "required_sql_state": "HY000",
+      "required_driver_code": "1901",
+      "message_contains_all": [
+        "GENERATED ALWAYS AS clause",
+        "active_dedupe_key"
+      ],
+      "required_columns_present": [
+        "dedupe_key",
+        "stage",
+        "checkpoint_json",
+        "consecutive_failures",
+        "last_success_at"
+      ],
+      "active_column": "active_dedupe_key",
+      "required_index_absent": "uq_module_jobs_active_dedupe",
+      "authorization_id": "ERP-MELI-2.17.1-MARIADB-1901-087"
+    },
+    {
+      "migration_key": "181_sales_temporal_coverage_contract_2_28_1.sql",
+      "old_checksum": "07b7c011e7281908cfa05b75b072b0b5092f57fb1e764bc171e1b851c8884ba7",
+      "new_checksum": "1b2e3dd036f33f2070436e9848efb9afb50cf3f00e773d8ecc5a9506b29539df",
+      "required_state": "failed",
+      "required_state_any": [
+        "failed",
+        "drifted"
+      ],
+      "required_stage": "sql_execution",
+      "required_sql_state": "23000",
+      "required_driver_code": "1062",
+      "message_contains_all": [
+        "Duplicate entry",
+        "sales_control-181_sales_temporal_coverage_contract_2_28_1.sql",
+        "PRIMARY"
+      ],
+      "authorization_id": "ERP-MELI-2.28.1-MARIADB-1062-181"
+    },
+    {
+      "migration_key": "185_cron_canary_actionable_2_28_5.sql",
+      "old_checksum": "72b9f430630505731823d6ccca36d26d95609d01683e0e5747d71e775c0223f1",
+      "new_checksum": "18cdaf0e1ff5356b6e523b3846d0c664b3062f8c0b157fa2caa9aaf0f4f37d87",
+      "required_state": "failed",
+      "required_state_any": [
+        "failed",
+        "running",
+        "drifted"
+      ],
+      "required_stage": "sql_execution",
+      "required_sql_state": "42S22",
+      "required_driver_code": "1054",
+      "message_contains_all": [
+        "Unknown column",
+        "description"
+      ],
+      "source_failure_optional": true,
+      "ignore_source_failure_when_schema_matches": true,
+      "allow_corrected_sql_reentry": true,
+      "skip_live_module_job_check": true,
+      "required_table_columns_absent": [
+        "schema_migrations.description"
+      ],
+      "authorization_id": "ERP-MELI-2.28.8-MARIADB-1054-185-DESCRIPTION"
+    },
+    {
+      "migration_key": "186_emergency_return_navigation_2_28_6.sql",
+      "old_checksum": "e564789d2af25bd60bbaa86dae5d1e56c7cd60713eda7ebf4e6b00c59f534d38",
+      "new_checksum": "a0d6f171c06176cfbba2f5177509337918d7eea0fd09c7e644fbf73a9c983330",
+      "required_state": "failed",
+      "required_state_any": [
+        "failed",
+        "running",
+        "drifted"
+      ],
+      "required_stage": "sql_execution",
+      "required_sql_state": "42S22",
+      "required_driver_code": "1054",
+      "message_contains_all": [
+        "Unknown column",
+        "description"
+      ],
+      "source_failure_optional": true,
+      "ignore_source_failure_when_schema_matches": true,
+      "allow_corrected_sql_reentry": true,
+      "skip_live_module_job_check": true,
+      "required_table_columns_absent": [
+        "schema_migrations.description"
+      ],
+      "authorization_id": "ERP-MELI-2.28.8-MARIADB-1054-186-DESCRIPTION"
+    },
+    {
+      "migration_key": "185_cron_canary_actionable_2_28_5.sql",
+      "old_checksum": "6c95dd35114881ebe0b9e9dff10165a46baa77f9ee8208dadb7d6f7e50540b25",
+      "new_checksum": "18cdaf0e1ff5356b6e523b3846d0c664b3062f8c0b157fa2caa9aaf0f4f37d87",
+      "required_state": "failed",
+      "required_state_any": [
+        "failed",
+        "running",
+        "drifted"
+      ],
+      "required_stage": "sql_execution",
+      "required_sql_state": "42S22",
+      "required_driver_code": "1054",
+      "message_contains_all": [
+        "Unknown column",
+        "key"
+      ],
+      "required_table_columns_absent": [
+        "app_settings.key"
+      ],
+      "source_failure_optional": true,
+      "ignore_source_failure_when_schema_matches": true,
+      "allow_corrected_sql_reentry": true,
+      "skip_live_module_job_check": true,
+      "authorization_id": "ERP-MELI-2.28.8-MARIADB-1054-185-APPSETTINGS-KEY"
+    },
+    {
+      "migration_key": "186_emergency_return_navigation_2_28_6.sql",
+      "old_checksum": "82be32abdaac0bbf7f839ae145ec11d2cc5432d75bdae0c64608babe0a1bbb26",
+      "new_checksum": "a0d6f171c06176cfbba2f5177509337918d7eea0fd09c7e644fbf73a9c983330",
+      "required_state": "failed",
+      "required_state_any": [
+        "failed",
+        "running",
+        "drifted"
+      ],
+      "required_stage": "sql_execution",
+      "required_sql_state": "42S22",
+      "required_driver_code": "1054",
+      "message_contains_all": [
+        "Unknown column",
+        "key"
+      ],
+      "required_table_columns_absent": [
+        "app_settings.key"
+      ],
+      "source_failure_optional": true,
+      "ignore_source_failure_when_schema_matches": true,
+      "allow_corrected_sql_reentry": true,
+      "skip_live_module_job_check": true,
+      "authorization_id": "ERP-MELI-2.28.8-MARIADB-1054-186-APPSETTINGS-KEY"
+    },
+    {
+      "migration_key": "274_clean_release_api_health_429_2_34_1.sql",
+      "old_checksum": "15473390bbb646c69f7da2b57a7f7c1919619f3b5fc0567a9ef786d8e36a8b5f",
+      "new_checksum": "24ab401b0b14ddcb02bd8b32e6e20db9aaab5156b8e76cf2aacbc1d0d41f61ab",
+      "required_state": "failed",
+      "required_state_any": [
+        "failed",
+        "running",
+        "drifted"
+      ],
+      "required_stage": "sql_execution",
+      "required_sql_state": "42S22",
+      "required_driver_code": "1054",
+      "message_contains_all": [
+        "Unknown column",
+        "key"
+      ],
+      "required_table_columns_absent": [
+        "app_settings.key"
+      ],
+      "source_failure_optional": true,
+      "ignore_source_failure_when_schema_matches": true,
+      "allow_corrected_sql_reentry": true,
+      "skip_live_module_job_check": true,
+      "authorization_id": "ERP-MELI-2.34.2-MARIADB-1054-274-APPSETTINGS-KEY"
+    }
+  ]
+}

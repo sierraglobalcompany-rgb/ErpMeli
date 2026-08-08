@@ -1,0 +1,26 @@
+{
+  "version": "1.0.0",
+  "verified_at": "2026-07-27",
+  "notice": "Las unidades de carga protegen PHP/MySQL; no representan cuotas publicadas por Mercado Libre.",
+  "profiles": {
+    "oauth": {"label":"Renovar autorización","priority":1,"load":"light","initial_batch":1,"max_batch":1},
+    "order_exact": {"label":"Incorporar orden informada","priority":1,"load":"medium","initial_batch":5,"max_batch":5,"fanout":true},
+    "shipment_exact": {"label":"Actualizar envío","priority":2,"load":"medium","initial_batch":5,"max_batch":5,"fanout":true},
+    "pack_exact": {"label":"Actualizar pack","priority":2,"load":"medium","initial_batch":5,"max_batch":5,"fanout":true},
+    "orders_search": {"label":"Buscar órdenes","priority":2,"load":"paginated","initial_batch":1,"max_batch":1},
+    "questions_search": {"label":"Buscar preguntas","priority":4,"load":"paginated","initial_batch":1,"max_batch":1,"pause_seconds":5},
+    "claims_search": {"label":"Buscar reclamos","priority":4,"load":"paginated","initial_batch":1,"max_batch":1,"pause_seconds":5},
+    "sales_audit": {"label":"Comprobar ventas","priority":5,"load":"paginated","initial_batch":1,"max_batch":1,"pause_seconds":3},
+    "billing_orders": {"label":"Consultar facturación de órdenes","priority":4,"load":"heavy","initial_batch":10,"max_batch":60,"pause_seconds":10},
+    "items_discovery": {"label":"Descubrir publicaciones","priority":6,"load":"cursor","initial_batch":1,"max_batch":1,"continuous_cursor":true},
+    "item_detail": {"label":"Actualizar publicación","priority":6,"load":"heavy","initial_batch":5,"max_batch":5,"pause_seconds":5},
+    "item_description": {"label":"Descargar descripción","priority":8,"load":"very_heavy","initial_batch":1,"max_batch":3,"pause_seconds":20},
+    "insights": {"label":"Actualizar rendimiento","priority":8,"load":"heavy","initial_batch":1,"max_batch":1,"pause_seconds":15}
+  },
+  "sources": [
+    "https://developers.mercadolibre.com.co/es_ar/rate-limit-error-429",
+    "https://developers.mercadolibre.com.co/descripcion-de-articulos",
+    "https://developers.mercadolibre.com.co/es_ar/api-docs-es/items-y-busquedas",
+    "https://developers.mercadolibre.com.co/es_ar/buenas-practicas-para-el-consumo-de-las-apis-de-reportes-de-facturacion"
+  ]
+}

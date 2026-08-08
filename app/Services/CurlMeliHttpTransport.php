@@ -1,0 +1,77 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Services;
+
+use RuntimeException;
+
+final class CurlMeliHttpTransport implements MeliHttpTransportInterface
+{
+    public function request(
+        string $method,
+        string $url,
+        array $data,
+        array $headers,
+        bool $form,
+        array $timeouts
+    ): array {
+        // Última barrera independiente del llamador: nunca abrir cURL hacia
+        // Mercado Libre mientras exista la parada local de emergencia.
+        $emergency = new MeliEmergencyStopService();
+        $emergency->assertTransportAllowed();
+        $method = strtoupper($method);
+        $ch = curl_init();
+        if ($ch === false) {
+            throw new RuntimeException('No se pudo inicializar cURL para consultar Mercado Libre.');
+        }
+
+        $urlWithQuery = $method === 'GET' && $data
+            ? $url . (str_contains($url, '?') ? '&' : '?') . http_build_query($data)
+            : $url;
+        $body = $form ? http_build_query($data) : json_encode($data, JSON_UNESCAPED_SLASHES);
+        $responseHeaders = [];
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $urlWithQuery,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => max(1, $timeouts['timeout']),
+            CURLOPT_CONNECTTIMEOUT => max(1, $timeouts['connect_timeout']),
+            CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_HEADERFUNCTION => static function ($curl, string $line) use (&$responseHeaders): int {
+                if (str_contains($line, ':')) {
+                    [$key, $value] = explode(':', $line, 2);
+                    $responseHeaders[strtolower(trim($key))] = trim($value);
+                }
+                return strlen($line);
+            },
+        ]);
+        if ($method !== 'GET') {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+        }
+
+        $started = microtime(true);
+        $raw = curl_exec($ch);
+        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $wireBytes = defined('CURLINFO_SIZE_DOWNLOAD_T')
+            ? (int) curl_getinfo($ch, CURLINFO_SIZE_DOWNLOAD_T)
+            : (is_string($raw) ? strlen($raw) : 0);
+        $curlError = curl_error($ch);
+        unset($ch);
+        $decoded = is_string($raw) ? json_decode($raw, true) : null;
+        (new EmergencyControlService())->completeCanaryTransport(
+            $curlError === '' && $status >= 200 && $status < 300,
+            $status > 0 ? $status : null
+        );
+
+        return [
+            'status' => $status,
+            'body' => is_array($decoded) ? $decoded : [],
+            'headers' => $responseHeaders,
+            'curl_error' => $curlError,
+            'duration_ms' => (int) round((microtime(true) - $started) * 1000),
+            'wire_bytes' => max(0, $wireBytes),
+            'decoded_bytes' => is_string($raw) ? strlen($raw) : 0,
+        ];
+    }
+}

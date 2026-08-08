@@ -1,0 +1,20 @@
+Options -Indexes
+DirectoryIndex index.php
+RewriteEngine On
+
+RewriteRule ^config\.env(?:\.|$) - [F,L,NC]
+RewriteRule ^PAUSE_MELI_API$ - [F,L,NC]
+RewriteRule ^PAUSE_ERP_AUTOMATION$ - [F,L,NC]
+RewriteRule ^MELI_API_CANARY\.json$ - [F,L,NC]
+RewriteRule ^(?:bootstrap\.php|composer\.(?:json|lock)|VERSION|README(?:\.[A-Za-z0-9_-]+)?|LICENSE(?:\.[A-Za-z0-9_-]+)?)$ - [F,L,NC]
+RewriteRule ^(?:app|config|database|docs|jobs|resources|storage|tests|vendor|launcher|releases|shared|update-inbox|update-staging|update-backups)(?:/|$) - [F,L,NC]
+RewriteRule (^|/)\. - [F,L]
+RewriteRule ^stop(?:/.*)?$ stop.php [QSA,L]
+RewriteRule ^settings/cron/(?:overview|tasks|section|run)\.json$ cron-status.php [QSA,L]
+RewriteRule ^(index|login|actualizar|stop|asset|cron-status)\.php$ - [L]
+RewriteRule ^$ index.php [L]
+RewriteRule ^assets/(.*)$ asset.php?path=$1 [QSA,L]
+RewriteRule ^(meli_callback\.php|webhook_mercadolibre\.php|logout\.php|update_rescue\.php)$ public/$1 [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ public/index.php [QSA,L]

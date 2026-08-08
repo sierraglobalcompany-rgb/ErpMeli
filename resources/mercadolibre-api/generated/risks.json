@@ -1,0 +1,121 @@
+[
+    {
+        "severity": "alto",
+        "title": "Endpoint registrado sin evidencia local suficiente",
+        "subject": "/advertising/advertisers/{id}/product_ads/ads",
+        "impact": "El ERP podría permitir una llamada no validada contra la documentación materializada.",
+        "recommendation": "Revisar contra docs ML y marcar confirmed/investigating/disabled."
+    },
+    {
+        "severity": "alto",
+        "title": "Billing financiero usa parsing flexible",
+        "subject": "/billing/integration/group/ML/order/details",
+        "impact": "El parser recursivo puede clasificar mal líneas si la respuesta oficial tiene nombres distintos.",
+        "recommendation": "Contrastar con schema oficial y fijar mapping determinístico por tipo/campo."
+    },
+    {
+        "severity": "alto",
+        "title": "Endpoint registrado sin evidencia local suficiente",
+        "subject": "/highlights/{id}/category/{id}",
+        "impact": "El ERP podría permitir una llamada no validada contra la documentación materializada.",
+        "recommendation": "Revisar contra docs ML y marcar confirmed/investigating/disabled."
+    },
+    {
+        "severity": "alto",
+        "title": "Endpoint registrado sin evidencia local suficiente",
+        "subject": "/orders/billing-info/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+",
+        "impact": "El ERP podría permitir una llamada no validada contra la documentación materializada.",
+        "recommendation": "Revisar contra docs ML y marcar confirmed/investigating/disabled."
+    },
+    {
+        "severity": "alto",
+        "title": "Pago expandido debe seguir desactivado",
+        "subject": "/payments/{id}",
+        "impact": "Mercado Libre no debe consultarse con /payments/{id} por defecto; pagos vienen embebidos en órdenes.",
+        "recommendation": "Mantener payments.expand_details_enabled=false y auditar cualquier 404 heredado."
+    },
+    {
+        "severity": "medio",
+        "title": "Reclamos requieren filtros de participante",
+        "subject": "/post-purchase/v1/claims/search",
+        "impact": "La documentación muestra players.user_id y players.role; el servicio actual consulta opened+limit.",
+        "recommendation": "Validar filtros correctos por cuenta para evitar resultados incompletos o inesperados."
+    },
+    {
+        "severity": "alto",
+        "title": "Endpoint registrado sin evidencia local suficiente",
+        "subject": "/post-purchase/v1/claims/{id}/{subresource}",
+        "impact": "El ERP podría permitir una llamada no validada contra la documentación materializada.",
+        "recommendation": "Revisar contra docs ML y marcar confirmed/investigating/disabled."
+    },
+    {
+        "severity": "medio",
+        "title": "Preguntas requieren confirmar parámetros",
+        "subject": "/questions/search",
+        "impact": "La documentación local menciona api_version=4; el servicio actual usa seller_id/status/limit.",
+        "recommendation": "Agregar api_version=4 si la página oficial local lo confirma para Colombia/cuenta."
+    },
+    {
+        "severity": "medio",
+        "title": "Stock multi-origen depende de permisos",
+        "subject": "/user-products/{user_product_id}/stock",
+        "impact": "Si la cuenta no tiene permiso o user_product_id, no debe inventarse stock FULL/local.",
+        "recommendation": "Mostrar no_disponible y guardar cooldown por cuenta/endpoint si hay 403."
+    },
+    {
+        "severity": "medio",
+        "title": "Productos ML usan offset/limit",
+        "subject": "/users/{seller_id}/items/search",
+        "impact": "En catálogos grandes puede saltar o repetir resultados si hay cambios mientras se pagina.",
+        "recommendation": "Evaluar search_type=scan/scroll_id en job seguro y nunca en catálogo público."
+    },
+    {
+        "severity": "medio",
+        "title": "Campo con riesgo de duplicado",
+        "subject": "id",
+        "impact": "Puede duplicar registros si no se usa clave por cuenta + ID externo.",
+        "recommendation": "Identificador externo de orden. Clave de idempotencia por cuenta."
+    },
+    {
+        "severity": "medio",
+        "title": "Campo con riesgo de duplicado",
+        "subject": "results[]",
+        "impact": "Puede duplicar registros si no se usa clave por cuenta + ID externo.",
+        "recommendation": "Usa offset actualmente; evaluar scan/scroll_id para catálogos grandes."
+    },
+    {
+        "severity": "medio",
+        "title": "Campo con riesgo de duplicado",
+        "subject": "id",
+        "impact": "Puede duplicar registros si no se usa clave por cuenta + ID externo.",
+        "recommendation": "Clave por cuenta + publicación."
+    },
+    {
+        "severity": "medio",
+        "title": "Campo con riesgo de duplicado",
+        "subject": "pictures[]",
+        "impact": "Puede duplicar registros si no se usa clave por cuenta + ID externo.",
+        "recommendation": "Usar secure_url/url y position; evitar miniaturas -I como principal si hay -O."
+    },
+    {
+        "severity": "medio",
+        "title": "Campo con riesgo de duplicado",
+        "subject": "variations[]",
+        "impact": "Puede duplicar registros si no se usa clave por cuenta + ID externo.",
+        "recommendation": "Público consolida por publicación; privado puede expandir variaciones."
+    },
+    {
+        "severity": "medio",
+        "title": "Campo con riesgo de duplicado",
+        "subject": "attributes[]",
+        "impact": "Puede duplicar registros si no se usa clave por cuenta + ID externo.",
+        "recommendation": "Usado para SKU y características públicas sanitizadas."
+    },
+    {
+        "severity": "medio",
+        "title": "Campo con riesgo de duplicado",
+        "subject": "billing lines",
+        "impact": "Puede duplicar registros si no se usa clave por cuenta + ID externo.",
+        "recommendation": "Parser actual es heurístico; validar estructura oficial y clasificaciones."
+    }
+]

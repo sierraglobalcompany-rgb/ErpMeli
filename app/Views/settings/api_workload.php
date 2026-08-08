@@ -1,0 +1,243 @@
+<?php
+
+use App\Core\Csrf;
+use App\Core\Env;
+use App\Core\View;
+
+$base = rtrim(Env::get('APP_URL', ''), '/');
+$rhythm = is_array($rhythm ?? null) ? $rhythm : [];
+$formatRamp = static function (mixed $steps, string $fallback = '15 → 20 → 25 → 30 → 35 → 40'): string {
+    if (is_array($steps)) {
+        $values = array_values(array_filter(array_map('intval', $steps), static fn (int $v): bool => $v > 0));
+        return $values === [] ? $fallback : implode(' → ', $values);
+    }
+    $text = trim((string) $steps);
+    if ($text === '') {
+        return $fallback;
+    }
+    $parts = array_values(array_filter(array_map('intval', preg_split('/[^0-9]+/', $text) ?: []), static fn (int $v): bool => $v > 0));
+    return $parts === [] ? $fallback : implode(' → ', $parts);
+};
+$rampInput = static function (mixed $steps, string $fallback = '15,20,25,30,35,40'): string {
+    if (is_array($steps)) {
+        $values = array_values(array_filter(array_map('intval', $steps), static fn (int $v): bool => $v > 0));
+        return $values === [] ? $fallback : implode(',', $values);
+    }
+    $text = trim((string) $steps);
+    if ($text === '') {
+        return $fallback;
+    }
+    $parts = array_values(array_filter(array_map('intval', preg_split('/[^0-9]+/', $text) ?: []), static fn (int $v): bool => $v > 0));
+    return $parts === [] ? $fallback : implode(',', $parts);
+};
+$storedProfile = (string) ($rhythm['profile'] ?? $rhythm['mode'] ?? 'fast');
+$profile = match ($storedProfile) {
+    'recovery' => 'fast',
+    'custom' => match ((int) ($rhythm['target_http_per_minute'] ?? $rhythm['calls_per_block'] ?? 30)) {
+        10 => 'conservative', 20 => 'balanced', 40 => 'maximum', default => 'fast',
+    },
+    default => $storedProfile,
+};
+$profiles = [
+    // Contrato legado 2.28.33 conservado para auditorías estáticas:
+    // 'conservative' => ['Conservador', 10
+    // 'balanced' => ['Equilibrado', 20
+    // 'fast' => ['Rápido', 30
+    'conservative' => ['Seguro', 10, '5 → 10', 'Para empezar con el menor impacto posible.'],
+    'balanced' => ['Recuperación gradual', 20, '10 → 15 → 20', 'Buen equilibrio entre recuperación y protección.'],
+    'fast' => ['Recuperación agresiva', 30, '15 → 20 → 25 → 30', 'Más recuperación con vigilancia automática.'],
+    'maximum' => ['Máximo controlado', 40, '15 → 20 → 25 → 30 → 35 → 40', 'Techo alto; solo se alcanza si la evidencia lo permite.'],
+    'custom' => ['Personalizado avanzado', max(1, (int) ($rhythm['target_http_per_minute'] ?? 40)), $formatRamp($rhythm['ramp_steps'] ?? '15,20,25,30,35,40'), 'Permite ajustar escalones y evidencia, sin saltar protecciones duras.'],
+];
+if (!isset($profiles[$profile])) {
+    $profile = 'fast';
+}
+$targetRpm = max(1, (int) ($rhythm['target_http_per_minute'] ?? $profiles[$profile][1]));
+$adaptiveLimit = isset($rhythm['current_adaptive_limit'])
+    ? max(0, (float) $rhythm['current_adaptive_limit'])
+    : (isset($rhythm['ramp_limit_rpm']) ? max(0, (float) $rhythm['ramp_limit_rpm']) : null);
+$allowedRpm = isset($rhythm['allowed_rpm'])
+    ? max(0, (float) $rhythm['allowed_rpm'])
+    : (isset($rhythm['effective_rpm']) ? max(0, (float) $rhythm['effective_rpm']) : null);
+$observed15 = isset($rhythm['observed_http_15m']) ? max(0, (float) $rhythm['observed_http_15m']) : null;
+$observed60 = isset($rhythm['observed_http_60m']) ? max(0, (float) $rhythm['observed_http_60m']) : null;
+$resourcesPerHttp = isset($rhythm['resources_per_http']) ? max(0, (float) $rhythm['resources_per_http']) : null;
+$remoteBacklog = isset($rhythm['remote_backlog']) ? max(0, (int) $rhythm['remote_backlog']) : null;
+$parkedBacklog = isset($rhythm['parked_backlog']) ? max(0, (int) $rhythm['parked_backlog']) : null;
+$legacyVisibleBacklog = isset($rhythm['legacy_visible_backlog']) ? max(0, (int) $rhythm['legacy_visible_backlog']) : null;
+$rateLimitIncidents = array_values(array_filter(
+    is_array($rhythm['recent_rate_limit_incidents'] ?? null) ? $rhythm['recent_rate_limit_incidents'] : [],
+    static fn(array $incident): bool => !empty($incident['rate_limit_signal']) || (int) ($incident['http_status'] ?? 0) === 429
+));
+$limitingScope = trim((string) ($rhythm['limiting_scope'] ?? ''));
+$increaseBlocker = trim((string) ($rhythm['increase_blocker'] ?? ''));
+$safeToIncrease = $increaseBlocker === '' && $allowedRpm !== null && $observed60 !== null && $observed60 >= min($allowedRpm, $targetRpm) * 0.7;
+$fmtRate = static fn(?float $value): string => $value === null
+    ? 'Por medir'
+    : number_format($value, 1, ',', '.') . ' HTTP/min';
+?>
+<div class="page-head cron-page-head">
+  <div>
+    <span class="eyebrow">AUTOMATIZACIÓN · RITMO</span>
+    <h1>Velocidad de salidas HTTP</h1>
+    <p>Elija un techo global. El ERP subirá gradualmente y respetará siempre las protecciones de cada cuenta y endpoint.</p>
+  </div>
+  <a class="btn" href="<?= View::e($base) ?>/settings/cron">Volver a Cron</a>
+</div>
+
+<nav class="cron-view-tabs" aria-label="Vistas de Cron">
+  <a href="<?= View::e($base) ?>/settings/cron#resumen">Resumen</a>
+  <a class="is-active" aria-current="page" href="<?= View::e($base) ?>/settings/cron/rhythm">Ritmo</a>
+  <a href="<?= View::e($base) ?>/settings/cron#colas">Colas</a>
+  <a href="<?= View::e($base) ?>/settings/cron#historial">Historial</a>
+</nav>
+
+<section class="operation-explainer" aria-label="Cómo funciona el ritmo">
+  <div><span>Qué está configurado</span><strong data-rhythm-current-profile><?= View::e($profiles[$profile][0]) ?> · <?= $targetRpm ?> HTTP/min</strong></div>
+  <div><span>Qué hará el ERP</span><strong>Subirá por pasos únicamente cuando la API permanezca estable.</strong></div>
+  <div><span>Qué debe saber</span><strong>Una salida HTTP puede recibir uno o varios recursos; no equivale necesariamente a un dato.</strong></div>
+</section>
+
+<section class="rhythm-truth-grid rhythm-capacity-grid" aria-label="Capacidad solicitada, permitida y observada">
+  <article>
+    <span>Solicitado</span>
+    <strong data-rhythm-requested><?= $targetRpm ?> HTTP/min</strong>
+    <p data-rhythm-theoretical>Techo teórico: <?= number_format($targetRpm * 60, 0, ',', '.') ?> HTTP/h.</p>
+  </article>
+  <article>
+    <span>Rampa actual</span>
+    <strong><?= $adaptiveLimit === null ? 'Por comprobar' : View::e(number_format($adaptiveLimit, 1, ',', '.')) . ' HTTP/min' ?></strong>
+    <p>Puede ser menor que el perfil mientras se reúne evidencia segura.</p>
+  </article>
+  <article>
+    <span>Ritmo efectivo estimado</span>
+    <strong><?= View::e($fmtRate($allowedRpm)) ?></strong>
+    <p>Permitido ahora; es una estimación, no una promesa. <?= $limitingScope !== '' ? 'Limitante: ' . View::e($limitingScope) . '.' : 'Se mostrará la protección más restrictiva.' ?></p>
+  </article>
+  <article>
+    <span>Observado · 15 min</span>
+    <strong><?= View::e($fmtRate($observed15)) ?></strong>
+    <p>Transportes que realmente comenzaron en todas las cuentas autorizadas.</p>
+  </article>
+  <article>
+    <span>Observado · 60 min</span>
+    <strong><?= View::e($fmtRate($observed60)) ?></strong>
+    <p><?= $observed60 === null ? 'Aún no hay una ventana completa comparable.' : 'Todas las cuentas autorizadas · equivale a ' . View::e(number_format($observed60 * 60, 0, ',', '.')) . ' HTTP/h observados.' ?></p>
+  </article>
+  <article>
+    <span>Recursos aceptados por HTTP</span>
+    <strong><?= $resourcesPerHttp === null ? 'Por medir' : View::e(number_format($resourcesPerHttp, 2, ',', '.')) ?></strong>
+    <p>Solo incluye respuestas con conteo certificado. Combina tipos de recurso y no equivale a recursos finalizados.</p>
+  </article>
+  <article>
+    <span>Fila remota lista</span>
+    <strong><?= $remoteBacklog === null ? 'Por comprobar' : number_format($remoteBacklog, 0, ',', '.') . ' ejecutables' ?></strong>
+    <p>Trabajo parqueado: <?= $parkedBacklog !== null ? number_format($parkedBacklog, 0, ',', '.') : 'por comprobar' ?> · <?= $legacyVisibleBacklog !== null ? number_format($legacyVisibleBacklog, 0, ',', '.') . ' visibles legacy.' : 'La estimación dependerá del rendimiento observado.' ?></p>
+  </article>
+  <article>
+    <span>Intervalo mínimo</span>
+    <strong>1 segundo</strong>
+    <p>La ventana rodante evita ráfagas al cambiar de minuto.</p>
+  </article>
+</section>
+
+<section class="api-command-section rhythm-rate-limit-panel" aria-label="Rate limits recientes">
+  <header>
+    <div>
+      <span class="eyebrow">Protección Mercado Libre</span>
+      <h2>Rate limit 429 recientes</h2>
+      <p>Un 429 no significa bloqueo definitivo, pero sí obliga a respetar la espera y no subir ritmo sin estabilidad.</p>
+    </div>
+    <a class="btn" href="<?= View::e($base) ?>/settings/api-health/incidents?http_status=429&amp;origin=remote">Ver incidentes 429</a>
+  </header>
+  <?php if ($rateLimitIncidents === []): ?>
+    <p class="api-inline-empty is-success">Sin 429 recientes en las últimas 24 horas para las cuentas autorizadas.</p>
+  <?php else: ?>
+    <div class="api-attention-list">
+      <?php foreach ($rateLimitIncidents as $incident): ?>
+        <a href="<?= View::e($base) ?>/settings/api-health/incidents/show?key=<?= View::e((string) $incident['incident_key']) ?>">
+          <strong><?= View::e((string) ($incident['account_names'] ?: 'Aplicación')) ?> · <?= View::e((string) ($incident['operation_label'] ?? 'Operación API')) ?></strong>
+          <span><?= number_format((int) ($incident['repetitions'] ?? 0), 0, ',', '.') ?> repeticiones · última vez <?= View::e((string) ($incident['last_seen_at'] ?? 'por comprobar')) ?> · activo ahora: <?= !empty($incident['active_now']) ? 'Sí' : 'No' ?></span>
+          <b>Revisar protección</b>
+        </a>
+      <?php endforeach; ?>
+    </div>
+  <?php endif; ?>
+</section>
+
+<section class="card rhythm-editor" data-rhythm-editor data-saved-profile="<?= View::e($profile) ?>">
+  <div class="card-header">
+      <div><h2>Elegir velocidad máxima</h2><p>Reducir se aplica de inmediato. Aumentar inicia una rampa segura; nunca eleva silenciosamente los límites individuales.</p></div>
+  </div>
+  <form method="post" action="<?= View::e($base) ?>/settings/cron/rhythm">
+    <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
+    <fieldset class="rhythm-profile-fieldset"><legend>Perfil de velocidad HTTP</legend>
+    <p class="rhythm-step-title">1. Velocidad máxima deseada</p>
+    <div class="rhythm-profile-grid rhythm-profile-grid-four">
+      <?php foreach ($profiles as $key => [$label, $target, $ramp, $description]): ?>
+        <label class="rhythm-profile <?= $profile === $key ? 'is-selected' : '' ?>" data-rhythm-target="<?= $target ?>" data-rhythm-ramp="<?= View::e($ramp) ?>">
+          <input type="radio" name="profile" value="<?= View::e($key) ?>" <?= $profile === $key ? 'checked' : '' ?>>
+          <strong><?= View::e($label) ?></strong>
+          <b><?= $target ?> HTTP/min</b>
+          <span><?= View::e($description) ?></span>
+          <small>Rampa: <?= View::e($ramp) ?></small>
+        </label>
+      <?php endforeach; ?>
+    </div></fieldset>
+
+    <div class="rhythm-selection-preview" data-rhythm-selection-preview aria-live="polite">
+      <div><span>Perfil elegido</span><strong data-rhythm-preview-profile><?= View::e($profiles[$profile][0]) ?></strong></div>
+      <div><span>Techo solicitado</span><strong data-rhythm-preview-target><?= $targetRpm ?> HTTP/min</strong></div>
+      <div><span>Rampa segura</span><strong data-rhythm-preview-ramp><?= View::e($profiles[$profile][2]) ?></strong></div>
+      <p data-rhythm-preview-note>Configuración actualmente guardada. El ritmo real puede ser menor que el techo.</p>
+    </div>
+
+    <label class="check rhythm-adaptive"><input type="checkbox" name="adaptive_enabled" <?= !array_key_exists('adaptive_enabled', $rhythm) || !empty($rhythm['adaptive_enabled']) ? 'checked' : '' ?>> Mantener la rampa adaptativa y reducir automáticamente ante señales de riesgo</label>
+    <section class="rhythm-custom-panel" aria-label="Rampa personalizada">
+      <div class="rhythm-panel-head">
+        <div>
+          <span class="eyebrow">PERSONALIZADO AVANZADO</span>
+          <h3>Editar rampa personalizada</h3>
+          <p>Use esto solo si quiere ajustar cómo sube Cron. Las protecciones duras siempre mandan.</p>
+        </div>
+      </div>
+      <div class="rhythm-wizard-grid">
+        <article class="rhythm-wizard-card">
+          <span class="step-pill">2</span>
+          <h4>Cómo subir gradualmente</h4>
+          <label><span>Máximo que quiere permitir</span><input type="number" name="custom_target_http_per_minute" min="1" max="300" value="<?= (int) $targetRpm ?>"><small>Es un techo, no una promesa.</small></label>
+          <label><span>Subir por estos escalones</span><input type="text" name="custom_ramp_steps" value="<?= View::e($rampInput($rhythm['ramp_steps'] ?? [15,20,25,30,35,40])) ?>"><small>Ejemplo: 10,15,20,25,30</small></label>
+          <label><span>Tiempo mínimo antes de subir</span><span class="input-with-unit"><input type="number" name="ramp_evaluation_minutes" min="5" max="1440" value="<?= (int) ($rhythm['ramp_evaluation_minutes'] ?? 1440) ?>"><em>min</em></span><small>Recomendado: 1440 min = 24 horas.</small></label>
+        </article>
+        <article class="rhythm-wizard-card">
+          <span class="step-pill">3</span>
+          <h4>Condiciones de seguridad</h4>
+          <label><span>Mínimo de respuestas exitosas</span><input type="number" name="ramp_min_known_responses" min="1" max="10000" value="<?= (int) ($rhythm['ramp_min_known_responses'] ?? 60) ?>"></label>
+          <label><span>HTTP 429 permitidos</span><input type="number" name="ramp_max_429" min="0" max="100" value="<?= (int) ($rhythm['ramp_max_429'] ?? 0) ?>"></label>
+          <label><span>Leases perdidos permitidos</span><input type="number" name="ramp_max_lease_lost" min="0" max="100" value="<?= (int) ($rhythm['ramp_max_lease_lost'] ?? 0) ?>"></label>
+          <label><span>Duplicados permitidos</span><input type="number" name="ramp_max_duplicates" min="0" max="100" value="<?= (int) ($rhythm['ramp_max_duplicates'] ?? 0) ?>"></label>
+          <label><span>Tiempo máximo normal por consulta</span><span class="input-with-unit"><input type="number" name="ramp_p95_http_ms" min="500" max="60000" value="<?= (int) ($rhythm['ramp_p95_http_ms'] ?? 5000) ?>"><em>ms</em></span></label>
+        </article>
+        <article class="rhythm-wizard-card rhythm-simulation-card">
+          <span class="step-pill">✓</span>
+          <h4>Simulación antes de guardar</h4>
+          <dl class="rhythm-simulation-list">
+            <div><dt>Solicitado</dt><dd><?= $targetRpm ?> HTTP/min</dd></div>
+            <div><dt>Rampa actual</dt><dd><?= $adaptiveLimit === null ? 'Por comprobar' : View::e(number_format($adaptiveLimit, 1, ',', '.')) . ' HTTP/min' ?></dd></div>
+            <div><dt>Permitido real</dt><dd><?= View::e($fmtRate($allowedRpm)) ?></dd></div>
+            <div><dt>Observado real</dt><dd><?= View::e($fmtRate($observed60)) ?></dd></div>
+            <div><dt>Impacto esperado</dt><dd><?= $allowedRpm === null ? 'Por medir' : View::e(number_format($allowedRpm * 60, 0, ',', '.')) . ' HTTP/h como techo efectivo actual' ?></dd></div>
+            <div><dt>Qué impide subir</dt><dd><?= $safeToIncrease ? 'Sin bloqueo visible en esta lectura.' : View::e($increaseBlocker !== '' ? $increaseBlocker : 'Cron necesita más evidencia completa y backlog ejecutable bajando.') ?></dd></div>
+          </dl>
+        </article>
+      </div>
+      <label class="check"><input type="checkbox" name="ramp_require_drainage" <?= !array_key_exists('ramp_require_drainage', $rhythm) || !empty($rhythm['ramp_require_drainage']) ? 'checked' : '' ?>> Exigir que el backlog ejecutable baje antes de subir la rampa</label>
+    </section>
+    <div class="alert info"><strong>La cifra no significa “datos por minuto”.</strong> Solo cuenta cuando comienza el transporte HTTP. Seleccionar, inspeccionar o aplazar un trabajo no consume el límite.</div>
+    <div class="page-actions rhythm-save-actions">
+      <button class="btn primary" type="submit">Guardar velocidad</button>
+      <a class="btn" href="<?= View::e($base) ?>/settings/cron">Cancelar</a>
+    </div>
+    <noscript><p class="alert warning">Puede guardar el perfil sin JavaScript. La confirmación visual se actualizará al recargar.</p></noscript>
+  </form>
+</section>

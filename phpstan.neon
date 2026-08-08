@@ -1,0 +1,11 @@
+parameters:
+    level: 5
+    paths:
+        - app/Core
+        - app/Controllers
+        - app/Services
+        - jobs
+        - public
+        - bin
+    treatPhpDocTypesAsCertain: true
+    reportUnmatchedIgnoredErrors: true

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Core\AppPaths;
+use App\Core\Crypto;
 use App\Core\Database;
 use App\Core\Env;
 use Closure;
@@ -73,6 +74,16 @@ final class EmergencyControlService
         if (is_array($publicOAuthRefresh)) {
             unset($publicOAuthRefresh['reservation_nonce']);
         }
+        $oauthTokenRecovery = $this->readJson($this->oauthTokenRecoveryPath());
+        $publicOAuthTokenRecovery = null;
+        if (is_array($oauthTokenRecovery)) {
+            $publicOAuthTokenRecovery = [
+                'state' => (string) ($oauthTokenRecovery['state'] ?? 'unknown'),
+                'meli_account_id' => (int) ($oauthTokenRecovery['meli_account_id'] ?? 0),
+                'target_refresh_version' => (int) ($oauthTokenRecovery['target_refresh_version'] ?? 0),
+                'created_at' => (string) ($oauthTokenRecovery['created_at'] ?? ''),
+            ];
+        }
 
         return [
             // Un marcador vencido sin PAUSE_MELI_API sigue siendo fail-closed.
@@ -90,6 +101,9 @@ final class EmergencyControlService
             'canary' => $canaryVisible ? $publicCanary : null,
             'canary_expired' => $canaryExpired,
             'oauth_refresh' => is_array($publicOAuthRefresh) ? $publicOAuthRefresh : null,
+            // Solo metadata operativa: el payload recuperable permanece
+            // cifrado y nunca se expone al panel, logs o respuestas web.
+            'oauth_token_recovery' => $publicOAuthTokenRecovery,
             'storage_degraded' => str_contains(str_replace('\\', '/', $this->privateDirectory), '/storage/'),
         ];
     }
@@ -652,34 +666,12 @@ final class EmergencyControlService
         });
     }
 
-    public function completeEmergencyOAuthRefreshTransport(bool $success, ?int $status = null): void
-    {
-        if (!is_file($this->markerPath(self::OAUTH_REFRESH_MARKER))) {
-            return;
-        }
-        $this->mutateOAuthRefresh(function (array $document) use ($success, $status): array {
-            if (($document['state'] ?? '') !== 'in_flight') {
-                return $document;
-            }
-            $document['http_status'] = $status;
-            $document['response_at'] = gmdate(DATE_ATOM);
-            if ($success) {
-                $document['state'] = 'response_known';
-                return $document;
-            }
-            $document['state'] = 'complete';
-            $document['last_result'] = 'failed';
-            $document['failure_class'] = 'transport_or_http_failure';
-            $document['completed_at'] = gmdate(DATE_ATOM);
-            return $document;
-        });
-    }
-
     public function completeEmergencyOAuthRefreshSuccess(
         string $nonce,
         int $accountId,
         string $expiresAt,
-        int $refreshVersion
+        int $refreshVersion,
+        bool $recoveredLocally = false
     ): void {
         $reservation = $this->readJson($this->oauthRefreshReservationPath());
         $privateNonce = is_array($reservation) ? (string) ($reservation['reservation_nonce'] ?? '') : '';
@@ -688,9 +680,18 @@ final class EmergencyControlService
             $privateNonce,
             $accountId,
             $expiresAt,
-            $refreshVersion
+            $refreshVersion,
+            $recoveredLocally
         ): array {
-            if (!in_array((string) ($document['state'] ?? ''), ['in_flight', 'response_known'], true)
+            $state = (string) ($document['state'] ?? '');
+            $usedCalls = (int) ($document['used_calls'] ?? -1);
+            $validRemoteCompletion = !$recoveredLocally
+                && in_array($state, ['in_flight', 'response_known'], true)
+                && $usedCalls === 1;
+            $validLocalRecovery = $recoveredLocally
+                && $state === 'reserved'
+                && $usedCalls === 0;
+            if ((!$validRemoteCompletion && !$validLocalRecovery)
                 || $privateNonce === ''
                 || !hash_equals($privateNonce, $nonce)
                 || (int) ($document['meli_account_id'] ?? 0) !== $accountId
@@ -699,8 +700,13 @@ final class EmergencyControlService
             }
             $document['state'] = 'complete';
             $document['last_result'] = 'success';
-            $document['http_status'] = 200;
-            $document['response_at'] = $document['response_at'] ?? gmdate(DATE_ATOM);
+            if ($recoveredLocally) {
+                $document['recovered_from_durable_escrow'] = true;
+                $document['recovered_at'] = gmdate(DATE_ATOM);
+            } else {
+                $document['http_status'] = 200;
+                $document['response_at'] = $document['response_at'] ?? gmdate(DATE_ATOM);
+            }
             $document['token_expires_at'] = mb_substr($expiresAt, 0, 40);
             $document['refresh_version'] = $refreshVersion;
             $document['completed_at'] = gmdate(DATE_ATOM);
@@ -708,6 +714,101 @@ final class EmergencyControlService
         });
         $this->removePrivateOAuthRefreshReservation();
         $this->recordChange('emergency_oauth_refresh_complete', 'system', 'Token OAuth renovado para una cuenta.');
+    }
+
+    /**
+     * Conserva el resultado OAuth rotado antes del commit MariaDB. Los tokens
+     * ya llegan cifrados y el documento completo se vuelve a sellar con
+     * APP_KEY para impedir sustituciones entre cuentas/versiones.
+     *
+     * @param array{access_token_encrypted:string,refresh_token_encrypted:string,expires_at:string,scope:string,token_type:string} $token
+     */
+    public function stageEmergencyOAuthTokenRecovery(
+        int $accountId,
+        string $expectedMeliUserId,
+        int $previousRefreshVersion,
+        array $token
+    ): void {
+        if ($accountId < 1
+            || trim($expectedMeliUserId) === ''
+            || $previousRefreshVersion < 0
+            || trim($token['access_token_encrypted']) === ''
+            || trim($token['refresh_token_encrypted']) === ''
+            || trim($token['expires_at']) === '') {
+            throw new RuntimeException('No se pudo preparar la recuperación OAuth exacta.');
+        }
+        $targetRefreshVersion = $previousRefreshVersion + 1;
+        $sealed = Crypto::encrypt(json_encode([
+            'version' => 1,
+            'meli_account_id' => $accountId,
+            'expected_meli_user_id' => trim($expectedMeliUserId),
+            'previous_refresh_version' => $previousRefreshVersion,
+            'target_refresh_version' => $targetRefreshVersion,
+            'access_token_encrypted' => $token['access_token_encrypted'],
+            'refresh_token_encrypted' => $token['refresh_token_encrypted'],
+            'expires_at' => $token['expires_at'],
+            'scope' => $token['scope'],
+            'token_type' => $token['token_type'],
+            'created_at' => gmdate(DATE_ATOM),
+        ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+        $this->ensurePrivateDirectory();
+        $this->durableAtomicJson($this->oauthTokenRecoveryPath(), [
+            'version' => 1,
+            'state' => 'pending_db_persist',
+            'meli_account_id' => $accountId,
+            'expected_meli_user_id' => trim($expectedMeliUserId),
+            'previous_refresh_version' => $previousRefreshVersion,
+            'target_refresh_version' => $targetRefreshVersion,
+            'created_at' => gmdate(DATE_ATOM),
+            'sealed_payload' => $sealed,
+        ]);
+    }
+
+    /** @return array<string,mixed>|null */
+    public function emergencyOAuthTokenRecovery(int $accountId, string $expectedMeliUserId): ?array
+    {
+        $document = $this->readJson($this->oauthTokenRecoveryPath());
+        if (!is_array($document)) {
+            return null;
+        }
+        if (($document['state'] ?? '') !== 'pending_db_persist'
+            || (int) ($document['meli_account_id'] ?? 0) !== $accountId
+            || !hash_equals((string) ($document['expected_meli_user_id'] ?? ''), trim($expectedMeliUserId))) {
+            throw new RuntimeException('La recuperación OAuth pendiente pertenece a otra identidad.');
+        }
+        $sealed = trim((string) ($document['sealed_payload'] ?? ''));
+        if ($sealed === '') {
+            throw new RuntimeException('La recuperación OAuth pendiente no es legible.');
+        }
+        try {
+            $payload = json_decode(Crypto::decrypt($sealed), true, 32, JSON_THROW_ON_ERROR);
+        } catch (Throwable) {
+            throw new RuntimeException('La recuperación OAuth pendiente no pudo autenticarse.');
+        }
+        if (!is_array($payload)
+            || (int) ($payload['meli_account_id'] ?? 0) !== $accountId
+            || !hash_equals((string) ($payload['expected_meli_user_id'] ?? ''), trim($expectedMeliUserId))
+            || (int) ($payload['previous_refresh_version'] ?? -1) !== (int) ($document['previous_refresh_version'] ?? -2)
+            || (int) ($payload['target_refresh_version'] ?? -1) !== (int) ($document['target_refresh_version'] ?? -2)) {
+            throw new RuntimeException('La recuperación OAuth pendiente no coincide con su identidad pública.');
+        }
+        return $payload;
+    }
+
+    public function clearEmergencyOAuthTokenRecovery(int $accountId, int $targetRefreshVersion): void
+    {
+        $path = $this->oauthTokenRecoveryPath();
+        $document = $this->readJson($path);
+        if (!is_array($document)) {
+            return;
+        }
+        if ((int) ($document['meli_account_id'] ?? 0) !== $accountId
+            || (int) ($document['target_refresh_version'] ?? 0) !== $targetRefreshVersion) {
+            throw new RuntimeException('No se pudo retirar una recuperación OAuth de otra cuenta o versión.');
+        }
+        if (is_file($path) && !@unlink($path)) {
+            throw new RuntimeException('No se pudo retirar la recuperación OAuth ya aplicada.');
+        }
     }
 
     public function failEmergencyOAuthRefreshAndBlock(
@@ -1238,6 +1339,11 @@ final class EmergencyControlService
         return $this->privateDirectory . '/oauth-refresh-reservation.json';
     }
 
+    private function oauthTokenRecoveryPath(): string
+    {
+        return $this->privateDirectory . '/oauth-rotated-token-recovery.json';
+    }
+
     private function newCanaryNonce(): string
     {
         $nonce = $this->canaryNonceFactory !== null
@@ -1328,6 +1434,56 @@ final class EmergencyControlService
         if (@file_put_contents($temporary, $json, LOCK_EX) === false || !@rename($temporary, $path)) {
             @unlink($temporary);
             throw new RuntimeException('No fue posible guardar el estado de seguridad. Código: EMERGENCY_MARKER_WRITE_FAILED.');
+        }
+        @chmod($path, 0600);
+    }
+
+    /** @param array<string,mixed> $payload */
+    private function durableAtomicJson(string $path, array $payload): void
+    {
+        $directory = dirname($path);
+        if (!is_dir($directory) && !@mkdir($directory, 0770, true) && !is_dir($directory)) {
+            throw new RuntimeException('No se pudo preparar el almacenamiento OAuth recuperable.');
+        }
+        $temporary = $path . '.tmp-' . bin2hex(random_bytes(5));
+        $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        $handle = @fopen($temporary, 'xb');
+        if (!is_resource($handle)) {
+            throw new RuntimeException('No se pudo abrir el almacenamiento OAuth recuperable.');
+        }
+        $written = 0;
+        $writeFailure = null;
+        try {
+            if (!@flock($handle, LOCK_EX)) {
+                throw new RuntimeException('No se pudo cercar el almacenamiento OAuth recuperable.');
+            }
+            $length = strlen($json);
+            while ($written < $length) {
+                $chunk = @fwrite($handle, substr($json, $written));
+                if (!is_int($chunk) || $chunk < 1) {
+                    throw new RuntimeException('No se pudo guardar el almacenamiento OAuth recuperable.');
+                }
+                $written += $chunk;
+            }
+            if (!@fflush($handle)) {
+                throw new RuntimeException('No se pudo confirmar el almacenamiento OAuth recuperable.');
+            }
+            if (DIRECTORY_SEPARATOR === '/' && function_exists('fsync') && !@fsync($handle)) {
+                throw new RuntimeException('No se pudo sincronizar el almacenamiento OAuth recuperable.');
+            }
+        } catch (Throwable $error) {
+            $writeFailure = $error;
+        } finally {
+            @flock($handle, LOCK_UN);
+            @fclose($handle);
+        }
+        if ($writeFailure instanceof Throwable) {
+            @unlink($temporary);
+            throw $writeFailure;
+        }
+        if ($written !== strlen($json) || !@rename($temporary, $path)) {
+            @unlink($temporary);
+            throw new RuntimeException('No se pudo publicar el almacenamiento OAuth recuperable.');
         }
         @chmod($path, 0600);
     }

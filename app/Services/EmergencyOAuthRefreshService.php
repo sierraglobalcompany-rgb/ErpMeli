@@ -92,11 +92,12 @@ final class EmergencyOAuthRefreshService
     public function run(int $accountId, string $actor): array
     {
         $account = $this->preflight($accountId);
-        $nonce = $this->control->reserveEmergencyOAuthRefresh(
-            $accountId,
-            (string) $account['meli_user_id']
-        );
+        $nonce = '';
         try {
+            $nonce = $this->control->reserveEmergencyOAuthRefresh(
+                $accountId,
+                (string) $account['meli_user_id']
+            );
             $metadata = [
                 'source' => self::SOURCE,
                 'job_type' => 'emergency_oauth_refresh',
@@ -105,7 +106,7 @@ final class EmergencyOAuthRefreshService
                 'expected_meli_user_id' => (string) $account['meli_user_id'],
                 'bulk' => false,
             ];
-            EmergencyOAuthRefreshTransportContext::run(
+            $refreshResult = EmergencyOAuthRefreshTransportContext::run(
                 $nonce,
                 fn (): array => ApiExecutionMetadataContext::run(
                     $metadata,
@@ -126,7 +127,8 @@ final class EmergencyOAuthRefreshService
                 $nonce,
                 $accountId,
                 $expiresAt,
-                $refreshVersion
+                $refreshVersion,
+                (bool) ($refreshResult['emergency_recovery_applied'] ?? false)
             );
             return [
                 'account_id' => $accountId,

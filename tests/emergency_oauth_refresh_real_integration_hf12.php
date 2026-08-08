@@ -185,7 +185,12 @@ try {
             $path = $testRoot . DIRECTORY_SEPARATOR . $marker;
             is_dir($path) ? @rmdir($path) : @unlink($path);
         }
-        foreach (['oauth-refresh-reservation.json', 'canary-reservation.json', 'audit.jsonl'] as $name) {
+        foreach ([
+            'oauth-refresh-reservation.json',
+            'oauth-rotated-token-recovery.json',
+            'canary-reservation.json',
+            'audit.jsonl',
+        ] as $name) {
             @unlink($privateRoot . DIRECTORY_SEPARATOR . $name);
         }
     };
@@ -305,6 +310,88 @@ try {
     $check($control->apiStopped() && $control->automationStopped(),
         'El fallo de marcador post-200 retiró una barrera de emergencia.');
     @rmdir($testRoot . DIRECTORY_SEPARATOR . EmergencyControlService::OAUTH_REFRESH_MARKER);
+
+    // Fallo MariaDB después del 200: el refresh token rotado queda cifrado en
+    // escrow y el siguiente intento lo aplica localmente con cero HTTP.
+    $resetAccount();
+    $clearEmergency();
+    $control = new EmergencyControlService(null, static fn (): string => $nonceSentinel);
+    $control->stopAll('hf12-integration', 'Preparar recuperación durable por fallo DB');
+    $dbFailureTransport = new class($pdo, $newAccess, $newRefresh) implements MeliHttpTransportInterface {
+        public int $calls = 0;
+        public function __construct(
+            private readonly PDO $pdo,
+            private readonly string $access,
+            private readonly string $refresh
+        ) {}
+        public function request(string $method, string $url, array $data, array $headers, bool $form, array $timeouts): array
+        {
+            (new MeliEmergencyStopService())->assertTransportAllowed($method, $url);
+            $this->calls++;
+            $this->pdo->exec(
+                'ALTER TABLE meli_tokens CHANGE refresh_version refresh_version_broken INT UNSIGNED NOT NULL DEFAULT 0'
+            );
+            return [
+                'status' => 200, 'headers' => [], 'curl_error' => '', 'duration_ms' => 1,
+                'wire_bytes' => 120, 'decoded_bytes' => 120,
+                'body' => [
+                    'access_token' => $this->access,
+                    'refresh_token' => $this->refresh,
+                    'expires_in' => 21600,
+                    'token_type' => 'Bearer',
+                    'scope' => 'offline_access',
+                ],
+            ];
+        }
+    };
+    $dbFailureService = new EmergencyOAuthRefreshService(
+        $control,
+        null,
+        static fn (int $accountId): array => (new MeliApiClient($accountId, $dbFailureTransport))->refreshOAuthToken()
+    );
+    $dbFailureObserved = false;
+    try {
+        $dbFailureService->run(3, 'hf12-integration');
+    } catch (Throwable) {
+        $dbFailureObserved = true;
+    }
+    $recoveryPath = $privateRoot . DIRECTORY_SEPARATOR . 'oauth-rotated-token-recovery.json';
+    $recoveryRaw = is_file($recoveryPath) ? (string) file_get_contents($recoveryPath) : '';
+    $check($dbFailureObserved && $dbFailureTransport->calls === 1,
+        'El fallo DB post-200 no quedó limitado a un único HTTP conocido.');
+    $check($recoveryRaw !== ''
+        && !str_contains($recoveryRaw, $newAccess)
+        && !str_contains($recoveryRaw, $newRefresh),
+        'El token rotado no quedó recuperable y cifrado después del fallo DB.');
+    $pdo->exec(
+        'ALTER TABLE meli_tokens CHANGE refresh_version_broken refresh_version INT UNSIGNED NOT NULL DEFAULT 0'
+    );
+
+    $recoveryTransport = new class implements MeliHttpTransportInterface {
+        public int $calls = 0;
+        public function request(string $method, string $url, array $data, array $headers, bool $form, array $timeouts): array
+        {
+            $this->calls++;
+            throw new RuntimeException('La recuperación local no debe abrir transporte.');
+        }
+    };
+    $recoveryService = new EmergencyOAuthRefreshService(
+        $control,
+        null,
+        static fn (int $accountId): array => (new MeliApiClient($accountId, $recoveryTransport))->refreshOAuthToken()
+    );
+    $recoveryResult = $recoveryService->run(3, 'hf12-integration');
+    $recoveredToken = $tokenRow();
+    $check($recoveryTransport->calls === 0, 'La recuperación durable abrió un segundo HTTP.');
+    $check(Crypto::decrypt((string) $recoveredToken['access_token_encrypted']) === $newAccess
+        && Crypto::decrypt((string) $recoveredToken['refresh_token_encrypted']) === $newRefresh,
+        'La recuperación durable no aplicó ambos tokens rotados.');
+    $check((int) $recoveredToken['refresh_version'] === 8
+        && (int) $recoveryResult['refresh_version'] === 8,
+        'La recuperación durable no aplicó la generación exacta.');
+    $check(!is_file($recoveryPath), 'El escrow durable no se retiró después del commit recuperado.');
+    $check($control->apiStopped() && $control->automationStopped(),
+        'La recuperación durable retiró una barrera de emergencia.');
 
     // Un 302 real no puede generar una segunda salida física.
     $clearEmergency();
@@ -490,8 +577,10 @@ PHP
         'NONCE_IN_OBSERVABLE_STORAGE fue distinto de cero.');
 
     $transportSource = (string) file_get_contents($codeRoot . '/app/Services/CurlMeliHttpTransport.php');
-    $check(!str_contains($transportSource, 'completeEmergencyOAuthRefreshTransport('),
-        'Existe una escritura fallible de marcador entre HTTP 200 y persistencia OAuth.');
+    $controlSource = (string) file_get_contents($codeRoot . '/app/Services/EmergencyControlService.php');
+    $check(!str_contains($transportSource, 'completeEmergencyOAuthRefreshTransport(')
+        && !str_contains($controlSource, 'function completeEmergencyOAuthRefreshTransport('),
+        'Permanece la transición OAuth obsoleta anterior a la persistencia.');
 
     if ($failures !== []) {
         fwrite(STDERR, implode(PHP_EOL, $failures) . PHP_EOL);

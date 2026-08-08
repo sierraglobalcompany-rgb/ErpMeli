@@ -19,8 +19,8 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         // Última barrera independiente del llamador: nunca abrir cURL hacia
         // Mercado Libre mientras exista la parada local de emergencia.
         $emergency = new MeliEmergencyStopService();
-        $emergency->assertTransportAllowed();
         $method = strtoupper($method);
+        $emergency->assertTransportAllowed($method, $url);
         $ch = curl_init();
         if ($ch === false) {
             throw new RuntimeException('No se pudo inicializar cURL para consultar Mercado Libre.');

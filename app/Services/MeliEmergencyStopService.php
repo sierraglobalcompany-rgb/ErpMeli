@@ -21,10 +21,11 @@ final class MeliEmergencyStopService
      * Última barrera antes del transporte. Además del freno físico, consume
      * de forma atómica el único permiso de una reactivación canaria.
      */
-    public function assertTransportAllowed(): void
+    public function assertTransportAllowed(string $method, string $url): void
     {
         $this->assertAllowed();
-        (new EmergencyControlService())->claimCanaryTransport();
+        $path = (string) (parse_url($url, PHP_URL_PATH) ?: '/');
+        (new EmergencyControlService())->claimCanaryTransport($method, $path);
     }
 
     /** @return array{active:bool,label:string,reason:string,resume_at:null} */

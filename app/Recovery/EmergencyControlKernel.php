@@ -8,6 +8,7 @@ use App\Core\Env;
 use App\Core\AppPaths;
 use App\Core\SameOriginGuard;
 use App\Core\SecurityHeaders;
+use App\Services\EmergencyApiCanaryService;
 use App\Services\EmergencyControlService;
 use Throwable;
 
@@ -64,7 +65,7 @@ final class EmergencyControlKernel
             $knownActions = [
                 'login', 'logout', 'stop_api', 'stop_automation', 'stop_all',
                 'start_local_site', 'start_automation', 'clear_maintenance',
-                'prepare_api', 'confirm_api', 'start_api_without_canary',
+                'prepare_api', 'run_api_canary', 'confirm_api', 'start_api_without_canary',
             ];
             if (!in_array($action, $knownActions, true)) {
                 $_SESSION['emergency_error'] = 'La acción solicitada no existe. Código: EMERGENCY_ACTION_UNKNOWN.';
@@ -103,6 +104,7 @@ final class EmergencyControlKernel
                         static fn (EmergencyControlService $service) => $service->prepareApiStart($actor, $reason),
                         true
                     ),
+                    'run_api_canary' => $this->runApiCanary((int) ($_POST['account_id'] ?? 0), $actor),
                     'confirm_api' => $this->reactivate(
                         static fn (EmergencyControlService $service) => $service->confirmApiStart($actor, $reason),
                         true
@@ -113,7 +115,9 @@ final class EmergencyControlKernel
                     ),
                     default => throw new \RuntimeException('La acción solicitada no existe. Código: EMERGENCY_ACTION_UNKNOWN.'),
                 };
-                $_SESSION['emergency_notice'] = 'Estado de seguridad actualizado.';
+                if (!isset($_SESSION['emergency_notice'])) {
+                    $_SESSION['emergency_notice'] = 'Estado de seguridad actualizado.';
+                }
             } catch (Throwable $error) {
                 $_SESSION['emergency_error'] = $this->safeMessage($error);
             }
@@ -183,10 +187,18 @@ final class EmergencyControlKernel
             'start_automation' => 'Automatización activada desde freno de mano.',
             'clear_maintenance' => 'Modo lectura local retirado desde freno de mano.',
             'prepare_api' => 'Prueba canaria preparada desde freno de mano.',
+            'run_api_canary' => 'Prueba canaria ejecutada desde freno de mano.',
             'confirm_api' => 'Mercado Libre activado después de canario exitoso.',
             'start_api_without_canary' => 'Mercado Libre activado sin canario; V3 respetará ritmo, presupuesto, Retry-After y circuit breaker.',
             default => 'Cambio realizado desde freno de mano.',
         };
+    }
+
+    private function runApiCanary(int $accountId, string $actor): void
+    {
+        $result = (new EmergencyApiCanaryService($this->control))->run($accountId, $actor);
+        $_SESSION['emergency_notice'] = 'Prueba canaria exitosa para '
+            . (string) $result['nickname'] . '. Identidad confirmada con una sola consulta HTTP.';
     }
 
     /** @return array{ready:bool,message:string,db:string,pending:int|null} */
@@ -322,12 +334,21 @@ final class EmergencyControlKernel
         $error = $this->pull('emergency_error');
         $apiStopped = $status['api'] === 'stopped';
         $automationStopped = $status['automation'] === 'stopped';
-        $canary = $status['api'] === 'canary';
-        $apiClass = $apiStopped ? 'off' : ($canary ? 'wait' : 'on');
+        $canaryDocument = is_array($status['canary'] ?? null) ? $status['canary'] : null;
+        $canaryState = is_array($canaryDocument) ? (string) ($canaryDocument['state'] ?? '') : '';
+        $canaryResult = is_array($canaryDocument) ? (string) ($canaryDocument['last_result'] ?? '') : '';
+        $canaryFailed = $canaryState === 'complete' && $canaryResult === 'failed';
+        $canarySucceeded = $canaryState === 'complete'
+            && $canaryResult === 'success'
+            && !empty($canaryDocument['identity_verified']);
+        $canaryActive = is_array($canaryDocument)
+            && !$canaryFailed
+            && !$canarySucceeded
+            && (int) ($canaryDocument['expires_at'] ?? 0) >= time();
+        $apiClass = $apiStopped ? 'off' : ($canaryActive ? 'wait' : 'on');
         $automationClass = $automationStopped ? 'off' : 'on';
-        $apiLabel = $apiStopped ? 'Bloqueada' : ($canary ? 'Prueba canaria' : 'Disponible');
+        $apiLabel = $canaryFailed ? 'Prueba canaria fallida' : ($apiStopped ? 'Bloqueada' : ($canaryActive ? 'Prueba canaria' : 'Disponible'));
         $automationLabel = $automationStopped ? 'Detenida' : 'Activa';
-        $canaryResult = is_array($status['canary'] ?? null) ? (string) ($status['canary']['last_result'] ?? '') : '';
         $maintenance = is_array($status['maintenance'] ?? null) ? $status['maintenance'] : ['active' => false, 'count' => 0, 'markers' => []];
         $maintenanceActive = !empty($maintenance['active']);
         $maintenanceClass = $maintenanceActive ? 'wait' : 'on';
@@ -336,24 +357,59 @@ final class EmergencyControlKernel
             ? 'Hay ' . (int) ($maintenance['count'] ?? 0) . ' marcador(es) locales de mantenimiento. Puede retirarlos si ya no hay una copia, saneamiento o restauración en curso.'
             : 'No hay snapshot, freeze ni coordinador local bloqueando el sitio.';
 
-        if ($apiStopped) {
+        $accountFieldHtml = '';
+        if ($canaryFailed) {
+            $apiTitle = 'Prueba canaria fallida';
+            $reference = trim((string) ($canaryDocument['failure_reference'] ?? ''));
+            $apiText = 'La prueba no confirmó la identidad esperada o encontró un bloqueo seguro. Mercado Libre volvió a quedar bloqueado.'
+                . ($reference !== '' ? ' Referencia: ' . $reference . '.' : '');
+            $apiAction = 'prepare_api';
+            $apiButton = 'Preparar nueva prueba';
+            $apiConfirm = '¿Seguro que desea descartar el resultado fallido y preparar una nueva prueba canaria?';
+        } elseif ($canarySucceeded) {
+            $apiTitle = 'Identidad confirmada';
+            $apiText = 'La única consulta GET /users/me respondió con la identidad de la cuenta seleccionada. La automatización continúa detenida.';
+            $apiAction = 'confirm_api';
+            $apiButton = 'Confirmar activación';
+            $apiConfirm = '¿Seguro que desea habilitar las lecturas después de confirmar la identidad de la cuenta?';
+        } elseif ($canaryState === 'ready' && $canaryActive) {
+            $apiTitle = 'Prueba lista para ejecutar';
+            $apiText = 'Seleccione la cuenta. El ERP hará exactamente un GET /users/me, sin renovar el token ni reintentar.';
+            $apiAction = 'run_api_canary';
+            $apiButton = 'Ejecutar prueba';
+            $apiConfirm = '¿Ejecutar ahora una sola consulta GET /users/me para confirmar la identidad de la cuenta seleccionada?';
+            try {
+                $accounts = (new EmergencyApiCanaryService($this->control))->eligibleAccounts();
+                if (count($accounts) === 1) {
+                    $accountFieldHtml = '<input type="hidden" name="account_id" value="' . (int) $accounts[0]['id'] . '"><p class="account-choice">Cuenta: <strong>' . $this->escape((string) $accounts[0]['nickname']) . '</strong> · ID interno ' . (int) $accounts[0]['id'] . '</p>';
+                } elseif ($accounts !== []) {
+                    $options = '<option value="">Seleccione una cuenta</option>';
+                    foreach ($accounts as $account) {
+                        $options .= '<option value="' . (int) $account['id'] . '">' . $this->escape((string) $account['nickname']) . ' · ID interno ' . (int) $account['id'] . '</option>';
+                    }
+                    $accountFieldHtml = '<label class="account-choice" for="canary-account">Cuenta que se comprobará</label><select id="canary-account" name="account_id" required>' . $options . '</select>';
+                } else {
+                    $apiText = 'No hay una cuenta con identidad y access token vigente. La prueba no hará ninguna consulta HTTP.';
+                    $apiAction = '';
+                    $apiButton = 'Sin cuenta elegible';
+                }
+            } catch (Throwable) {
+                $apiText = 'No se pudo certificar localmente una cuenta elegible. No se realizará ninguna consulta HTTP.';
+                $apiAction = '';
+                $apiButton = 'No se pudo comprobar';
+            }
+        } elseif (in_array($canaryState, ['reserved', 'in_flight', 'response_known'], true)) {
+            $apiTitle = 'Prueba en curso';
+            $apiText = 'La única consulta está reservada o su respuesta está siendo validada. No se permite otra solicitud.';
+            $apiAction = '';
+            $apiButton = 'Espere el resultado';
+            $apiConfirm = '';
+        } elseif ($apiStopped) {
             $apiTitle = 'Bloqueada';
-            $apiText = 'No se iniciarán consultas remotas. Puede preparar una prueba canaria o activar lecturas V3 directamente.';
+            $apiText = 'No se iniciarán consultas remotas. Puede preparar una prueba canaria ligada a una cuenta.';
             $apiAction = 'prepare_api';
             $apiButton = 'Preparar prueba canaria';
-            $apiConfirm = '¿Seguro que desea preparar la prueba canaria de Mercado Libre? Solo permitirá una consulta de comprobación.';
-        } elseif ($canary && $canaryResult === 'success') {
-            $apiTitle = 'Listo para activar';
-            $apiText = 'El canario ya fue exitoso. Puede activar Mercado Libre completo.';
-            $apiAction = 'confirm_api';
-            $apiButton = 'Activar Mercado Libre';
-            $apiConfirm = '¿Seguro que desea activar Mercado Libre completo después del canario exitoso?';
-        } elseif ($canary) {
-            $apiTitle = 'Prueba canaria';
-            $apiText = 'Mercado Libre está limitado a una consulta de prueba. Aún no hay aprobación completa.';
-            $apiAction = 'stop_api';
-            $apiButton = 'Detener prueba canaria';
-            $apiConfirm = '¿Seguro que desea detener la prueba canaria y bloquear Mercado Libre?';
+            $apiConfirm = '¿Preparar una prueba canaria? Todavía no hará HTTP hasta que seleccione y confirme una cuenta.';
         } else {
             $apiTitle = 'Disponible';
             $apiText = 'Las consultas de lectura están habilitadas; las escrituras remotas siguen deshabilitadas por configuración.';
@@ -362,7 +418,7 @@ final class EmergencyControlKernel
             $apiConfirm = '¿Seguro que desea apagar Mercado Libre ahora?';
         }
 
-        $apiEnableAction = in_array($apiAction, ['prepare_api', 'confirm_api'], true);
+        $apiEnableAction = in_array($apiAction, ['prepare_api', 'run_api_canary', 'confirm_api'], true);
         $apiActionBlockedByAutomation = $apiEnableAction && !$automationStopped;
         if ($apiActionBlockedByAutomation) {
             $apiText .= ' Primero detenga la automatización; habilitar lecturas nunca la detendrá ni la iniciará automáticamente.';
@@ -374,13 +430,15 @@ final class EmergencyControlKernel
             ? '¿Seguro que desea activar la automatización? El cron podrá procesar trabajos permitidos por el ERP.'
             : '¿Seguro que desea apagar la automatización? Los trabajos quedarán guardados sin avanzar.';
 
-        $apiPrimaryForm = $apiActionBlockedByAutomation
+        $apiPrimaryForm = $apiAction === ''
+            ? '<button class="switch-button ' . $apiClass . '" type="button" disabled aria-disabled="true"><span>' . $this->escape($apiButton) . '</span><i></i></button>'
+            : ($apiActionBlockedByAutomation
             ? '<button class="switch-button ' . $apiClass . '" type="button" disabled aria-disabled="true"><span>Detenga automatización primero</span><i></i></button>'
-            : '<form method="post" class="safety-action-form" data-confirm="' . $this->escape($apiConfirm) . '"><input type="hidden" name="_token" value="' . $this->escape($this->csrf()) . '"><input type="hidden" name="action" value="' . $this->escape($apiAction) . '"><button class="switch-button ' . $apiClass . '" aria-pressed="' . ($apiClass === 'on' ? 'true' : 'false') . '" type="submit"><span>' . $this->escape($apiButton) . '</span><i></i></button></form>';
+            : '<form method="post" class="safety-action-form" data-confirm="' . $this->escape($apiConfirm) . '"><input type="hidden" name="_token" value="' . $this->escape($this->csrf()) . '"><input type="hidden" name="action" value="' . $this->escape($apiAction) . '">' . $accountFieldHtml . '<button class="switch-button ' . $apiClass . '" aria-pressed="' . ($apiClass === 'on' ? 'true' : 'false') . '" type="submit"><span>' . $this->escape($apiButton) . '</span><i></i></button></form>');
 
         $directApiConfirm = '¿Seguro que desea activar lecturas sin canario? La automatización permanecerá detenida y ML_WRITE_ENABLED seguirá deshabilitado.';
-        $directApiActionHtml = ($automationStopped && ($apiStopped || $canary))
-            ? '<form method="post" class="inline-safety-action" data-confirm="' . $this->escape($directApiConfirm) . '"><input type="hidden" name="_token" value="' . $this->escape($this->csrf()) . '"><input type="hidden" name="action" value="start_api_without_canary"><button class="secondary" type="submit">Activar lecturas sin canario</button><p>No activa Cron V3 ni escrituras remotas.</p></form>'
+        $directApiActionHtml = ($automationStopped && $apiStopped && $canaryDocument === null)
+            ? '<form method="post" class="inline-safety-action" data-confirm="' . $this->escape($directApiConfirm) . '"><input type="hidden" name="_token" value="' . $this->escape($this->csrf()) . '"><input type="hidden" name="action" value="start_api_without_canary"><button class="secondary" type="submit">Activar lecturas sin canario</button><p>V3 podrá hacer consultas de lectura; no activa Cron V3 ni escrituras remotas.</p></form>'
             : '';
 
         $maintenanceButton = $maintenanceActive ? 'Retirar modo lectura local' : 'Sitio libre para operar';
@@ -409,7 +467,7 @@ final class EmergencyControlKernel
   </section>
   <details class="technical"><summary>Detalle técnico</summary>
     <dl>
-      <div><dt>Mercado Libre</dt><dd>' . $this->escape((string) $status['api']) . ($canary ? ' · canario: ' . $this->escape($canaryResult !== '' ? $canaryResult : 'pendiente') : '') . '</dd></div>
+      <div><dt>Mercado Libre</dt><dd>' . $this->escape((string) $status['api']) . (is_array($canaryDocument) ? ' · canario: ' . $this->escape($canaryResult !== '' ? $canaryResult : $canaryState) : '') . '</dd></div>
       <div><dt>Automatización</dt><dd>' . $this->escape((string) $status['automation']) . '</dd></div>
       <div><dt>Modo lectura local</dt><dd>' . $this->escape($maintenanceActive ? 'activo' : 'inactivo') . '</dd></div>
       <div><dt>Escrituras remotas</dt><dd>' . $this->escape(Env::bool('ML_WRITE_ENABLED', false) ? 'habilitadas — requiere revisión' : 'deshabilitadas') . '</dd></div>
@@ -430,7 +488,7 @@ final class EmergencyControlKernel
             . '/asset.php?path=emergency-control.js&amp;v=' . rawurlencode($scriptVersion);
         echo '<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'
             . $this->escape($title) . ' · ERP Meli</title><style>'
-            . ':root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#0b1f3a;background:#eef3f9}*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:24px;display:grid;place-items:center}.card{width:min(880px,100%);background:#fff;border:1px solid #d8e2ef;border-radius:18px;padding:30px;box-shadow:0 18px 60px rgba(10,33,63,.09)}.narrow{max-width:560px}.head,.emergency-topbar{display:flex;justify-content:space-between;gap:20px;align-items:start}.head-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.emergency-topbar{align-items:center;margin-bottom:12px}.nav-return{display:inline-flex;min-height:40px;align-items:center;border:1px solid #d7e1ee;border-radius:999px;padding:0 14px;color:#173f72;text-decoration:none;font-weight:800;background:#f8fbff}.nav-return:before{content:"←";margin-right:7px}.nav-return:hover,.nav-return:focus-visible,.secondary:hover,.ghost:hover{background:#eef5ff}h1{font-size:clamp(30px,5vw,44px);margin:5px 0}h2{margin-bottom:4px}h3{margin-bottom:2px}.eyebrow,small{font-size:12px;font-weight:800;letter-spacing:.08em;color:#5d6f89}p{color:#5b6d84;line-height:1.45}label{display:block;font-weight:750;margin-top:12px}input{width:100%;height:46px;margin-top:6px;border:1px solid #bac8d9;border-radius:9px;padding:0 12px;font:inherit}button,.button{display:inline-flex;min-height:44px;align-items:center;justify-content:center;border:0;border-radius:9px;padding:0 18px;font-weight:800;text-decoration:none;cursor:pointer}button:disabled{cursor:not-allowed;opacity:.65}.form-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}.primary{background:#1769e0;color:#fff}.danger{background:#c7353f;color:#fff}.secondary,.ghost{background:#fff;color:#173f72;border:1px solid #bdcadb}.notice{padding:12px 14px;border-radius:10px;margin:14px 0}.notice.success{background:#eaf8f0;color:#17633d}.notice.error{background:#fff0f0;color:#8c2525}.switch-panel{border-top:1px solid #e3e9f1;margin-top:14px}.safety-row{width:100%;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 0;border:0;border-bottom:1px solid #e3e9f1;background:transparent;text-align:left}.safety-main-form{width:100%;display:flex;align-items:center;justify-content:space-between;gap:20px;margin:0}.safety-action-column,.safety-action-form{display:flex;align-items:center;justify-content:flex-end;margin:0}.safety-row strong{display:block;font-size:22px;margin-top:3px}.safety-row p{margin:4px 0}.inline-safety-action{margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}.inline-safety-action p{flex-basis:100%;margin:0;color:#6a7a91;font-size:13px}.switch-button{position:relative;width:116px;height:52px;border-radius:999px;background:#d5dde8;padding:5px;display:block;flex:none;border:0;color:transparent;overflow:hidden}.switch-button span{position:absolute;width:1px;height:1px;clip:rect(0 0 0 0);overflow:hidden}.switch-button i{display:block;width:42px;height:42px;border-radius:50%;background:#fff;box-shadow:0 2px 8px #0002;transition:transform .18s ease}.switch-button.on{background:#1c9a61}.switch-button.on i{transform:translateX(64px)}.switch-button.off{background:#cf3f48}.switch-button.wait{background:#d89b19}.switch-button.wait i{transform:translateX(32px)}.switch-button.inert{cursor:default}.quick-actions{display:flex;gap:12px;flex-wrap:wrap;margin:24px 0}.quick-actions form{margin:0}.technical{border:1px solid #dbe4ef;border-radius:12px;padding:14px}summary{font-weight:850;cursor:pointer}dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0 0}dt{font-weight:800;color:#5d6f89;font-size:12px;text-transform:uppercase;letter-spacing:.06em}dd{margin:2px 0 0}.foot{font-size:13px;margin:20px 0 0}.head form{margin:0}.confirm-backdrop{position:fixed;inset:0;background:rgba(8,25,48,.44);display:none;align-items:center;justify-content:center;padding:18px;z-index:10}.confirm-backdrop.is-open{display:flex}.confirm-box{width:min(440px,100%);background:#fff;border-radius:16px;padding:22px;box-shadow:0 24px 80px rgba(0,0,0,.22)}.confirm-box h2{font-size:24px;margin:0 0 8px}.confirm-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}@media(max-width:640px){body{padding:10px}.card{padding:20px}.head{display:block}.head-actions{justify-content:flex-start;margin-top:12px}.emergency-topbar{align-items:flex-start;gap:10px}.safety-row,.safety-main-form{align-items:center;gap:12px}.inline-safety-action{align-items:stretch}.inline-safety-action button{width:100%}.switch-button{width:92px}.switch-button.on i{transform:translateX(40px)}.switch-button.wait i{transform:translateX(20px)}dl{grid-template-columns:1fr}.form-actions .button,.form-actions button,.quick-actions .button,.quick-actions button{width:100%}.confirm-actions{display:block}.confirm-actions button{width:100%;margin-top:8px}}@media(prefers-reduced-motion:reduce){.switch-button i{transition:none}}'
+            . ':root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#0b1f3a;background:#eef3f9}*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:24px;display:grid;place-items:center}.card{width:min(880px,100%);background:#fff;border:1px solid #d8e2ef;border-radius:18px;padding:30px;box-shadow:0 18px 60px rgba(10,33,63,.09)}.narrow{max-width:560px}.head,.emergency-topbar{display:flex;justify-content:space-between;gap:20px;align-items:start}.head-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.emergency-topbar{align-items:center;margin-bottom:12px}.nav-return{display:inline-flex;min-height:40px;align-items:center;border:1px solid #d7e1ee;border-radius:999px;padding:0 14px;color:#173f72;text-decoration:none;font-weight:800;background:#f8fbff}.nav-return:before{content:"←";margin-right:7px}.nav-return:hover,.nav-return:focus-visible,.secondary:hover,.ghost:hover{background:#eef5ff}h1{font-size:clamp(30px,5vw,44px);margin:5px 0}h2{margin-bottom:4px}h3{margin-bottom:2px}.eyebrow,small{font-size:12px;font-weight:800;letter-spacing:.08em;color:#5d6f89}p{color:#5b6d84;line-height:1.45}label{display:block;font-weight:750;margin-top:12px}input,select{width:100%;height:46px;margin-top:6px;border:1px solid #bac8d9;border-radius:9px;padding:0 12px;font:inherit;background:#fff}.account-choice{min-width:230px;margin:0 12px 0 0;font-size:13px}.account-choice strong{font-size:14px}.safety-action-form select{width:260px;margin:0 12px 0 0}button,.button{display:inline-flex;min-height:44px;align-items:center;justify-content:center;border:0;border-radius:9px;padding:0 18px;font-weight:800;text-decoration:none;cursor:pointer}button:disabled{cursor:not-allowed;opacity:.65}.form-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}.primary{background:#1769e0;color:#fff}.danger{background:#c7353f;color:#fff}.secondary,.ghost{background:#fff;color:#173f72;border:1px solid #bdcadb}.notice{padding:12px 14px;border-radius:10px;margin:14px 0}.notice.success{background:#eaf8f0;color:#17633d}.notice.error{background:#fff0f0;color:#8c2525}.switch-panel{border-top:1px solid #e3e9f1;margin-top:14px}.safety-row{width:100%;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 0;border:0;border-bottom:1px solid #e3e9f1;background:transparent;text-align:left}.safety-main-form{width:100%;display:flex;align-items:center;justify-content:space-between;gap:20px;margin:0}.safety-action-column,.safety-action-form{display:flex;align-items:center;justify-content:flex-end;margin:0}.safety-row strong{display:block;font-size:22px;margin-top:3px}.safety-row p{margin:4px 0}.inline-safety-action{margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}.inline-safety-action p{flex-basis:100%;margin:0;color:#6a7a91;font-size:13px}.switch-button{position:relative;width:116px;height:52px;border-radius:999px;background:#d5dde8;padding:5px;display:block;flex:none;border:0;color:transparent;overflow:hidden}.switch-button span{position:absolute;width:1px;height:1px;clip:rect(0 0 0 0);overflow:hidden}.switch-button i{display:block;width:42px;height:42px;border-radius:50%;background:#fff;box-shadow:0 2px 8px #0002;transition:transform .18s ease}.switch-button.on{background:#1c9a61}.switch-button.on i{transform:translateX(64px)}.switch-button.off{background:#cf3f48}.switch-button.wait{background:#d89b19}.switch-button.wait i{transform:translateX(32px)}.switch-button.inert{cursor:default}.quick-actions{display:flex;gap:12px;flex-wrap:wrap;margin:24px 0}.quick-actions form{margin:0}.technical{border:1px solid #dbe4ef;border-radius:12px;padding:14px}summary{font-weight:850;cursor:pointer}dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0 0}dt{font-weight:800;color:#5d6f89;font-size:12px;text-transform:uppercase;letter-spacing:.06em}dd{margin:2px 0 0}.foot{font-size:13px;margin:20px 0 0}.head form{margin:0}.confirm-backdrop{position:fixed;inset:0;background:rgba(8,25,48,.44);display:none;align-items:center;justify-content:center;padding:18px;z-index:10}.confirm-backdrop.is-open{display:flex}.confirm-box{width:min(440px,100%);background:#fff;border-radius:16px;padding:22px;box-shadow:0 24px 80px rgba(0,0,0,.22)}.confirm-box h2{font-size:24px;margin:0 0 8px}.confirm-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}@media(max-width:640px){body{padding:10px}.card{padding:20px}.head{display:block}.head-actions{justify-content:flex-start;margin-top:12px}.emergency-topbar{align-items:flex-start;gap:10px}.safety-row,.safety-main-form{align-items:center;gap:12px}.safety-action-form{align-items:stretch;flex-direction:column}.safety-action-form select,.account-choice{width:100%;margin:0 0 10px}.inline-safety-action{align-items:stretch}.inline-safety-action button{width:100%}.switch-button{width:92px}.switch-button.on i{transform:translateX(40px)}.switch-button.wait i{transform:translateX(20px)}dl{grid-template-columns:1fr}.form-actions .button,.form-actions button,.quick-actions .button,.quick-actions button{width:100%}.confirm-actions{display:block}.confirm-actions button{width:100%;margin-top:8px}}@media(prefers-reduced-motion:reduce){.switch-button i{transition:none}}'
             . '</style></head><body>' . $content . '<div class="confirm-backdrop" id="confirm-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message" hidden><div class="confirm-box"><h2 id="confirm-title">Confirmar cambio</h2><p id="confirm-message">¿Seguro?</p><div class="confirm-actions"><button class="secondary" type="button" id="confirm-cancel">Cancelar</button><button class="primary" type="button" id="confirm-submit">Sí, cambiar estado</button></div></div></div><script src="' . $this->escape($scriptUrl) . '"></script></body></html>';
         exit;
     }

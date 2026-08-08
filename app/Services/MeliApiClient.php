@@ -156,7 +156,7 @@ final class MeliApiClient implements MeliReadClientInterface
         }
         $singleDispatchAttempt = in_array(
             (string) ($meta['source'] ?? ''),
-            ['cron_v3_remote', 'manual_campaign'],
+            ['cron_v3_remote', 'manual_campaign', 'manual_emergency_canary'],
             true
         );
         $cronV3RemoteContext = (string) ($meta['source'] ?? '') === 'cron_v3_remote';
@@ -280,17 +280,20 @@ final class MeliApiClient implements MeliReadClientInterface
                 // proceso termine antes de que cURL devuelva una respuesta.
                 // La marca persistente anterior evita un segundo envío ciego.
                 $dispatchBoundaryCrossed = true;
-                $transportResult = $this->transport->request(
-                    $method,
-                    $url,
-                    $data,
-                    array_merge($headers, [
-                        'Accept: application/json',
-                        'X-Request-Id: ' . $requestId,
-                        $form ? 'Content-Type: application/x-www-form-urlencoded' : 'Content-Type: application/json',
-                    ]),
-                    $form,
-                    $timeouts
+                $transportResult = ApiExecutionMetadataContext::withTransportMetadata(
+                    ['transport_meli_account_id' => $this->accountId],
+                    fn (): array => $this->transport->request(
+                        $method,
+                        $url,
+                        $data,
+                        array_merge($headers, [
+                            'Accept: application/json',
+                            'X-Request-Id: ' . $requestId,
+                            $form ? 'Content-Type: application/x-www-form-urlencoded' : 'Content-Type: application/json',
+                        ]),
+                        $form,
+                        $timeouts
+                    )
                 );
             } catch (Throwable $transportBlocked) {
                 if (!$dispatchBoundaryCrossed) {

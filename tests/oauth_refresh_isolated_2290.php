@@ -17,9 +17,9 @@ $check(str_contains($client, 'throw new OAuthRefreshRequiredException($this->acc
 $check(str_contains($client, 'public function refreshOAuthToken(): array'), 'El worker OAuth necesita una operacion remota explicita.');
 $check(!str_contains($client, '$token = $this->refreshToken()'), 'El refresh heredado sigue encadenado a la lectura comercial.');
 $check(str_contains($exception, 'public readonly int $accountId'), 'La senal OAuth debe conservar solamente la cuenta, sin secretos.');
-$check(str_contains($client, "['cron_v3_remote', 'manual_campaign']"), 'V3 remoto y el paso web deben limitarse a un solo transporte.');
+$check(str_contains($client, "['cron_v3_remote', 'manual_campaign', 'manual_emergency_canary']"), 'V3 remoto, el paso web y el canario deben limitarse a un solo transporte.');
 $check(str_contains($client, '$attempts = $singleDispatchAttempt ? 1'), 'Un 5xx de V3 debe aplazarse como otro intento, no reintentarse dentro del mismo handler.');
-$check(substr_count($executionContext, "['manual_campaign', 'cron_v3_remote']") >= 2, 'El limite fisico de un transporte debe cubrir el worker V3 y el paso web.');
+$check(substr_count($executionContext, "['manual_campaign', 'cron_v3_remote', 'manual_emergency_canary']") >= 2, 'El limite fisico de un transporte debe cubrir V3, el paso web y el canario.');
 
 if ($failures !== []) {
     fwrite(STDERR, implode(PHP_EOL, $failures) . PHP_EOL);

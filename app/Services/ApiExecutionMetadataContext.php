@@ -41,7 +41,7 @@ final class ApiExecutionMetadataContext
         $previous = self::$current;
         $previousCalls = self::$remoteCalls;
         self::$current = array_replace(self::$current, $metadata);
-        if (in_array((string) ($metadata['source'] ?? ''), ['manual_campaign', 'cron_v3_remote'], true)) {
+        if (in_array((string) ($metadata['source'] ?? ''), ['manual_campaign', 'cron_v3_remote', 'manual_emergency_canary'], true)) {
             self::$remoteCalls = 0;
         }
         try {
@@ -52,9 +52,31 @@ final class ApiExecutionMetadataContext
         }
     }
 
+    /**
+     * Añade metadata autoritativa del transporte sin reiniciar el contador de
+     * llamadas del trabajo exterior. Se usa para ligar el token/cuenta real
+     * del cliente a la última barrera física.
+     *
+     * @template T
+     * @param array<string,scalar|null> $metadata
+     * @param callable():T $callback
+     * @return T
+     * @throws Throwable
+     */
+    public static function withTransportMetadata(array $metadata, callable $callback): mixed
+    {
+        $previous = self::$current;
+        self::$current = array_replace(self::$current, $metadata);
+        try {
+            return $callback();
+        } finally {
+            self::$current = $previous;
+        }
+    }
+
     public static function claimRemoteCall(): void
     {
-        if (!in_array((string) (self::$current['source'] ?? ''), ['manual_campaign', 'cron_v3_remote'], true)) {
+        if (!in_array((string) (self::$current['source'] ?? ''), ['manual_campaign', 'cron_v3_remote', 'manual_emergency_canary'], true)) {
             return;
         }
         $maximum = 1;

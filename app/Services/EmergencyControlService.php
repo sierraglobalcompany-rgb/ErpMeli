@@ -43,9 +43,16 @@ final class EmergencyControlService
         $lastChange = $this->readJson($this->markerPath(self::LAST_CHANGE_MARKER));
         $apiStopped = is_file($this->markerPath(self::API_MARKER));
         $automationStopped = is_file($this->markerPath(self::AUTOMATION_MARKER));
+        $canaryVisible = is_array($canary);
         $canaryActive = !$apiStopped
-            && is_array($canary)
+            && $canaryVisible
             && (int) ($canary['expires_at'] ?? 0) >= time();
+        $publicCanary = $canary;
+        if (is_array($publicCanary)) {
+            // La evidencia es visible para el panel, pero el nonce permanece
+            // exclusivamente en el marcador privado y en el contexto del transporte.
+            unset($publicCanary['reservation_nonce']);
+        }
 
         return [
             'api' => $apiStopped ? 'stopped' : ($canaryActive ? 'canary' : 'enabled'),
@@ -56,7 +63,9 @@ final class EmergencyControlService
             'source' => 'filesystem',
             'changed_at' => $this->latestChangedAt([$lastChange, $api, $automation, $canary]),
             'reason' => $this->latestReason([$lastChange, $api, $automation, $canary]),
-            'canary' => $canaryActive ? $canary : null,
+            // La evidencia de una prueba fallida debe seguir visible incluso
+            // después de restaurar el bloqueo físico PAUSE_MELI_API.
+            'canary' => $canaryVisible ? $publicCanary : null,
             'storage_degraded' => str_contains(str_replace('\\', '/', $this->privateDirectory), '/storage/'),
         ];
     }
@@ -69,7 +78,7 @@ final class EmergencyControlService
         $algorithm = defined('PASSWORD_ARGON2ID') ? PASSWORD_ARGON2ID : PASSWORD_DEFAULT;
         $hash = password_hash($password, $algorithm);
         $payload = [
-            'version' => 1,
+            'version' => 2,
             'username' => self::USERNAME,
             'password_hash' => $hash,
             'created_at' => gmdate(DATE_ATOM),
@@ -240,7 +249,7 @@ final class EmergencyControlService
     {
         $this->assertAutomationStoppedForApiEnable();
         $canary = [
-            'version' => 1,
+            'version' => 2,
             'state' => 'ready',
             'max_calls' => 1,
             'used_calls' => 0,
@@ -259,7 +268,10 @@ final class EmergencyControlService
     {
         $this->assertAutomationStoppedForApiEnable();
         $canary = $this->readJson($this->markerPath(self::CANARY_MARKER));
-        if (!is_array($canary) || ($canary['last_result'] ?? '') !== 'success') {
+        if (!is_array($canary)
+            || ($canary['state'] ?? '') !== 'complete'
+            || ($canary['last_result'] ?? '') !== 'success'
+            || empty($canary['identity_verified'])) {
             throw new RuntimeException('El canario todavía no confirmó una consulta correcta.');
         }
         @unlink($this->markerPath(self::CANARY_MARKER));
@@ -269,61 +281,155 @@ final class EmergencyControlService
     }
 
     /**
-     * Se llama en la última barrera, inmediatamente antes de abrir cURL.
+     * Vincula una prueba preparada con una sola cuenta y una sola operación.
+     * El nonce nunca sale del servidor ni se muestra en la interfaz.
      */
-    public function claimCanaryTransport(): void
+    public function reserveApiCanary(int $accountId, string $expectedMeliUserId): string
+    {
+        $this->assertAutomationStoppedForApiEnable();
+        if (Env::bool('ML_WRITE_ENABLED', false)) {
+            throw new RuntimeException('Las escrituras remotas deben permanecer deshabilitadas. Código: EMERGENCY_WRITES_ENABLED.');
+        }
+        if ($accountId < 1 || trim($expectedMeliUserId) === '') {
+            throw new RuntimeException('La cuenta seleccionada no tiene una identidad Mercado Libre válida.');
+        }
+        $nonce = bin2hex(random_bytes(32));
+        $this->mutateCanary(function (array $canary) use ($accountId, $expectedMeliUserId, $nonce): array {
+            if ((int) ($canary['expires_at'] ?? 0) < time()) {
+                throw new RuntimeException('La prueba canaria venció. Prepare una nueva prueba.');
+            }
+            if (($canary['state'] ?? '') !== 'ready' || (int) ($canary['used_calls'] ?? 0) !== 0) {
+                throw new RuntimeException('La prueba canaria ya fue reservada o utilizada. Revise su resultado.');
+            }
+            $canary['state'] = 'reserved';
+            $canary['meli_account_id'] = $accountId;
+            $canary['expected_meli_user_id'] = trim($expectedMeliUserId);
+            $canary['method'] = 'GET';
+            $canary['endpoint'] = '/users/me';
+            $canary['operation'] = 'users_me';
+            $canary['source'] = 'manual_emergency_canary';
+            $canary['reservation_nonce'] = $nonce;
+            $canary['reserved_at'] = gmdate(DATE_ATOM);
+            return $canary;
+        });
+        return $nonce;
+    }
+
+    /** Se llama en la última barrera, inmediatamente antes de abrir cURL. */
+    public function claimCanaryTransport(string $method, string $endpoint): void
     {
         $path = $this->markerPath(self::CANARY_MARKER);
         if (!is_file($path)) {
             return;
         }
-        $handle = @fopen($path, 'c+');
-        if (!is_resource($handle)) {
-            throw new ApiManualPauseException('app', null, null, 'No se pudo comprobar el canario de Mercado Libre.');
-        }
-        try {
-            if (!flock($handle, LOCK_EX)) {
-                throw new ApiManualPauseException('app', null, null, 'Otra consulta canaria está en curso.');
+        $context = ApiExecutionMetadataContext::current();
+        $this->mutateCanary(function (array $canary) use ($context, $method, $endpoint): array {
+            if ((int) ($canary['expires_at'] ?? 0) < time()) {
+                throw new ApiManualPauseException('app', null, null, 'El permiso canario venció. Prepare una nueva prueba.');
             }
-            rewind($handle);
-            $raw = stream_get_contents($handle);
-            $canary = is_string($raw) ? json_decode($raw, true) : null;
-            if (!is_array($canary) || (int) ($canary['expires_at'] ?? 0) < time()) {
-                throw new ApiManualPauseException('app', null, null, 'El permiso canario venció. Active nuevamente la prueba.');
+            if (($canary['state'] ?? '') !== 'reserved' || (int) ($canary['used_calls'] ?? 0) !== 0) {
+                throw new ApiManualPauseException('app', null, null, 'La consulta canaria ya fue utilizada o no está reservada.');
             }
-            $used = (int) ($canary['used_calls'] ?? 0);
-            $maximum = max(1, (int) ($canary['max_calls'] ?? 1));
-            if ($used >= $maximum || ($canary['state'] ?? '') === 'in_flight') {
-                throw new ApiManualPauseException('app', null, null, 'La consulta canaria ya fue utilizada. Revise su resultado.');
+            $actual = [
+                'meli_account_id' => (string) ($context['meli_account_id'] ?? ''),
+                'transport_meli_account_id' => (string) ($context['transport_meli_account_id'] ?? ''),
+                'expected_meli_user_id' => (string) ($context['expected_meli_user_id'] ?? ''),
+                'method' => strtoupper($method),
+                'endpoint' => '/' . ltrim($endpoint, '/'),
+                'source' => (string) ($context['source'] ?? ''),
+                'reservation_nonce' => (string) ($context['canary_reservation_nonce'] ?? ''),
+            ];
+            $expected = [
+                'meli_account_id' => (string) ($canary['meli_account_id'] ?? ''),
+                'transport_meli_account_id' => (string) ($canary['meli_account_id'] ?? ''),
+                'expected_meli_user_id' => (string) ($canary['expected_meli_user_id'] ?? ''),
+                'method' => (string) ($canary['method'] ?? ''),
+                'endpoint' => (string) ($canary['endpoint'] ?? ''),
+                'source' => (string) ($canary['source'] ?? ''),
+                'reservation_nonce' => (string) ($canary['reservation_nonce'] ?? ''),
+            ];
+            foreach ($expected as $key => $value) {
+                if ($value === '' || !hash_equals($value, $actual[$key])) {
+                    throw new ApiManualPauseException('app', null, null, 'La solicitud no coincide con la reserva canaria autorizada.');
+                }
             }
-            $canary['used_calls'] = $used + 1;
+            $canary['used_calls'] = 1;
             $canary['state'] = 'in_flight';
             $canary['dispatched_at'] = gmdate(DATE_ATOM);
-            ftruncate($handle, 0);
-            rewind($handle);
-            fwrite($handle, json_encode($canary, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
-            fflush($handle);
-        } finally {
-            flock($handle, LOCK_UN);
-            fclose($handle);
-        }
+            return $canary;
+        });
     }
 
     public function completeCanaryTransport(bool $success, ?int $status = null): void
     {
-        $path = $this->markerPath(self::CANARY_MARKER);
-        if (!is_file($path)) {
+        if (!is_file($this->markerPath(self::CANARY_MARKER))) {
             return;
         }
-        $canary = $this->readJson($path);
-        if (!is_array($canary) || ($canary['state'] ?? '') !== 'in_flight') {
-            return;
+        $this->mutateCanary(function (array $canary) use ($success, $status): array {
+            if (($canary['state'] ?? '') !== 'in_flight') {
+                return $canary;
+            }
+            $canary['http_status'] = $status;
+            $canary['response_at'] = gmdate(DATE_ATOM);
+            if ($success) {
+                // Un 2xx solo certifica transporte. La identidad se valida
+                // después, usando el cuerpo ya decodificado de /users/me.
+                $canary['state'] = 'response_known';
+                $canary['transport_result'] = 'success';
+                return $canary;
+            }
+            $canary['state'] = 'complete';
+            $canary['last_result'] = 'failed';
+            $canary['identity_verified'] = false;
+            $canary['failure_class'] = 'transport_or_http_failure';
+            $canary['completed_at'] = gmdate(DATE_ATOM);
+            return $canary;
+        });
+    }
+
+    public function completeApiCanarySuccess(string $nonce, int $accountId, string $actualMeliUserId): void
+    {
+        $this->mutateCanary(function (array $canary) use ($nonce, $accountId, $actualMeliUserId): array {
+            $expectedId = (string) ($canary['expected_meli_user_id'] ?? '');
+            if (($canary['state'] ?? '') !== 'response_known'
+                || !hash_equals((string) ($canary['reservation_nonce'] ?? ''), $nonce)
+                || (int) ($canary['meli_account_id'] ?? 0) !== $accountId
+                || $expectedId === ''
+                || !hash_equals($expectedId, trim($actualMeliUserId))) {
+                throw new RuntimeException('La identidad de Mercado Libre no coincide con la cuenta seleccionada.');
+            }
+            $canary['state'] = 'complete';
+            $canary['last_result'] = 'success';
+            $canary['identity_verified'] = true;
+            $canary['completed_at'] = gmdate(DATE_ATOM);
+            return $canary;
+        });
+    }
+
+    public function failApiCanaryAndBlock(
+        string $actor,
+        string $failureClass,
+        string $reference,
+        ?int $status = null
+    ): void {
+        // Fail closed primero. No se usa stopApi(), porque borraría la evidencia.
+        $this->writeMarker(self::API_MARKER, $actor, 'Prueba canaria fallida. Referencia: ' . $reference . '.');
+        if (is_file($this->markerPath(self::CANARY_MARKER))) {
+            $this->mutateCanary(function (array $canary) use ($failureClass, $reference, $status): array {
+                $canary['state'] = 'complete';
+                $canary['last_result'] = 'failed';
+                $canary['identity_verified'] = false;
+                $canary['failure_class'] = mb_substr($failureClass, 0, 80);
+                $canary['failure_reference'] = mb_substr($reference, 0, 80);
+                if ($status !== null) {
+                    $canary['http_status'] = $status;
+                }
+                $canary['completed_at'] = gmdate(DATE_ATOM);
+                return $canary;
+            });
         }
-        $canary['state'] = 'complete';
-        $canary['last_result'] = $success ? 'success' : 'failed';
-        $canary['http_status'] = $status;
-        $canary['completed_at'] = gmdate(DATE_ATOM);
-        $this->atomicJson($path, $canary);
+        $this->recordChange('api_canary_failed', $actor, 'Prueba canaria fallida. Referencia: ' . $reference . '.');
+        $this->audit('api_canary_failed', $actor, 'failure_class=' . mb_substr($failureClass, 0, 80) . ' reference=' . mb_substr($reference, 0, 80));
     }
 
     public function apiStopped(): bool
@@ -589,6 +695,40 @@ final class EmergencyControlService
             'count' => count($markers),
             'markers' => $markers,
         ];
+    }
+
+    /**
+     * @param callable(array<string,mixed>):array<string,mixed> $callback
+     * @return array<string,mixed>
+     */
+    private function mutateCanary(callable $callback): array
+    {
+        $path = $this->markerPath(self::CANARY_MARKER);
+        $handle = @fopen($path, 'c+');
+        if (!is_resource($handle)) {
+            throw new RuntimeException('No se pudo comprobar el canario de Mercado Libre.');
+        }
+        try {
+            if (!flock($handle, LOCK_EX)) {
+                throw new RuntimeException('Otra acción canaria está en curso.');
+            }
+            rewind($handle);
+            $raw = stream_get_contents($handle);
+            $canary = is_string($raw) && trim($raw) !== '' ? json_decode($raw, true) : null;
+            if (!is_array($canary)) {
+                throw new RuntimeException('No existe una prueba canaria preparada.');
+            }
+            $updated = $callback($canary);
+            ftruncate($handle, 0);
+            rewind($handle);
+            fwrite($handle, json_encode($updated, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+            fflush($handle);
+            @chmod($path, 0600);
+            return $updated;
+        } finally {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
     }
 
     private function writeMarker(string $name, string $actor, string $reason): void

@@ -11,6 +11,7 @@ use App\Recovery\EmergencyControlKernel;
 use App\Services\ApiExecutionMetadataContext;
 use App\Services\ApiGuardService;
 use App\Services\CurlMeliHttpTransport;
+use App\Services\EmergencyApiCanaryService;
 use App\Services\EmergencyControlService;
 use App\Services\ExecutionJournalService;
 use App\Services\MeliApiClient;
@@ -122,6 +123,8 @@ try {
             id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
             company_id BIGINT UNSIGNED NULL,
             account_name VARCHAR(255) NOT NULL DEFAULT "Cuenta QA",
+            nickname VARCHAR(255) NULL,
+            meli_user_id VARCHAR(80) NULL,
             status VARCHAR(40) NOT NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
     );
@@ -267,7 +270,8 @@ try {
     $pdo->exec('TRUNCATE TABLE system_execution_attempts');
     $pdo->exec('TRUNCATE TABLE system_execution_runs');
     $pdo->exec('SET FOREIGN_KEY_CHECKS=1');
-    $pdo->exec("INSERT INTO meli_accounts (id,status) VALUES (1,'conectado')");
+    $pdo->exec("INSERT INTO meli_accounts (id,company_id,account_name,nickname,meli_user_id,status)
+                VALUES (1,1,'Cuenta QA','Seller QA','1','conectado')");
     $token = Crypto::encrypt('hf1-fake-token-never-sent');
     $tokenInsert = $pdo->prepare(
         'INSERT INTO meli_tokens (meli_account_id,access_token_encrypted,expires_at)
@@ -287,7 +291,7 @@ try {
             array $timeouts
         ): array {
             // Reproduce las dos barreras del transporte real sin abrir cURL.
-            (new MeliEmergencyStopService())->assertTransportAllowed();
+            (new MeliEmergencyStopService())->assertTransportAllowed($method, $url);
             $this->calls++;
             $result = [
                 'status' => 200,
@@ -313,40 +317,192 @@ try {
     $control = new EmergencyControlService();
     $control->stopAll('hf1-test', 'Integración local con transporte falso');
     $control->prepareApiStart('hf1-test', 'Canario manual local');
+    $manualNonce = $control->reserveApiCanary(1, '1');
     $callsBeforeManual = $fakeTransport->calls;
-    $manualResult = $invoke(['source' => 'manual_emergency_canary', 'job_type' => 'emergency_canary']);
+    $manualResult = $invoke([
+        'source' => 'manual_emergency_canary',
+        'job_type' => 'emergency_canary',
+        'meli_account_id' => 1,
+        'expected_meli_user_id' => '1',
+        'canary_reservation_nonce' => $manualNonce,
+    ]);
+    $control->completeApiCanarySuccess($manualNonce, 1, (string) ($manualResult['id'] ?? ''));
     $canary = $control->status()['canary'] ?? null;
     $check($fakeTransport->calls === $callsBeforeManual + 1 && ($manualResult['id'] ?? null) === 1,
         'REAL_CLIENT_MANUAL_CANARY_TEST no alcanzó exactamente una vez el transporte falso.');
     $check(is_array($canary) && (int) ($canary['used_calls'] ?? 0) === 1
-        && ($canary['last_result'] ?? '') === 'success',
+        && ($canary['last_result'] ?? '') === 'success'
+        && !empty($canary['identity_verified']),
         'El permiso canario no quedó consumido con resultado conocido.');
+
+    // El orquestador HF1.1 debe usar el mismo cliente real y una sola salida,
+    // pero validar además que /users/me pertenece a la cuenta reservada.
+    $control->prepareApiStart('hf1-test', 'Canario HF1.1 correcto');
+    $callsBeforeService = $fakeTransport->calls;
+    $service = new EmergencyApiCanaryService(
+        $control,
+        static fn (int $accountId): MeliApiClient => new MeliApiClient($accountId, $fakeTransport)
+    );
+    $serviceResult = $service->run(1, 'hf1-test');
+    $serviceCanary = $control->status()['canary'] ?? null;
+    $check($fakeTransport->calls === $callsBeforeService + 1
+        && (int) ($serviceResult['account_id'] ?? 0) === 1
+        && is_array($serviceCanary)
+        && ($serviceCanary['last_result'] ?? '') === 'success'
+        && !empty($serviceCanary['identity_verified']),
+        'HF11_IDENTITY_BOUND_SUCCESS no certificó una sola llamada ligada a identidad.');
+    $control->confirmApiStart('hf1-test', 'Identidad confirmada');
+    $check(!$control->apiStopped() && ($control->status()['canary'] ?? null) === null,
+        'CONFIRM_API no exigió y consumió la evidencia de identidad exitosa.');
+
+    // Token vencido/próximo a vencer: el orquestador falla antes de construir
+    // transporte; por contrato tampoco existe llamada a refreshOAuthToken.
+    $pdo->exec("UPDATE meli_tokens SET expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 30 SECOND) WHERE meli_account_id=1");
+    $control->stopApi('hf1-test', 'Preparar autorización vencida');
+    $control->prepareApiStart('hf1-test', 'Autorización vencida');
+    $callsBeforeExpired = $fakeTransport->calls;
+    try {
+        $service->run(1, 'hf1-test');
+        $check(false, 'EXPIRED_TOKEN_CAUSES_ZERO_HTTP permitió ejecutar el canario.');
+    } catch (RuntimeException $expired) {
+        $check($fakeTransport->calls === $callsBeforeExpired
+            && str_contains($expired->getMessage(), 'autorización'),
+            'EXPIRED_TOKEN_CAUSES_ZERO_HTTP cruzó la frontera del transporte.');
+    }
+    $serviceSource = (string) file_get_contents($root . '/app/Services/EmergencyApiCanaryService.php');
+    $check(!str_contains($serviceSource, 'refreshOAuthToken(')
+        && !str_contains($serviceSource, "'/oauth/token'")
+        && !str_contains($serviceSource, '"/oauth/token"'),
+        'TOKEN_REFRESH_IS_NEVER_CALLED encontró una ruta de refresh en el orquestador canario.');
+    $pdo->exec("UPDATE meli_tokens SET expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 DAY) WHERE meli_account_id=1");
+
+    // Una solicitud ajena o de otra cuenta no puede consumir la reserva.
+    $control->prepareApiStart('hf1-test', 'Reserva ligada a operación');
+    $boundNonce = $control->reserveApiCanary(1, '1');
+    foreach ([
+        ['source' => 'cron_v3_remote', 'meli_account_id' => 1, 'transport_meli_account_id' => 1, 'expected_meli_user_id' => '1', 'canary_reservation_nonce' => $boundNonce],
+        ['source' => 'manual_emergency_canary', 'meli_account_id' => 2, 'transport_meli_account_id' => 2, 'expected_meli_user_id' => '1', 'canary_reservation_nonce' => $boundNonce],
+    ] as $index => $wrongMetadata) {
+        try {
+            ApiExecutionMetadataContext::run(
+                $wrongMetadata,
+                static fn () => (new MeliEmergencyStopService())->assertTransportAllowed('GET', 'https://api.mercadolibre.com/users/me')
+            );
+            $check(false, $index === 0
+                ? 'UNRELATED_REQUEST_CANNOT_CONSUME_CANARY fue autorizada.'
+                : 'WRONG_ACCOUNT_CANNOT_CONSUME_CANARY fue autorizada.');
+        } catch (Throwable) {
+            $reserved = $control->status()['canary'] ?? null;
+            $check(is_array($reserved)
+                && ($reserved['state'] ?? '') === 'reserved'
+                && (int) ($reserved['used_calls'] ?? -1) === 0,
+                $index === 0
+                    ? 'UNRELATED_REQUEST_CANNOT_CONSUME_CANARY gastó la reserva.'
+                    : 'WRONG_ACCOUNT_CANNOT_CONSUME_CANARY gastó la reserva.');
+        }
+    }
+
+    // Un 200 de otro seller es fallo: se restaura PAUSE_MELI_API y se conserva
+    // la evidencia sin cuerpo ni Authorization.
+    $wrongIdentityTransport = new class implements MeliHttpTransportInterface {
+        public int $calls = 0;
+        public function request(string $method, string $url, array $data, array $headers, bool $form, array $timeouts): array
+        {
+            (new MeliEmergencyStopService())->assertTransportAllowed($method, $url);
+            $this->calls++;
+            (new EmergencyControlService())->completeCanaryTransport(true, 200);
+            return ['status' => 200, 'headers' => [], 'body' => ['id' => 999], 'curl_error' => '', 'duration_ms' => 1, 'wire_bytes' => 10, 'decoded_bytes' => 10];
+        }
+    };
+    $control->prepareApiStart('hf1-test', 'Identidad incorrecta');
+    $wrongService = new EmergencyApiCanaryService(
+        $control,
+        static fn (int $accountId): MeliApiClient => new MeliApiClient($accountId, $wrongIdentityTransport)
+    );
+    try {
+        $wrongService->run(1, 'hf1-test');
+        $check(false, 'USERS_ME_IDENTITY_MISMATCH_FAILS aceptó otro seller.');
+    } catch (RuntimeException) {
+        $failed = $control->status()['canary'] ?? null;
+        $encoded = is_array($failed) ? json_encode($failed) : '';
+        $check($wrongIdentityTransport->calls === 1
+            && $control->apiStopped()
+            && is_array($failed)
+            && ($failed['last_result'] ?? '') === 'failed'
+            && ($failed['failure_class'] ?? '') === 'account_identity_mismatch'
+            && !str_contains((string) $encoded, 'Authorization')
+            && !str_contains((string) $encoded, 'hf1-fake-token-never-sent')
+            && !array_key_exists('body', $failed),
+            'FAILED_CANARY_PRESERVES_EVIDENCE_AFTER_API_BLOCK no conservó evidencia segura.');
+        try {
+            $control->confirmApiStart('hf1-test', 'No permitido');
+            $check(false, 'CONFIRM_API aceptó un 200 con identidad incorrecta.');
+        } catch (RuntimeException) {
+            $check($control->apiStopped(), 'CONFIRM_API retiró el bloqueo después de un fallo.');
+        }
+    }
+
+    // Un 200 sin id también debe fallar, no basta el status HTTP.
+    $missingIdentityTransport = new class implements MeliHttpTransportInterface {
+        public int $calls = 0;
+        public function request(string $method, string $url, array $data, array $headers, bool $form, array $timeouts): array
+        {
+            (new MeliEmergencyStopService())->assertTransportAllowed($method, $url);
+            $this->calls++;
+            (new EmergencyControlService())->completeCanaryTransport(true, 200);
+            return ['status' => 200, 'headers' => [], 'body' => [], 'curl_error' => '', 'duration_ms' => 1, 'wire_bytes' => 2, 'decoded_bytes' => 2];
+        }
+    };
+    $control->prepareApiStart('hf1-test', 'Respuesta sin identidad');
+    $missingService = new EmergencyApiCanaryService(
+        $control,
+        static fn (int $accountId): MeliApiClient => new MeliApiClient($accountId, $missingIdentityTransport)
+    );
+    try {
+        $missingService->run(1, 'hf1-test');
+        $check(false, 'HTTP_200_WITHOUT_ID_FAILS aceptó una respuesta incompleta.');
+    } catch (RuntimeException) {
+        $missing = $control->status()['canary'] ?? null;
+        $check($missingIdentityTransport->calls === 1
+            && $control->apiStopped()
+            && is_array($missing)
+            && ($missing['failure_class'] ?? '') === 'response_schema_invalid',
+            'HTTP_200_WITHOUT_ID_FAILS no bloqueó con diagnóstico seguro.');
+    }
 
     // Contrato del transporte productivo: la primera salida consume el único
     // permiso canario justo antes de cURL; una segunda salida queda bloqueada.
     $control->stopAll('hf1-test', 'Preparar contrato canario del transporte real');
     $control->prepareApiStart('hf1-test', 'Canario local del transporte cURL');
+    $transportNonce = $control->reserveApiCanary(1, '1');
+    $transportMetadata = [
+        'source' => 'manual_emergency_canary',
+        'meli_account_id' => 1,
+        'transport_meli_account_id' => 1,
+        'expected_meli_user_id' => '1',
+        'canary_reservation_nonce' => $transportNonce,
+    ];
     $realTransport = new CurlMeliHttpTransport();
-    $realTransport->request(
+    ApiExecutionMetadataContext::run($transportMetadata, static fn (): array => $realTransport->request(
         'GET',
-        'http://127.0.0.1:9/hf1-canary-contract',
+        'http://127.0.0.1:9/users/me',
         [],
         ['Accept: application/json'],
         false,
         ['timeout' => 1, 'connect_timeout' => 1]
-    );
+    ));
     $realCanary = $control->status()['canary'] ?? null;
     $check(is_array($realCanary) && (int) ($realCanary['used_calls'] ?? 0) === 1,
         'REAL_TRANSPORT_CANARY_GUARD no consumió el permiso en CurlMeliHttpTransport.');
     try {
-        $realTransport->request(
+        ApiExecutionMetadataContext::run($transportMetadata, static fn (): array => $realTransport->request(
             'GET',
-            'http://127.0.0.1:9/hf1-canary-contract-second',
+            'http://127.0.0.1:9/users/me',
             [],
             ['Accept: application/json'],
             false,
             ['timeout' => 1, 'connect_timeout' => 1]
-        );
+        ));
         $check(false, 'SINGLE_CANARY_TRANSPORT_ENFORCED permitió una segunda salida.');
     } catch (Throwable $blocked) {
         $check(str_contains($blocked->getMessage(), 'canaria ya fue utilizada'),

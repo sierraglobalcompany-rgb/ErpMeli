@@ -14,6 +14,13 @@ final class MeliEmergencyStopService
             return;
         }
 
+        // PAUSE_MELI_API continúa presente. La única excepción es una reserva
+        // OAuth privada, exacta y todavía no consumida; la última barrera vuelve
+        // a validar y consume ese permiso inmediatamente antes de cURL.
+        if ((new EmergencyControlService())->emergencyOAuthRefreshPreflightAllowed()) {
+            return;
+        }
+
         throw new ApiManualPauseException('app', null, null, self::MESSAGE);
     }
 
@@ -23,8 +30,12 @@ final class MeliEmergencyStopService
      */
     public function assertTransportAllowed(string $method, string $url): void
     {
-        $this->assertAllowed();
         $path = (string) (parse_url($url, PHP_URL_PATH) ?: '/');
+        if ($this->active()) {
+            (new EmergencyControlService())->claimEmergencyOAuthRefreshTransport($method, $path);
+            return;
+        }
+        $this->assertAllowed();
         (new EmergencyControlService())->claimCanaryTransport($method, $path);
     }
 

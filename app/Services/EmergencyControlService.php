@@ -24,6 +24,7 @@ final class EmergencyControlService
     public const API_MARKER = 'PAUSE_MELI_API';
     public const AUTOMATION_MARKER = 'PAUSE_ERP_AUTOMATION';
     public const CANARY_MARKER = 'MELI_API_CANARY.json';
+    public const OAUTH_REFRESH_MARKER = 'EMERGENCY_OAUTH_REFRESH.json';
     public const LAST_CHANGE_MARKER = 'ERP_SAFETY_STATE.json';
     public const USERNAME = 'admin-emergencia';
 
@@ -48,6 +49,7 @@ final class EmergencyControlService
         $api = $this->readJson($this->markerPath(self::API_MARKER));
         $automation = $this->readJson($this->markerPath(self::AUTOMATION_MARKER));
         $canary = $this->readJson($this->markerPath(self::CANARY_MARKER));
+        $oauthRefresh = $this->readJson($this->markerPath(self::OAUTH_REFRESH_MARKER));
         $lastChange = $this->readJson($this->markerPath(self::LAST_CHANGE_MARKER));
         $apiStopped = is_file($this->markerPath(self::API_MARKER));
         $automationStopped = is_file($this->markerPath(self::AUTOMATION_MARKER));
@@ -67,6 +69,10 @@ final class EmergencyControlService
             // exclusivamente en el marcador privado y en el contexto del transporte.
             unset($publicCanary['reservation_nonce']);
         }
+        $publicOAuthRefresh = $oauthRefresh;
+        if (is_array($publicOAuthRefresh)) {
+            unset($publicOAuthRefresh['reservation_nonce']);
+        }
 
         return [
             // Un marcador vencido sin PAUSE_MELI_API sigue siendo fail-closed.
@@ -77,12 +83,13 @@ final class EmergencyControlService
             'writes' => Env::bool('ML_WRITE_ENABLED', false) ? 'enabled' : 'disabled',
             'credential_ready' => $this->credentialExists(),
             'source' => 'filesystem',
-            'changed_at' => $this->latestChangedAt([$lastChange, $api, $automation, $canary]),
-            'reason' => $this->latestReason([$lastChange, $api, $automation, $canary]),
+            'changed_at' => $this->latestChangedAt([$lastChange, $api, $automation, $canary, $oauthRefresh]),
+            'reason' => $this->latestReason([$lastChange, $api, $automation, $canary, $oauthRefresh]),
             // La evidencia de una prueba fallida debe seguir visible incluso
             // después de restaurar el bloqueo físico PAUSE_MELI_API.
             'canary' => $canaryVisible ? $publicCanary : null,
             'canary_expired' => $canaryExpired,
+            'oauth_refresh' => is_array($publicOAuthRefresh) ? $publicOAuthRefresh : null,
             'storage_degraded' => str_contains(str_replace('\\', '/', $this->privateDirectory), '/storage/'),
         ];
     }
@@ -202,8 +209,8 @@ final class EmergencyControlService
 
     public function startAutomation(string $actor, string $reason): void
     {
-        if ($this->canaryRequiresAutomationStop()) {
-            throw new RuntimeException('No puede activar la automatización mientras exista una prueba canaria pendiente. Cierre o bloquee primero la prueba.');
+        if ($this->canaryRequiresAutomationStop() || $this->oauthRefreshRequiresAutomationStop()) {
+            throw new RuntimeException('No puede activar la automatización mientras exista una operación de emergencia pendiente.');
         }
         $this->removeMarker(self::AUTOMATION_MARKER);
         $this->recordChange('automation_started', $actor, $reason ?: 'Automatización habilitada.');
@@ -213,6 +220,9 @@ final class EmergencyControlService
     public function startApiWithoutCanary(string $actor, string $reason): void
     {
         $this->assertAutomationStoppedForApiEnable();
+        if ($this->oauthRefreshRequiresAutomationStop()) {
+            throw new RuntimeException('No puede habilitar Mercado Libre mientras exista una renovación OAuth en curso.');
+        }
         @unlink($this->markerPath(self::CANARY_MARKER));
         $this->removePrivateCanaryReservation();
         $this->removeMarker(self::API_MARKER);
@@ -269,22 +279,27 @@ final class EmergencyControlService
 
     public function prepareApiStart(string $actor, string $reason): void
     {
-        $this->assertAutomationStoppedForApiEnable();
-        $this->removePrivateCanaryReservation();
-        $canary = [
-            'version' => 2,
-            'state' => 'ready',
-            'max_calls' => 1,
-            'used_calls' => 0,
-            'created_at' => gmdate(DATE_ATOM),
-            'expires_at' => time() + 3600,
-            'actor' => mb_substr($actor, 0, 120),
-            'reason' => mb_substr(trim($reason) ?: 'Reactivación canaria solicitada.', 0, 500),
-        ];
-        $this->atomicJson($this->markerPath(self::CANARY_MARKER), $canary);
-        $this->removeMarker(self::API_MARKER);
-        $this->recordChange('api_canary_ready', $actor, (string) $canary['reason']);
-        $this->audit('api_canary_ready', $actor, (string) $canary['reason']);
+        $this->withEmergencyRemoteAuthorizationLock(function () use ($actor, $reason): void {
+            $this->assertAutomationStoppedForApiEnable();
+            if ($this->oauthRefreshRequiresAutomationStop()) {
+                throw new RuntimeException('Espere a que termine la renovación OAuth antes de preparar el canario.');
+            }
+            $this->removePrivateCanaryReservation();
+            $canary = [
+                'version' => 2,
+                'state' => 'ready',
+                'max_calls' => 1,
+                'used_calls' => 0,
+                'created_at' => gmdate(DATE_ATOM),
+                'expires_at' => time() + 3600,
+                'actor' => mb_substr($actor, 0, 120),
+                'reason' => mb_substr(trim($reason) ?: 'Reactivación canaria solicitada.', 0, 500),
+            ];
+            $this->atomicJson($this->markerPath(self::CANARY_MARKER), $canary);
+            $this->removeMarker(self::API_MARKER);
+            $this->recordChange('api_canary_ready', $actor, (string) $canary['reason']);
+            $this->audit('api_canary_ready', $actor, (string) $canary['reason']);
+        });
     }
 
     public function confirmApiStart(string $actor, string $reason): void
@@ -311,43 +326,48 @@ final class EmergencyControlService
      */
     public function reserveApiCanary(int $accountId, string $expectedMeliUserId): string
     {
-        $this->assertAutomationStoppedForApiEnable();
-        if (Env::bool('ML_WRITE_ENABLED', false)) {
-            throw new RuntimeException('Las escrituras remotas deben permanecer deshabilitadas. Código: EMERGENCY_WRITES_ENABLED.');
-        }
-        if ($accountId < 1 || trim($expectedMeliUserId) === '') {
-            throw new RuntimeException('La cuenta seleccionada no tiene una identidad Mercado Libre válida.');
-        }
-        $nonce = $this->newCanaryNonce();
-        $this->mutateCanary(function (array $canary) use ($accountId, $expectedMeliUserId, $nonce): array {
-            if ((int) ($canary['expires_at'] ?? 0) < time()) {
-                throw new RuntimeException('La prueba canaria venció. Prepare una nueva prueba.');
+        return $this->withEmergencyRemoteAuthorizationLock(function () use ($accountId, $expectedMeliUserId): string {
+            $this->assertAutomationStoppedForApiEnable();
+            if ($this->oauthRefreshRequiresAutomationStop()) {
+                throw new RuntimeException('Existe una renovación OAuth de emergencia en curso.');
             }
-            if (($canary['state'] ?? '') !== 'ready' || (int) ($canary['used_calls'] ?? 0) !== 0) {
-                throw new RuntimeException('La prueba canaria ya fue reservada o utilizada. Revise su resultado.');
+            if (Env::bool('ML_WRITE_ENABLED', false)) {
+                throw new RuntimeException('Las escrituras remotas deben permanecer deshabilitadas. Código: EMERGENCY_WRITES_ENABLED.');
             }
-            $canary['state'] = 'reserved';
-            $canary['meli_account_id'] = $accountId;
-            $canary['expected_meli_user_id'] = trim($expectedMeliUserId);
-            $canary['method'] = 'GET';
-            $canary['endpoint'] = '/users/me';
-            $canary['operation'] = 'users_me';
-            $canary['source'] = 'manual_emergency_canary';
-            $canary['reserved_at'] = gmdate(DATE_ATOM);
-            $this->ensurePrivateDirectory();
-            $this->atomicJson($this->canaryReservationPath(), [
-                'version' => 1,
-                'meli_account_id' => $accountId,
-                'expected_meli_user_id' => trim($expectedMeliUserId),
-                'method' => 'GET',
-                'endpoint' => '/users/me',
-                'source' => 'manual_emergency_canary',
-                'reservation_nonce' => $nonce,
-                'reserved_at' => $canary['reserved_at'],
-            ]);
-            return $canary;
+            if ($accountId < 1 || trim($expectedMeliUserId) === '') {
+                throw new RuntimeException('La cuenta seleccionada no tiene una identidad Mercado Libre válida.');
+            }
+            $nonce = $this->newCanaryNonce();
+            $this->mutateCanary(function (array $canary) use ($accountId, $expectedMeliUserId, $nonce): array {
+                if ((int) ($canary['expires_at'] ?? 0) < time()) {
+                    throw new RuntimeException('La prueba canaria venció. Prepare una nueva prueba.');
+                }
+                if (($canary['state'] ?? '') !== 'ready' || (int) ($canary['used_calls'] ?? 0) !== 0) {
+                    throw new RuntimeException('La prueba canaria ya fue reservada o utilizada. Revise su resultado.');
+                }
+                $canary['state'] = 'reserved';
+                $canary['meli_account_id'] = $accountId;
+                $canary['expected_meli_user_id'] = trim($expectedMeliUserId);
+                $canary['method'] = 'GET';
+                $canary['endpoint'] = '/users/me';
+                $canary['operation'] = 'users_me';
+                $canary['source'] = 'manual_emergency_canary';
+                $canary['reserved_at'] = gmdate(DATE_ATOM);
+                $this->ensurePrivateDirectory();
+                $this->atomicJson($this->canaryReservationPath(), [
+                    'version' => 1,
+                    'meli_account_id' => $accountId,
+                    'expected_meli_user_id' => trim($expectedMeliUserId),
+                    'method' => 'GET',
+                    'endpoint' => '/users/me',
+                    'source' => 'manual_emergency_canary',
+                    'reservation_nonce' => $nonce,
+                    'reserved_at' => $canary['reserved_at'],
+                ]);
+                return $canary;
+            });
+            return $nonce;
         });
-        return $nonce;
     }
 
     /** Se llama en la última barrera, inmediatamente antes de abrir cURL. */
@@ -499,6 +519,223 @@ final class EmergencyControlService
         $this->removePrivateCanaryReservation();
         $this->recordChange('api_canary_failed', $actor, 'Prueba canaria fallida. Referencia: ' . $reference . '.');
         $this->audit('api_canary_failed', $actor, 'failure_class=' . mb_substr($failureClass, 0, 80) . ' reference=' . mb_substr($reference, 0, 80));
+    }
+
+    /** Reserva una sola salida POST /oauth/token sin retirar PAUSE_MELI_API. */
+    public function reserveEmergencyOAuthRefresh(int $accountId, string $expectedMeliUserId): string
+    {
+        $nonce = $this->withEmergencyRemoteAuthorizationLock(function () use ($accountId, $expectedMeliUserId): string {
+            $this->assertAutomationStoppedForApiEnable();
+            if (!$this->apiStopped()) {
+                throw new RuntimeException('Mercado Libre debe permanecer bloqueado durante la renovación OAuth.');
+            }
+            if (Env::bool('ML_WRITE_ENABLED', false)) {
+                throw new RuntimeException('Las escrituras remotas deben permanecer deshabilitadas.');
+            }
+            if ($accountId < 1 || trim($expectedMeliUserId) === '') {
+                throw new RuntimeException('La cuenta seleccionada no tiene una identidad Mercado Libre válida.');
+            }
+            $this->retireUnusedCanaryBeforeOAuthRefresh();
+            $existing = $this->readJson($this->markerPath(self::OAUTH_REFRESH_MARKER));
+            if (is_array($existing)
+                && in_array((string) ($existing['state'] ?? ''), ['reserved', 'in_flight', 'response_known'], true)
+                && (int) ($existing['expires_at'] ?? 0) >= time()) {
+                throw new RuntimeException('Ya existe una renovación OAuth de emergencia en curso.');
+            }
+            $nonce = $this->newCanaryNonce();
+            $reservedAt = gmdate(DATE_ATOM);
+            $document = [
+                'version' => 1,
+                'state' => 'reserved',
+                'max_calls' => 1,
+                'used_calls' => 0,
+                'meli_account_id' => $accountId,
+                'expected_meli_user_id' => trim($expectedMeliUserId),
+                'method' => 'POST',
+                'endpoint' => '/oauth/token',
+                'operation' => 'oauth_token',
+                'source' => 'manual_emergency_oauth_refresh',
+                'reserved_at' => $reservedAt,
+                'expires_at' => time() + 300,
+            ];
+            $this->atomicJson($this->markerPath(self::OAUTH_REFRESH_MARKER), $document);
+            $this->ensurePrivateDirectory();
+            $this->atomicJson($this->oauthRefreshReservationPath(), [
+                'version' => 1,
+                'meli_account_id' => $accountId,
+                'expected_meli_user_id' => trim($expectedMeliUserId),
+                'method' => 'POST',
+                'endpoint' => '/oauth/token',
+                'source' => 'manual_emergency_oauth_refresh',
+                'reservation_nonce' => $nonce,
+                'reserved_at' => $reservedAt,
+            ]);
+            return $nonce;
+        });
+        $this->recordChange('emergency_oauth_refresh_reserved', 'system', 'Renovación OAuth reservada para una cuenta.');
+        return $nonce;
+    }
+
+    /** Preflight no consumidor utilizado por la barrera API anterior al transporte. */
+    public function emergencyOAuthRefreshPreflightAllowed(): bool
+    {
+        if (!$this->apiStopped() || !$this->automationStopped()) {
+            return false;
+        }
+        $context = ApiExecutionMetadataContext::current();
+        $nonce = EmergencyOAuthRefreshTransportContext::reservationNonce();
+        if ((string) ($context['source'] ?? '') !== 'manual_emergency_oauth_refresh' || $nonce === '') {
+            return false;
+        }
+        $document = $this->readJson($this->markerPath(self::OAUTH_REFRESH_MARKER));
+        $reservation = $this->readJson($this->oauthRefreshReservationPath());
+        return is_array($document)
+            && is_array($reservation)
+            && ($document['state'] ?? '') === 'reserved'
+            && (int) ($document['used_calls'] ?? -1) === 0
+            && (int) ($document['expires_at'] ?? 0) >= time()
+            && hash_equals((string) ($reservation['reservation_nonce'] ?? ''), $nonce)
+            && (int) ($context['meli_account_id'] ?? 0) === (int) ($reservation['meli_account_id'] ?? -1);
+    }
+
+    /** Última barrera, bajo lock, antes de abrir cURL para OAuth. */
+    public function claimEmergencyOAuthRefreshTransport(string $method, string $endpoint): void
+    {
+        $context = ApiExecutionMetadataContext::current();
+        $nonce = EmergencyOAuthRefreshTransportContext::reservationNonce();
+        $this->mutateOAuthRefresh(function (array $document) use ($context, $nonce, $method, $endpoint): array {
+            if (!$this->automationStopped() || !$this->apiStopped()) {
+                throw new ApiManualPauseException('app', null, null, 'Las barreras de emergencia cambiaron antes de renovar OAuth.');
+            }
+            if ((int) ($document['expires_at'] ?? 0) < time()) {
+                throw new ApiManualPauseException('app', null, null, 'La autorización OAuth de emergencia venció.');
+            }
+            if (($document['state'] ?? '') !== 'reserved' || (int) ($document['used_calls'] ?? 0) !== 0) {
+                throw new ApiManualPauseException('app', null, null, 'La autorización OAuth ya fue utilizada o no está reservada.');
+            }
+            $reservation = $this->readJson($this->oauthRefreshReservationPath());
+            if (!is_array($reservation)) {
+                throw new ApiManualPauseException('app', null, null, 'La reserva OAuth privada no está disponible.');
+            }
+            $actual = [
+                'meli_account_id' => (string) ($context['meli_account_id'] ?? ''),
+                'transport_meli_account_id' => (string) ($context['transport_meli_account_id'] ?? ''),
+                'expected_meli_user_id' => (string) ($context['expected_meli_user_id'] ?? ''),
+                'method' => strtoupper($method),
+                'endpoint' => '/' . ltrim($endpoint, '/'),
+                'source' => (string) ($context['source'] ?? ''),
+                'reservation_nonce' => $nonce,
+            ];
+            $expected = [
+                'meli_account_id' => (string) ($reservation['meli_account_id'] ?? ''),
+                'transport_meli_account_id' => (string) ($reservation['meli_account_id'] ?? ''),
+                'expected_meli_user_id' => (string) ($reservation['expected_meli_user_id'] ?? ''),
+                'method' => (string) ($reservation['method'] ?? ''),
+                'endpoint' => (string) ($reservation['endpoint'] ?? ''),
+                'source' => (string) ($reservation['source'] ?? ''),
+                'reservation_nonce' => (string) ($reservation['reservation_nonce'] ?? ''),
+            ];
+            foreach (['meli_account_id', 'expected_meli_user_id', 'method', 'endpoint', 'source'] as $key) {
+                if (!hash_equals((string) ($document[$key] ?? ''), (string) ($reservation[$key] ?? ''))) {
+                    throw new ApiManualPauseException('app', null, null, 'La reserva OAuth privada no coincide con su estado público.');
+                }
+            }
+            foreach ($expected as $key => $value) {
+                if ($value === '' || !hash_equals($value, $actual[$key])) {
+                    throw new ApiManualPauseException('app', null, null, 'La solicitud no coincide con la renovación OAuth autorizada.');
+                }
+            }
+            $document['used_calls'] = 1;
+            $document['state'] = 'in_flight';
+            $document['dispatched_at'] = gmdate(DATE_ATOM);
+            return $document;
+        });
+    }
+
+    public function completeEmergencyOAuthRefreshTransport(bool $success, ?int $status = null): void
+    {
+        if (!is_file($this->markerPath(self::OAUTH_REFRESH_MARKER))) {
+            return;
+        }
+        $this->mutateOAuthRefresh(function (array $document) use ($success, $status): array {
+            if (($document['state'] ?? '') !== 'in_flight') {
+                return $document;
+            }
+            $document['http_status'] = $status;
+            $document['response_at'] = gmdate(DATE_ATOM);
+            if ($success) {
+                $document['state'] = 'response_known';
+                return $document;
+            }
+            $document['state'] = 'complete';
+            $document['last_result'] = 'failed';
+            $document['failure_class'] = 'transport_or_http_failure';
+            $document['completed_at'] = gmdate(DATE_ATOM);
+            return $document;
+        });
+    }
+
+    public function completeEmergencyOAuthRefreshSuccess(
+        string $nonce,
+        int $accountId,
+        string $expiresAt,
+        int $refreshVersion
+    ): void {
+        $reservation = $this->readJson($this->oauthRefreshReservationPath());
+        $privateNonce = is_array($reservation) ? (string) ($reservation['reservation_nonce'] ?? '') : '';
+        $this->mutateOAuthRefresh(function (array $document) use (
+            $nonce,
+            $privateNonce,
+            $accountId,
+            $expiresAt,
+            $refreshVersion
+        ): array {
+            if (($document['state'] ?? '') !== 'response_known'
+                || $privateNonce === ''
+                || !hash_equals($privateNonce, $nonce)
+                || (int) ($document['meli_account_id'] ?? 0) !== $accountId
+                || $refreshVersion < 1) {
+                throw new RuntimeException('No se pudo certificar la renovación OAuth exacta.');
+            }
+            $document['state'] = 'complete';
+            $document['last_result'] = 'success';
+            $document['token_expires_at'] = mb_substr($expiresAt, 0, 40);
+            $document['refresh_version'] = $refreshVersion;
+            $document['completed_at'] = gmdate(DATE_ATOM);
+            return $document;
+        });
+        $this->removePrivateOAuthRefreshReservation();
+        $this->recordChange('emergency_oauth_refresh_complete', 'system', 'Token OAuth renovado para una cuenta.');
+    }
+
+    public function failEmergencyOAuthRefreshAndBlock(
+        string $actor,
+        string $failureClass,
+        string $reference,
+        ?int $status = null
+    ): void {
+        if (!$this->apiStopped()) {
+            $this->writeMarker(self::API_MARKER, $actor, 'Renovación OAuth fallida. Referencia: ' . $reference . '.');
+        }
+        if (!$this->automationStopped()) {
+            $this->writeMarker(self::AUTOMATION_MARKER, $actor, 'Renovación OAuth cancelada por cambio de seguridad.');
+        }
+        if (is_file($this->markerPath(self::OAUTH_REFRESH_MARKER))) {
+            $this->mutateOAuthRefresh(function (array $document) use ($failureClass, $reference, $status): array {
+                $document['state'] = 'complete';
+                $document['last_result'] = 'failed';
+                $document['failure_class'] = mb_substr($failureClass, 0, 80);
+                $document['failure_reference'] = mb_substr($reference, 0, 80);
+                if ($status !== null) {
+                    $document['http_status'] = $status;
+                }
+                $document['completed_at'] = gmdate(DATE_ATOM);
+                return $document;
+            });
+        }
+        $this->removePrivateOAuthRefreshReservation();
+        $this->recordChange('emergency_oauth_refresh_failed', $actor, 'Renovación OAuth fallida. Referencia: ' . $reference . '.');
+        $this->audit('emergency_oauth_refresh_failed', $actor, 'failure_class=' . mb_substr($failureClass, 0, 80) . ' reference=' . mb_substr($reference, 0, 80));
     }
 
     public function apiStopped(): bool
@@ -802,6 +1039,63 @@ final class EmergencyControlService
         }
     }
 
+    /**
+     * @param callable(array<string,mixed>):array<string,mixed> $callback
+     * @return array<string,mixed>
+     */
+    private function mutateOAuthRefresh(callable $callback): array
+    {
+        $path = $this->markerPath(self::OAUTH_REFRESH_MARKER);
+        $handle = @fopen($path, 'r+');
+        if (!is_resource($handle)) {
+            throw new RuntimeException('No se pudo comprobar la renovación OAuth de emergencia.');
+        }
+        try {
+            if (!flock($handle, LOCK_EX)) {
+                throw new RuntimeException('Otra renovación OAuth está en curso.');
+            }
+            rewind($handle);
+            $raw = stream_get_contents($handle);
+            $document = is_string($raw) && trim($raw) !== '' ? json_decode($raw, true) : null;
+            if (!is_array($document)) {
+                throw new RuntimeException('No existe una renovación OAuth de emergencia preparada.');
+            }
+            $updated = $callback($document);
+            ftruncate($handle, 0);
+            rewind($handle);
+            fwrite($handle, json_encode($updated, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+            fflush($handle);
+            @chmod($path, 0600);
+            return $updated;
+        } finally {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
+    }
+
+    /**
+     * @template T
+     * @param callable():T $callback
+     * @return T
+     */
+    private function withEmergencyRemoteAuthorizationLock(callable $callback): mixed
+    {
+        $this->ensurePrivateDirectory();
+        $handle = @fopen($this->privateDirectory . '/remote-authorization.lock', 'c+');
+        if (!is_resource($handle)) {
+            throw new RuntimeException('No se pudo bloquear la autorización remota de emergencia.');
+        }
+        try {
+            if (!flock($handle, LOCK_EX)) {
+                throw new RuntimeException('Otra autorización remota de emergencia está en curso.');
+            }
+            return $callback();
+        } finally {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
+    }
+
     private function canaryRequiresAutomationStop(): bool
     {
         $canary = $this->readJson($this->markerPath(self::CANARY_MARKER));
@@ -815,6 +1109,42 @@ final class EmergencyControlService
         return $state === 'complete'
             && ($canary['last_result'] ?? '') === 'success'
             && !empty($canary['identity_verified']);
+    }
+
+    private function oauthRefreshRequiresAutomationStop(): bool
+    {
+        $document = $this->readJson($this->markerPath(self::OAUTH_REFRESH_MARKER));
+        if (!is_array($document) || (int) ($document['expires_at'] ?? 0) < time()) {
+            return false;
+        }
+        return in_array((string) ($document['state'] ?? ''), ['reserved', 'in_flight', 'response_known'], true);
+    }
+
+    /**
+     * Un canario meramente preparado todavía no hizo HTTP y puede reemplazarse
+     * por la autorización OAuth solicitada. Cualquier canario que ya cruzó una
+     * reserva o que espera confirmación humana permanece protegido.
+     */
+    private function retireUnusedCanaryBeforeOAuthRefresh(): void
+    {
+        $path = $this->markerPath(self::CANARY_MARKER);
+        $canary = $this->readJson($path);
+        if (!is_array($canary)) {
+            return;
+        }
+        $state = (string) ($canary['state'] ?? '');
+        $usedCalls = (int) ($canary['used_calls'] ?? 0);
+        if ($state === 'ready' && $usedCalls === 0) {
+            if (!@unlink($path) && is_file($path)) {
+                throw new RuntimeException('No fue posible retirar la prueba canaria sin uso.');
+            }
+            $this->removePrivateCanaryReservation();
+            return;
+        }
+        if ($state === 'complete' && ($canary['last_result'] ?? '') === 'failed') {
+            return;
+        }
+        throw new RuntimeException('La prueba canaria actual debe terminar antes de renovar OAuth.');
     }
 
     private function writeMarker(string $name, string $actor, string $reason): void
@@ -901,6 +1231,11 @@ final class EmergencyControlService
         return $this->privateDirectory . '/canary-reservation.json';
     }
 
+    private function oauthRefreshReservationPath(): string
+    {
+        return $this->privateDirectory . '/oauth-refresh-reservation.json';
+    }
+
     private function newCanaryNonce(): string
     {
         $nonce = $this->canaryNonceFactory !== null
@@ -917,6 +1252,14 @@ final class EmergencyControlService
         $path = $this->canaryReservationPath();
         if (is_file($path) && !@unlink($path)) {
             throw new RuntimeException('No fue posible retirar la reserva canaria privada.');
+        }
+    }
+
+    private function removePrivateOAuthRefreshReservation(): void
+    {
+        $path = $this->oauthRefreshReservationPath();
+        if (is_file($path) && !@unlink($path)) {
+            throw new RuntimeException('No fue posible retirar la reserva OAuth privada.');
         }
     }
 

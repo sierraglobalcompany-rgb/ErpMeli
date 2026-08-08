@@ -156,10 +156,11 @@ final class MeliApiClient implements MeliReadClientInterface
         }
         $singleDispatchAttempt = in_array(
             (string) ($meta['source'] ?? ''),
-            ['cron_v3_remote', 'manual_campaign', 'manual_emergency_canary'],
+            ['cron_v3_remote', 'manual_campaign', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'],
             true
         );
         $manualEmergencyCanary = (string) ($meta['source'] ?? '') === 'manual_emergency_canary';
+        $manualEmergencyOAuthRefresh = (string) ($meta['source'] ?? '') === 'manual_emergency_oauth_refresh';
         $cronV3RemoteContext = (string) ($meta['source'] ?? '') === 'cron_v3_remote';
         $attempts = $singleDispatchAttempt ? 1 : $guard->maxAttempts($mutation, $method);
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
@@ -393,6 +394,18 @@ final class MeliApiClient implements MeliReadClientInterface
                     'is_app_blocked_signal' => false,
                     'recommendation' => 'Mantenga Mercado Libre bloqueado y revise la referencia canaria local.',
                 ];
+            } elseif ($manualEmergencyOAuthRefresh) {
+                // La respuesta OAuth puede contener credenciales incluso en un
+                // error. Solo se conserva una clase segura y nunca el body.
+                $errorCode = $this->emergencyOAuthRefreshErrorCode($status, $curlError);
+                $safeMessage = $this->emergencyOAuthRefreshSafeMessage($errorCode);
+                $safeDecoded = [];
+                $classification = [
+                    'type' => strtolower($errorCode),
+                    'is_retryable' => false,
+                    'is_app_blocked_signal' => false,
+                    'recommendation' => 'Mantenga Mercado Libre y la automatización bloqueados; revise la referencia OAuth local.',
+                ];
             }
             $classification['reached_remote'] = true;
             if ($status === 404 && str_contains($path, '/description')) {
@@ -437,12 +450,37 @@ final class MeliApiClient implements MeliReadClientInterface
                 $status,
                 $safeMessage,
                 $safeDecoded,
-                $manualEmergencyCanary ? $errorCode : null,
-                $manualEmergencyCanary
+                ($manualEmergencyCanary || $manualEmergencyOAuthRefresh) ? $errorCode : null,
+                $manualEmergencyCanary || $manualEmergencyOAuthRefresh
             );
             throw new MeliApiException($safeMessage, $status ?: null, $requestId, $safeDecoded);
         }
         throw new MeliApiException('Error de API no recuperable.', null, $requestId);
+    }
+
+    private function emergencyOAuthRefreshErrorCode(int $status, string $curlError): string
+    {
+        if ($curlError !== '' || $status <= 0) {
+            return 'EMERGENCY_OAUTH_TRANSPORT_ERROR';
+        }
+        return match (true) {
+            $status === 401 => 'EMERGENCY_OAUTH_HTTP_401',
+            $status === 403 => 'EMERGENCY_OAUTH_HTTP_403',
+            $status === 429 => 'EMERGENCY_OAUTH_HTTP_429',
+            $status >= 500 => 'EMERGENCY_OAUTH_HTTP_5XX',
+            default => 'EMERGENCY_OAUTH_HTTP_ERROR',
+        };
+    }
+
+    private function emergencyOAuthRefreshSafeMessage(string $errorCode): string
+    {
+        return match ($errorCode) {
+            'EMERGENCY_OAUTH_HTTP_401', 'EMERGENCY_OAUTH_HTTP_403' => 'Mercado Libre rechazó la renovación OAuth.',
+            'EMERGENCY_OAUTH_HTTP_429' => 'Mercado Libre limitó temporalmente la renovación OAuth.',
+            'EMERGENCY_OAUTH_HTTP_5XX' => 'Mercado Libre no pudo completar la renovación OAuth.',
+            'EMERGENCY_OAUTH_TRANSPORT_ERROR' => 'No se obtuvo una respuesta verificable durante la renovación OAuth.',
+            default => 'La renovación OAuth no fue aceptada.',
+        };
     }
 
     private function logApiError(

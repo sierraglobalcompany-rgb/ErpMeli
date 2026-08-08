@@ -46,7 +46,8 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
                 return strlen($line);
             },
         ];
-        if ((string) (ApiExecutionMetadataContext::current()['source'] ?? '') === 'manual_emergency_canary') {
+        $emergencySource = (string) (ApiExecutionMetadataContext::current()['source'] ?? '');
+        if (in_array($emergencySource, ['manual_emergency_canary', 'manual_emergency_oauth_refresh'], true)) {
             // Un redirect también sería otra solicitud física. El canario no
             // puede seguirlo, ni siquiera cuando el servidor responda 301/302.
             $options[CURLOPT_FOLLOWLOCATION] = false;
@@ -66,10 +67,18 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         $curlError = curl_error($ch);
         unset($ch);
         $decoded = is_string($raw) ? json_decode($raw, true) : null;
-        (new EmergencyControlService())->completeCanaryTransport(
-            $curlError === '' && $status >= 200 && $status < 300,
-            $status > 0 ? $status : null
-        );
+        $control = new EmergencyControlService();
+        if ($emergencySource === 'manual_emergency_oauth_refresh') {
+            $control->completeEmergencyOAuthRefreshTransport(
+                $curlError === '' && $status >= 200 && $status < 300,
+                $status > 0 ? $status : null
+            );
+        } else {
+            $control->completeCanaryTransport(
+                $curlError === '' && $status >= 200 && $status < 300,
+                $status > 0 ? $status : null
+            );
+        }
 
         return [
             'status' => $status,

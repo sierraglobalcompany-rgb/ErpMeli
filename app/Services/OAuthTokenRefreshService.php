@@ -57,13 +57,23 @@ final class OAuthTokenRefreshService
                 'grant_type' => 'refresh_token',
                 'refresh_token' => Crypto::decrypt((string) $current['refresh_token_encrypted']),
             ]);
-            if (empty($response['access_token']) || empty($response['refresh_token'])) {
+            $accessToken = trim((string) ($response['access_token'] ?? ''));
+            $refreshToken = trim((string) ($response['refresh_token'] ?? ''));
+            $expiresIn = filter_var($response['expires_in'] ?? null, FILTER_VALIDATE_INT);
+            $tokenType = trim((string) ($response['token_type'] ?? ''));
+            if ($accessToken === '' || $refreshToken === '') {
                 throw new RuntimeException('La renovación OAuth no entregó ambos tokens.');
             }
+            if ($expiresIn === false || $expiresIn < 60) {
+                throw new RuntimeException('La renovación OAuth no entregó una vigencia válida.');
+            }
+            if ($tokenType !== '' && strcasecmp($tokenType, 'Bearer') !== 0) {
+                throw new RuntimeException('La renovación OAuth entregó un tipo de token inesperado.');
+            }
 
-            $accessEncrypted = Crypto::encrypt((string) $response['access_token']);
-            $refreshEncrypted = Crypto::encrypt((string) $response['refresh_token']);
-            $expiresAt = gmdate('Y-m-d H:i:s', time() + max(60, (int) ($response['expires_in'] ?? 21600)));
+            $accessEncrypted = Crypto::encrypt($accessToken);
+            $refreshEncrypted = Crypto::encrypt($refreshToken);
+            $expiresAt = gmdate('Y-m-d H:i:s', time() + $expiresIn);
 
             $pdo = Database::connectionFresh();
             $pdo->beginTransaction();
@@ -97,6 +107,7 @@ final class OAuthTokenRefreshService
             $current['refresh_token_encrypted'] = $refreshEncrypted;
             $current['expires_at'] = $expiresAt;
             $current['scope'] = (string) ($response['scope'] ?? $current['scope'] ?? '');
+            $current['refresh_version'] = (int) ($current['refresh_version'] ?? 0) + 1;
             return $current;
         } catch (Throwable $error) {
             if ($this->isInvalidGrant($error)) {

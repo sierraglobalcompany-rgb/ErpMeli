@@ -51,9 +51,15 @@ final class EmergencyControlService
         $apiStopped = is_file($this->markerPath(self::API_MARKER));
         $automationStopped = is_file($this->markerPath(self::AUTOMATION_MARKER));
         $canaryVisible = is_array($canary);
+        $canaryFailed = $canaryVisible
+            && ($canary['state'] ?? '') === 'complete'
+            && ($canary['last_result'] ?? '') === 'failed';
+        $canaryExpired = $canaryVisible
+            && !$canaryFailed
+            && (int) ($canary['expires_at'] ?? 0) < time();
         $canaryActive = !$apiStopped
             && $canaryVisible
-            && (int) ($canary['expires_at'] ?? 0) >= time();
+            && !$canaryExpired;
         $publicCanary = $canary;
         if (is_array($publicCanary)) {
             // La evidencia es visible para el panel, pero el nonce permanece
@@ -62,7 +68,9 @@ final class EmergencyControlService
         }
 
         return [
-            'api' => $apiStopped ? 'stopped' : ($canaryActive ? 'canary' : 'enabled'),
+            // Un marcador vencido sin PAUSE_MELI_API sigue siendo fail-closed.
+            // Nunca debe degradarse visualmente a "enabled".
+            'api' => $canaryExpired ? 'canary_expired' : ($apiStopped ? 'stopped' : ($canaryActive ? 'canary' : 'enabled')),
             'automation' => $automationStopped ? 'stopped' : 'enabled',
             'maintenance' => $this->maintenanceStatus(),
             'writes' => Env::bool('ML_WRITE_ENABLED', false) ? 'enabled' : 'disabled',
@@ -73,6 +81,7 @@ final class EmergencyControlService
             // La evidencia de una prueba fallida debe seguir visible incluso
             // después de restaurar el bloqueo físico PAUSE_MELI_API.
             'canary' => $canaryVisible ? $publicCanary : null,
+            'canary_expired' => $canaryExpired,
             'storage_degraded' => str_contains(str_replace('\\', '/', $this->privateDirectory), '/storage/'),
         ];
     }
@@ -281,7 +290,8 @@ final class EmergencyControlService
         if (!is_array($canary)
             || ($canary['state'] ?? '') !== 'complete'
             || ($canary['last_result'] ?? '') !== 'success'
-            || empty($canary['identity_verified'])) {
+            || empty($canary['identity_verified'])
+            || (int) ($canary['expires_at'] ?? 0) < time()) {
             throw new RuntimeException('El canario todavía no confirmó una consulta correcta.');
         }
         @unlink($this->markerPath(self::CANARY_MARKER));
@@ -341,6 +351,12 @@ final class EmergencyControlService
     {
         $path = $this->markerPath(self::CANARY_MARKER);
         if (!is_file($path)) {
+            // Sin contexto privado se trata de una lectura normal. Si había una
+            // reserva canaria y el marcador desapareció, fallar cerrado evita
+            // que la carrera continúe hasta cURL.
+            if (EmergencyCanaryTransportContext::reservationNonce() !== '') {
+                throw new ApiManualPauseException('app', null, null, 'La prueba canaria ya no está disponible. Vuelva a bloquear Mercado Libre.');
+            }
             return;
         }
         $context = ApiExecutionMetadataContext::current();
@@ -740,7 +756,9 @@ final class EmergencyControlService
     private function mutateCanary(callable $callback): array
     {
         $path = $this->markerPath(self::CANARY_MARKER);
-        $handle = @fopen($path, 'c+');
+        // Una transición solo puede mutar una reserva que ya existe. r+ evita
+        // recrear un marcador vacío si otro proceso lo eliminó en una carrera.
+        $handle = @fopen($path, 'r+');
         if (!is_resource($handle)) {
             throw new RuntimeException('No se pudo comprobar el canario de Mercado Libre.');
         }

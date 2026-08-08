@@ -7,6 +7,7 @@ require dirname(__DIR__) . '/bootstrap.php';
 use App\Core\Database;
 use App\Core\Crypto;
 use App\Core\Env;
+use App\Core\AppPaths;
 use App\Recovery\EmergencyControlKernel;
 use App\Services\ApiExecutionMetadataContext;
 use App\Services\ApiGuardService;
@@ -283,18 +284,29 @@ try {
             created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
     );
+    // Estas tablas son efímeras y deben reproducir la forma productiva real;
+    // de otro modo la prueba no observaría la frontera de persistencia.
+    $pdo->exec('DROP TABLE IF EXISTS api_error_logs');
     $pdo->exec(
-        'CREATE TABLE IF NOT EXISTS api_error_logs (
+        'CREATE TABLE api_error_logs (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            safe_message TEXT NULL,
-            context_json LONGTEXT NULL,
+            meli_account_id BIGINT UNSIGNED NULL,
+            request_id VARCHAR(100) NULL,
+            method VARCHAR(10) NULL,
+            endpoint_path VARCHAR(255) NULL,
+            http_status INT NULL,
+            error_code VARCHAR(120) NULL,
+            safe_message VARCHAR(500) NULL,
+            response_json LONGTEXT NULL,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
     );
+    $pdo->exec('DROP TABLE IF EXISTS system_logs');
     $pdo->exec(
-        'CREATE TABLE IF NOT EXISTS system_logs (
+        'CREATE TABLE system_logs (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            safe_message TEXT NULL,
+            level VARCHAR(20) NOT NULL,
+            message VARCHAR(500) NOT NULL,
             context_json LONGTEXT NULL,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
@@ -450,6 +462,11 @@ try {
     $pdo->exec('TRUNCATE TABLE schema_migrations');
     $pdo->exec('TRUNCATE TABLE api_manual_pauses');
     $pdo->exec('TRUNCATE TABLE api_circuit_breakers');
+    $pdo->exec('TRUNCATE TABLE api_request_logs');
+    $pdo->exec('TRUNCATE TABLE api_error_logs');
+    $pdo->exec('TRUNCATE TABLE system_logs');
+    $pdo->exec('TRUNCATE TABLE api_operation_metrics_hourly');
+    $pdo->exec('TRUNCATE TABLE api_operation_metric_samples');
     $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
     $pdo->exec('TRUNCATE TABLE system_execution_attempts');
     $pdo->exec('TRUNCATE TABLE system_execution_runs');
@@ -638,6 +655,107 @@ try {
         && !str_contains($kernelSource, $nonceSentinel),
         'CANARY_NONCE_IN_HTML permitió que la capa de presentación acceda al secreto.');
     $sentinelControl->confirmApiStart('hf1-test', 'Prueba de persistencia completada');
+
+    // Un body remoto no-2xx puede clasificarse únicamente en memoria. Ni su
+    // mensaje, error o campos arbitrarios pueden cruzar observabilidad.
+    $bodySentinel = 'BODY_SENTINEL_' . bin2hex(random_bytes(18));
+    $bodyTransport = new class($bodySentinel) implements MeliHttpTransportInterface {
+        public int $calls = 0;
+        public function __construct(private string $sentinel)
+        {
+        }
+        public function request(string $method, string $url, array $data, array $headers, bool $form, array $timeouts): array
+        {
+            (new MeliEmergencyStopService())->assertTransportAllowed($method, $url);
+            $this->calls++;
+            (new EmergencyControlService())->completeCanaryTransport(false, 401);
+            return [
+                'status' => 401,
+                'headers' => [],
+                'body' => [
+                    'message' => $this->sentinel,
+                    'error' => $this->sentinel,
+                    'private_field' => $this->sentinel,
+                ],
+                'curl_error' => '',
+                'duration_ms' => 1,
+                'wire_bytes' => 128,
+                'decoded_bytes' => 128,
+            ];
+        }
+    };
+    $pdo->exec('TRUNCATE TABLE api_budget_windows');
+    $pdo->exec('TRUNCATE TABLE api_rhythm_states');
+    $pdo->exec('TRUNCATE TABLE api_remote_permits');
+    $pdo->exec('TRUNCATE TABLE api_rhythm_penalties');
+    $pdo->exec('TRUNCATE TABLE api_request_logs');
+    $pdo->exec('TRUNCATE TABLE api_error_logs');
+    $pdo->exec('TRUNCATE TABLE system_logs');
+    $pdo->exec('TRUNCATE TABLE api_operation_metrics_hourly');
+    $pdo->exec('TRUNCATE TABLE api_operation_metric_samples');
+    $bodyControl = new EmergencyControlService();
+    $bodyControl->stopAll('hf11-test', 'Aislar body no aprobado');
+    $bodyControl->prepareApiStart('hf11-test', 'Aislar body no aprobado');
+    $bodyService = new EmergencyApiCanaryService(
+        $bodyControl,
+        static fn (int $accountId): MeliApiClient => new MeliApiClient($accountId, $bodyTransport)
+    );
+    try {
+        $bodyService->run(1, 'hf11-test');
+        $check(false, 'CANARY_BODY_401 no terminó como fallo.');
+    } catch (RuntimeException) {
+        $bodyCanary = $bodyControl->status()['canary'] ?? null;
+        $check($bodyTransport->calls === 1
+            && $bodyControl->apiStopped()
+            && is_array($bodyCanary)
+            && ($bodyCanary['last_result'] ?? '') === 'failed',
+            'CANARY_BODY_401 no restauró PAUSE_MELI_API con evidencia fallida.');
+    }
+
+    $bodyDatabaseHits = 0;
+    $bodyColumns = $pdo->prepare(
+        "SELECT TABLE_NAME,COLUMN_NAME FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA=DATABASE()
+           AND DATA_TYPE IN ('char','varchar','tinytext','text','mediumtext','longtext','json',
+                             'binary','varbinary','tinyblob','blob','mediumblob','longblob')"
+    );
+    $bodyColumns->execute();
+    foreach ($bodyColumns->fetchAll(PDO::FETCH_ASSOC) as $column) {
+        $tableName = str_replace('`', '``', (string) $column['TABLE_NAME']);
+        $columnName = str_replace('`', '``', (string) $column['COLUMN_NAME']);
+        $needle = $pdo->quote('%' . $bodySentinel . '%');
+        $bodyDatabaseHits += (int) $pdo->query(
+            "SELECT COUNT(*) FROM `{$tableName}` WHERE CAST(`{$columnName}` AS CHAR) LIKE {$needle}"
+        )->fetchColumn();
+    }
+    $bodyFileHits = 0;
+    $bodyFiles = [
+        $root . DIRECTORY_SEPARATOR . EmergencyControlService::CANARY_MARKER,
+        $root . DIRECTORY_SEPARATOR . EmergencyControlService::LAST_CHANGE_MARKER,
+        $testPrivateDirectory . DIRECTORY_SEPARATOR . 'emergency-audit.jsonl',
+        $testPrivateDirectory . DIRECTORY_SEPARATOR . 'canary-reservation.json',
+        AppPaths::storage('logs/app.log'),
+    ];
+    foreach ($bodyFiles as $candidate) {
+        $contents = @file_get_contents($candidate);
+        if (is_string($contents) && str_contains($contents, $bodySentinel)) {
+            $bodyFileHits++;
+        }
+    }
+    $bodyStatus = json_encode($bodyControl->status(), JSON_UNESCAPED_SLASHES) ?: '';
+    $bodyErrorRow = $pdo->query(
+        "SELECT error_code,response_json FROM api_error_logs
+         WHERE meli_account_id=1 AND method='GET' AND endpoint_path='/users/me'
+         ORDER BY id DESC LIMIT 1"
+    )->fetch(PDO::FETCH_ASSOC) ?: [];
+    $check($bodyDatabaseHits === 0
+        && $bodyFileHits === 0
+        && !str_contains($bodyStatus, $bodySentinel)
+        && !str_contains($kernelSource, $bodySentinel),
+        'CANARY_RESPONSE_BODY_SENTINEL_PERSISTED encontró contenido remoto fuera de memoria.');
+    $check(($bodyErrorRow['error_code'] ?? '') === 'CANARY_REMOTE_401'
+        && ($bodyErrorRow['response_json'] ?? null) === null,
+        'CANARY_ERROR_RESPONSE_JSON_EMPTY no conservó solo código local normalizado y body NULL.');
 
     // Token vencido/próximo a vencer: el orquestador falla antes de construir
     // transporte; por contrato tampoco existe llamada a refreshOAuthToken.

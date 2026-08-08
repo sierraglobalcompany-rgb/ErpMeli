@@ -332,7 +332,7 @@ final class EmergencyControlKernel
         $status = $this->control->status();
         $notice = $this->pull('emergency_notice');
         $error = $this->pull('emergency_error');
-        $apiStopped = $status['api'] === 'stopped';
+        $apiStopped = in_array((string) ($status['api'] ?? ''), ['stopped', 'canary_expired'], true);
         $automationStopped = $status['automation'] === 'stopped';
         $canaryDocument = is_array($status['canary'] ?? null) ? $status['canary'] : null;
         $canaryState = is_array($canaryDocument) ? (string) ($canaryDocument['state'] ?? '') : '';
@@ -341,13 +341,18 @@ final class EmergencyControlKernel
         $canarySucceeded = $canaryState === 'complete'
             && $canaryResult === 'success'
             && !empty($canaryDocument['identity_verified']);
+        $canaryExpired = !$canaryFailed
+            && is_array($canaryDocument)
+            && ((bool) ($status['canary_expired'] ?? false)
+                || (int) ($canaryDocument['expires_at'] ?? 0) < time());
         $canaryActive = is_array($canaryDocument)
             && !$canaryFailed
             && !$canarySucceeded
+            && !$canaryExpired
             && (int) ($canaryDocument['expires_at'] ?? 0) >= time();
-        $apiClass = $apiStopped ? 'off' : ($canaryActive ? 'wait' : 'on');
+        $apiClass = ($apiStopped || $canaryExpired) ? 'off' : ($canaryActive ? 'wait' : 'on');
         $automationClass = $automationStopped ? 'off' : 'on';
-        $apiLabel = $canaryFailed ? 'Prueba canaria fallida' : ($apiStopped ? 'Bloqueada' : ($canaryActive ? 'Prueba canaria' : 'Disponible'));
+        $apiLabel = $canaryFailed ? 'Prueba canaria fallida' : ($canaryExpired ? 'Prueba canaria vencida' : ($apiStopped ? 'Bloqueada' : ($canaryActive ? 'Prueba canaria' : 'Disponible')));
         $automationLabel = $automationStopped ? 'Detenida' : 'Activa';
         $maintenance = is_array($status['maintenance'] ?? null) ? $status['maintenance'] : ['active' => false, 'count' => 0, 'markers' => []];
         $maintenanceActive = !empty($maintenance['active']);
@@ -366,6 +371,12 @@ final class EmergencyControlKernel
             $apiAction = 'prepare_api';
             $apiButton = 'Preparar nueva prueba';
             $apiConfirm = '¿Seguro que desea descartar el resultado fallido y preparar una nueva prueba canaria?';
+        } elseif ($canaryExpired) {
+            $apiTitle = 'Prueba canaria vencida';
+            $apiText = 'La prueba se interrumpió o superó su tiempo seguro. No se permitirá ninguna consulta adicional hasta recuperar el bloqueo.';
+            $apiAction = 'stop_api';
+            $apiButton = 'Volver a bloquear';
+            $apiConfirm = '¿Volver a bloquear Mercado Libre y cerrar esta prueba vencida? La automatización permanecerá detenida.';
         } elseif ($canarySucceeded) {
             $apiTitle = 'Identidad confirmada';
             $apiText = 'La única consulta GET /users/me respondió con la identidad de la cuenta seleccionada. La automatización continúa detenida.';

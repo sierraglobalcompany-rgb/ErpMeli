@@ -235,6 +235,118 @@ PHP
         'SECOND_PARALLEL_REQUEST_ZERO_HTTP no garantizó un solo ganador físico.');
     $control->failApiCanaryAndBlock('hf11-test', 'parallel_test_complete', 'CANARY-HF11-PARALLEL');
 
+    $expirePublicCanary = static function () use ($temporary): void {
+        $path = $temporary . DIRECTORY_SEPARATOR . EmergencyControlService::CANARY_MARKER;
+        $document = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+        $document['expires_at'] = time() - 5;
+        file_put_contents(
+            $path,
+            json_encode($document, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+            LOCK_EX
+        );
+    };
+
+    // Un marcador vencido nunca se presenta como API habilitada. Cada estado
+    // queda fail-closed y ofrece una recuperación POST sin emitir HTTP.
+    $control->stopAll('hf11-test', 'Canario ready vencido');
+    $control->prepareApiStart('hf11-test', 'Canario ready vencido');
+    $expirePublicCanary();
+    $readyExpired = $control->status();
+    $check(($readyExpired['api'] ?? '') === 'canary_expired'
+        && !empty($readyExpired['canary_expired'])
+        && (int) ($readyExpired['canary']['used_calls'] ?? -1) === 0,
+        'EXPIRED_READY_CANARY se presentó como API habilitada o consumió HTTP.');
+
+    $control->stopAll('hf11-test', 'Canario reserved vencido');
+    $control->prepareApiStart('hf11-test', 'Canario reserved vencido');
+    $reservedExpiredNonce = $control->reserveApiCanary(7, '70001');
+    $expirePublicCanary();
+    try {
+        EmergencyCanaryTransportContext::run(
+            $reservedExpiredNonce,
+            static fn () => ApiExecutionMetadataContext::run(
+                $base,
+                static fn () => $control->claimCanaryTransport('GET', '/users/me')
+            )
+        );
+        $check(false, 'EXPIRED_RESERVED_CANARY autorizó un HTTP.');
+    } catch (ApiManualPauseException) {
+        $reservedExpired = $control->status();
+        $check(($reservedExpired['api'] ?? '') === 'canary_expired'
+            && (int) ($reservedExpired['canary']['used_calls'] ?? -1) === 0,
+            'EXPIRED_RESERVED_CANARY no quedó recuperable y sin uso.');
+    }
+
+    $control->stopAll('hf11-test', 'Canario in-flight vencido');
+    $control->prepareApiStart('hf11-test', 'Canario in-flight vencido');
+    $inFlightExpiredNonce = $control->reserveApiCanary(7, '70001');
+    EmergencyCanaryTransportContext::run(
+        $inFlightExpiredNonce,
+        static fn () => ApiExecutionMetadataContext::run(
+            $base,
+            static fn () => $control->claimCanaryTransport('GET', '/users/me')
+        )
+    );
+    $expirePublicCanary();
+    try {
+        EmergencyCanaryTransportContext::run(
+            $inFlightExpiredNonce,
+            static fn () => ApiExecutionMetadataContext::run(
+                $base,
+                static fn () => $control->claimCanaryTransport('GET', '/users/me')
+            )
+        );
+        $check(false, 'EXPIRED_IN_FLIGHT_CANARY autorizó un segundo HTTP.');
+    } catch (ApiManualPauseException) {
+        $inFlightExpired = $control->status();
+        $check(($inFlightExpired['api'] ?? '') === 'canary_expired'
+            && (int) ($inFlightExpired['canary']['used_calls'] ?? 0) === 1,
+            'EXPIRED_IN_FLIGHT_CANARY no bloqueó transportes adicionales.');
+    }
+
+    $control->completeCanaryTransport(true, 200);
+    $responseKnownBeforeExpiry = $control->status()['canary'] ?? null;
+    // completeCanaryTransport conserva expires_at vencido; confirmar debe fallar.
+    try {
+        $control->confirmApiStart('hf11-test', 'No confirmar evidencia vencida');
+        $check(false, 'EXPIRED_RESPONSE_KNOWN_CANARY permitió confirm_api.');
+    } catch (RuntimeException) {
+        $responseKnownExpired = $control->status();
+        $check(is_array($responseKnownBeforeExpiry)
+            && ($responseKnownBeforeExpiry['state'] ?? '') === 'response_known'
+            && ($responseKnownExpired['api'] ?? '') === 'canary_expired'
+            && (int) ($responseKnownExpired['canary']['used_calls'] ?? 0) === 1,
+            'EXPIRED_RESPONSE_KNOWN_CANARY no permaneció bloqueado y recuperable.');
+    }
+
+    $control->stopApi('hf11-test', 'Recuperar canario vencido');
+    $recovered = $control->status();
+    $check($control->apiStopped()
+        && $control->automationStopped()
+        && ($recovered['canary'] ?? null) === null,
+        'STALE_CANARY_RECOVERY no restauró PAUSE_MELI_API conservando Automation Stop.');
+
+    // Si el marcador desaparece durante una transición, r+ debe fallar sin
+    // recrear un JSON vacío.
+    $control->prepareApiStart('hf11-test', 'Carrera de marcador ausente');
+    $missingMarkerNonce = $control->reserveApiCanary(7, '70001');
+    $missingMarkerPath = $temporary . DIRECTORY_SEPARATOR . EmergencyControlService::CANARY_MARKER;
+    @unlink($missingMarkerPath);
+    try {
+        EmergencyCanaryTransportContext::run(
+            $missingMarkerNonce,
+            static fn () => ApiExecutionMetadataContext::run(
+                $base,
+                static fn () => $control->claimCanaryTransport('GET', '/users/me')
+            )
+        );
+        $check(false, 'MUTATE_CANARY_MISSING_MARKER no falló de forma segura.');
+    } catch (RuntimeException) {
+        $check(!is_file($missingMarkerPath),
+            'MUTATE_CANARY_CREATES_MISSING_MARKER recreó el marcador ausente.');
+    }
+    $control->stopAll('hf11-test', 'Finalizar pruebas de expiración');
+
     $serviceSource = (string) file_get_contents($root . '/app/Services/EmergencyApiCanaryService.php');
     $clientSource = (string) file_get_contents($root . '/app/Services/MeliApiClient.php');
     $kernelSource = (string) file_get_contents($root . '/app/Recovery/EmergencyControlKernel.php');
@@ -246,6 +358,8 @@ PHP
         'CANARY_MAX_PHYSICAL_HTTP no está fijado en uno.');
     $check(str_contains($kernelSource, "'run_api_canary'")
         && str_contains($kernelSource, 'name="account_id"')
+        && str_contains($kernelSource, 'Prueba canaria vencida')
+        && str_contains($kernelSource, 'Volver a bloquear')
         && !str_contains($kernelSource, 'canary_reservation_nonce')
         && !array_key_exists('reservation_nonce', (array) ($control->status()['canary'] ?? [])),
         'La UI no expone la acción ligada a cuenta o filtra el nonce.');

@@ -32,13 +32,15 @@ final class MeliEmergencyStopService
     public function status(): array
     {
         $safety = (new EmergencyControlService())->status();
-        $active = $safety['api'] === 'stopped';
+        $active = in_array((string) ($safety['api'] ?? ''), ['stopped', 'canary_expired'], true);
         $canary = $safety['api'] === 'canary';
 
         return [
             'active' => $active,
             'label' => $active
-                ? 'Consultas a Mercado Libre bloqueadas por mantenimiento'
+                ? (($safety['api'] ?? '') === 'canary_expired'
+                    ? 'Prueba canaria vencida; Mercado Libre permanece bloqueado'
+                    : 'Consultas a Mercado Libre bloqueadas por mantenimiento')
                 : ($canary ? 'Mercado Libre habilitado para una consulta canaria' : 'Bloqueo de emergencia inactivo'),
             'reason' => $active
                 ? 'La protección se aplicó mediante un archivo local y no depende de Cron ni de la base de datos.'

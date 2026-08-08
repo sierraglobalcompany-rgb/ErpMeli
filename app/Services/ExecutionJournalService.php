@@ -115,17 +115,16 @@ final class ExecutionJournalService
     }
 
     /**
-     * Revierte exclusivamente la frontera que todavía no llegó al transporte.
+     * Compensa exclusivamente un intento que todavía no llegó al transporte.
      * El CAS evita tocar un intento que ya recibió respuesta o fue aprobado.
      */
     public function dispatchCancelledBeforeRemote(int $attemptId, int $expectedGeneration): bool
     {
         $stmt = Database::connectionFresh()->prepare(
             'UPDATE system_execution_attempts
-             SET state=CASE WHEN budget_reserved=1 THEN "budget_reserved" ELSE "local_started" END,
-                 reached_remote=0,dispatched_at=NULL
+             SET state="local_started",budget_reserved=0,reached_remote=0,dispatched_at=NULL
              WHERE id=? AND lease_generation=?
-               AND state="remote_dispatched" AND response_at IS NULL'
+               AND state IN ("budget_reserved","remote_dispatched") AND response_at IS NULL'
         );
         $stmt->execute([$attemptId, $expectedGeneration]);
         return $stmt->rowCount() === 1;

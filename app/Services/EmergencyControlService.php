@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Core\AppPaths;
+use App\Core\Database;
 use App\Core\Env;
+use PDO;
 use RuntimeException;
 use Throwable;
 
@@ -163,8 +165,10 @@ final class EmergencyControlService
 
     public function stopAll(string $actor, string $reason): void
     {
-        $this->stopApi($actor, $reason ?: 'Freno de mano activado.');
+        // Fail closed: primero impedir que cualquier launcher reclame trabajo y
+        // solo después cerrar la autoridad de lecturas remotas.
         $this->stopAutomation($actor, $reason ?: 'Freno de mano activado.');
+        $this->stopApi($actor, $reason ?: 'Freno de mano activado.');
         $this->recordChange('handbrake_stopped', $actor, $reason ?: 'Freno de mano activado.');
         $this->audit('handbrake_stopped', $actor, $reason);
     }
@@ -178,6 +182,7 @@ final class EmergencyControlService
 
     public function startApiWithoutCanary(string $actor, string $reason): void
     {
+        $this->assertAutomationStoppedForApiEnable();
         @unlink($this->markerPath(self::CANARY_MARKER));
         $this->removeMarker(self::API_MARKER);
         $message = $reason ?: 'Mercado Libre habilitado para lecturas sin prueba canaria desde freno de mano.';
@@ -189,9 +194,10 @@ final class EmergencyControlService
     public function startLocalSite(string $actor, string $reason): array
     {
         $clear = $this->clearLocalMaintenance($actor, $reason ?: 'Preparar sitio local.');
-        $this->removeMarker(self::AUTOMATION_MARKER);
-        $this->recordChange('local_site_started', $actor, $reason ?: 'Sitio local habilitado con Mercado Libre bloqueado.');
-        $this->audit('local_site_started', $actor, $reason ?: 'Sitio local habilitado con Mercado Libre bloqueado.');
+        // El procesamiento local y la automatización son autoridades distintas.
+        // Retirar un freeze nunca debe retirar PAUSE_ERP_AUTOMATION.
+        $this->recordChange('local_site_started', $actor, $reason ?: 'Sitio local habilitado sin cambiar API ni automatización.');
+        $this->audit('local_site_started', $actor, $reason ?: 'Sitio local habilitado sin cambiar API ni automatización.');
         return [
             'maintenance_removed' => (int) $clear['removed'],
             'markers' => $clear['markers'],
@@ -232,6 +238,7 @@ final class EmergencyControlService
 
     public function prepareApiStart(string $actor, string $reason): void
     {
+        $this->assertAutomationStoppedForApiEnable();
         $canary = [
             'version' => 1,
             'state' => 'ready',
@@ -250,6 +257,7 @@ final class EmergencyControlService
 
     public function confirmApiStart(string $actor, string $reason): void
     {
+        $this->assertAutomationStoppedForApiEnable();
         $canary = $this->readJson($this->markerPath(self::CANARY_MARKER));
         if (!is_array($canary) || ($canary['last_result'] ?? '') !== 'success') {
             throw new RuntimeException('El canario todavía no confirmó una consulta correcta.');
@@ -328,6 +336,235 @@ final class EmergencyControlService
         return is_file($this->markerPath(self::AUTOMATION_MARKER));
     }
 
+    public function assertAutomationStoppedForApiEnable(): void
+    {
+        if (!$this->automationStopped()) {
+            throw new RuntimeException(
+                'Primero detenga la automatización. Código: EMERGENCY_AUTOMATION_NOT_STOPPED.'
+            );
+        }
+    }
+
+    /**
+     * Diagnóstico estrictamente local. No retira marcadores, no escribe DB y no
+     * construye transporte Mercado Libre.
+     *
+     * @return array{ready:bool,checks:array<string,array{status:string,detail:string}>}
+     */
+    public function diagnoseApiReactivation(): array
+    {
+        $checks = [];
+        $add = static function (array &$target, string $key, string $status, string $detail): void {
+            $target[$key] = ['status' => $status, 'detail' => $detail];
+        };
+
+        $add(
+            $checks,
+            'installation_root',
+            is_dir($this->root) && is_readable($this->root) ? 'PASS' : 'FAIL',
+            is_dir($this->root) && is_readable($this->root)
+                ? 'Raíz de instalación legible.'
+                : 'No se pudo leer la raíz de instalación.'
+        );
+        $add(
+            $checks,
+            'marker_writability',
+            is_writable($this->root) ? 'PASS' : 'FAIL',
+            is_writable($this->root)
+                ? 'La raíz permite cambios atómicos de marcadores.'
+                : 'La raíz no permite cambiar marcadores de seguridad.'
+        );
+        $config = AppPaths::configFile();
+        $add(
+            $checks,
+            'config',
+            is_file($config) && is_readable($config) ? 'PASS' : 'FAIL',
+            is_file($config) && is_readable($config)
+                ? 'Configuración local legible.'
+                : 'Configuración local ausente o no legible.'
+        );
+        $writesDisabled = !Env::bool('ML_WRITE_ENABLED', false);
+        $add(
+            $checks,
+            'remote_writes',
+            $writesDisabled ? 'PASS' : 'FAIL',
+            $writesDisabled ? 'ML_WRITE_ENABLED permanece false.' : 'ML_WRITE_ENABLED está habilitado.'
+        );
+        $add(
+            $checks,
+            'transport_extension',
+            function_exists('curl_init') ? 'PASS' : 'FAIL',
+            function_exists('curl_init') ? 'La extensión cURL está disponible.' : 'La extensión cURL no está disponible.'
+        );
+        $automationStopped = $this->automationStopped();
+        $add(
+            $checks,
+            'automation',
+            $automationStopped ? 'PASS' : 'FAIL',
+            $automationStopped
+                ? 'La automatización está detenida.'
+                : 'La automatización debe detenerse antes de habilitar lecturas.'
+        );
+        $add(
+            $checks,
+            'api_marker',
+            is_file($this->markerPath(self::API_MARKER)) ? 'PASS' : 'WARNING',
+            is_file($this->markerPath(self::API_MARKER))
+                ? 'Las lecturas continúan bloqueadas durante el diagnóstico.'
+                : 'Las lecturas ya no tienen marcador físico de bloqueo.'
+        );
+
+        $pdo = null;
+        try {
+            Database::useProfile('diagnostic');
+            $pdo = Database::connection();
+            $pdo->query('SELECT 1')->fetchColumn();
+            $add($checks, 'database', 'PASS', 'MariaDB respondió a una lectura local.');
+        } catch (Throwable) {
+            $add($checks, 'database', 'FAIL', 'No se pudo establecer una conexión local de solo lectura con MariaDB.');
+        }
+
+        if ($pdo instanceof PDO) {
+            try {
+                $applied = $pdo->query('SELECT version FROM schema_migrations')->fetchAll(PDO::FETCH_COLUMN);
+                $lookup = array_fill_keys(array_map('strval', $applied), true);
+                $migrationDirectory = $this->root . '/database/migrations';
+                if (!is_dir($migrationDirectory) || !is_readable($migrationDirectory)) {
+                    throw new RuntimeException('El directorio de migraciones no es legible.');
+                }
+                $migrationFiles = glob($migrationDirectory . '/*.sql');
+                if ($migrationFiles === false) {
+                    throw new RuntimeException('No se pudo enumerar el directorio de migraciones.');
+                }
+                $pending = 0;
+                foreach ($migrationFiles as $file) {
+                    if (!isset($lookup[basename($file)])) {
+                        $pending++;
+                    }
+                }
+                $add(
+                    $checks,
+                    'migrations',
+                    $pending === 0 ? 'PASS' : 'FAIL',
+                    $pending === 0 ? 'Migraciones completas.' : 'Hay migraciones pendientes: ' . $pending . '.'
+                );
+            } catch (Throwable) {
+                $add($checks, 'migrations', 'UNKNOWN', 'No se pudo comprobar la autoridad schema_migrations.');
+            }
+
+            try {
+                $accounts = (int) $pdo->query(
+                    "SELECT COUNT(*) FROM meli_accounts WHERE status='conectado'"
+                )->fetchColumn();
+                $add(
+                    $checks,
+                    'accounts_metadata',
+                    $accounts > 0 ? 'PASS' : 'FAIL',
+                    $accounts > 0 ? 'Cuentas conectadas con metadata local: ' . $accounts . '.' : 'No hay cuentas conectadas.'
+                );
+            } catch (Throwable) {
+                $add($checks, 'accounts_metadata', 'UNKNOWN', 'No se pudo comprobar la autoridad meli_accounts.');
+            }
+
+            try {
+                $tokens = (int) $pdo->query(
+                    "SELECT COUNT(*)
+                     FROM meli_accounts a
+                     INNER JOIN meli_tokens t ON t.meli_account_id=a.id
+                     WHERE a.status='conectado' AND t.access_token_encrypted IS NOT NULL"
+                )->fetchColumn();
+                $add(
+                    $checks,
+                    'token_metadata',
+                    $tokens > 0 ? 'PASS' : 'FAIL',
+                    $tokens > 0 ? 'Token metadata local disponible para ' . $tokens . ' cuenta(s).' : 'No hay token metadata disponible.'
+                );
+            } catch (Throwable) {
+                $add($checks, 'token_metadata', 'UNKNOWN', 'No se pudo comprobar la autoridad meli_tokens.');
+            }
+
+            try {
+                $activePauses = (int) $pdo->query(
+                    "SELECT COUNT(*) FROM api_manual_pauses WHERE status='active'"
+                )->fetchColumn();
+                $add(
+                    $checks,
+                    'manual_pause_state',
+                    $activePauses === 0 ? 'PASS' : 'FAIL',
+                    $activePauses === 0
+                        ? 'No hay pausas manuales activas.'
+                        : 'Hay pausas manuales activas: ' . $activePauses . '.'
+                );
+            } catch (Throwable) {
+                $add($checks, 'manual_pause_state', 'UNKNOWN', 'No se pudo comprobar la autoridad api_manual_pauses.');
+            }
+
+            try {
+                $openCircuits = (int) $pdo->query(
+                    "SELECT COUNT(*) FROM api_circuit_breakers WHERE status='open'"
+                )->fetchColumn();
+                $add(
+                    $checks,
+                    'circuit_state',
+                    $openCircuits === 0 ? 'PASS' : 'FAIL',
+                    $openCircuits === 0
+                        ? 'No hay circuitos API abiertos.'
+                        : 'Hay circuitos API abiertos: ' . $openCircuits . '.'
+                );
+            } catch (Throwable) {
+                $add($checks, 'circuit_state', 'UNKNOWN', 'No se pudo comprobar la autoridad api_circuit_breakers.');
+            }
+
+            try {
+                $guardType = get_debug_type(new ApiGuardService());
+                $guardValue = $pdo->prepare(
+                    "SELECT setting_value FROM app_settings WHERE setting_key='api.guard.enabled' LIMIT 1"
+                );
+                $guardValue->execute();
+                $guardEnabled = filter_var((string) $guardValue->fetchColumn(), FILTER_VALIDATE_BOOL);
+                $add(
+                    $checks,
+                    'api_guard',
+                    $guardEnabled ? 'PASS' : 'FAIL',
+                    $guardEnabled
+                        ? $guardType . ' y api.guard.enabled están activos.'
+                        : 'La protección api.guard.enabled no está activa.'
+                );
+            } catch (Throwable) {
+                $add($checks, 'api_guard', 'UNKNOWN', 'No se pudo inicializar la protección ApiGuardService.');
+            }
+        } else {
+            foreach (['migrations', 'accounts_metadata', 'token_metadata', 'manual_pause_state', 'circuit_state', 'api_guard'] as $key) {
+                $add($checks, $key, 'UNKNOWN', 'No se pudo comprobar esta autoridad porque MariaDB no estuvo disponible.');
+            }
+        }
+
+        $mandatoryChecks = [
+            'installation_root',
+            'marker_writability',
+            'config',
+            'remote_writes',
+            'transport_extension',
+            'automation',
+            'database',
+            'migrations',
+            'accounts_metadata',
+            'token_metadata',
+            'manual_pause_state',
+            'circuit_state',
+            'api_guard',
+        ];
+        $ready = true;
+        foreach ($mandatoryChecks as $key) {
+            $status = (string) ($checks[$key]['status'] ?? 'UNKNOWN');
+            if ($status !== 'PASS') {
+                $ready = false;
+                break;
+            }
+        }
+        return ['ready' => $ready, 'checks' => $checks];
+    }
+
     /** @return array{active:bool,count:int,markers:list<array{name:string,changed_at:?string,reason:string}>} */
     private function maintenanceStatus(): array
     {
@@ -369,7 +606,7 @@ final class EmergencyControlService
     {
         $path = $this->markerPath($name);
         if (is_file($path) && !@unlink($path)) {
-            throw new RuntimeException('No fue posible cambiar el estado de seguridad.');
+            throw new RuntimeException('No fue posible cambiar el marcador de seguridad. Código: EMERGENCY_MARKER_WRITE_FAILED.');
         }
     }
 
@@ -489,13 +726,13 @@ final class EmergencyControlService
     {
         $directory = dirname($path);
         if (!is_dir($directory) && !@mkdir($directory, 0770, true) && !is_dir($directory)) {
-            throw new RuntimeException('No se pudo preparar el almacenamiento de seguridad.');
+            throw new RuntimeException('No se pudo preparar el almacenamiento de seguridad. Código: EMERGENCY_MARKER_WRITE_FAILED.');
         }
         $temporary = $path . '.tmp-' . bin2hex(random_bytes(5));
         $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
         if (@file_put_contents($temporary, $json, LOCK_EX) === false || !@rename($temporary, $path)) {
             @unlink($temporary);
-            throw new RuntimeException('No fue posible guardar el estado de seguridad.');
+            throw new RuntimeException('No fue posible guardar el estado de seguridad. Código: EMERGENCY_MARKER_WRITE_FAILED.');
         }
         @chmod($path, 0600);
     }

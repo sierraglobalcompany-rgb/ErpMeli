@@ -4,13 +4,11 @@ declare(strict_types=1);
 
 namespace App\Recovery;
 
-use App\Core\Database;
 use App\Core\Env;
 use App\Core\AppPaths;
 use App\Core\SameOriginGuard;
 use App\Core\SecurityHeaders;
 use App\Services\EmergencyControlService;
-use PDO;
 use Throwable;
 
 final class EmergencyControlKernel
@@ -31,7 +29,9 @@ final class EmergencyControlKernel
     {
         $this->root = rtrim($root, '/\\');
         $this->autoload();
-        Env::load(AppPaths::configFile());
+        if (is_file(AppPaths::configFile())) {
+            Env::load(AppPaths::configFile());
+        }
         $requestPath = (string) (parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/stop/'), PHP_URL_PATH) ?: '/stop/');
         $position = strpos($requestPath, '/stop');
         $this->base = $position === false ? '' : rtrim(substr($requestPath, 0, $position), '/');
@@ -51,7 +51,25 @@ final class EmergencyControlKernel
 
         if ($method === 'POST') {
             $this->validateOrigin();
-            $this->validateCsrf((string) ($_POST['_token'] ?? ''));
+            try {
+                $this->validateCsrf((string) ($_POST['_token'] ?? ''));
+            } catch (Throwable $error) {
+                $_SESSION['emergency_error'] = $this->safeMessage($error);
+                $this->redirect('/stop/');
+            }
+            if ($action === '') {
+                $_SESSION['emergency_error'] = 'No se recibió la acción solicitada. Código: EMERGENCY_ACTION_MISSING.';
+                $this->redirect('/stop/');
+            }
+            $knownActions = [
+                'login', 'logout', 'stop_api', 'stop_automation', 'stop_all',
+                'start_local_site', 'start_automation', 'clear_maintenance',
+                'prepare_api', 'confirm_api', 'start_api_without_canary',
+            ];
+            if (!in_array($action, $knownActions, true)) {
+                $_SESSION['emergency_error'] = 'La acción solicitada no existe. Código: EMERGENCY_ACTION_UNKNOWN.';
+                $this->redirect('/stop/');
+            }
             if (str_ends_with($path, '/login') || $action === 'login') {
                 $this->login();
             }
@@ -93,7 +111,7 @@ final class EmergencyControlKernel
                         static fn (EmergencyControlService $service) => $service->startApiWithoutCanary($actor, $reason),
                         true
                     ),
-                    default => throw new \RuntimeException('La acción de emergencia no es válida.'),
+                    default => throw new \RuntimeException('La acción solicitada no existe. Código: EMERGENCY_ACTION_UNKNOWN.'),
                 };
                 $_SESSION['emergency_notice'] = 'Estado de seguridad actualizado.';
             } catch (Throwable $error) {
@@ -174,46 +192,32 @@ final class EmergencyControlKernel
     /** @return array{ready:bool,message:string,db:string,pending:int|null} */
     private function readiness(): array
     {
-        if (Env::bool('ML_WRITE_ENABLED', false)) {
-            return ['ready' => false, 'message' => 'Las escrituras remotas están habilitadas en la configuración. Corrija ML_WRITE_ENABLED antes de reactivar.', 'db' => 'unknown', 'pending' => null];
-        }
-        if (!is_file($this->root . '/VERSION') || !is_file(AppPaths::configFile())) {
-            return ['ready' => false, 'message' => 'La instalación no tiene todos sus archivos críticos.', 'db' => 'unknown', 'pending' => null];
-        }
-        if (!is_writable($this->root)) {
-            return ['ready' => false, 'message' => 'El ERP no puede guardar el estado de seguridad.', 'db' => 'unknown', 'pending' => null];
-        }
-        try {
-            Database::useProfile('diagnostic');
-            $pdo = Database::connection();
-            if (!function_exists('curl_init')) {
-                return ['ready' => false, 'message' => 'PHP no tiene disponible el transporte requerido.', 'db' => 'ready', 'pending' => null];
-            }
-            $applied = $pdo->query('SELECT version FROM schema_migrations')->fetchAll(PDO::FETCH_COLUMN);
-            $lookup = array_fill_keys(array_map('strval', $applied), true);
-            $pending = 0;
-            foreach (glob($this->root . '/database/migrations/*.sql') ?: [] as $file) {
-                if (!isset($lookup[basename($file)])) {
-                    $pending++;
-                }
-            }
-            if ($pending > 0) {
-                return ['ready' => false, 'message' => 'Complete las migraciones pendientes antes de habilitar Mercado Libre.', 'db' => 'ready', 'pending' => $pending];
-            }
-            $accounts = (int) $pdo->query(
-                "SELECT COUNT(*)
-                 FROM meli_accounts a
-                 INNER JOIN meli_tokens t ON t.meli_account_id=a.id
-                 WHERE a.status='conectado'
-                   AND t.access_token_encrypted IS NOT NULL"
-            )->fetchColumn();
-            if ($accounts < 1) {
-                return ['ready' => false, 'message' => 'No existe una cuenta activa lista para la comprobación canaria.', 'db' => 'ready', 'pending' => 0];
-            }
+        $diagnostic = $this->control->diagnoseApiReactivation();
+        if (!empty($diagnostic['ready'])) {
             return ['ready' => true, 'message' => 'Instalación lista para una prueba canaria.', 'db' => 'ready', 'pending' => 0];
-        } catch (Throwable) {
-            return ['ready' => false, 'message' => 'No se pudo comprobar MariaDB. La API continuará bloqueada.', 'db' => 'unavailable', 'pending' => null];
         }
+        foreach ((array) ($diagnostic['checks'] ?? []) as $check) {
+            if (($check['status'] ?? '') === 'FAIL') {
+                return [
+                    'ready' => false,
+                    'message' => (string) ($check['detail'] ?? 'No se cumplieron las condiciones de seguridad.'),
+                    'db' => 'unknown',
+                    'pending' => null,
+                ];
+            }
+        }
+        foreach ((array) ($diagnostic['checks'] ?? []) as $check) {
+            if (($check['status'] ?? '') === 'UNKNOWN') {
+                $detail = rtrim((string) ($check['detail'] ?? 'No se pudo comprobar una autoridad local.'), ". \t\n\r\0\x0B");
+                return [
+                    'ready' => false,
+                    'message' => $detail . '. Código: EMERGENCY_PRECONDITION_UNKNOWN.',
+                    'db' => 'unknown',
+                    'pending' => null,
+                ];
+            }
+        }
+        return ['ready' => false, 'message' => 'No se pudo certificar la reactivación local.', 'db' => 'unknown', 'pending' => null];
     }
 
     private function authenticated(): bool
@@ -255,7 +259,7 @@ final class EmergencyControlKernel
     {
         $known = (string) ($_SESSION['emergency_csrf'] ?? '');
         if ($known === '' || $token === '' || !hash_equals($known, $token)) {
-            throw new \RuntimeException('La sesión de emergencia venció.');
+            throw new \RuntimeException('La sesión de emergencia no es válida. Código: EMERGENCY_CSRF_INVALID.');
         }
     }
 
@@ -358,15 +362,25 @@ final class EmergencyControlKernel
             $apiConfirm = '¿Seguro que desea apagar Mercado Libre ahora?';
         }
 
+        $apiEnableAction = in_array($apiAction, ['prepare_api', 'confirm_api'], true);
+        $apiActionBlockedByAutomation = $apiEnableAction && !$automationStopped;
+        if ($apiActionBlockedByAutomation) {
+            $apiText .= ' Primero detenga la automatización; habilitar lecturas nunca la detendrá ni la iniciará automáticamente.';
+        }
+
         $automationAction = $automationStopped ? 'start_automation' : 'stop_automation';
         $automationButton = $automationStopped ? 'Activar automatización' : 'Apagar automatización';
         $automationConfirm = $automationStopped
             ? '¿Seguro que desea activar la automatización? El cron podrá procesar trabajos permitidos por el ERP.'
             : '¿Seguro que desea apagar la automatización? Los trabajos quedarán guardados sin avanzar.';
 
-        $directApiConfirm = '¿Seguro que desea activar Mercado Libre sin canario? V3 podrá hacer consultas de lectura, pero seguirá respetando ritmo, presupuesto, Retry-After y ML_WRITE_ENABLED=false.';
-        $directApiActionHtml = ($apiStopped || $canary)
-            ? '<div class="inline-safety-action"><button class="secondary" type="submit" name="action" value="start_api_without_canary" data-confirm-override="' . $this->escape($directApiConfirm) . '">Activar lecturas sin canario</button><p>Opción útil para Cron V3 operativo: no habilita escrituras y no salta protecciones de ritmo.</p></div>'
+        $apiPrimaryForm = $apiActionBlockedByAutomation
+            ? '<button class="switch-button ' . $apiClass . '" type="button" disabled aria-disabled="true"><span>Detenga automatización primero</span><i></i></button>'
+            : '<form method="post" class="safety-action-form" data-confirm="' . $this->escape($apiConfirm) . '"><input type="hidden" name="_token" value="' . $this->escape($this->csrf()) . '"><input type="hidden" name="action" value="' . $this->escape($apiAction) . '"><button class="switch-button ' . $apiClass . '" aria-pressed="' . ($apiClass === 'on' ? 'true' : 'false') . '" type="submit"><span>' . $this->escape($apiButton) . '</span><i></i></button></form>';
+
+        $directApiConfirm = '¿Seguro que desea activar lecturas sin canario? La automatización permanecerá detenida y ML_WRITE_ENABLED seguirá deshabilitado.';
+        $directApiActionHtml = ($automationStopped && ($apiStopped || $canary))
+            ? '<form method="post" class="inline-safety-action" data-confirm="' . $this->escape($directApiConfirm) . '"><input type="hidden" name="_token" value="' . $this->escape($this->csrf()) . '"><input type="hidden" name="action" value="start_api_without_canary"><button class="secondary" type="submit">Activar lecturas sin canario</button><p>No activa Cron V3 ni escrituras remotas.</p></form>'
             : '';
 
         $maintenanceButton = $maintenanceActive ? 'Retirar modo lectura local' : 'Sitio libre para operar';
@@ -382,7 +396,7 @@ final class EmergencyControlKernel
   ' . ($notice !== '' ? '<div class="notice success" role="status">' . $this->escape($notice) . '</div>' : '') . '
   ' . ($error !== '' ? '<div class="notice error" role="alert">' . $this->escape($error) . '</div>' : '') . '
   <div class="switch-panel" aria-label="Controles principales">
-    <div class="safety-row safety-row-composite"><form method="post" class="safety-main-form" data-confirm="' . $this->escape($apiConfirm) . '"><input type="hidden" name="_token" value="' . $this->escape($this->csrf()) . '"><div><small>MERCADO LIBRE</small><strong>' . $this->escape($apiTitle) . '</strong><p>' . $this->escape($apiText) . '</p>' . $directApiActionHtml . '</div><button class="switch-button ' . $apiClass . '" aria-pressed="' . ($apiClass === 'on' ? 'true' : 'false') . '" type="submit" name="action" value="' . $this->escape($apiAction) . '"><span>' . $this->escape($apiButton) . '</span><i></i></button></form></div>
+    <div class="safety-row safety-row-composite"><div><small>MERCADO LIBRE</small><strong>' . $this->escape($apiTitle) . '</strong><p>' . $this->escape($apiText) . '</p>' . $directApiActionHtml . '</div><div class="safety-action-column">' . $apiPrimaryForm . '</div></div>
     <form method="post" class="safety-row" data-confirm="' . $this->escape($automationConfirm) . '"><input type="hidden" name="_token" value="' . $this->escape($this->csrf()) . '"><input type="hidden" name="action" value="' . $this->escape($automationAction) . '"><div><small>AUTOMATIZACIÓN</small><strong>' . $this->escape($automationLabel) . '</strong><p>Hostinger puede invocar PHP; este interruptor decide si el ERP procesa.</p></div><button class="switch-button ' . $automationClass . '" aria-pressed="' . (!$automationStopped ? 'true' : 'false') . '" type="submit"><span>' . $this->escape($automationButton) . '</span><i></i></button></form>
     ' . ($maintenanceActive
         ? '<form method="post" class="safety-row" data-confirm="' . $this->escape($maintenanceConfirm) . '"><input type="hidden" name="_token" value="' . $this->escape($this->csrf()) . '"><input type="hidden" name="action" value="clear_maintenance"><div><small>MODO LECTURA LOCAL</small><strong>' . $this->escape($maintenanceLabel) . '</strong><p>' . $this->escape($maintenanceDetail) . '</p></div><button class="switch-button ' . $maintenanceClass . '" aria-pressed="false" type="submit"><span>' . $this->escape($maintenanceButton) . '</span><i></i></button></form>'
@@ -407,10 +421,16 @@ final class EmergencyControlKernel
 
     private function document(string $title, string $content): never
     {
-        $scriptUrl = ($this->base !== '' ? $this->base : '') . '/asset.php?path=emergency-control.js';
+        $scriptPath = $this->root . '/public/assets/emergency-control.js';
+        $scriptHash = is_file($scriptPath) ? hash_file('sha256', $scriptPath) : false;
+        $scriptVersion = is_string($scriptHash) && $scriptHash !== ''
+            ? substr($scriptHash, 0, 16)
+            : 'unavailable';
+        $scriptUrl = ($this->base !== '' ? $this->base : '')
+            . '/asset.php?path=emergency-control.js&amp;v=' . rawurlencode($scriptVersion);
         echo '<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'
             . $this->escape($title) . ' · ERP Meli</title><style>'
-            . ':root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#0b1f3a;background:#eef3f9}*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:24px;display:grid;place-items:center}.card{width:min(880px,100%);background:#fff;border:1px solid #d8e2ef;border-radius:18px;padding:30px;box-shadow:0 18px 60px rgba(10,33,63,.09)}.narrow{max-width:560px}.head,.emergency-topbar{display:flex;justify-content:space-between;gap:20px;align-items:start}.head-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.emergency-topbar{align-items:center;margin-bottom:12px}.nav-return{display:inline-flex;min-height:40px;align-items:center;border:1px solid #d7e1ee;border-radius:999px;padding:0 14px;color:#173f72;text-decoration:none;font-weight:800;background:#f8fbff}.nav-return:before{content:"←";margin-right:7px}.nav-return:hover,.nav-return:focus-visible,.secondary:hover,.ghost:hover{background:#eef5ff}h1{font-size:clamp(30px,5vw,44px);margin:5px 0}h2{margin-bottom:4px}h3{margin-bottom:2px}.eyebrow,small{font-size:12px;font-weight:800;letter-spacing:.08em;color:#5d6f89}p{color:#5b6d84;line-height:1.45}label{display:block;font-weight:750;margin-top:12px}input{width:100%;height:46px;margin-top:6px;border:1px solid #bac8d9;border-radius:9px;padding:0 12px;font:inherit}button,.button{display:inline-flex;min-height:44px;align-items:center;justify-content:center;border:0;border-radius:9px;padding:0 18px;font-weight:800;text-decoration:none;cursor:pointer}.form-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}.primary{background:#1769e0;color:#fff}.danger{background:#c7353f;color:#fff}.secondary,.ghost{background:#fff;color:#173f72;border:1px solid #bdcadb}.notice{padding:12px 14px;border-radius:10px;margin:14px 0}.notice.success{background:#eaf8f0;color:#17633d}.notice.error{background:#fff0f0;color:#8c2525}.switch-panel{border-top:1px solid #e3e9f1;margin-top:14px}.safety-row{width:100%;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 0;border:0;border-bottom:1px solid #e3e9f1;background:transparent;text-align:left}.safety-main-form{width:100%;display:flex;align-items:center;justify-content:space-between;gap:20px;margin:0}.safety-row strong{display:block;font-size:22px;margin-top:3px}.safety-row p{margin:4px 0}.inline-safety-action{margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}.inline-safety-action p{flex-basis:100%;margin:0;color:#6a7a91;font-size:13px}.switch-button{position:relative;width:116px;height:52px;border-radius:999px;background:#d5dde8;padding:5px;display:block;flex:none;border:0;color:transparent;overflow:hidden}.switch-button span{position:absolute;width:1px;height:1px;clip:rect(0 0 0 0);overflow:hidden}.switch-button i{display:block;width:42px;height:42px;border-radius:50%;background:#fff;box-shadow:0 2px 8px #0002;transition:transform .18s ease}.switch-button.on{background:#1c9a61}.switch-button.on i{transform:translateX(64px)}.switch-button.off{background:#cf3f48}.switch-button.wait{background:#d89b19}.switch-button.wait i{transform:translateX(32px)}.switch-button.inert{cursor:default}.quick-actions{display:flex;gap:12px;flex-wrap:wrap;margin:24px 0}.quick-actions form{margin:0}.technical{border:1px solid #dbe4ef;border-radius:12px;padding:14px}summary{font-weight:850;cursor:pointer}dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0 0}dt{font-weight:800;color:#5d6f89;font-size:12px;text-transform:uppercase;letter-spacing:.06em}dd{margin:2px 0 0}.foot{font-size:13px;margin:20px 0 0}.head form{margin:0}.confirm-backdrop{position:fixed;inset:0;background:rgba(8,25,48,.44);display:none;align-items:center;justify-content:center;padding:18px;z-index:10}.confirm-backdrop.is-open{display:flex}.confirm-box{width:min(440px,100%);background:#fff;border-radius:16px;padding:22px;box-shadow:0 24px 80px rgba(0,0,0,.22)}.confirm-box h2{font-size:24px;margin:0 0 8px}.confirm-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}@media(max-width:640px){body{padding:10px}.card{padding:20px}.head{display:block}.head-actions{justify-content:flex-start;margin-top:12px}.emergency-topbar{align-items:flex-start;gap:10px}.safety-row,.safety-main-form{align-items:center;gap:12px}.inline-safety-action{align-items:stretch}.inline-safety-action button{width:100%}.switch-button{width:92px}.switch-button.on i{transform:translateX(40px)}.switch-button.wait i{transform:translateX(20px)}dl{grid-template-columns:1fr}.form-actions .button,.form-actions button,.quick-actions .button,.quick-actions button{width:100%}.confirm-actions{display:block}.confirm-actions button{width:100%;margin-top:8px}}@media(prefers-reduced-motion:reduce){.switch-button i{transition:none}}'
+            . ':root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#0b1f3a;background:#eef3f9}*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:24px;display:grid;place-items:center}.card{width:min(880px,100%);background:#fff;border:1px solid #d8e2ef;border-radius:18px;padding:30px;box-shadow:0 18px 60px rgba(10,33,63,.09)}.narrow{max-width:560px}.head,.emergency-topbar{display:flex;justify-content:space-between;gap:20px;align-items:start}.head-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.emergency-topbar{align-items:center;margin-bottom:12px}.nav-return{display:inline-flex;min-height:40px;align-items:center;border:1px solid #d7e1ee;border-radius:999px;padding:0 14px;color:#173f72;text-decoration:none;font-weight:800;background:#f8fbff}.nav-return:before{content:"←";margin-right:7px}.nav-return:hover,.nav-return:focus-visible,.secondary:hover,.ghost:hover{background:#eef5ff}h1{font-size:clamp(30px,5vw,44px);margin:5px 0}h2{margin-bottom:4px}h3{margin-bottom:2px}.eyebrow,small{font-size:12px;font-weight:800;letter-spacing:.08em;color:#5d6f89}p{color:#5b6d84;line-height:1.45}label{display:block;font-weight:750;margin-top:12px}input{width:100%;height:46px;margin-top:6px;border:1px solid #bac8d9;border-radius:9px;padding:0 12px;font:inherit}button,.button{display:inline-flex;min-height:44px;align-items:center;justify-content:center;border:0;border-radius:9px;padding:0 18px;font-weight:800;text-decoration:none;cursor:pointer}button:disabled{cursor:not-allowed;opacity:.65}.form-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}.primary{background:#1769e0;color:#fff}.danger{background:#c7353f;color:#fff}.secondary,.ghost{background:#fff;color:#173f72;border:1px solid #bdcadb}.notice{padding:12px 14px;border-radius:10px;margin:14px 0}.notice.success{background:#eaf8f0;color:#17633d}.notice.error{background:#fff0f0;color:#8c2525}.switch-panel{border-top:1px solid #e3e9f1;margin-top:14px}.safety-row{width:100%;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 0;border:0;border-bottom:1px solid #e3e9f1;background:transparent;text-align:left}.safety-main-form{width:100%;display:flex;align-items:center;justify-content:space-between;gap:20px;margin:0}.safety-action-column,.safety-action-form{display:flex;align-items:center;justify-content:flex-end;margin:0}.safety-row strong{display:block;font-size:22px;margin-top:3px}.safety-row p{margin:4px 0}.inline-safety-action{margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}.inline-safety-action p{flex-basis:100%;margin:0;color:#6a7a91;font-size:13px}.switch-button{position:relative;width:116px;height:52px;border-radius:999px;background:#d5dde8;padding:5px;display:block;flex:none;border:0;color:transparent;overflow:hidden}.switch-button span{position:absolute;width:1px;height:1px;clip:rect(0 0 0 0);overflow:hidden}.switch-button i{display:block;width:42px;height:42px;border-radius:50%;background:#fff;box-shadow:0 2px 8px #0002;transition:transform .18s ease}.switch-button.on{background:#1c9a61}.switch-button.on i{transform:translateX(64px)}.switch-button.off{background:#cf3f48}.switch-button.wait{background:#d89b19}.switch-button.wait i{transform:translateX(32px)}.switch-button.inert{cursor:default}.quick-actions{display:flex;gap:12px;flex-wrap:wrap;margin:24px 0}.quick-actions form{margin:0}.technical{border:1px solid #dbe4ef;border-radius:12px;padding:14px}summary{font-weight:850;cursor:pointer}dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0 0}dt{font-weight:800;color:#5d6f89;font-size:12px;text-transform:uppercase;letter-spacing:.06em}dd{margin:2px 0 0}.foot{font-size:13px;margin:20px 0 0}.head form{margin:0}.confirm-backdrop{position:fixed;inset:0;background:rgba(8,25,48,.44);display:none;align-items:center;justify-content:center;padding:18px;z-index:10}.confirm-backdrop.is-open{display:flex}.confirm-box{width:min(440px,100%);background:#fff;border-radius:16px;padding:22px;box-shadow:0 24px 80px rgba(0,0,0,.22)}.confirm-box h2{font-size:24px;margin:0 0 8px}.confirm-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}@media(max-width:640px){body{padding:10px}.card{padding:20px}.head{display:block}.head-actions{justify-content:flex-start;margin-top:12px}.emergency-topbar{align-items:flex-start;gap:10px}.safety-row,.safety-main-form{align-items:center;gap:12px}.inline-safety-action{align-items:stretch}.inline-safety-action button{width:100%}.switch-button{width:92px}.switch-button.on i{transform:translateX(40px)}.switch-button.wait i{transform:translateX(20px)}dl{grid-template-columns:1fr}.form-actions .button,.form-actions button,.quick-actions .button,.quick-actions button{width:100%}.confirm-actions{display:block}.confirm-actions button{width:100%;margin-top:8px}}@media(prefers-reduced-motion:reduce){.switch-button i{transition:none}}'
             . '</style></head><body>' . $content . '<div class="confirm-backdrop" id="confirm-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message" hidden><div class="confirm-box"><h2 id="confirm-title">Confirmar cambio</h2><p id="confirm-message">¿Seguro?</p><div class="confirm-actions"><button class="secondary" type="button" id="confirm-cancel">Cancelar</button><button class="primary" type="button" id="confirm-submit">Sí, cambiar estado</button></div></div></div><script src="' . $this->escape($scriptUrl) . '"></script></body></html>';
         exit;
     }
@@ -486,4 +506,3 @@ final class EmergencyControlKernel
         return htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     }
 }
-

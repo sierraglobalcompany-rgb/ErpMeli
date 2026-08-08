@@ -6,7 +6,6 @@
   const cancel = document.getElementById('confirm-cancel');
   const submit = document.getElementById('confirm-submit');
   let pendingForm = null;
-  let pendingSubmitter = null;
   let returnFocus = null;
 
   const pageChildren = Array.from(document.body.children).filter((element) => element !== modal);
@@ -27,7 +26,6 @@
     modal.hidden = true;
     setPageInactive(false);
     pendingForm = null;
-    pendingSubmitter = null;
     returnFocus?.focus();
     returnFocus = null;
   };
@@ -37,10 +35,8 @@
       if (form.dataset.confirmed === '1') return;
       event.preventDefault();
       pendingForm = form;
-      pendingSubmitter = event.submitter || document.activeElement;
       returnFocus = document.activeElement;
-      message.textContent = pendingSubmitter?.getAttribute?.('data-confirm-override')
-        || form.getAttribute('data-confirm')
+      message.textContent = form.getAttribute('data-confirm')
         || '¿Seguro que desea continuar?';
       modal.hidden = false;
       modal.classList.add('is-open');
@@ -56,10 +52,12 @@
   submit.addEventListener('click', () => {
     if (!pendingForm) return close();
     pendingForm.dataset.confirmed = '1';
-    if (pendingSubmitter && typeof pendingForm.requestSubmit === 'function') {
-      pendingForm.requestSubmit(pendingSubmitter);
-    } else {
+    // Cada formulario lleva action como input hidden. El modal solo confirma;
+    // el contrato del POST no depende del botón que originó el evento.
+    if (typeof pendingForm.requestSubmit === 'function') {
       pendingForm.requestSubmit();
+    } else {
+      HTMLFormElement.prototype.submit.call(pendingForm);
     }
   });
   document.addEventListener('keydown', (event) => {

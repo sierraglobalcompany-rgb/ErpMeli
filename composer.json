@@ -146,6 +146,7 @@
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2340_contract.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_2341_contract.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_integrity_text_hash_2344.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/emergency_manual_canary_hf11.php"
     ],
     "test:sales-control": "@php -d error_reporting=-1 -d display_errors=1 tests/sales_control_2211_mysql_integration.php",
     "test:release-db": "@php -d error_reporting=-1 -d display_errors=1 tests/release_gate.php",

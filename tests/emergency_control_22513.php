@@ -3,10 +3,12 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__);
-require $root . '/vendor/autoload.php';
+require $root . '/bootstrap.php';
 
 use App\Services\ApiManualPauseException;
+use App\Services\ApiExecutionMetadataContext;
 use App\Services\CurlMeliHttpTransport;
+use App\Services\EmergencyCanaryTransportContext;
 use App\Services\EmergencyControlService;
 
 $temporary = sys_get_temp_dir() . '/erp-meli-emergency-' . bin2hex(random_bytes(5));
@@ -62,32 +64,45 @@ try {
     $service->startAutomation('test-admin', 'Prueba local');
     $assert($service->status()['automation'] === 'enabled', 'La automatización no se reactivó por separado.');
 
+    $service->stopAutomation('test-admin', 'Preparar canario local');
     $service->prepareApiStart('test-admin', 'Canario local');
     $assert($service->status()['api'] === 'canary', 'La API no entró en modo canario.');
-    $service->claimCanaryTransport();
+    $nonce = $service->reserveApiCanary(1, '10001');
+    $metadata = [
+        'source' => 'manual_emergency_canary',
+        'meli_account_id' => 1,
+        'transport_meli_account_id' => 1,
+        'expected_meli_user_id' => '10001',
+    ];
+    EmergencyCanaryTransportContext::run(
+        $nonce,
+        static fn () => ApiExecutionMetadataContext::run(
+            $metadata,
+            static fn () => $service->claimCanaryTransport('GET', '/users/me')
+        )
+    );
     $blockedSecond = false;
     try {
-        $service->claimCanaryTransport();
+        EmergencyCanaryTransportContext::run(
+            $nonce,
+            static fn () => ApiExecutionMetadataContext::run(
+                $metadata,
+                static fn () => $service->claimCanaryTransport('GET', '/users/me')
+            )
+        );
     } catch (ApiManualPauseException) {
         $blockedSecond = true;
     }
     $assert($blockedSecond, 'El canario permitió más de una salida.');
     $service->completeCanaryTransport(true, 200);
+    $service->completeApiCanarySuccess($nonce, 1, '10001');
     $service->confirmApiStart('test-admin', 'Canario correcto');
     $assert($service->status()['api'] === 'enabled', 'El canario correcto no pudo cerrarse.');
 
-    // La instalación real conserva PAUSE_MELI_API: la barrera de transporte
-    // debe lanzar antes de intentar resolver siquiera el host de prueba.
-    $transportBlocked = false;
-    try {
-        (new CurlMeliHttpTransport())->request('GET', 'https://invalid.example.test/', [], [], false, [
-            'timeout' => 1,
-            'connect_timeout' => 1,
-        ]);
-    } catch (ApiManualPauseException) {
-        $transportBlocked = true;
-    }
-    $assert($transportBlocked, 'El transporte no respetó el freno físico del proyecto.');
+    // El marcador físico del root aislado queda presente. La integración de
+    // CurlMeliHttpTransport se cubre en emergency_real_meli_client_integration.
+    $service->stopApi('test-admin', 'Verificar barrera física');
+    $assert($service->apiStopped(), 'El freno físico no quedó presente en el root aislado.');
 
     echo "emergency_control_22513_ok\n";
 } finally {

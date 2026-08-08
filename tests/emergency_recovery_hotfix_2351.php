@@ -123,9 +123,9 @@ try {
         && str_contains($clientSource, '$executionJournal->dispatchCancelledBeforeRemote(')
         && str_contains($clientSource, 'if (!$dispatchBoundaryCrossed)'),
         'La barrera previa a HTTP no libera consistentemente las reservas internas.');
-    $check(str_contains($transportSource, '$emergency->assertTransportAllowed();')
+    $check(str_contains($transportSource, '$emergency->assertTransportAllowed($method, $url);')
         && str_contains($transportSource, 'completeCanaryTransport(')
-        && strpos($transportSource, '$emergency->assertTransportAllowed();') < strpos($transportSource, 'curl_init()'),
+        && strpos($transportSource, '$emergency->assertTransportAllowed($method, $url);') < strpos($transportSource, 'curl_init()'),
         'CurlMeliHttpTransport no aplica el contrato canario antes de cURL y después del resultado.');
     $check(str_contains($journalSource, 'state IN ("budget_reserved","remote_dispatched")')
         && str_contains($journalSource, 'state="local_started",budget_reserved=0,reached_remote=0'),

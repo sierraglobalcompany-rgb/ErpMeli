@@ -156,9 +156,10 @@ final class MeliApiClient implements MeliReadClientInterface
         }
         $singleDispatchAttempt = in_array(
             (string) ($meta['source'] ?? ''),
-            ['cron_v3_remote', 'manual_campaign'],
+            ['cron_v3_remote', 'manual_campaign', 'manual_emergency_canary'],
             true
         );
+        $manualEmergencyCanary = (string) ($meta['source'] ?? '') === 'manual_emergency_canary';
         $cronV3RemoteContext = (string) ($meta['source'] ?? '') === 'cron_v3_remote';
         $attempts = $singleDispatchAttempt ? 1 : $guard->maxAttempts($mutation, $method);
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
@@ -280,17 +281,20 @@ final class MeliApiClient implements MeliReadClientInterface
                 // proceso termine antes de que cURL devuelva una respuesta.
                 // La marca persistente anterior evita un segundo envío ciego.
                 $dispatchBoundaryCrossed = true;
-                $transportResult = $this->transport->request(
-                    $method,
-                    $url,
-                    $data,
-                    array_merge($headers, [
-                        'Accept: application/json',
-                        'X-Request-Id: ' . $requestId,
-                        $form ? 'Content-Type: application/x-www-form-urlencoded' : 'Content-Type: application/json',
-                    ]),
-                    $form,
-                    $timeouts
+                $transportResult = ApiExecutionMetadataContext::withTransportMetadata(
+                    ['transport_meli_account_id' => $this->accountId],
+                    fn (): array => $this->transport->request(
+                        $method,
+                        $url,
+                        $data,
+                        array_merge($headers, [
+                            'Accept: application/json',
+                            'X-Request-Id: ' . $requestId,
+                            $form ? 'Content-Type: application/x-www-form-urlencoded' : 'Content-Type: application/json',
+                        ]),
+                        $form,
+                        $timeouts
+                    )
                 );
             } catch (Throwable $transportBlocked) {
                 if (!$dispatchBoundaryCrossed) {
@@ -377,6 +381,19 @@ final class MeliApiClient implements MeliReadClientInterface
             $errorCode = isset($decoded['error']) ? mb_substr(Logger::redactString((string) $decoded['error']), 0, 100) : null;
             $safeDecoded = Logger::redact($decoded);
             $classification = ApiErrorClassifier::classify($status ?: null, $errorCode, $safeMessage, $decoded, $curlError);
+            if ($manualEmergencyCanary) {
+                // El cuerpo de /users/me solo existe en memoria para clasificar
+                // esta respuesta. Nunca cruza la frontera de observabilidad.
+                $errorCode = $this->emergencyCanaryErrorCode($status, $curlError);
+                $safeMessage = $this->emergencyCanarySafeMessage($errorCode);
+                $safeDecoded = [];
+                $classification = [
+                    'type' => strtolower($errorCode),
+                    'is_retryable' => false,
+                    'is_app_blocked_signal' => false,
+                    'recommendation' => 'Mantenga Mercado Libre bloqueado y revise la referencia canaria local.',
+                ];
+            }
             $classification['reached_remote'] = true;
             if ($status === 404 && str_contains($path, '/description')) {
                 $classification['outcome_class'] = 'expected_absence';
@@ -413,16 +430,35 @@ final class MeliApiClient implements MeliReadClientInterface
                 continue;
             }
             $guard->afterFailure($this->accountId, $method, $path, $status, $retryAfter, $safeMessage, $classification);
-            $this->logApiError($requestId, $method, $path, $status, $safeMessage, $safeDecoded);
+            $this->logApiError(
+                $requestId,
+                $method,
+                $path,
+                $status,
+                $safeMessage,
+                $safeDecoded,
+                $manualEmergencyCanary ? $errorCode : null,
+                $manualEmergencyCanary
+            );
             throw new MeliApiException($safeMessage, $status ?: null, $requestId, $safeDecoded);
         }
         throw new MeliApiException('Error de API no recuperable.', null, $requestId);
     }
 
-    private function logApiError(string $requestId, string $method, string $path, int $status, string $message, array $response): void
+    private function logApiError(
+        string $requestId,
+        string $method,
+        string $path,
+        int $status,
+        string $message,
+        array $response,
+        ?string $normalizedErrorCode = null,
+        bool $omitResponse = false
+    ): void
     {
         try {
-            $presented = (new ApiHealthSafeMessageService())->present($message, isset($response['error']) ? (string) $response['error'] : null);
+            $responseError = isset($response['error']) ? (string) $response['error'] : null;
+            $presented = (new ApiHealthSafeMessageService())->present($message, $normalizedErrorCode ?? $responseError);
             $stmt = Database::connection()->prepare('INSERT INTO api_error_logs (meli_account_id, request_id, method, endpoint_path, http_status, error_code, safe_message, response_json) VALUES (:account,:request,:method,:path,:status,:code,:message,:response)');
             $stmt->execute([
                 'account' => $this->accountId,
@@ -430,13 +466,45 @@ final class MeliApiClient implements MeliReadClientInterface
                 'method' => $method,
                 'path' => $path,
                 'status' => $status ?: null,
-                'code' => isset($response['error']) ? mb_substr(Logger::redactString((string) $response['error']), 0, 100) : null,
+                'code' => $normalizedErrorCode !== null
+                    ? mb_substr($normalizedErrorCode, 0, 100)
+                    : ($responseError !== null ? mb_substr(Logger::redactString($responseError), 0, 100) : null),
                 'message' => $presented['safe_message'],
-                'response' => json_encode(Logger::redact($response), JSON_UNESCAPED_UNICODE),
+                // El canario manual nunca persiste el cuerpo remoto, ni siquiera
+                // una versión redactada. NULL constituye la frontera contractual.
+                'response' => $omitResponse
+                    ? null
+                    : json_encode(Logger::redact($response), JSON_UNESCAPED_UNICODE),
             ]);
         } catch (Throwable) {
             Logger::write('error', 'Fallo de Mercado Libre API', ['request_id' => $requestId, 'status' => $status, 'path' => $path]);
         }
+    }
+
+    private function emergencyCanaryErrorCode(int $status, string $curlError): string
+    {
+        if ($curlError !== '') {
+            return 'CANARY_CURL_ERROR';
+        }
+        return match (true) {
+            $status === 401 => 'CANARY_REMOTE_401',
+            $status === 403 => 'CANARY_REMOTE_403',
+            $status === 429 => 'CANARY_REMOTE_429',
+            $status >= 500 => 'CANARY_REMOTE_5XX',
+            default => 'CANARY_REMOTE_HTTP_ERROR',
+        };
+    }
+
+    private function emergencyCanarySafeMessage(string $errorCode): string
+    {
+        return match ($errorCode) {
+            'CANARY_REMOTE_401' => 'La prueba canaria recibió una autorización rechazada.',
+            'CANARY_REMOTE_403' => 'La prueba canaria recibió un acceso denegado.',
+            'CANARY_REMOTE_429' => 'La prueba canaria recibió una protección de ritmo.',
+            'CANARY_REMOTE_5XX' => 'La prueba canaria recibió un fallo temporal remoto.',
+            'CANARY_CURL_ERROR' => 'La prueba canaria no pudo confirmar una respuesta HTTP.',
+            default => 'La prueba canaria recibió una respuesta HTTP no aprobada.',
+        };
     }
 
     /** @param array<string,mixed>|list<mixed> $decoded @param array<string,mixed> $meta */

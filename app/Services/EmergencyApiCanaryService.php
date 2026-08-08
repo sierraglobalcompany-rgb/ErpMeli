@@ -38,7 +38,9 @@ final class EmergencyApiCanaryService
     {
         $stmt = Database::connection()->query(
             "SELECT a.id,a.company_id,a.account_name,a.nickname,a.meli_user_id,
-                    t.access_token_encrypted,t.expires_at
+                    CASE WHEN t.access_token_encrypted IS NOT NULL
+                               AND LENGTH(TRIM(t.access_token_encrypted))>0 THEN 1 ELSE 0 END token_present,
+                    t.expires_at
              FROM meli_accounts a
              INNER JOIN meli_tokens t ON t.meli_account_id=a.id
              WHERE a.status IN ('conectado','connected')
@@ -79,12 +81,14 @@ final class EmergencyApiCanaryService
                 'expected_meli_user_id' => (string) $account['meli_user_id'],
                 'canary_method' => self::METHOD,
                 'canary_endpoint' => self::ENDPOINT,
-                'canary_reservation_nonce' => $nonce,
                 'bulk' => false,
             ];
-            $response = ApiExecutionMetadataContext::run(
-                $metadata,
-                static fn (): array => $client->get(self::ENDPOINT, [], $metadata)
+            $response = EmergencyCanaryTransportContext::run(
+                $nonce,
+                static fn (): array => ApiExecutionMetadataContext::run(
+                    $metadata,
+                    static fn (): array => $client->get(self::ENDPOINT, [], $metadata)
+                )
             );
             $actualUserId = $this->canonicalIdentifier($response['id'] ?? null);
             if ($actualUserId === '') {
@@ -116,7 +120,7 @@ final class EmergencyApiCanaryService
         }
     }
 
-    /** @return array{id:int,company_id:int,nickname:string,meli_user_id:string,access_token_encrypted:string,expires_at:string} */
+    /** @return array{id:int,company_id:int,nickname:string,meli_user_id:string,token_present:int,expires_at:string} */
     private function preflight(int $accountId): array
     {
         if (!$this->control->automationStopped()) {
@@ -134,7 +138,9 @@ final class EmergencyApiCanaryService
         }
         $stmt = Database::connection()->prepare(
             "SELECT a.id,a.company_id,a.account_name,a.nickname,a.meli_user_id,
-                    t.access_token_encrypted,t.expires_at
+                    CASE WHEN t.access_token_encrypted IS NOT NULL
+                               AND LENGTH(TRIM(t.access_token_encrypted))>0 THEN 1 ELSE 0 END token_present,
+                    t.expires_at
              FROM meli_accounts a
              INNER JOIN meli_tokens t ON t.meli_account_id=a.id
              WHERE a.id=? AND a.status IN ('conectado','connected')
@@ -155,7 +161,7 @@ final class EmergencyApiCanaryService
             'nickname' => trim((string) ($account['nickname'] ?? ''))
                 ?: trim((string) ($account['account_name'] ?? 'Cuenta Mercado Libre')),
             'meli_user_id' => trim((string) $account['meli_user_id']),
-            'access_token_encrypted' => (string) $account['access_token_encrypted'],
+            'token_present' => (int) $account['token_present'],
             'expires_at' => (string) $account['expires_at'],
         ];
     }
@@ -163,7 +169,7 @@ final class EmergencyApiCanaryService
     /** @param array<string,mixed> $row */
     private function tokenMetadataReady(array $row): bool
     {
-        if (trim((string) ($row['access_token_encrypted'] ?? '')) === '') {
+        if ((int) ($row['token_present'] ?? 0) !== 1) {
             return false;
         }
         $skew = max(30, min(600, (new AppSettingsService())->int('oauth.token_expiry_skew_seconds', 120)));

@@ -8,6 +8,7 @@ require $root . '/bootstrap.php';
 use App\Services\ApiManualPauseException;
 use App\Services\ApiExecutionMetadataContext;
 use App\Services\CurlMeliHttpTransport;
+use App\Services\EmergencyCanaryTransportContext;
 use App\Services\EmergencyControlService;
 
 $temporary = sys_get_temp_dir() . '/erp-meli-emergency-' . bin2hex(random_bytes(5));
@@ -72,12 +73,23 @@ try {
         'meli_account_id' => 1,
         'transport_meli_account_id' => 1,
         'expected_meli_user_id' => '10001',
-        'canary_reservation_nonce' => $nonce,
     ];
-    ApiExecutionMetadataContext::run($metadata, static fn () => $service->claimCanaryTransport('GET', '/users/me'));
+    EmergencyCanaryTransportContext::run(
+        $nonce,
+        static fn () => ApiExecutionMetadataContext::run(
+            $metadata,
+            static fn () => $service->claimCanaryTransport('GET', '/users/me')
+        )
+    );
     $blockedSecond = false;
     try {
-        ApiExecutionMetadataContext::run($metadata, static fn () => $service->claimCanaryTransport('GET', '/users/me'));
+        EmergencyCanaryTransportContext::run(
+            $nonce,
+            static fn () => ApiExecutionMetadataContext::run(
+                $metadata,
+                static fn () => $service->claimCanaryTransport('GET', '/users/me')
+            )
+        );
     } catch (ApiManualPauseException) {
         $blockedSecond = true;
     }

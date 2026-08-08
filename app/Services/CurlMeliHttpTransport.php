@@ -31,7 +31,7 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             : $url;
         $body = $form ? http_build_query($data) : json_encode($data, JSON_UNESCAPED_SLASHES);
         $responseHeaders = [];
-        curl_setopt_array($ch, [
+        $options = [
             CURLOPT_URL => $urlWithQuery,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => max(1, $timeouts['timeout']),
@@ -45,7 +45,14 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
                 }
                 return strlen($line);
             },
-        ]);
+        ];
+        if ((string) (ApiExecutionMetadataContext::current()['source'] ?? '') === 'manual_emergency_canary') {
+            // Un redirect también sería otra solicitud física. El canario no
+            // puede seguirlo, ni siquiera cuando el servidor responda 301/302.
+            $options[CURLOPT_FOLLOWLOCATION] = false;
+            $options[CURLOPT_MAXREDIRS] = 0;
+        }
+        curl_setopt_array($ch, $options);
         if ($method !== 'GET') {
             curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
         }

@@ -12,6 +12,7 @@ use App\Services\ApiExecutionMetadataContext;
 use App\Services\ApiGuardService;
 use App\Services\CurlMeliHttpTransport;
 use App\Services\EmergencyApiCanaryService;
+use App\Services\EmergencyCanaryTransportContext;
 use App\Services\EmergencyControlService;
 use App\Services\ExecutionJournalService;
 use App\Services\MeliApiClient;
@@ -48,8 +49,24 @@ foreach ($markerNames as $name) {
     $path = $root . DIRECTORY_SEPARATOR . $name;
     $savedMarkers[$name] = is_file($path) ? file_get_contents($path) : null;
 }
+$savedEmergencyStorage = getenv('ERP_EMERGENCY_STORAGE_DIR');
+$testPrivateDirectory = sys_get_temp_dir() . DIRECTORY_SEPARATOR
+    . 'erp-hf11-private-' . bin2hex(random_bytes(6));
+if (!mkdir($testPrivateDirectory, 0700, true) && !is_dir($testPrivateDirectory)) {
+    fwrite(STDERR, 'No fue posible crear el almacenamiento privado efímero.' . PHP_EOL);
+    exit(2);
+}
+putenv('ERP_EMERGENCY_STORAGE_DIR=' . $testPrivateDirectory);
+$_ENV['ERP_EMERGENCY_STORAGE_DIR'] = $testPrivateDirectory;
 
-$restoreMarkers = static function () use ($root, $savedMarkers, $configPath, $savedConfig): void {
+$restoreMarkers = static function () use (
+    $root,
+    $savedMarkers,
+    $configPath,
+    $savedConfig,
+    $savedEmergencyStorage,
+    $testPrivateDirectory
+): void {
     foreach ($savedMarkers as $name => $contents) {
         $path = $root . DIRECTORY_SEPARATOR . $name;
         if (is_string($contents)) {
@@ -62,6 +79,23 @@ $restoreMarkers = static function () use ($root, $savedMarkers, $configPath, $sa
         file_put_contents($configPath, $savedConfig, LOCK_EX);
     } else {
         @unlink($configPath);
+    }
+    if (is_string($savedEmergencyStorage)) {
+        putenv('ERP_EMERGENCY_STORAGE_DIR=' . $savedEmergencyStorage);
+        $_ENV['ERP_EMERGENCY_STORAGE_DIR'] = $savedEmergencyStorage;
+    } else {
+        putenv('ERP_EMERGENCY_STORAGE_DIR');
+        unset($_ENV['ERP_EMERGENCY_STORAGE_DIR']);
+    }
+    if (is_dir($testPrivateDirectory)) {
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($testPrivateDirectory, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::CHILD_FIRST
+        );
+        foreach ($iterator as $item) {
+            $item->isDir() ? @rmdir($item->getPathname()) : @unlink($item->getPathname());
+        }
+        @rmdir($testPrivateDirectory);
     }
 };
 
@@ -116,6 +150,153 @@ try {
             access_token_encrypted MEDIUMTEXT NOT NULL,
             expires_at DATETIME NOT NULL,
             UNIQUE KEY uq_meli_tokens_account (meli_account_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS api_rhythm_states (
+            scope_key VARCHAR(64) NOT NULL PRIMARY KEY,
+            generation BIGINT UNSIGNED NOT NULL DEFAULT 1,
+            calls_in_block INT UNSIGNED NOT NULL DEFAULT 0,
+            block_started_at DATETIME(3) NULL,
+            next_allowed_at DATETIME(3) NULL,
+            block_pause_until DATETIME(3) NULL,
+            last_dispatched_at DATETIME(3) NULL,
+            updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS api_remote_permits (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            permit_token CHAR(40) NOT NULL,
+            owner_token CHAR(32) NOT NULL,
+            generation BIGINT UNSIGNED NOT NULL,
+            run_token VARCHAR(100) NULL,
+            work_key VARCHAR(120) NULL,
+            company_id BIGINT UNSIGNED NULL,
+            meli_account_id BIGINT UNSIGNED NULL,
+            endpoint_key VARCHAR(120) NOT NULL,
+            job_type VARCHAR(80) NOT NULL,
+            method VARCHAR(10) NOT NULL,
+            status ENUM("reserved","dispatched","completed","released","expired") NOT NULL DEFAULT "reserved",
+            requested_interval_ms INT UNSIGNED NOT NULL,
+            effective_interval_ms INT UNSIGNED NOT NULL,
+            blocking_scope VARCHAR(80) NULL,
+            http_status SMALLINT UNSIGNED NULL,
+            created_at DATETIME(3) NOT NULL,
+            dispatched_at DATETIME(3) NULL,
+            completed_at DATETIME(3) NULL,
+            released_at DATETIME(3) NULL,
+            expires_at DATETIME(3) NOT NULL,
+            updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+            UNIQUE KEY uq_hf11_remote_permit_token (permit_token)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS api_rhythm_penalties (
+            scope_key VARCHAR(180) NOT NULL PRIMARY KEY,
+            reduced_limit_per_minute SMALLINT UNSIGNED NOT NULL,
+            blocked_until DATETIME(3) NULL,
+            reduced_until DATETIME(3) NOT NULL,
+            reason VARCHAR(80) NOT NULL,
+            updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS api_request_logs (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            meli_account_id BIGINT UNSIGNED NULL,
+            company_id BIGINT UNSIGNED NULL,
+            scope_kind VARCHAR(20) NULL,
+            request_id VARCHAR(100) NULL,
+            method VARCHAR(10) NULL,
+            endpoint_path VARCHAR(255) NULL,
+            http_status INT NULL,
+            duration_ms INT NULL,
+            retry_after_seconds INT NULL,
+            attempt INT NULL,
+            was_blocked TINYINT(1) NOT NULL DEFAULT 0,
+            safe_message VARCHAR(500) NULL,
+            diagnostic_id VARCHAR(100) NULL,
+            error_type VARCHAR(100) NULL,
+            error_code VARCHAR(120) NULL,
+            is_retryable TINYINT(1) NOT NULL DEFAULT 0,
+            is_app_blocked_signal TINYINT(1) NOT NULL DEFAULT 0,
+            outcome_class VARCHAR(80) NULL,
+            reached_remote TINYINT(1) NULL,
+            actionable TINYINT(1) NOT NULL DEFAULT 0,
+            risk_signal TINYINT(1) NOT NULL DEFAULT 0,
+            incident_key VARCHAR(120) NULL,
+            execution_source VARCHAR(40) NULL,
+            job_type VARCHAR(80) NULL,
+            source_queue_key VARCHAR(80) NULL,
+            source_work_id VARCHAR(100) NULL,
+            operation_key VARCHAR(80) NULL,
+            load_class VARCHAR(24) NULL,
+            workload_units INT NULL,
+            wire_bytes BIGINT NULL,
+            decoded_bytes BIGINT NULL,
+            response_item_count INT NULL,
+            response_count_state VARCHAR(20) NULL,
+            response_resource_unit VARCHAR(40) NULL,
+            fanout_count INT NULL,
+            created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS api_operation_metrics_hourly (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            bucket_started_at DATETIME NOT NULL,
+            account_scope_key BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            meli_account_id BIGINT UNSIGNED NULL,
+            operation_key VARCHAR(80) NOT NULL,
+            load_class VARCHAR(24) NOT NULL,
+            sample_count INT UNSIGNED NOT NULL DEFAULT 0,
+            remote_count INT UNSIGNED NOT NULL DEFAULT 0,
+            success_count INT UNSIGNED NOT NULL DEFAULT 0,
+            error_count INT UNSIGNED NOT NULL DEFAULT 0,
+            total_duration_ms BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            max_duration_ms INT UNSIGNED NOT NULL DEFAULT 0,
+            total_wire_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            total_decoded_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            total_items BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            total_fanout BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_hf11_operation_hour (bucket_started_at,account_scope_key,operation_key,load_class)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS api_operation_metric_samples (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            bucket_started_at DATETIME NOT NULL,
+            account_scope_key BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            meli_account_id BIGINT UNSIGNED NULL,
+            operation_key VARCHAR(80) NOT NULL,
+            load_class VARCHAR(24) NOT NULL,
+            duration_ms INT UNSIGNED NOT NULL DEFAULT 0,
+            wire_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            decoded_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            response_item_count INT UNSIGNED NOT NULL DEFAULT 0,
+            fanout_count INT UNSIGNED NOT NULL DEFAULT 0,
+            http_status INT NULL,
+            reached_remote TINYINT(1) NOT NULL DEFAULT 0,
+            successful TINYINT(1) NOT NULL DEFAULT 0,
+            created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS api_error_logs (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            safe_message TEXT NULL,
+            context_json LONGTEXT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS system_logs (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            safe_message TEXT NULL,
+            context_json LONGTEXT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
     );
     $pdo->exec(
@@ -261,6 +442,9 @@ try {
         $upsert->execute(['setting_key' => $key, 'setting_value' => $value]);
     }
     $pdo->exec('TRUNCATE TABLE api_budget_windows');
+    $pdo->exec('TRUNCATE TABLE api_rhythm_states');
+    $pdo->exec('TRUNCATE TABLE api_remote_permits');
+    $pdo->exec('TRUNCATE TABLE api_rhythm_penalties');
     $pdo->exec('TRUNCATE TABLE meli_tokens');
     $pdo->exec('TRUNCATE TABLE meli_accounts');
     $pdo->exec('TRUNCATE TABLE schema_migrations');
@@ -281,6 +465,8 @@ try {
 
     $fakeTransport = new class implements MeliHttpTransportInterface {
         public int $calls = 0;
+        /** @var array<string,mixed> */
+        public array $observedMetadata = [];
 
         public function request(
             string $method,
@@ -292,6 +478,7 @@ try {
         ): array {
             // Reproduce las dos barreras del transporte real sin abrir cURL.
             (new MeliEmergencyStopService())->assertTransportAllowed($method, $url);
+            $this->observedMetadata = ApiExecutionMetadataContext::current();
             $this->calls++;
             $result = [
                 'status' => 200,
@@ -319,13 +506,15 @@ try {
     $control->prepareApiStart('hf1-test', 'Canario manual local');
     $manualNonce = $control->reserveApiCanary(1, '1');
     $callsBeforeManual = $fakeTransport->calls;
-    $manualResult = $invoke([
-        'source' => 'manual_emergency_canary',
-        'job_type' => 'emergency_canary',
-        'meli_account_id' => 1,
-        'expected_meli_user_id' => '1',
-        'canary_reservation_nonce' => $manualNonce,
-    ]);
+    $manualResult = EmergencyCanaryTransportContext::run(
+        $manualNonce,
+        static fn (): array => $invoke([
+            'source' => 'manual_emergency_canary',
+            'job_type' => 'emergency_canary',
+            'meli_account_id' => 1,
+            'expected_meli_user_id' => '1',
+        ])
+    );
     $control->completeApiCanarySuccess($manualNonce, 1, (string) ($manualResult['id'] ?? ''));
     $canary = $control->status()['canary'] ?? null;
     $check($fakeTransport->calls === $callsBeforeManual + 1 && ($manualResult['id'] ?? null) === 1,
@@ -343,6 +532,12 @@ try {
         $control,
         static fn (int $accountId): MeliApiClient => new MeliApiClient($accountId, $fakeTransport)
     );
+    $preflightMethod = (new ReflectionClass($service))->getMethod('preflight');
+    $preflightResult = $preflightMethod->invoke($service, 1);
+    $check(is_array($preflightResult)
+        && !array_key_exists('access_token_encrypted', $preflightResult)
+        && !str_contains(json_encode($preflightResult) ?: '', $token),
+        'CANARY_PREFLIGHT_RETURNS_ENCRYPTED_TOKEN devolvió material cifrado al orquestador.');
     $serviceResult = $service->run(1, 'hf1-test');
     $serviceCanary = $control->status()['canary'] ?? null;
     $check($fakeTransport->calls === $callsBeforeService + 1
@@ -354,6 +549,95 @@ try {
     $control->confirmApiStart('hf1-test', 'Identidad confirmada');
     $check(!$control->apiStopped() && ($control->status()['canary'] ?? null) === null,
         'CONFIRM_API no exigió y consumió la evidencia de identidad exitosa.');
+
+    // El secreto de reserva existe durante unos milisegundos exclusivamente en
+    // almacenamiento privado y en el contexto privado del transporte. Nunca
+    // entra al metadata observable, estado público, telemetría, logs o HTML.
+    $nonceSentinel = 'NONCE_SENTINEL_' . bin2hex(random_bytes(18));
+    $privateSentinelSeen = false;
+    $publicSentinelSeenBeforeTransport = false;
+    $sentinelControl = new EmergencyControlService(
+        null,
+        static fn (): string => $nonceSentinel
+    );
+    $sentinelControl->stopAll('hf1-test', 'Persistencia privada del nonce');
+    $sentinelControl->prepareApiStart('hf1-test', 'Persistencia privada del nonce');
+    $pdo->prepare("UPDATE app_settings SET setting_value='1' WHERE setting_key='api.guard.enabled'")->execute();
+    $sentinelService = new EmergencyApiCanaryService(
+        $sentinelControl,
+        static function (int $accountId) use (
+            $testPrivateDirectory,
+            $root,
+            $nonceSentinel,
+            &$privateSentinelSeen,
+            &$publicSentinelSeenBeforeTransport,
+            $fakeTransport
+        ): MeliApiClient {
+            $privateContents = @file_get_contents(
+                $testPrivateDirectory . DIRECTORY_SEPARATOR . 'canary-reservation.json'
+            );
+            $publicContents = @file_get_contents(
+                $root . DIRECTORY_SEPARATOR . EmergencyControlService::CANARY_MARKER
+            );
+            $privateSentinelSeen = is_string($privateContents)
+                && str_contains($privateContents, $nonceSentinel);
+            $publicSentinelSeenBeforeTransport = is_string($publicContents)
+                && str_contains($publicContents, $nonceSentinel);
+            return new MeliApiClient($accountId, $fakeTransport);
+        }
+    );
+    $sentinelService->run(1, 'hf1-test');
+    $sentinelStatus = json_encode($sentinelControl->status(), JSON_UNESCAPED_SLASHES) ?: '';
+    $sentinelPublicMarker = @file_get_contents(
+        $root . DIRECTORY_SEPARATOR . EmergencyControlService::CANARY_MARKER
+    );
+    $sentinelPrivateMarker = @file_get_contents(
+        $testPrivateDirectory . DIRECTORY_SEPARATOR . 'canary-reservation.json'
+    );
+    $databaseSentinelHits = 0;
+    $columns = $pdo->prepare(
+        "SELECT TABLE_NAME,COLUMN_NAME FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA=DATABASE()
+           AND DATA_TYPE IN ('char','varchar','tinytext','text','mediumtext','longtext','json',
+                             'binary','varbinary','tinyblob','blob','mediumblob','longblob')"
+    );
+    $columns->execute();
+    foreach ($columns->fetchAll(PDO::FETCH_ASSOC) as $column) {
+        $tableName = str_replace('`', '``', (string) $column['TABLE_NAME']);
+        $columnName = str_replace('`', '``', (string) $column['COLUMN_NAME']);
+        $needle = $pdo->quote('%' . $nonceSentinel . '%');
+        $databaseSentinelHits += (int) $pdo->query(
+            "SELECT COUNT(*) FROM `{$tableName}` WHERE CAST(`{$columnName}` AS CHAR) LIKE {$needle}"
+        )->fetchColumn();
+    }
+    $fileSentinelHits = 0;
+    foreach ([
+        $root . DIRECTORY_SEPARATOR . EmergencyControlService::CANARY_MARKER,
+        $root . DIRECTORY_SEPARATOR . EmergencyControlService::LAST_CHANGE_MARKER,
+        $testPrivateDirectory . DIRECTORY_SEPARATOR . 'emergency-audit.jsonl',
+        $testPrivateDirectory . DIRECTORY_SEPARATOR . 'canary-reservation.json',
+    ] as $candidate) {
+        $contents = @file_get_contents($candidate);
+        if (is_string($contents) && str_contains($contents, $nonceSentinel)) {
+            $fileSentinelHits++;
+        }
+    }
+    $kernelSource = (string) file_get_contents($root . '/app/Recovery/EmergencyControlKernel.php');
+    $check($privateSentinelSeen && !$publicSentinelSeenBeforeTransport,
+        'CANARY_NONCE_PRIVATE_STORAGE_ONLY no aisló el secreto antes del transporte.');
+    $check(!array_key_exists('canary_reservation_nonce', $fakeTransport->observedMetadata)
+        && !str_contains(json_encode($fakeTransport->observedMetadata) ?: '', $nonceSentinel),
+        'CANARY_NONCE_IN_OBSERVABLE_METADATA filtró el secreto al cliente/guard/telemetría.');
+    $check($databaseSentinelHits === 0 && $fileSentinelHits === 0,
+        'CANARY_NONCE_IN_OBSERVABLE_LOGS encontró el secreto en persistencia observable.');
+    $check(!str_contains($sentinelStatus, $nonceSentinel)
+        && (!is_string($sentinelPublicMarker) || !str_contains($sentinelPublicMarker, $nonceSentinel))
+        && !is_string($sentinelPrivateMarker),
+        'CANARY_NONCE_IN_PUBLIC_STATUS expuso el secreto o no eliminó la reserva privada.');
+    $check(!str_contains($kernelSource, 'EmergencyCanaryTransportContext')
+        && !str_contains($kernelSource, $nonceSentinel),
+        'CANARY_NONCE_IN_HTML permitió que la capa de presentación acceda al secreto.');
+    $sentinelControl->confirmApiStart('hf1-test', 'Prueba de persistencia completada');
 
     // Token vencido/próximo a vencer: el orquestador falla antes de construir
     // transporte; por contrato tampoco existe llamada a refreshOAuthToken.
@@ -380,13 +664,16 @@ try {
     $control->prepareApiStart('hf1-test', 'Reserva ligada a operación');
     $boundNonce = $control->reserveApiCanary(1, '1');
     foreach ([
-        ['source' => 'cron_v3_remote', 'meli_account_id' => 1, 'transport_meli_account_id' => 1, 'expected_meli_user_id' => '1', 'canary_reservation_nonce' => $boundNonce],
-        ['source' => 'manual_emergency_canary', 'meli_account_id' => 2, 'transport_meli_account_id' => 2, 'expected_meli_user_id' => '1', 'canary_reservation_nonce' => $boundNonce],
+        ['source' => 'cron_v3_remote', 'meli_account_id' => 1, 'transport_meli_account_id' => 1, 'expected_meli_user_id' => '1'],
+        ['source' => 'manual_emergency_canary', 'meli_account_id' => 2, 'transport_meli_account_id' => 2, 'expected_meli_user_id' => '1'],
     ] as $index => $wrongMetadata) {
         try {
-            ApiExecutionMetadataContext::run(
-                $wrongMetadata,
-                static fn () => (new MeliEmergencyStopService())->assertTransportAllowed('GET', 'https://api.mercadolibre.com/users/me')
+            EmergencyCanaryTransportContext::run(
+                $boundNonce,
+                static fn () => ApiExecutionMetadataContext::run(
+                    $wrongMetadata,
+                    static fn () => (new MeliEmergencyStopService())->assertTransportAllowed('GET', 'https://api.mercadolibre.com/users/me')
+                )
             );
             $check(false, $index === 0
                 ? 'UNRELATED_REQUEST_CANNOT_CONSUME_CANARY fue autorizada.'
@@ -480,33 +767,138 @@ try {
         'meli_account_id' => 1,
         'transport_meli_account_id' => 1,
         'expected_meli_user_id' => '1',
-        'canary_reservation_nonce' => $transportNonce,
     ];
     $realTransport = new CurlMeliHttpTransport();
-    ApiExecutionMetadataContext::run($transportMetadata, static fn (): array => $realTransport->request(
-        'GET',
-        'http://127.0.0.1:9/users/me',
-        [],
-        ['Accept: application/json'],
-        false,
-        ['timeout' => 1, 'connect_timeout' => 1]
-    ));
-    $realCanary = $control->status()['canary'] ?? null;
-    $check(is_array($realCanary) && (int) ($realCanary['used_calls'] ?? 0) === 1,
-        'REAL_TRANSPORT_CANARY_GUARD no consumió el permiso en CurlMeliHttpTransport.');
-    try {
-        ApiExecutionMetadataContext::run($transportMetadata, static fn (): array => $realTransport->request(
+    EmergencyCanaryTransportContext::run(
+        $transportNonce,
+        static fn (): array => ApiExecutionMetadataContext::run($transportMetadata, static fn (): array => $realTransport->request(
             'GET',
             'http://127.0.0.1:9/users/me',
             [],
             ['Accept: application/json'],
             false,
             ['timeout' => 1, 'connect_timeout' => 1]
-        ));
+        ))
+    );
+    $realCanary = $control->status()['canary'] ?? null;
+    $check(is_array($realCanary) && (int) ($realCanary['used_calls'] ?? 0) === 1,
+        'REAL_TRANSPORT_CANARY_GUARD no consumió el permiso en CurlMeliHttpTransport.');
+    try {
+        EmergencyCanaryTransportContext::run(
+            $transportNonce,
+            static fn (): array => ApiExecutionMetadataContext::run($transportMetadata, static fn (): array => $realTransport->request(
+                'GET',
+                'http://127.0.0.1:9/users/me',
+                [],
+                ['Accept: application/json'],
+                false,
+                ['timeout' => 1, 'connect_timeout' => 1]
+            ))
+        );
         $check(false, 'SINGLE_CANARY_TRANSPORT_ENFORCED permitió una segunda salida.');
     } catch (Throwable $blocked) {
         $check(str_contains($blocked->getMessage(), 'canaria ya fue utilizada'),
             'SINGLE_CANARY_TRANSPORT_ENFORCED no bloqueó por permiso ya consumido.');
+    }
+
+    // Un redirect HTTP no puede transformar la única llamada autorizada en
+    // una segunda salida física. A responde 302 hacia B; B debe quedar en cero.
+    $socket = stream_socket_server('tcp://127.0.0.1:0', $socketError, $socketMessage);
+    if (!is_resource($socket)) {
+        throw new RuntimeException('No fue posible reservar el puerto local para probar redirects.');
+    }
+    $socketName = (string) stream_socket_get_name($socket, false);
+    fclose($socket);
+    $redirectPort = (int) substr(strrchr($socketName, ':'), 1);
+    $redirectHits = $testPrivateDirectory . DIRECTORY_SEPARATOR . 'redirect-hits.jsonl';
+    $redirectRouter = $testPrivateDirectory . DIRECTORY_SEPARATOR . 'redirect-router.php';
+    file_put_contents($redirectRouter, <<<'PHP'
+<?php
+$hits = getenv('HF11_REDIRECT_HITS');
+$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+file_put_contents($hits, json_encode(['path' => $path]) . "\n", FILE_APPEND | LOCK_EX);
+if ($path === '/users/me') {
+    http_response_code(302);
+    header('Location: /redirect-target');
+    echo '{}';
+    return;
+}
+header('Content-Type: application/json');
+echo json_encode(['id' => 1]);
+PHP
+    );
+    $redirectProcess = proc_open(
+        [PHP_BINARY, '-S', '127.0.0.1:' . $redirectPort, $redirectRouter],
+        [
+            0 => ['pipe', 'r'],
+            1 => ['file', $testPrivateDirectory . DIRECTORY_SEPARATOR . 'redirect-out.log', 'a'],
+            2 => ['file', $testPrivateDirectory . DIRECTORY_SEPARATOR . 'redirect-error.log', 'a'],
+        ],
+        $redirectPipes,
+        $root,
+        array_merge($_ENV, ['HF11_REDIRECT_HITS' => $redirectHits])
+    );
+    if (!is_resource($redirectProcess)) {
+        throw new RuntimeException('No fue posible iniciar el servidor HTTP local de redirects.');
+    }
+    if (isset($redirectPipes[0]) && is_resource($redirectPipes[0])) {
+        fclose($redirectPipes[0]);
+    }
+    try {
+        $serverReady = false;
+        for ($attempt = 0; $attempt < 50; $attempt++) {
+            $probe = @fsockopen('127.0.0.1', $redirectPort, $probeError, $probeMessage, 0.1);
+            if (is_resource($probe)) {
+                fclose($probe);
+                $serverReady = true;
+                break;
+            }
+            usleep(20_000);
+        }
+        if (!$serverReady) {
+            throw new RuntimeException('El servidor HTTP local no quedó disponible.');
+        }
+        $control->stopAll('hf1-test', 'Preparar redirect canario local');
+        $control->prepareApiStart('hf1-test', 'Redirect canario local');
+        $redirectNonce = $control->reserveApiCanary(1, '1');
+        $redirectMetadata = [
+            'source' => 'manual_emergency_canary',
+            'meli_account_id' => 1,
+            'transport_meli_account_id' => 1,
+            'expected_meli_user_id' => '1',
+        ];
+        $redirectResult = EmergencyCanaryTransportContext::run(
+            $redirectNonce,
+            static fn (): array => ApiExecutionMetadataContext::run(
+                $redirectMetadata,
+                static fn (): array => (new CurlMeliHttpTransport())->request(
+                    'GET',
+                    'http://127.0.0.1:' . $redirectPort . '/users/me',
+                    [],
+                    ['Accept: application/json'],
+                    false,
+                    ['timeout' => 2, 'connect_timeout' => 1]
+                )
+            )
+        );
+        usleep(50_000);
+        $hitRows = is_file($redirectHits)
+            ? array_values(array_filter(file($redirectHits, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: []))
+            : [];
+        $firstHits = 0;
+        $secondHits = 0;
+        foreach ($hitRows as $hitRow) {
+            $hit = json_decode($hitRow, true);
+            $firstHits += is_array($hit) && ($hit['path'] ?? '') === '/users/me' ? 1 : 0;
+            $secondHits += is_array($hit) && ($hit['path'] ?? '') === '/redirect-target' ? 1 : 0;
+        }
+        $check((int) ($redirectResult['status'] ?? 0) === 302
+            && $firstHits === 1
+            && $secondHits === 0,
+            'CANARY_REDIRECT_SECOND_HTTP siguió el redirect o no alcanzó exactamente una vez A.');
+    } finally {
+        proc_terminate($redirectProcess);
+        proc_close($redirectProcess);
     }
 
     $budgetCount = static fn (): int => (int) $pdo->query(

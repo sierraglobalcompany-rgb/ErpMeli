@@ -6,6 +6,7 @@ require dirname(__DIR__) . '/bootstrap.php';
 
 use App\Services\ApiExecutionMetadataContext;
 use App\Services\ApiManualPauseException;
+use App\Services\EmergencyCanaryTransportContext;
 use App\Services\EmergencyControlService;
 
 $root = dirname(__DIR__);
@@ -53,7 +54,8 @@ try {
         && ($canary['method'] ?? '') === 'GET'
         && ($canary['endpoint'] ?? '') === '/users/me'
         && ($canary['source'] ?? '') === 'manual_emergency_canary'
-        && !array_key_exists('reservation_nonce', $canary),
+        && !array_key_exists('reservation_nonce', $canary)
+        && !array_key_exists('canary_reservation_nonce', ApiExecutionMetadataContext::current()),
         'RESERVATION_BINDING no guardó todas las dimensiones autorizadas.');
 
     $base = [
@@ -61,18 +63,20 @@ try {
         'meli_account_id' => 7,
         'transport_meli_account_id' => 7,
         'expected_meli_user_id' => '70001',
-        'canary_reservation_nonce' => $nonce,
     ];
     foreach ([
-        array_replace($base, ['source' => 'cron_v3_remote']),
-        array_replace($base, ['meli_account_id' => 8, 'transport_meli_account_id' => 8]),
-        array_replace($base, ['transport_meli_account_id' => 8]),
-        array_replace($base, ['canary_reservation_nonce' => str_repeat('0', 64)]),
-    ] as $index => $invalid) {
+        [array_replace($base, ['source' => 'cron_v3_remote']), $nonce],
+        [array_replace($base, ['meli_account_id' => 8, 'transport_meli_account_id' => 8]), $nonce],
+        [array_replace($base, ['transport_meli_account_id' => 8]), $nonce],
+        [$base, str_repeat('0', 64)],
+    ] as $index => [$invalid, $invalidNonce]) {
         try {
-            ApiExecutionMetadataContext::run(
-                $invalid,
-                static fn () => $control->claimCanaryTransport('GET', '/users/me')
+            EmergencyCanaryTransportContext::run(
+                $invalidNonce,
+                static fn () => ApiExecutionMetadataContext::run(
+                    $invalid,
+                    static fn () => $control->claimCanaryTransport('GET', '/users/me')
+                )
             );
             $check(false, 'INVALID_RESERVATION_' . $index . ' fue autorizada.');
         } catch (ApiManualPauseException) {
@@ -83,18 +87,24 @@ try {
         }
     }
 
-    ApiExecutionMetadataContext::run(
-        $base,
-        static fn () => $control->claimCanaryTransport('GET', '/users/me')
+    EmergencyCanaryTransportContext::run(
+        $nonce,
+        static fn () => ApiExecutionMetadataContext::run(
+            $base,
+            static fn () => $control->claimCanaryTransport('GET', '/users/me')
+        )
     );
     $inFlight = $control->status()['canary'] ?? null;
     $check(is_array($inFlight) && ($inFlight['state'] ?? '') === 'in_flight'
         && (int) ($inFlight['used_calls'] ?? 0) === 1,
         'VALID_RESERVATION no cruzó exactamente una vez a in_flight.');
     try {
-        ApiExecutionMetadataContext::run(
-            $base,
-            static fn () => $control->claimCanaryTransport('GET', '/users/me')
+        EmergencyCanaryTransportContext::run(
+            $nonce,
+            static fn () => ApiExecutionMetadataContext::run(
+                $base,
+                static fn () => $control->claimCanaryTransport('GET', '/users/me')
+            )
         );
         $check(false, 'SECOND_PARALLEL_REQUEST_ZERO_HTTP permitió un segundo claim.');
     } catch (ApiManualPauseException) {
@@ -126,10 +136,13 @@ try {
 
     $control->prepareApiStart('hf11-test', 'Nueva prueba');
     $successNonce = $control->reserveApiCanary(7, '70001');
-    $successMetadata = array_replace($base, ['canary_reservation_nonce' => $successNonce]);
-    ApiExecutionMetadataContext::run(
-        $successMetadata,
-        static fn () => $control->claimCanaryTransport('GET', '/users/me')
+    $successMetadata = $base;
+    EmergencyCanaryTransportContext::run(
+        $successNonce,
+        static fn () => ApiExecutionMetadataContext::run(
+            $successMetadata,
+            static fn () => $control->claimCanaryTransport('GET', '/users/me')
+        )
     );
     $control->completeCanaryTransport(true, 200);
     $control->completeApiCanarySuccess($successNonce, 7, '70001');
@@ -146,7 +159,7 @@ try {
     $control->stopAll('hf11-test', 'Preparar carrera concurrente');
     $control->prepareApiStart('hf11-test', 'Carrera concurrente');
     $parallelNonce = $control->reserveApiCanary(7, '70001');
-    $parallelMetadata = array_replace($base, ['canary_reservation_nonce' => $parallelNonce]);
+    $parallelMetadata = $base;
     $childPath = $temporary . DIRECTORY_SEPARATOR . 'parallel-claim.php';
     $gatePath = $temporary . DIRECTORY_SEPARATOR . 'parallel-go';
     file_put_contents($childPath, <<<'PHP'
@@ -155,6 +168,7 @@ declare(strict_types=1);
 require $argv[1];
 
 use App\Services\ApiExecutionMetadataContext;
+use App\Services\EmergencyCanaryTransportContext;
 use App\Services\EmergencyControlService;
 
 $metadata = json_decode(base64_decode($argv[2], true), true, 512, JSON_THROW_ON_ERROR);
@@ -163,9 +177,12 @@ while (!is_file($argv[4]) && microtime(true) < $deadline) {
     usleep(1000);
 }
 try {
-    ApiExecutionMetadataContext::run(
-        $metadata,
-        static fn () => (new EmergencyControlService($argv[3]))->claimCanaryTransport('GET', '/users/me')
+    EmergencyCanaryTransportContext::run(
+        $argv[5],
+        static fn () => ApiExecutionMetadataContext::run(
+            $metadata,
+            static fn () => (new EmergencyControlService($argv[3]))->claimCanaryTransport('GET', '/users/me')
+        )
     );
     fwrite(STDOUT, 'claimed');
 } catch (Throwable) {
@@ -180,6 +197,7 @@ PHP
         base64_encode(json_encode($parallelMetadata, JSON_THROW_ON_ERROR)),
         $temporary,
         $gatePath,
+        $parallelNonce,
     ];
     $descriptors = [
         0 => ['pipe', 'r'],

@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Core\AppPaths;
 use App\Core\Database;
 use App\Core\Env;
+use Closure;
 use PDO;
 use RuntimeException;
 use Throwable;
@@ -27,11 +28,17 @@ final class EmergencyControlService
 
     private string $root;
     private string $privateDirectory;
+    /** @var null|Closure():string */
+    private ?Closure $canaryNonceFactory;
 
-    public function __construct(?string $root = null)
+    /** @param null|callable():string $canaryNonceFactory */
+    public function __construct(?string $root = null, ?callable $canaryNonceFactory = null)
     {
         $this->root = rtrim($root ?? AppPaths::installationRoot(), '/\\');
         $this->privateDirectory = $this->resolvePrivateDirectory();
+        $this->canaryNonceFactory = $canaryNonceFactory !== null
+            ? Closure::fromCallable($canaryNonceFactory)
+            : null;
     }
 
     /** @return array<string,mixed> */
@@ -161,6 +168,7 @@ final class EmergencyControlService
     {
         $this->writeMarker(self::API_MARKER, $actor, $reason ?: 'Parada preventiva de Mercado Libre.');
         @unlink($this->markerPath(self::CANARY_MARKER));
+        $this->removePrivateCanaryReservation();
         $this->recordChange('api_stopped', $actor, $reason ?: 'Parada preventiva de Mercado Libre.');
         $this->audit('api_stopped', $actor, $reason);
     }
@@ -193,6 +201,7 @@ final class EmergencyControlService
     {
         $this->assertAutomationStoppedForApiEnable();
         @unlink($this->markerPath(self::CANARY_MARKER));
+        $this->removePrivateCanaryReservation();
         $this->removeMarker(self::API_MARKER);
         $message = $reason ?: 'Mercado Libre habilitado para lecturas sin prueba canaria desde freno de mano.';
         $this->recordChange('api_started_without_canary', $actor, $message);
@@ -248,6 +257,7 @@ final class EmergencyControlService
     public function prepareApiStart(string $actor, string $reason): void
     {
         $this->assertAutomationStoppedForApiEnable();
+        $this->removePrivateCanaryReservation();
         $canary = [
             'version' => 2,
             'state' => 'ready',
@@ -275,6 +285,7 @@ final class EmergencyControlService
             throw new RuntimeException('El canario todavía no confirmó una consulta correcta.');
         }
         @unlink($this->markerPath(self::CANARY_MARKER));
+        $this->removePrivateCanaryReservation();
         $this->removeMarker(self::API_MARKER);
         $this->recordChange('api_started', $actor, $reason ?: 'Mercado Libre habilitado después del canario.');
         $this->audit('api_started', $actor, $reason ?: 'Mercado Libre habilitado después del canario.');
@@ -293,7 +304,7 @@ final class EmergencyControlService
         if ($accountId < 1 || trim($expectedMeliUserId) === '') {
             throw new RuntimeException('La cuenta seleccionada no tiene una identidad Mercado Libre válida.');
         }
-        $nonce = bin2hex(random_bytes(32));
+        $nonce = $this->newCanaryNonce();
         $this->mutateCanary(function (array $canary) use ($accountId, $expectedMeliUserId, $nonce): array {
             if ((int) ($canary['expires_at'] ?? 0) < time()) {
                 throw new RuntimeException('La prueba canaria venció. Prepare una nueva prueba.');
@@ -308,8 +319,18 @@ final class EmergencyControlService
             $canary['endpoint'] = '/users/me';
             $canary['operation'] = 'users_me';
             $canary['source'] = 'manual_emergency_canary';
-            $canary['reservation_nonce'] = $nonce;
             $canary['reserved_at'] = gmdate(DATE_ATOM);
+            $this->ensurePrivateDirectory();
+            $this->atomicJson($this->canaryReservationPath(), [
+                'version' => 1,
+                'meli_account_id' => $accountId,
+                'expected_meli_user_id' => trim($expectedMeliUserId),
+                'method' => 'GET',
+                'endpoint' => '/users/me',
+                'source' => 'manual_emergency_canary',
+                'reservation_nonce' => $nonce,
+                'reserved_at' => $canary['reserved_at'],
+            ]);
             return $canary;
         });
         return $nonce;
@@ -323,12 +344,17 @@ final class EmergencyControlService
             return;
         }
         $context = ApiExecutionMetadataContext::current();
-        $this->mutateCanary(function (array $canary) use ($context, $method, $endpoint): array {
+        $privateNonce = EmergencyCanaryTransportContext::reservationNonce();
+        $this->mutateCanary(function (array $canary) use ($context, $privateNonce, $method, $endpoint): array {
             if ((int) ($canary['expires_at'] ?? 0) < time()) {
                 throw new ApiManualPauseException('app', null, null, 'El permiso canario venció. Prepare una nueva prueba.');
             }
             if (($canary['state'] ?? '') !== 'reserved' || (int) ($canary['used_calls'] ?? 0) !== 0) {
                 throw new ApiManualPauseException('app', null, null, 'La consulta canaria ya fue utilizada o no está reservada.');
+            }
+            $reservation = $this->readJson($this->canaryReservationPath());
+            if (!is_array($reservation)) {
+                throw new ApiManualPauseException('app', null, null, 'La reserva privada del canario no está disponible.');
             }
             $actual = [
                 'meli_account_id' => (string) ($context['meli_account_id'] ?? ''),
@@ -337,17 +363,22 @@ final class EmergencyControlService
                 'method' => strtoupper($method),
                 'endpoint' => '/' . ltrim($endpoint, '/'),
                 'source' => (string) ($context['source'] ?? ''),
-                'reservation_nonce' => (string) ($context['canary_reservation_nonce'] ?? ''),
+                'reservation_nonce' => $privateNonce,
             ];
             $expected = [
-                'meli_account_id' => (string) ($canary['meli_account_id'] ?? ''),
-                'transport_meli_account_id' => (string) ($canary['meli_account_id'] ?? ''),
-                'expected_meli_user_id' => (string) ($canary['expected_meli_user_id'] ?? ''),
-                'method' => (string) ($canary['method'] ?? ''),
-                'endpoint' => (string) ($canary['endpoint'] ?? ''),
-                'source' => (string) ($canary['source'] ?? ''),
-                'reservation_nonce' => (string) ($canary['reservation_nonce'] ?? ''),
+                'meli_account_id' => (string) ($reservation['meli_account_id'] ?? ''),
+                'transport_meli_account_id' => (string) ($reservation['meli_account_id'] ?? ''),
+                'expected_meli_user_id' => (string) ($reservation['expected_meli_user_id'] ?? ''),
+                'method' => (string) ($reservation['method'] ?? ''),
+                'endpoint' => (string) ($reservation['endpoint'] ?? ''),
+                'source' => (string) ($reservation['source'] ?? ''),
+                'reservation_nonce' => (string) ($reservation['reservation_nonce'] ?? ''),
             ];
+            foreach (['meli_account_id', 'expected_meli_user_id', 'method', 'endpoint', 'source'] as $key) {
+                if (!hash_equals((string) ($canary[$key] ?? ''), (string) ($reservation[$key] ?? ''))) {
+                    throw new ApiManualPauseException('app', null, null, 'La reserva privada no coincide con el estado canario.');
+                }
+            }
             foreach ($expected as $key => $value) {
                 if ($value === '' || !hash_equals($value, $actual[$key])) {
                     throw new ApiManualPauseException('app', null, null, 'La solicitud no coincide con la reserva canaria autorizada.');
@@ -389,10 +420,13 @@ final class EmergencyControlService
 
     public function completeApiCanarySuccess(string $nonce, int $accountId, string $actualMeliUserId): void
     {
-        $this->mutateCanary(function (array $canary) use ($nonce, $accountId, $actualMeliUserId): array {
+        $reservation = $this->readJson($this->canaryReservationPath());
+        $privateNonce = is_array($reservation) ? (string) ($reservation['reservation_nonce'] ?? '') : '';
+        $this->mutateCanary(function (array $canary) use ($nonce, $privateNonce, $accountId, $actualMeliUserId): array {
             $expectedId = (string) ($canary['expected_meli_user_id'] ?? '');
             if (($canary['state'] ?? '') !== 'response_known'
-                || !hash_equals((string) ($canary['reservation_nonce'] ?? ''), $nonce)
+                || $privateNonce === ''
+                || !hash_equals($privateNonce, $nonce)
                 || (int) ($canary['meli_account_id'] ?? 0) !== $accountId
                 || $expectedId === ''
                 || !hash_equals($expectedId, trim($actualMeliUserId))) {
@@ -404,6 +438,7 @@ final class EmergencyControlService
             $canary['completed_at'] = gmdate(DATE_ATOM);
             return $canary;
         });
+        $this->removePrivateCanaryReservation();
     }
 
     public function failApiCanaryAndBlock(
@@ -428,6 +463,7 @@ final class EmergencyControlService
                 return $canary;
             });
         }
+        $this->removePrivateCanaryReservation();
         $this->recordChange('api_canary_failed', $actor, 'Prueba canaria fallida. Referencia: ' . $reference . '.');
         $this->audit('api_canary_failed', $actor, 'failure_class=' . mb_substr($failureClass, 0, 80) . ' reference=' . mb_substr($reference, 0, 80));
     }
@@ -808,6 +844,30 @@ final class EmergencyControlService
     private function auditPath(): string
     {
         return $this->privateDirectory . '/audit.jsonl';
+    }
+
+    private function canaryReservationPath(): string
+    {
+        return $this->privateDirectory . '/canary-reservation.json';
+    }
+
+    private function newCanaryNonce(): string
+    {
+        $nonce = $this->canaryNonceFactory !== null
+            ? (string) ($this->canaryNonceFactory)()
+            : bin2hex(random_bytes(32));
+        if (strlen($nonce) < 32 || strlen($nonce) > 200 || preg_match('/^[A-Za-z0-9_-]+$/', $nonce) !== 1) {
+            throw new RuntimeException('No fue posible generar una reserva canaria segura.');
+        }
+        return $nonce;
+    }
+
+    private function removePrivateCanaryReservation(): void
+    {
+        $path = $this->canaryReservationPath();
+        if (is_file($path) && !@unlink($path)) {
+            throw new RuntimeException('No fue posible retirar la reserva canaria privada.');
+        }
     }
 
     private function resolvePrivateDirectory(): string

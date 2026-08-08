@@ -228,6 +228,8 @@ final class MeliApiClient implements MeliReadClientInterface
                 ApiExecutionMetadataContext::markRemoteBlocked();
                 throw $blocked;
             }
+            $executionJournal = new ExecutionJournalService();
+            $executionLeaseGeneration = max(0, (int) ($meta['execution_lease_generation'] ?? 0));
             $dispatchBoundaryCrossed = false;
             try {
                 if (!$rhythm->isCurrent($rhythmPermit)) {
@@ -237,12 +239,18 @@ final class MeliApiClient implements MeliReadClientInterface
                         'rhythm_fence_stale'
                     );
                 }
+                // Segunda barrera para la carrera entre el guard del launcher y
+                // el transporte. Solo aplica al worker V3: las lecturas canarias
+                // manuales deben seguir siendo posibles con automatización parada.
+                if ($cronV3RemoteContext && (new EmergencyControlService())->automationStopped()) {
+                    throw new RuntimeException(
+                        'La automatización se detuvo antes del transporte remoto.'
+                    );
+                }
                 // La ventana puede agotarse después de reservar ritmo y
                 // presupuesto. Se calcula dentro de la misma barrera que el
                 // transporte para devolver ambas reservas si HTTP no inició.
                 $timeouts = CronDeadlineContext::curlTimeouts();
-                $executionJournal = new ExecutionJournalService();
-                $executionLeaseGeneration = max(0, (int) ($meta['execution_lease_generation'] ?? 0));
                 if ($executionAttemptId > 0
                     && !$executionJournal->dispatchStarted($executionAttemptId, $executionLeaseGeneration)) {
                     throw new RuntimeException('La reserva exacta cambió antes de iniciar el transporte remoto.');
@@ -290,6 +298,12 @@ final class MeliApiClient implements MeliReadClientInterface
                     // devolverse sin riesgo de duplicar una consulta.
                     $budget->releaseReservation($budgetReservation);
                     $rhythm->cancelBeforeTransport($rhythmPermit);
+                    if ($executionAttemptId > 0) {
+                        $executionJournal->dispatchCancelledBeforeRemote(
+                            $executionAttemptId,
+                            $executionLeaseGeneration
+                        );
+                    }
                     ApiExecutionMetadataContext::markRemoteBlocked();
                     throw $transportBlocked;
                 }

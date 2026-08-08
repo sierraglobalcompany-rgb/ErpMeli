@@ -103,7 +103,13 @@ $modified = (int) filemtime($file);
 $etag = '"' . hash('sha256', $file . '|' . $size . '|' . $modified) . '"';
 header('Content-Type: ' . $types[$extension]);
 header('X-Content-Type-Options: nosniff');
-header('Cache-Control: public, max-age=31536000, immutable');
+if ($relativeAsset === 'emergency-control.js') {
+    // El control de emergencia no puede sobrevivir un cambio de build en la
+    // caché del navegador. La URL además lleva fingerprint de contenido.
+    header('Cache-Control: private, no-cache, max-age=0, must-revalidate');
+} else {
+    header('Cache-Control: public, max-age=31536000, immutable');
+}
 header('ETag: ' . $etag);
 header('Last-Modified: ' . gmdate('D, d M Y H:i:s', $modified) . ' GMT');
 if (trim((string) ($_SERVER['HTTP_IF_NONE_MATCH'] ?? '')) === $etag) {

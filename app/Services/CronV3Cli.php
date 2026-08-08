@@ -58,6 +58,22 @@ final class CronV3Cli
                 return 0;
             }
 
+            // Autoridad física fail-closed. Debe ejecutarse antes del lock,
+            // delay, conexión DB, cutover, productores, importadores o claims.
+            // El JSON de salida es el receipt; no crea heartbeat ni trabajo útil.
+            if ((new EmergencyControlService())->automationStopped()) {
+                self::write([
+                    'ok' => true,
+                    'mode' => $shadow ? 'shadow' : 'active',
+                    'lane' => $lane,
+                    'status' => 'SKIPPED_AUTOMATION_STOPPED',
+                    'reason' => 'automation_stop_marker_present',
+                    'http_calls' => 0,
+                    'source_mutations' => 0,
+                ]);
+                return 0;
+            }
+
             if (function_exists('job_try_lock')) {
                 $lock = \job_try_lock('cron_v3_' . $lane);
                 if ($lock === null) {

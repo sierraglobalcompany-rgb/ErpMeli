@@ -203,14 +203,16 @@ try {
         'GET',
         $authenticated['cookies']
     );
-    if (
-        $panel['status'] !== 200
-        || !str_contains($panel['body'], '<h1>Freno de mano</h1>')
-        || !str_contains($panel['body'], 'MODO LECTURA LOCAL</small><strong>Modo lectura activo</strong>')
-        || !str_contains($panel['body'], 'Activar sitio local')
-        || str_contains($panel['body'], 'El panel necesita revisión')
-    ) {
-        throw new RuntimeException('El panel autenticado cayó en modo degradado.');
+    $panelChecks = [
+        'status' => $panel['status'] === 200,
+        'title' => str_contains($panel['body'], '<h1>Freno de mano</h1>'),
+        'maintenance' => str_contains($panel['body'], 'MODO LECTURA LOCAL</small><strong>Modo lectura activo</strong>'),
+        'local_action' => str_contains($panel['body'], 'Retirar modo lectura local'),
+        'not_degraded' => !str_contains($panel['body'], 'El panel necesita revisión'),
+    ];
+    $failedPanelChecks = array_keys(array_filter($panelChecks, static fn (bool $ok): bool => !$ok));
+    if ($failedPanelChecks !== []) {
+        throw new RuntimeException('El panel autenticado falló en: ' . implode(',', $failedPanelChecks) . '.');
     }
     $aliasPanel = $request($origin . '/stop/', 'GET', $authenticated['cookies']);
     if ($aliasPanel['status'] !== 200 || !str_contains($aliasPanel['body'], '<h1>Freno de mano</h1>')) {
@@ -283,7 +285,7 @@ try {
     $clearedPanel = $request($origin . '/stop.php', 'GET', $clearMaintenance['cookies']);
     if (
         $clearedPanel['status'] !== 200
-        || !str_contains($clearedPanel['body'], 'MODO LECTURA LOCAL</small><strong>Sin mantenimiento</strong>')
+        || !str_contains($clearedPanel['body'], 'MODO LECTURA LOCAL</small><strong>El sitio está libre para operar</strong>')
         || !is_file($apiMarkerPath)
     ) {
         throw new RuntimeException('El panel no reflejó mantenimiento libre manteniendo Mercado Libre bloqueado.');
@@ -318,15 +320,15 @@ try {
     $sitePanel = $request($origin . '/stop.php', 'GET', $startLocalSite['cookies']);
     if (
         $sitePanel['status'] !== 200
-        || !str_contains($sitePanel['body'], 'AUTOMATIZACIÓN</small><strong>Activa</strong>')
+        || !str_contains($sitePanel['body'], 'AUTOMATIZACIÓN</small><strong>Detenida</strong>')
         || !str_contains($sitePanel['body'], 'MERCADO LIBRE</small><strong>Bloqueada</strong>')
-        || !str_contains($sitePanel['body'], 'MODO LECTURA LOCAL</small><strong>Sin mantenimiento</strong>')
+        || !str_contains($sitePanel['body'], 'MODO LECTURA LOCAL</small><strong>El sitio está libre para operar</strong>')
         || !is_file($apiMarkerPath)
-        || is_file($automationMarkerPath)
+        || !is_file($automationMarkerPath)
         || is_file($maintenanceMarkerPaths[0])
         || is_file($maintenanceMarkerPaths[1])
     ) {
-        throw new RuntimeException('Activar sitio local no dejó el sitio operativo localmente con API bloqueada.');
+        throw new RuntimeException('Activar sitio local no preservó API y automatización detenidas.');
     }
     echo "PASS emergency_authenticated_panel_2264\n";
 } finally {

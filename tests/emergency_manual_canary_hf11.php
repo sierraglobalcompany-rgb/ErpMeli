@@ -64,6 +64,13 @@ try {
         'transport_meli_account_id' => 7,
         'expected_meli_user_id' => '70001',
     ];
+    try {
+        $control->startAutomation('hf11-test', 'No debe iniciar durante canario');
+        $check(false, 'START_AUTOMATION_DURING_ACTIVE_CANARY fue permitido.');
+    } catch (RuntimeException) {
+        $check($control->automationStopped(),
+            'START_AUTOMATION_DURING_ACTIVE_CANARY alteró el freno de automatización.');
+    }
     foreach ([
         [array_replace($base, ['source' => 'cron_v3_remote']), $nonce],
         [array_replace($base, ['meli_account_id' => 8, 'transport_meli_account_id' => 8]), $nonce],

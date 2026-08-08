@@ -567,6 +567,62 @@ try {
     $check(!$control->apiStopped() && ($control->status()['canary'] ?? null) === null,
         'CONFIRM_API no exigió y consumió la evidencia de identidad exitosa.');
 
+    // Gate previo: con automatización ya activa, el orquestador debe fallar
+    // antes de reservar o construir una salida física.
+    $control->stopAll('hf11-test', 'Automation gate previo');
+    $control->prepareApiStart('hf11-test', 'Automation gate previo');
+    @unlink($root . DIRECTORY_SEPARATOR . EmergencyControlService::AUTOMATION_MARKER);
+    $callsBeforeRunning = $fakeTransport->calls;
+    try {
+        $service->run(1, 'hf11-test');
+        $check(false, 'AUTOMATION_RUNNING_FROM_BEFORE permitió el canario.');
+    } catch (RuntimeException) {
+        $check($fakeTransport->calls === $callsBeforeRunning,
+            'AUTOMATION_RUNNING_FROM_BEFORE cruzó la frontera HTTP.');
+    }
+
+    // Carrera obligatoria: la reserva se creó con Automation Stop, pero el
+    // marcador desaparece antes de la barrera física. assertTransportAllowed
+    // debe negar el claim antes de que el fake incremente su contador.
+    $control->stopAll('hf11-test', 'Automation race físico');
+    $control->prepareApiStart('hf11-test', 'Automation race físico');
+    $automationRaceNonce = $control->reserveApiCanary(1, '1');
+    @unlink($root . DIRECTORY_SEPARATOR . EmergencyControlService::AUTOMATION_MARKER);
+    $callsBeforeAutomationRace = $fakeTransport->calls;
+    try {
+        EmergencyCanaryTransportContext::run(
+            $automationRaceNonce,
+            static fn (): array => ApiExecutionMetadataContext::run(
+                [
+                    'source' => 'manual_emergency_canary',
+                    'meli_account_id' => 1,
+                    'transport_meli_account_id' => 1,
+                    'expected_meli_user_id' => '1',
+                ],
+                static fn (): array => $fakeTransport->request(
+                    'GET',
+                    'https://api.mercadolibre.com/users/me',
+                    [],
+                    ['Accept: application/json'],
+                    false,
+                    ['timeout' => 1, 'connect_timeout' => 1]
+                )
+            )
+        );
+        $check(false, 'CANARY_CLAIM_AFTER_AUTOMATION_RESUME fue autorizado.');
+    } catch (RuntimeException) {
+        $automationRaceState = $control->status()['canary'] ?? null;
+        $check($fakeTransport->calls === $callsBeforeAutomationRace
+            && $control->apiStopped()
+            && !$control->automationStopped()
+            && is_array($automationRaceState)
+            && ($automationRaceState['last_result'] ?? '') === 'failed'
+            && ($automationRaceState['failure_class'] ?? '') === 'automation_resumed_before_transport'
+            && (int) ($automationRaceState['used_calls'] ?? -1) === 0,
+            'CANARY_HTTP_AFTER_AUTOMATION_RESUME no quedó en cero o perdió la evidencia segura.');
+    }
+    $control->stopAll('hf11-test', 'Restaurar estado después de carrera');
+
     // El secreto de reserva existe durante unos milisegundos exclusivamente en
     // almacenamiento privado y en el contexto privado del transporte. Nunca
     // entra al metadata observable, estado público, telemetría, logs o HTML.

@@ -690,7 +690,7 @@ final class EmergencyControlService
             $expiresAt,
             $refreshVersion
         ): array {
-            if (($document['state'] ?? '') !== 'response_known'
+            if (!in_array((string) ($document['state'] ?? ''), ['in_flight', 'response_known'], true)
                 || $privateNonce === ''
                 || !hash_equals($privateNonce, $nonce)
                 || (int) ($document['meli_account_id'] ?? 0) !== $accountId
@@ -699,6 +699,8 @@ final class EmergencyControlService
             }
             $document['state'] = 'complete';
             $document['last_result'] = 'success';
+            $document['http_status'] = 200;
+            $document['response_at'] = $document['response_at'] ?? gmdate(DATE_ATOM);
             $document['token_expires_at'] = mb_substr($expiresAt, 0, 40);
             $document['refresh_version'] = $refreshVersion;
             $document['completed_at'] = gmdate(DATE_ATOM);

@@ -136,9 +136,11 @@ final class EmergencyOAuthRefreshService
             ];
         } catch (Throwable $error) {
             $state = $this->control->status()['oauth_refresh'] ?? null;
-            $status = is_array($state) && isset($state['http_status'])
-                ? (int) $state['http_status']
-                : null;
+            $status = $error instanceof MeliApiException && $error->httpStatus !== null
+                ? (int) $error->httpStatus
+                : (is_array($state) && isset($state['http_status'])
+                    ? (int) $state['http_status']
+                    : null);
             $reference = 'OAUTH-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(3));
             $this->control->failEmergencyOAuthRefreshAndBlock(
                 $actor,

@@ -67,18 +67,18 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         $curlError = curl_error($ch);
         unset($ch);
         $decoded = is_string($raw) ? json_decode($raw, true) : null;
-        $control = new EmergencyControlService();
-        if ($emergencySource === 'manual_emergency_oauth_refresh') {
-            $control->completeEmergencyOAuthRefreshTransport(
-                $curlError === '' && $status >= 200 && $status < 300,
-                $status > 0 ? $status : null
-            );
-        } else {
-            $control->completeCanaryTransport(
+        if ($emergencySource === 'manual_emergency_canary') {
+            (new EmergencyControlService())->completeCanaryTransport(
                 $curlError === '' && $status >= 200 && $status < 300,
                 $status > 0 ? $status : null
             );
         }
+
+        // OAuth es distinto al canario de lectura: una respuesta 2xx puede
+        // rotar el refresh token remoto. No debe existir ninguna escritura
+        // fallible de control-plane antes de devolver ese body al servicio que
+        // valida y persiste ambos tokens transaccionalmente. El estado OAuth se
+        // completa únicamente después de confirmar la persistencia.
 
         return [
             'status' => $status,

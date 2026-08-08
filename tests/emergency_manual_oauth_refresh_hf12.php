@@ -257,7 +257,6 @@ try {
             static function () use ($control, &$http): array {
                 $control->claimEmergencyOAuthRefreshTransport('POST', '/oauth/token');
                 $http++;
-                $control->completeEmergencyOAuthRefreshTransport(true, 200);
                 return ['access_token' => 'access-token-response-sentinel'];
             }
         );
@@ -378,7 +377,6 @@ PHP
                 static function () use ($control, &$http, $status): array {
                     $control->claimEmergencyOAuthRefreshTransport('POST', '/oauth/token');
                     $http++;
-                    $control->completeEmergencyOAuthRefreshTransport(false, $status > 0 ? $status : null);
                     throw new MeliApiException('Fallo OAuth seguro.', $status > 0 ? $status : null, 'hf12-request', []);
                 }
             );
@@ -401,7 +399,6 @@ PHP
             static function () use ($control, &$http): array {
                 $control->claimEmergencyOAuthRefreshTransport('POST', '/oauth/token');
                 $http++;
-                $control->completeEmergencyOAuthRefreshTransport(true, 200);
                 return [];
             }
         );

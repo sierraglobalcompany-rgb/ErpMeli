@@ -32,8 +32,12 @@ final class MeliEmergencyStopService
     {
         $path = (string) (parse_url($url, PHP_URL_PATH) ?: '/');
         if ($this->active()) {
-            (new EmergencyControlService())->claimEmergencyOAuthRefreshTransport($method, $path);
-            return;
+            $source = (string) (ApiExecutionMetadataContext::current()['source'] ?? '');
+            if ($source === 'manual_emergency_oauth_refresh') {
+                (new EmergencyControlService())->claimEmergencyOAuthRefreshTransport($method, $path);
+                return;
+            }
+            throw new ApiManualPauseException('app', null, null, self::MESSAGE);
         }
         $this->assertAllowed();
         (new EmergencyControlService())->claimCanaryTransport($method, $path);

@@ -23,13 +23,13 @@ final class CronV4Cli
         $requestedRuntime = $this->option($argv, 'runtime', 45, 5, 55);
         $requestedMax = $this->option($argv, 'max-jobs', 3, 1, 200);
         if ((new EmergencyControlService())->automationStopped()) {
-            return ['ok' => true, 'status' => 'SKIPPED_AUTOMATION_STOPPED', 'side_effects' => 0, 'claimed' => 0];
+            return ['ok' => true, 'status' => 'SKIPPED_AUTOMATION_STOPPED', 'side_effects' => 0, 'claimed' => 0, 'http' => 0];
         }
         if (!Env::bool('CRON_V4_ENABLED', false)) {
-            return ['ok' => true, 'status' => 'DISABLED', 'side_effects' => 0, 'claimed' => 0];
+            return ['ok' => true, 'status' => 'DISABLED', 'side_effects' => 0, 'claimed' => 0, 'http' => 0];
         }
         if (Env::bool('ML_WRITE_ENABLED', false)) {
-            return ['ok' => false, 'status' => 'BLOCKED_ML_WRITE_ENABLED', 'side_effects' => 0, 'claimed' => 0];
+            return ['ok' => false, 'status' => 'BLOCKED_ML_WRITE_ENABLED', 'side_effects' => 0, 'claimed' => 0, 'http' => 0];
         }
 
         $executionLease = null;

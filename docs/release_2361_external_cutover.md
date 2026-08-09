@@ -96,6 +96,18 @@ Todos deben pasar inmediatamente antes de cualquier mutación del clon/rehearsal
 11. La transición técnica exacta de `app_settings.setting_key='app.version'` y su rollback provienen del contrato certificado del repositorio; no se improvisa SQL.
 12. La compatibilidad N-1 detenida sobre schema 293 fue certificada. En caso contrario, el rollback exige restaurar el backup DB completo.
 
+## Autoridad del scheduler durante el corte
+
+El estado observado del scheduler de Hostinger puede permanecer `HOSTINGER_CRON_V3_UNKNOWN` durante la construcción y el ensayo local. Esto no bloquea el paquete porque el corte mantiene simultáneamente `PAUSE_MELI_API`, `PAUSE_ERP_AUTOMATION`, `ML_WRITE_ENABLED=false`, Cron V3 fail-closed, Cron V4 fail-closed y `queue_engine_control.active_engine=disabled`. Los receipts de ambos launchers deben declarar `http=0`; no basta inferirlo de la ausencia de errores.
+
+`HOSTINGER_CRON_V3_UNKNOWN` es un bloqueo duro para activar V4. Antes de cualquier cambio de `active_engine` a `v4`, un operador debe demostrar fuera de banda que no existe una tarea V3 activa ni otro comando heredado equivalente. La release, el tag y el paquete pueden publicarse con este estado desconocido, pero ni el rehearsal ni el futuro cutover pueden activar V3, V4, Automation o API.
+
+La secuencia de seguridad de cada launcher es auditable:
+
+- Cron V3 comprueba primero su flag disabled y el marcador estable de Automation, antes del lock, MariaDB, productores, claims o transporte.
+- Cron V4 comprueba primero Automation, `CRON_V4_ENABLED` y `ML_WRITE_ENABLED`; luego exige schema completo y un permit cercado del motor. Si `active_engine=disabled`, termina como `SKIPPED_ENGINE_INACTIVE` antes de productores, claims o transporte.
+- `launcher/cron.php` sólo acepta CLI, resuelve un path relativo dentro de `releases/` y exige un job PHP existente en esa release. Pointer ausente, inválido o fuera de `releases/` termina cerrado sin cargar un job.
+
 ## Máquina de estados combinada
 
 Cada estado persiste evidencia no secreta fuera del webroot. Una reanudación primero observa filesystem, pointer, `schema_migrations` y `app.version`; nunca confía sólo en el último log.

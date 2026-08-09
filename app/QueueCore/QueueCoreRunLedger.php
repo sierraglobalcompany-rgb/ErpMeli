@@ -50,7 +50,8 @@ final class QueueCoreRunLedger
         $status = in_array($status, $allowed, true) ? $status : 'failed';
         $run = is_array($summary['run'] ?? null) ? $summary['run'] : $summary;
         $attempts = $this->pdo->prepare(
-            'SELECT COALESCE(SUM(physical_http_calls),0) physical_http,
+            'SELECT COUNT(DISTINCT job_id) measured_claimed,
+                    COALESCE(SUM(physical_http_calls),0) physical_http,
                     COALESCE(SUM(response_known_at IS NOT NULL),0) known_responses,
                     COALESCE(SUM(resources_persisted),0) resources_persisted
              FROM queue_core_attempts WHERE run_id=?'
@@ -67,7 +68,11 @@ final class QueueCoreRunLedger
         $statement->execute([
             $status,
             mb_substr($reason, 0, 100),
-            max(0, (int) ($run['claimed'] ?? 0)),
+            max(
+                0,
+                (int) ($run['claimed'] ?? 0),
+                (int) ($measured['measured_claimed'] ?? 0),
+            ),
             max(0, (int) ($measured['physical_http'] ?? 0)),
             max(0, (int) ($measured['known_responses'] ?? 0)),
             max(0, (int) ($measured['resources_persisted'] ?? 0)),

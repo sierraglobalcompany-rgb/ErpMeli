@@ -12,6 +12,9 @@ use Throwable;
 /** Read model acotado para salud y convergencia; no muta durante lecturas. */
 final class QueueCoreHealthService
 {
+    private const FRESHNESS_STALE_SECONDS = 300;
+    private const SUSTAINED_429_THRESHOLD = 3;
+
     public function __construct(private readonly PDO $pdo) {}
 
     /** @return array<string,mixed> */
@@ -52,6 +55,9 @@ final class QueueCoreHealthService
             if ($row['watermark_at'] === null) {
                 $reasons[] = 'bootstrap_required';
             }
+            if ($lag !== null && $lag > self::FRESHNESS_STALE_SECONDS) {
+                $reasons[] = 'freshness_stale';
+            }
             if (!empty($row['last_error_class'])) {
                 $reasons[] = 'producer_checkpoint_error';
             }
@@ -86,6 +92,9 @@ final class QueueCoreHealthService
         if ((int) ($depth['dead']['total'] ?? 0) > 0) {
             $reasons[] = 'dead_work_present';
         }
+        if ((int) ($depth['review']['total'] ?? 0) > 0) {
+            $reasons[] = 'blocking_review_present';
+        }
         if ((int) ($depth['waiting_oauth']['total'] ?? 0) > 0) {
             $reasons[] = 'waiting_oauth_present';
         }
@@ -102,10 +111,26 @@ final class QueueCoreHealthService
         }
         $rateLimited = (int) $this->pdo->query(
             'SELECT COUNT(*) FROM queue_core_attempts
-             WHERE http_status=429 AND started_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 HOUR)'
+             WHERE http_status=429 AND started_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 15 MINUTE)'
         )->fetchColumn();
-        if ($rateLimited > 0) {
+        if ($rateLimited >= self::SUSTAINED_429_THRESHOLD) {
             $reasons[] = 'sustained_429';
+        }
+
+        $dependencyCount = $this->pendingDependencyCount();
+        if ($dependencyCount === null) {
+            $reasons[] = 'dependency_query_unknown';
+        }
+        $webhook = $this->webhookBacklog();
+        if ($webhook === null) {
+            $reasons[] = 'webhook_query_unknown';
+        } elseif ($webhook['unresolved'] > 0) {
+            $reasons[] = $webhook['oldest_seconds'] > self::FRESHNESS_STALE_SECONDS
+                ? 'webhook_observation_stalled'
+                : 'webhook_observation_pending';
+        }
+        if ($this->latestReadinessFailed()) {
+            $reasons[] = 'latest_readiness_failed';
         }
 
         $safety = (new EmergencyControlService())->status();
@@ -123,7 +148,9 @@ final class QueueCoreHealthService
         $red = array_intersect($reasons, [
             'engine_ownership_inconsistent', 'ml_write_enabled', 'remote_uncertain_present',
             'identity_mismatch', 'rotated_credential_unrecoverable', 'schema_inconsistent',
-            'cross_account_state',
+            'cross_account_state', 'blocking_review_present', 'freshness_stale',
+            'dependency_query_unknown', 'webhook_query_unknown', 'webhook_observation_stalled',
+            'latest_readiness_failed',
         ]);
         $state = $red !== [] ? 'RED' : ($reasons !== [] ? 'DEGRADED' : 'GREEN');
 
@@ -174,6 +201,7 @@ final class QueueCoreHealthService
             }
         }
         $engine = is_array($snapshot['engine'] ?? null) ? $snapshot['engine'] : [];
+        $dependencyCount = $this->pendingDependencyCount();
         $reasons = json_encode(
             array_values(array_map('strval', (array) ($snapshot['reasons'] ?? []))),
             JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
@@ -191,7 +219,7 @@ final class QueueCoreHealthService
             count((array) ($snapshot['accounts'] ?? [])),
             $eligible,
             (int) ($depth['waiting_oauth']['total'] ?? 0),
-            $this->pendingDependencyCount(),
+            $dependencyCount ?? 0,
             (int) ($depth['review']['total'] ?? 0),
             (int) ($depth['dead']['total'] ?? 0),
             $oldest === [] ? null : max($oldest),
@@ -227,7 +255,7 @@ final class QueueCoreHealthService
         return $row;
     }
 
-    private function pendingDependencyCount(): int
+    private function pendingDependencyCount(): ?int
     {
         try {
             return max(0, (int) $this->pdo->query(
@@ -235,7 +263,45 @@ final class QueueCoreHealthService
                  WHERE state IN ('pending','waiting_dependency')"
             )->fetchColumn());
         } catch (Throwable) {
-            return 0;
+            return null;
+        }
+    }
+
+    /** @return array{unresolved:int,oldest_seconds:int}|null */
+    private function webhookBacklog(): ?array
+    {
+        try {
+            $row = $this->pdo->query(
+                "SELECT COUNT(*) unresolved,
+                        COALESCE(TIMESTAMPDIFF(SECOND,MIN(last_observed_at),UTC_TIMESTAMP(3)),0) oldest_seconds
+                 FROM queue_core_webhook_triggers
+                 WHERE desired_watermark>completed_watermark
+                    OR state IN ('pending','inflight')"
+            )->fetch(PDO::FETCH_ASSOC);
+            return [
+                'unresolved' => max(0, (int) ($row['unresolved'] ?? 0)),
+                'oldest_seconds' => max(0, (int) ($row['oldest_seconds'] ?? 0)),
+            ];
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    private function latestReadinessFailed(): bool
+    {
+        try {
+            return (int) $this->pdo->query(
+                "SELECT COUNT(*)
+                 FROM queue_core_readiness_receipts r
+                 JOIN (
+                   SELECT receipt_type,company_id,meli_account_id,MAX(id) id
+                   FROM queue_core_readiness_receipts
+                   GROUP BY receipt_type,company_id,meli_account_id
+                 ) latest ON latest.id=r.id
+                 WHERE r.status='fail'"
+            )->fetchColumn() > 0;
+        } catch (Throwable) {
+            return true;
         }
     }
 }

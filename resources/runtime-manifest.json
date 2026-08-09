@@ -518,8 +518,8 @@
         },
         "runtime_app_services_melinotificationtopicregistry_php": {
             "path": "app/Services/MeliNotificationTopicRegistry.php",
-            "sha256": "f83624ac3f46943d3cc69c3bbf54d3fcb9fb6a31c39d0f17ae0d40f99f61153f",
-            "sha256_lf": "f83624ac3f46943d3cc69c3bbf54d3fcb9fb6a31c39d0f17ae0d40f99f61153f",
+            "sha256": "092ec705da4e9b646db7b4b2c3a5ef6798bc54dae925f9fa864e78822f31012a",
+            "sha256_lf": "092ec705da4e9b646db7b4b2c3a5ef6798bc54dae925f9fa864e78822f31012a",
             "text": true
         },
         "runtime_app_services_notificationcoalescerservice_php": {
@@ -602,8 +602,8 @@
         },
         "runtime_app_services_runtimepublicationpolicy_php": {
             "path": "app/Services/RuntimePublicationPolicy.php",
-            "sha256": "b7b0371c482ddba73003b7a65056bcbf20109e3c590e44035cef987c2749516c",
-            "sha256_lf": "b7b0371c482ddba73003b7a65056bcbf20109e3c590e44035cef987c2749516c",
+            "sha256": "565fc72bc462138ff626893b9fb4ed4b389e190cb48a26b154392e3bb3ac7621",
+            "sha256_lf": "565fc72bc462138ff626893b9fb4ed4b389e190cb48a26b154392e3bb3ac7621",
             "text": true
         },
         "runtime_app_services_salefinancialservice_php": {

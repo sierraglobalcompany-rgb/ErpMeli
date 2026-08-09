@@ -16,6 +16,7 @@ use App\QueueCore\QueueCapabilityRegistry;
 use App\QueueCore\QueueCoreOAuthRefreshHandler;
 use App\QueueCore\QueueCoreOAuthSupervisor;
 use App\QueueCore\QueueCoreConvergenceService;
+use App\QueueCore\QueueCoreCanaryService;
 use App\QueueCore\QueueCoreRepository;
 use App\QueueCore\QueueCoreReadinessReceiptService;
 use App\QueueCore\QueueCoreReleaseEvidenceService;
@@ -103,7 +104,8 @@ $pdo->exec("CREATE TABLE meli_orders (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     meli_account_id BIGINT UNSIGNED NOT NULL,
     external_order_id BIGINT UNSIGNED NOT NULL,
-    synced_at DATETIME NULL
+    synced_at DATETIME NULL,
+    date_created DATETIME NULL
 ) ENGINE=InnoDB");
 $pdo->exec("CREATE TABLE api_rhythm_states (
     scope_key VARCHAR(64) NOT NULL PRIMARY KEY,generation BIGINT UNSIGNED NOT NULL DEFAULT 1,
@@ -221,12 +223,19 @@ $backupFixture=$private.'/readiness-backup.sql';
 $backupTables=$pdo->query("SELECT LOWER(table_name) FROM information_schema.tables
     WHERE table_schema=DATABASE() AND table_type='BASE TABLE'
       AND table_name NOT LIKE 'queue\\_core\\_%' AND table_name<>'queue_engine_control'")->fetchAll(PDO::FETCH_COLUMN);
+$actualBackupTables=array_map('strval',$backupTables);
 $backupTables=array_values(array_unique(array_merge(array_map('strval',$backupTables),[
     'companies','users','app_settings','schema_migrations','meli_accounts','meli_tokens',
     'meli_orders','meli_order_items','meli_payments','meli_shipments',
 ])));sort($backupTables,SORT_STRING);$backupSql='';
-foreach($backupTables as $backupTable)$backupSql.='CREATE TABLE `'.$backupTable."` (`id` BIGINT);\n";
-foreach(['meli_accounts','meli_tokens'] as $backupTable){
+foreach($backupTables as $backupTable){
+    if(in_array($backupTable,$actualBackupTables,true)){
+        $showCreate=$pdo->query('SHOW CREATE TABLE `'.$backupTable.'`')->fetch(PDO::FETCH_NUM);
+        $backupSql.=(string)($showCreate[1]??'').";\n";
+    }else{$backupSql.='CREATE TABLE `'.$backupTable."` (`id` BIGINT);\n";}
+}
+foreach(['companies','users','meli_accounts','meli_tokens'] as $backupTable){
+    if(!in_array($backupTable,$actualBackupTables,true))continue;
     $backupRows=(int)$pdo->query('SELECT COUNT(*) FROM `'.$backupTable.'`')->fetchColumn();
     for($backupRow=0;$backupRow<$backupRows;$backupRow++)$backupSql.='INSERT INTO `'.$backupTable."` VALUES (1);\n";
 }
@@ -288,7 +297,6 @@ $pdo->exec("INSERT INTO queue_core_producer_checkpoints
     ON DUPLICATE KEY UPDATE watermark_at=VALUES(watermark_at),cursor_value='20',generation=generation+1");
 $check(hash_equals($contextBeforeCanaryProgress,$readinessReceipts->currentContextHash(1)),
     'Normal canary checkpoint progress invalidated its own readiness context.');
-$pdo->exec('ALTER TABLE meli_orders ADD COLUMN date_created DATETIME NULL');
 $windowFrom=gmdate('Y-m-d H:i:s',time()-600);$windowTo=gmdate('Y-m-d H:i:s',time()-300);
 $evidenceRepository=new QueueCoreRepository($pdo);
 $emptyDiscoveryId=$evidenceRepository->enqueue(new QueueJob(
@@ -346,6 +354,12 @@ try{(new QueueCoreConvergenceService($pdo))->compare(99,1,$windowFrom,$windowTo,
 $check($crossCompanyBlocked,'cross-company convergence scope was accepted');
 $authorityConnection=new PDO($dsn,$user,$pass,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
 $authorityConnection->query("SELECT GET_LOCK('erp_meli_queue_readiness_authority',0)")->fetchColumn();
+$canaryReceiptsBefore=(int)$pdo->query("SELECT COUNT(*) FROM queue_core_readiness_receipts WHERE receipt_type='canary'")->fetchColumn();
+$busyCanary=(new QueueCoreCanaryService($pdo))->run(1,1,0,5);
+$canaryReceiptsAfter=(int)$pdo->query("SELECT COUNT(*) FROM queue_core_readiness_receipts WHERE receipt_type='canary'")->fetchColumn();
+$check(!$busyCanary['ok']&&$busyCanary['reason']==='readiness_authority_busy'
+    &&$canaryReceiptsAfter===$canaryReceiptsBefore,
+    'A contending canary wrote a late FAIL or crossed the readiness authority.');
 $busyReadiness=$control->compareAndSwap('v4',1,'concurrent-evidence');
 $check(!$busyReadiness['ok']&&$busyReadiness['reason']==='readiness_authority_busy',
     'Activation crossed a concurrent readiness evidence operation.');

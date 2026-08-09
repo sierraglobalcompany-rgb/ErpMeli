@@ -100,8 +100,8 @@ final class QueueCoreReleaseEvidenceService
         ];
     }
 
-    /** @return array{ok:bool,sha256:?string,bytes:int,path_verified:bool,format_valid:bool,table_count:int,data_statements:int,current_table_count:int,missing_table_count:int,critical_data_missing_count:int,critical_row_count_mismatch_count:int} */
-    public function verifyBackup(string $path, string $expectedSha256, bool $compareLiveRows = true): array
+    /** @return array{ok:bool,sha256:?string,bytes:int,path_verified:bool,format_valid:bool,table_count:int,data_statements:int,current_table_count:int,missing_table_count:int,schema_mismatch_count:int,critical_data_missing_count:int,critical_row_count_mismatch_count:int} */
+    public function verifyBackup(string $path, string $expectedSha256, bool $allowCommercialGrowth = false): array
     {
         $expected = strtolower(trim($expectedSha256));
         $approved = strtolower(trim((string) Env::get('QUEUE_CORE_APPROVED_BACKUP_SHA256', '')));
@@ -115,13 +115,14 @@ final class QueueCoreReleaseEvidenceService
         $bytes = $exists ? max(0, (int) filesize($path)) : 0;
         $content = $exists ? $this->inspectSqlBackup($path) : [
             'format_valid' => false, 'table_count' => 0, 'data_statements' => 0,
-            'tables' => [], 'data_tables' => [], 'row_counts'=>[],
+            'tables' => [], 'data_tables' => [], 'row_counts'=>[], 'schema_hashes'=>[],
         ];
         $inventory = $this->compareBackupWithCurrentDatabase(
             $content['tables'],
             $content['data_tables'],
             $content['row_counts'],
-            $compareLiveRows,
+            $content['schema_hashes'],
+            $allowCommercialGrowth,
         );
         $ok = is_string($sha)
             && $bytes > 0
@@ -132,6 +133,7 @@ final class QueueCoreReleaseEvidenceService
             && hash_equals($expected, strtolower($sha))
             && $content['format_valid']
             && $inventory['missing_table_count'] === 0
+            && $inventory['schema_mismatch_count'] === 0
             && $inventory['critical_data_missing_count'] === 0
             && $inventory['critical_row_count_mismatch_count'] === 0;
         return [
@@ -167,6 +169,7 @@ final class QueueCoreReleaseEvidenceService
             'dump_data_statements' => $verification['data_statements'],
             'current_table_count' => $verification['current_table_count'],
             'missing_table_count' => $verification['missing_table_count'],
+            'schema_mismatch_count' => $verification['schema_mismatch_count'],
             'critical_data_missing_count' => $verification['critical_data_missing_count'],
             'critical_row_count_mismatch_count' => $verification['critical_row_count_mismatch_count'],
             'path_verified'=>$verification['path_verified']?1:0,
@@ -366,34 +369,52 @@ final class QueueCoreReleaseEvidenceService
         return ['ok' => $passed, 'id' => $id, 'manifest' => $manifest];
     }
 
-    /** @return array{format_valid:bool,table_count:int,data_statements:int,tables:array<string,true>,data_tables:array<string,true>,row_counts:array<string,int>} */
+    /** @return array{format_valid:bool,table_count:int,data_statements:int,tables:array<string,true>,data_tables:array<string,true>,row_counts:array<string,int>,schema_hashes:array<string,string>} */
     private function inspectSqlBackup(string $path): array
     {
         $gzip=str_ends_with(strtolower($path),'.gz');
         $handle=$gzip?@gzopen($path,'rb'):@fopen($path,'rb');
         if($handle===false)return [
             'format_valid'=>false,'table_count'=>0,'data_statements'=>0,
-            'tables'=>[],'data_tables'=>[],'row_counts'=>[],
+            'tables'=>[],'data_tables'=>[],'row_counts'=>[],'schema_hashes'=>[],
         ];
-        $tables=[];$dataTables=[];$rowCounts=[];$data=0;$activeDataTable=null;
+        $tables=[];$dataTables=[];$rowCounts=[];$schemaHashes=[];$data=0;$activeDataTable=null;
+        $activeCreateTable=null;$activeCreateSql='';
         $required=array_fill_keys([
             'companies','users','app_settings','schema_migrations','meli_accounts',
             'meli_tokens','meli_orders','meli_order_items','meli_payments','meli_shipments',
         ],false);
         try{
             while(($line=$gzip?gzgets($handle):fgets($handle))!==false){
+                if($activeCreateTable!==null){
+                    $activeCreateSql.=$line;
+                    if(str_ends_with(rtrim($line),';')){
+                        $schemaHashes[$activeCreateTable]=hash('sha256',$this->canonicalCreateSql($activeCreateSql));
+                        $activeCreateTable=null;$activeCreateSql='';
+                    }
+                    continue;
+                }
                 if(preg_match('/^CREATE TABLE (?:IF NOT EXISTS )?[`"]?([a-zA-Z0-9_]+)/i',$line,$match)===1){
                     $name=strtolower($match[1]);$tables[$name]=true;if(array_key_exists($name,$required))$required[$name]=true;
+                    $activeCreateTable=$name;$activeCreateSql=$line;
+                    if(str_ends_with(rtrim($line),';')){
+                        $schemaHashes[$name]=hash('sha256',$this->canonicalCreateSql($activeCreateSql));
+                        $activeCreateTable=null;$activeCreateSql='';
+                    }
+                    continue;
                 }
                 if(preg_match('/^(?:INSERT INTO|REPLACE INTO)\s+[`"]?([a-zA-Z0-9_]+)/i',$line,$match)===1){
                     $data++;$activeDataTable=strtolower($match[1]);$dataTables[$activeDataTable]=true;
                     $rowCounts[$activeDataTable]=$rowCounts[$activeDataTable]??0;
-                    if(preg_match('/\bVALUES\s*\(/i',$line)===1)$rowCounts[$activeDataTable]++;
+                    $valuesPosition=stripos($line,'VALUES');
+                    if($valuesPosition!==false){
+                        $rowCounts[$activeDataTable]+=$this->countSqlValueTuples(substr($line,$valuesPosition+6));
+                    }
                     if(str_ends_with(rtrim($line),';'))$activeDataTable=null;
                 }elseif(preg_match('/^COPY\s+[`"]?([a-zA-Z0-9_]+)/i',$line,$match)===1){
                     $data++;$dataTables[strtolower($match[1])]=true;
-                }elseif($activeDataTable!==null&&str_starts_with(ltrim($line),'(')){
-                    $rowCounts[$activeDataTable]++;
+                }elseif($activeDataTable!==null){
+                    $rowCounts[$activeDataTable]+=$this->countSqlValueTuples($line);
                     if(str_ends_with(rtrim($line),';'))$activeDataTable=null;
                 }
             }
@@ -401,8 +422,37 @@ final class QueueCoreReleaseEvidenceService
         return [
             'format_valid'=>$tables!==[]&&$data>0&&!in_array(false,$required,true),
             'table_count'=>count($tables),'data_statements'=>$data,
-            'tables'=>$tables,'data_tables'=>$dataTables,'row_counts'=>$rowCounts,
+            'tables'=>$tables,'data_tables'=>$dataTables,'row_counts'=>$rowCounts,'schema_hashes'=>$schemaHashes,
         ];
+    }
+
+    private function canonicalCreateSql(string $sql): string
+    {
+        $sql=(string)preg_replace('/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS/i','CREATE TABLE',$sql);
+        $sql=(string)preg_replace('/\s+AUTO_INCREMENT=\d+/i','',$sql);
+        $sql=(string)preg_replace('/\s+/',' ',trim($sql));
+        return strtolower(rtrim($sql," ;\t\r\n"));
+    }
+
+    private function countSqlValueTuples(string $sql): int
+    {
+        $count=0;$depth=0;$quote=null;$escaped=false;$length=strlen($sql);
+        for($index=0;$index<$length;$index++){
+            $char=$sql[$index];
+            if($quote!==null){
+                if($escaped){$escaped=false;continue;}
+                if($char==='\\'){$escaped=true;continue;}
+                if($char===$quote){
+                    if($index+1<$length&&$sql[$index+1]===$quote){$index++;continue;}
+                    $quote=null;
+                }
+                continue;
+            }
+            if($char==="'"||$char==='"'){$quote=$char;continue;}
+            if($char==='('){if($depth===0)$count++;$depth++;continue;}
+            if($char===')'&&$depth>0)$depth--;
+        }
+        return $count;
     }
 
     /**
@@ -415,13 +465,15 @@ final class QueueCoreReleaseEvidenceService
      * @param array<string,true> $dumpTables
      * @param array<string,true> $dumpDataTables
      * @param array<string,int> $dumpRowCounts
-     * @return array{current_table_count:int,missing_table_count:int,critical_data_missing_count:int,critical_row_count_mismatch_count:int}
+     * @param array<string,string> $dumpSchemaHashes
+     * @return array{current_table_count:int,missing_table_count:int,schema_mismatch_count:int,critical_data_missing_count:int,critical_row_count_mismatch_count:int}
      */
     private function compareBackupWithCurrentDatabase(
         array $dumpTables,
         array $dumpDataTables,
         array $dumpRowCounts,
-        bool $compareLiveRows,
+        array $dumpSchemaHashes,
+        bool $allowCommercialGrowth,
     ): array
     {
         $statement=$this->pdo->query(
@@ -433,30 +485,43 @@ final class QueueCoreReleaseEvidenceService
                AND table_name<>'queue_engine_control'"
         );
         $current=array_map('strval',$statement->fetchAll(PDO::FETCH_COLUMN));
-        $missing=0;
+        $missing=0;$schemaMismatch=0;
         foreach($current as $table){
             if(!isset($dumpTables[strtolower($table)]))$missing++;
+            $show=$this->pdo->query('SHOW CREATE TABLE `'.$table.'`')->fetch(PDO::FETCH_NUM);
+            $liveCreate=is_array($show)?(string)($show[1]??''):'';
+            $liveHash=$liveCreate!==''?hash('sha256',$this->canonicalCreateSql($liveCreate)):'';
+            if($liveHash===''||!isset($dumpSchemaHashes[$table])||!hash_equals($liveHash,$dumpSchemaHashes[$table])){
+                $schemaMismatch++;
+            }
         }
 
         $criticalMissing=0;$rowCountMismatch=0;
         $dataCritical=['companies','users','app_settings','schema_migrations','meli_accounts','meli_tokens',
             'meli_orders','meli_order_items','meli_payments','meli_shipments'];
-        $stableCounts=['companies','users','meli_accounts','meli_tokens','meli_orders','meli_order_items','meli_payments','meli_shipments'];
+        $identityCounts=['companies','users','meli_accounts','meli_tokens'];
+        $commercialCounts=['meli_orders','meli_order_items','meli_payments','meli_shipments'];
         foreach($dataCritical as $table){
             if(!in_array($table,$current,true))continue;
             $count=(int)$this->pdo->query('SELECT COUNT(*) FROM `'.$table.'`')->fetchColumn();
-            if($compareLiveRows && $count>0 && !isset($dumpDataTables[$table])) {
+            $dumpCount=max(0,(int)($dumpRowCounts[$table]??0));
+            $commercial=in_array($table,$commercialCounts,true);
+            if($count>0 && !isset($dumpDataTables[$table])
+                && (!$allowCommercialGrowth || !$commercial || $dumpCount>0)) {
                 $criticalMissing++;
             }
-            if($compareLiveRows
-                && in_array($table,$stableCounts,true)
-                && $count!==max(0,(int)($dumpRowCounts[$table]??0))) {
+            if(in_array($table,$identityCounts,true) && $count!==$dumpCount) {
+                $rowCountMismatch++;
+            }elseif($commercial
+                && ((!$allowCommercialGrowth && $count!==$dumpCount)
+                    || ($allowCommercialGrowth && $count<$dumpCount))) {
                 $rowCountMismatch++;
             }
         }
         return [
             'current_table_count'=>count($current),
             'missing_table_count'=>$missing,
+            'schema_mismatch_count'=>$schemaMismatch,
             'critical_data_missing_count'=>$criticalMissing,
             'critical_row_count_mismatch_count'=>$rowCountMismatch,
         ];

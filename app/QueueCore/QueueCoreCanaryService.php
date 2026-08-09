@@ -31,7 +31,20 @@ final class QueueCoreCanaryService
             min(8,max(2,$deadlineSeconds-2)),
             min(3,max(1,$deadlineSeconds-3)),
         );
-        try{return $this->runBounded($accountId,$maxJobs,$maxPhysicalHttp,$deadlineSeconds,$bootstrapFrom);
+        try{
+            try{
+                return QueueCoreReadinessOperationLock::with(
+                    $this->pdo,
+                    fn (): array => $this->runBounded(
+                        $accountId,$maxJobs,$maxPhysicalHttp,$deadlineSeconds,$bootstrapFrom
+                    ),
+                );
+            }catch(\RuntimeException $error){
+                if($error->getMessage()==='Queue Core readiness authority is busy.'){
+                    return $this->blocked('readiness_authority_busy',[],false);
+                }
+                throw $error;
+            }
         }finally{CronDeadlineContext::clear();}
     }
 
@@ -151,9 +164,9 @@ final class QueueCoreCanaryService
     private function sum(int $runId,string $expression): int
     {$s=$this->pdo->prepare("SELECT COALESCE(SUM($expression),0) FROM queue_core_attempts WHERE run_id=?");$s->execute([$runId]);return max(0,(int)$s->fetchColumn());}
     /** @param array<string,mixed> $extra @return array<string,mixed> */
-    private function blocked(string $reason,array $extra=[]):array
+    private function blocked(string $reason,array $extra=[],bool $record=true):array
     {
-        $this->recordFailure($reason,$extra);
+        if($record)$this->recordFailure($reason,$extra);
         return ['ok'=>false,'status'=>'BLOCKED','reason'=>$reason,
             'jobs_claimed'=>0,'physical_http_calls'=>0,'known_responses'=>0,'resources_persisted'=>0,
             'final_states'=>[],'fifo_preserved'=>true]+$extra;

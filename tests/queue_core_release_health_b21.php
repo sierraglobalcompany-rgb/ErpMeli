@@ -96,11 +96,13 @@ $assert(!$evidence->certifyCapacity(4, $context, $excessiveBacklog, [
 ])['ok'], 'An unbounded catch-up horizon certified as deployable capacity.');
 
 $backupFixture = tempnam(sys_get_temp_dir(), 'b21-backup-') . '.sql.gz';
-$backupSql = "CREATE TABLE `meli_accounts` (`id` BIGINT);\n"
+$accountCreate=$pdo->query('SHOW CREATE TABLE `meli_accounts`')->fetch(PDO::FETCH_NUM);
+$tokenCreate=$pdo->query('SHOW CREATE TABLE `meli_tokens`')->fetch(PDO::FETCH_NUM);
+$backupSql = (string)($accountCreate[1]??'').";\n"
     . "CREATE TABLE `companies` (`id` BIGINT);\n"
     . "CREATE TABLE `users` (`id` BIGINT);\n"
     . "CREATE TABLE `app_settings` (`setting_key` VARCHAR(100));\n"
-    . "CREATE TABLE `meli_tokens` (`meli_account_id` BIGINT);\n"
+    . (string)($tokenCreate[1]??'').";\n"
     . "CREATE TABLE `meli_orders` (`id` BIGINT);\n"
     . "CREATE TABLE `meli_order_items` (`id` BIGINT);\n"
     . "CREATE TABLE `meli_payments` (`id` BIGINT);\n"

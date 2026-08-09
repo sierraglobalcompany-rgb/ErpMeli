@@ -30,17 +30,36 @@ try {
     $result = \App\QueueCore\QueueCoreReadinessOperationLock::with($pdo, static function () use (
         $pdo, $companyId, $accountId, $option, $arguments, $recordRequested
     ): array {
-        $service = new \App\QueueCore\QueueCoreConvergenceService($pdo);
-        $result = $service->compare(
-            $companyId,
-            $accountId,
-            (string) ($option($arguments, 'from') ?? ''),
-            (string) ($option($arguments, 'to') ?? ''),
-            (int) ($option($arguments, 'limit') ?? 500),
-        );
+        $receipts = new \App\QueueCore\QueueCoreReadinessReceiptService($pdo);
+        $engine = (new \App\QueueCore\QueueEngineControlService($pdo))->snapshot();
+        if ($recordRequested && $companyId > 0 && $accountId > 0) {
+            // Un FAIL previo a la medición impide que una excepción o caída deje
+            // reutilizable un PASS anterior cuando el lock vuelva a liberarse.
+            $receipts->record(
+                $engine['generation'], 'convergence', false,
+                ['reason' => 'convergence_measurement_in_progress'], 3600, $companyId, $accountId
+            );
+        }
+        try {
+            $service = new \App\QueueCore\QueueCoreConvergenceService($pdo);
+            $result = $service->compare(
+                $companyId,
+                $accountId,
+                (string) ($option($arguments, 'from') ?? ''),
+                (string) ($option($arguments, 'to') ?? ''),
+                (int) ($option($arguments, 'limit') ?? 500),
+            );
+        } catch (\Throwable) {
+            return [
+                'ok' => false,
+                'reason' => 'convergence_unavailable',
+                'remote_http_calls' => 0,
+                'business_db_writes' => 0,
+                'technical_receipt_written' => $recordRequested && $companyId > 0 && $accountId > 0,
+            ];
+        }
         if ($recordRequested) {
-            $engine = (new \App\QueueCore\QueueEngineControlService($pdo))->snapshot();
-            (new \App\QueueCore\QueueCoreReadinessReceiptService($pdo))->record(
+            $receipts->record(
                 $engine['generation'],
                 'convergence',
                 !empty($result['ok']),
@@ -62,26 +81,12 @@ try {
         return $result;
     });
 } catch (\Throwable) {
-    $receiptWritten = false;
-    if ($recordRequested && $pdo instanceof \PDO && $companyId > 0 && $accountId > 0) {
-        try {
-            \App\QueueCore\QueueCoreReadinessOperationLock::with($pdo, static function () use ($pdo, $companyId, $accountId): void {
-                $engine = (new \App\QueueCore\QueueEngineControlService($pdo))->snapshot();
-                (new \App\QueueCore\QueueCoreReadinessReceiptService($pdo))->record(
-                    $engine['generation'], 'convergence', false,
-                    ['reason' => 'convergence_unavailable'], 3600, $companyId, $accountId
-                );
-            });
-            $receiptWritten = true;
-        } catch (\Throwable) {
-        }
-    }
     $result = [
         'ok' => false,
         'reason' => 'convergence_unavailable',
         'remote_http_calls' => 0,
         'business_db_writes' => 0,
-        'technical_receipt_written' => $receiptWritten,
+        'technical_receipt_written' => false,
     ];
 }
 

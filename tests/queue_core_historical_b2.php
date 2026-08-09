@@ -369,7 +369,10 @@ $scenario('deployment_gate_verifies_schema_and_backup', static function () use (
     sort($tables, SORT_STRING);
     $backupSql = '';
     foreach ($tables as $table) {
-        $backupSql .= 'CREATE TABLE `' . $table . "` (`id` BIGINT);\n";
+        if(in_array($table,$actualTables,true)){
+            $showCreate=$pdo->query('SHOW CREATE TABLE `'.$table.'`')->fetch(PDO::FETCH_NUM);
+            $backupSql.=(string)($showCreate[1]??'').";\n";
+        }else{$backupSql .= 'CREATE TABLE `' . $table . "` (`id` BIGINT);\n";}
     }
     foreach (['companies','users','meli_accounts','meli_tokens','meli_orders','meli_order_items','meli_payments','meli_shipments'] as $table) {
         $rows=in_array($table,$actualTables,true)?(int)$pdo->query('SELECT COUNT(*) FROM `'.$table.'`')->fetchColumn():0;

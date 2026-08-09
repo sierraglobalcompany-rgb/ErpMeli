@@ -160,6 +160,10 @@ final class QueueCoreHealthService
                         $reasons[] = $evidence['reason'];
                     }
                 }
+                $backupPath=trim((string)Env::get('QUEUE_CORE_APPROVED_BACKUP_PATH',''));
+                if($backupPath===''||!is_file($backupPath)||!is_readable($backupPath)){
+                    $reasons[]='backup_artifact_unavailable';
+                }
                 if (!(new QueueCoreDeploymentGateService($this->pdo))->runtimeManifestCheck()['ok']) {
                     $reasons[] = 'runtime_manifest_mismatch';
                 }
@@ -190,6 +194,7 @@ final class QueueCoreHealthService
             'capacity_latest_failed', 'capacity_context_changed', 'capacity_evidence_expired',
             'manifest_evidence_missing', 'manifest_latest_failed', 'manifest_context_changed',
             'manifest_evidence_expired', 'runtime_manifest_mismatch', 'release_evidence_unknown',
+            'backup_artifact_unavailable',
         ]);
         $state = $red !== [] ? 'RED' : ($reasons !== [] ? 'DEGRADED' : 'GREEN');
 

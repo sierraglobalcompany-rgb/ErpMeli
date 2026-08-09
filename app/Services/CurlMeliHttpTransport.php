@@ -21,6 +21,18 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         $emergency = new MeliEmergencyStopService();
         $method = strtoupper($method);
         $emergency->assertTransportAllowed($method, $url);
+        $executionSource=(string)(ApiExecutionMetadataContext::current()['source']??'');
+        if($executionSource==='queue_core'){
+            if((new EmergencyControlService())->automationStopped()){
+                throw new RuntimeException('Automation Stop denied Queue Core transport.');
+            }
+            // This is the Queue Core physical boundary. No DB lease may be
+            // consumed after cURL is initialized or by a stale worker.
+            \App\QueueCore\QueueCoreDispatchFence::beforeTransport(
+                $method,
+                parse_url($url,PHP_URL_PATH)?:'/'
+            );
+        }
         $ch = curl_init();
         if ($ch === false) {
             throw new RuntimeException('No se pudo inicializar cURL para consultar Mercado Libre.');
@@ -47,7 +59,7 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             },
         ];
         $emergencySource = (string) (ApiExecutionMetadataContext::current()['source'] ?? '');
-        if (in_array($emergencySource, ['manual_emergency_canary', 'manual_emergency_oauth_refresh'], true)) {
+        if (in_array($emergencySource, ['queue_core', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'], true)) {
             // Un redirect también sería otra solicitud física. El canario no
             // puede seguirlo, ni siquiera cuando el servidor responda 301/302.
             $options[CURLOPT_FOLLOWLOCATION] = false;

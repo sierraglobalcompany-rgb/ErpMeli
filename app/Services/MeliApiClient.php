@@ -156,12 +156,13 @@ final class MeliApiClient implements MeliReadClientInterface
         }
         $singleDispatchAttempt = in_array(
             (string) ($meta['source'] ?? ''),
-            ['cron_v3_remote', 'manual_campaign', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'],
+            ['queue_core', 'cron_v3_remote', 'manual_campaign', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'],
             true
         );
         $manualEmergencyCanary = (string) ($meta['source'] ?? '') === 'manual_emergency_canary';
         $manualEmergencyOAuthRefresh = (string) ($meta['source'] ?? '') === 'manual_emergency_oauth_refresh';
         $cronV3RemoteContext = (string) ($meta['source'] ?? '') === 'cron_v3_remote';
+        $queueCoreContext = (string) ($meta['source'] ?? '') === 'queue_core';
         $attempts = $singleDispatchAttempt ? 1 : $guard->maxAttempts($mutation, $method);
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
             ApiExecutionMetadataContext::markRemoteAttempted();
@@ -244,7 +245,7 @@ final class MeliApiClient implements MeliReadClientInterface
                 // Segunda barrera para la carrera entre el guard del launcher y
                 // el transporte. Solo aplica al worker V3: las lecturas canarias
                 // manuales deben seguir siendo posibles con automatización parada.
-                if ($cronV3RemoteContext && (new EmergencyControlService())->automationStopped()) {
+                if (($cronV3RemoteContext || $queueCoreContext) && (new EmergencyControlService())->automationStopped()) {
                     throw new RuntimeException(
                         'La automatización se detuvo antes del transporte remoto.'
                     );
@@ -366,6 +367,9 @@ final class MeliApiClient implements MeliReadClientInterface
             ApiExecutionMetadataContext::markRemoteDispatched();
             $status = (int) $transportResult['status'];
             $curlError = (string) $transportResult['curl_error'];
+            if ($queueCoreContext && $status > 0 && $curlError === '') {
+                \App\QueueCore\QueueCoreDispatchFence::responseKnown($status);
+            }
             $durationMs = (int) $transportResult['duration_ms'];
             $decoded = $transportResult['body'];
             $responseHeaders = $transportResult['headers'];
@@ -470,6 +474,15 @@ final class MeliApiClient implements MeliReadClientInterface
                 ($manualEmergencyCanary || $manualEmergencyOAuthRefresh) ? $errorCode : null,
                 $manualEmergencyCanary || $manualEmergencyOAuthRefresh
             );
+            if ($queueCoreContext && ($status === 429 || $retryAfter !== null)) {
+                $delay = $guard->retryDelaySeconds($attempt, $status, $retryAfter);
+                throw new ApiRhythmDeferredException(
+                    'Queue Core respetará la próxima oportunidad indicada por la protección remota.',
+                    gmdate('Y-m-d H:i:s', time() + max(1, $delay)),
+                    $status === 429 ? 'retry_after' : 'remote_backoff',
+                    true
+                );
+            }
             throw new MeliApiException($safeMessage, $status ?: null, $requestId, $safeDecoded);
         }
         throw new MeliApiException('Error de API no recuperable.', null, $requestId);

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Core\Database;
+use App\QueueCore\ManualQueueLauncher;
 use RuntimeException;
 use Throwable;
 
@@ -55,44 +56,15 @@ final class ManualSingleStepService
             }
 
             $previews->consume($previewToken, $userId);
-            ApiExecutionMetadataContext::resetRemoteDispatchCount();
-            $context = new CampaignExecutionContext(
-                0,
-                0,
+            // Manual and Cron V4 are launchers only. Both enter the same
+            // QueueRunner, scheduler, claim, fencing and retry path.
+            return (new ManualQueueLauncher())->runExact(
                 $companyId,
-                'manual_web_single_step',
-                1,
-                microtime(true) + 25,
-                1
+                $accountId,
+                $queueKey,
+                $sourceId,
+                $state->usesApi
             );
-            try {
-                $result = ApiExecutionMetadataContext::run(
-                    [
-                        'source' => 'manual_campaign',
-                        'manual_mode' => 'single_step',
-                        'company_id' => $companyId,
-                        'account_id' => $accountId,
-                    ],
-                    fn (): CampaignItemResult => $adapter->processExact($sourceId, $accountId, $context)
-                );
-            } catch (Throwable $error) {
-                if (ApiExecutionMetadataContext::remoteDispatchCount() > 0) {
-                    return [
-                        'status' => 'review',
-                        'message' => 'La consulta salio, pero su resultado no pudo confirmarse. No se repetira automaticamente.',
-                        'queue_key' => $queueKey,
-                        'source_id' => $sourceId,
-                        'remote_dispatches' => ApiExecutionMetadataContext::remoteDispatchCount(),
-                    ];
-                }
-                throw $error;
-            }
-
-            return $result->toArray() + [
-                'queue_key' => $queueKey,
-                'source_id' => $sourceId,
-                'remote_dispatches' => ApiExecutionMetadataContext::remoteDispatchCount(),
-            ];
         } finally {
             try {
                 $release = $pdo->prepare('SELECT RELEASE_LOCK(?)');

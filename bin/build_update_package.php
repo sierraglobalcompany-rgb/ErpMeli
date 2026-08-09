@@ -197,7 +197,7 @@ $manifest = [
         : array_map('basename', glob($source . '/database/migrations/*.sql') ?: []),
     'health_checks' => ['bootstrap', 'front_controller', 'database', 'storage'],
     'rollback' => ['code_compatible' => true, 'database_restore_required' => false],
-    'signing_key_id' => (string) $arguments['key-id'],
+    'signing_key_id' => (string) ($arguments['key-id'] ?? 'dry-run'),
 ];
 
 if ($dryRun) {

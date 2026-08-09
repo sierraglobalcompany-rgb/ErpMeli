@@ -355,12 +355,13 @@ $scenario('deployment_gate_verifies_schema_and_backup', static function () use (
     if (!is_string($backup)) {
         throw new RuntimeException('temporary backup could not be created');
     }
-    $tables = $pdo->query(
+    $actualTables = array_map('strval', $pdo->query(
         "SELECT LOWER(table_name) FROM information_schema.tables
          WHERE table_schema=DATABASE() AND table_type='BASE TABLE'
            AND table_name NOT LIKE 'queue\\_core\\_%'
            AND table_name<>'queue_engine_control'"
-    )->fetchAll(PDO::FETCH_COLUMN);
+    )->fetchAll(PDO::FETCH_COLUMN));
+    $tables = $actualTables;
     $tables = array_values(array_unique(array_merge(array_map('strval', $tables), [
         'companies', 'users', 'app_settings', 'schema_migrations', 'meli_accounts',
         'meli_tokens', 'meli_orders', 'meli_order_items', 'meli_payments', 'meli_shipments',
@@ -371,7 +372,7 @@ $scenario('deployment_gate_verifies_schema_and_backup', static function () use (
         $backupSql .= 'CREATE TABLE `' . $table . "` (`id` BIGINT);\n";
     }
     foreach (['companies','users','meli_accounts','meli_tokens','meli_orders','meli_order_items','meli_payments','meli_shipments'] as $table) {
-        $rows=in_array($table,$tables,true)?(int)$pdo->query('SELECT COUNT(*) FROM `'.$table.'`')->fetchColumn():0;
+        $rows=in_array($table,$actualTables,true)?(int)$pdo->query('SELECT COUNT(*) FROM `'.$table.'`')->fetchColumn():0;
         for($row=0;$row<$rows;$row++)$backupSql.='INSERT INTO `'.$table."` VALUES (1);\n";
     }
     $backupSql .= "INSERT INTO `app_settings` VALUES ('fixture');\nINSERT INTO `schema_migrations` VALUES ('fixture');\n";

@@ -84,4 +84,15 @@ $assert(($manifest['json']['runtime_manifest_missing'] ?? []) ===
 $assert(($manifest['json']['runtime_manifest_orphaned_delta'] ?? null) === [],
     'the frozen manifest contains an orphaned changed component');
 
+$final = $run(['--json', '--classification-only', '--target=HEAD']);
+$assert($final['exit'] === 0 && ($final['json']['ok'] ?? false) === true,
+    'the final release delta is not completely classified');
+$finalDiscovered = array_column($final['json']['STATIC_RUNTIME_DEPENDENCIES_DISCOVERED'] ?? [], 'path');
+$assert(in_array('resources/mercadolibre-api/generated/notification-topics.json', $finalDiscovered, true),
+    'final static discovery lost notification-topics.json');
+$assert(in_array('resources/release/queue-core-runtime-dependencies.json', $finalDiscovered, true),
+    'final static discovery lost its installed registry authority');
+$assert(($final['json']['DYNAMIC_RUNTIME_PATHS_UNBOUNDED'] ?? null) === [],
+    'the final release contains an unbounded dynamic runtime path');
+
 fwrite(STDOUT, "Queue Core B2.1A dependency authority: {$checks} checks passed\n");

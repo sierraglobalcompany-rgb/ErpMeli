@@ -130,6 +130,18 @@ function discoverStaticRuntimeDependencies(array $sources, array $operations): a
                 $found[$path][] = $sourcePath;
             }
         }
+        if (preg_match('#\b(?:' . $operationPattern . ')\b#', $source) === 1
+            && preg_match_all('#resources/[A-Za-z0-9._/*?-]+#', $source, $sourceMatches) > 0
+        ) {
+            foreach ($sourceMatches[0] as $path) {
+                $path = rtrim((string) $path, './');
+                if ($path === '' || strpbrk($path, '*?') !== false) {
+                    continue;
+                }
+                $found[$path] ??= [];
+                $found[$path][] = $sourcePath;
+            }
+        }
     }
     ksort($found, SORT_STRING);
     $result = [];

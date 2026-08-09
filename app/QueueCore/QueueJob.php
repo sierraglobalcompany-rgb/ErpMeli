@@ -11,11 +11,18 @@ final readonly class QueueJob
         public int $priority, public string $idempotencyKey, public string $inputVersion,
         public string $source, public ?string $sourceRef, public array $payload = [],
         public array $provenance = [], public int $maxAttempts = 5, public ?string $availableAt = null,
+        public ?string $queueDomain = null,
     ) {
         if ($companyId < 1 || $meliAccountId < 1) throw new InvalidArgumentException('Queue Core requires company and account scope.');
         if (!preg_match('/^[a-z][a-z0-9_]{1,79}$/', $workType)) throw new InvalidArgumentException('Queue Core work_type is invalid.');
         if (!in_array($lane, QueueScheduler::LANES, true)) throw new InvalidArgumentException('Queue Core lane is invalid.');
         if ($idempotencyKey === '' || strlen($idempotencyKey) > 191 || $inputVersion === '') throw new InvalidArgumentException('Queue Core idempotency identity is invalid.');
         if ($maxAttempts < 1 || $maxAttempts > 100) throw new InvalidArgumentException('Queue Core max_attempts is invalid.');
+        if ($queueDomain !== null && !in_array($queueDomain, ['operational', 'manual'], true)) throw new InvalidArgumentException('Queue Core domain is invalid.');
+    }
+
+    public function domain(): string
+    {
+        return $this->queueDomain ?? ($this->workType === 'manual_exact' ? 'manual' : 'operational');
     }
 }

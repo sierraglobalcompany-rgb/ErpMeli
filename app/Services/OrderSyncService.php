@@ -18,9 +18,9 @@ final class OrderSyncService
     /** @var array<string,array<string,mixed>> */
     private array $resourceCache = [];
 
-    public function __construct(private readonly int $accountId)
+    public function __construct(private readonly int $accountId, ?MeliApiClient $api = null)
     {
-        $this->api = new MeliApiClient($accountId);
+        $this->api = $api ?? new MeliApiClient($accountId);
         $this->dateNormalizer = new MeliDateTimeNormalizer();
     }
 
@@ -114,6 +114,35 @@ final class OrderSyncService
         ], $meta);
         $order = $this->api->get('/orders/' . rawurlencode((string) $externalOrderId), [], $meta);
         return $this->persistOrder($order, true, $beforePersist);
+    }
+
+    /**
+     * Persiste exactamente el snapshot remoto reclamado por Queue Core.
+     *
+     * Esta entrada no conserva compatibilidad con los productores legacy:
+     * nunca crea trabajo V2/V3, reconciliaciones financieras ni
+     * enriquecimientos, y tampoco ejecuta fallbacks remotos inline. Las
+     * capacidades que aún pertenecen a B2 quedan registradas localmente como
+     * obligaciones pendientes de Queue Core.
+     *
+     * @param array<string,mixed> $meta
+     */
+    public function syncOrderByIdForQueueCore(
+        int|string $externalOrderId,
+        array $meta = [],
+        ?callable $beforePersist = null
+    ): int {
+        $meta = array_replace([
+            'job_type' => 'order_exact',
+            'source' => 'queue_core',
+            'bulk' => false,
+        ], $meta);
+        $order = $this->api->get(
+            '/orders/' . rawurlencode((string) $externalOrderId),
+            [],
+            $meta
+        );
+        return $this->persistOrder($order, false, $beforePersist, false);
     }
 
     /** @param array<string,mixed> $meta */
@@ -244,7 +273,8 @@ final class OrderSyncService
     private function persistOrder(
         array $order,
         bool $allowInlineEnrichment = true,
-        ?callable $beforePersist = null
+        ?callable $beforePersist = null,
+        bool $allowFollowUpFanout = true
     ): int
     {
         $pdo = Database::connection();
@@ -359,6 +389,13 @@ final class OrderSyncService
                 catch (Throwable $e) { Logger::write('warning', 'Pago pendiente de reintento.', ['account_id'=>$this->accountId,'payment_id'=>$payment['id'],'error'=>$e->getMessage()]); }
             }
         }
+        if (!$allowFollowUpFanout) {
+            $this->recordQueueCorePendingCapability($orderId, 'financial_projection');
+            if (!empty($order['pack_id']) || !empty($order['shipping']['id'])) {
+                $this->recordQueueCorePendingCapability($orderId, 'order_enrichment');
+            }
+            return $orderId;
+        }
         try {
             $projection = (new SaleFinancialStateService())->projectOrder($orderId);
             (new SaleFinancialService())->queueFromOrderId(
@@ -384,6 +421,28 @@ final class OrderSyncService
             $this->enrichInlineFallback($orderId, $packId, $shipmentId);
         }
         return $orderId;
+    }
+
+    private function recordQueueCorePendingCapability(int $orderId, string $capability): void
+    {
+        if ($orderId < 1 || !in_array($capability, ['financial_projection', 'order_enrichment'], true)) {
+            return;
+        }
+        $pdo = Database::connection();
+        $company = $pdo->prepare(
+            'SELECT company_id FROM meli_accounts WHERE id=? LIMIT 1'
+        );
+        $company->execute([$this->accountId]);
+        $companyId = (int) $company->fetchColumn();
+        if ($companyId < 1) {
+            throw new \RuntimeException('Queue Core could not confirm the order company scope.');
+        }
+        $pdo->prepare(
+            'INSERT INTO queue_core_pending_capabilities
+                (company_id,meli_account_id,resource_type,resource_id,capability_key,state)
+             VALUES (?, ?, "order", ?, ?, "pending_b2")
+             ON DUPLICATE KEY UPDATE state="pending_b2",updated_at=UTC_TIMESTAMP(3)'
+        )->execute([$companyId, $this->accountId, (string) $orderId, $capability]);
     }
 
     private function persistItems(int $orderId, array $items): void

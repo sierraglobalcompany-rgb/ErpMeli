@@ -66,6 +66,7 @@ final class ManualSingleStepService
                 $queueKey,
                 $sourceId,
                 $state->usesApi,
+                $state->operationKey,
                 $inputVersion
             );
         } finally {

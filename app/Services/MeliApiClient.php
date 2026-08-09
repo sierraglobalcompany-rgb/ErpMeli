@@ -17,7 +17,7 @@ use App\QueueCore\QueueCorePreRemoteBlockedException;
 final class MeliApiClient implements MeliReadClientInterface
 {
     private MeliHttpTransportInterface $transport;
-    /** @var array{status:int,headers:array<string,string>,request_id:string}|null */
+    /** @var array{status:int,headers:array<string,string>,request_id:string,response_item_count:int,response_count_state:string}|null */
     private ?array $lastResponseMetadata = null;
 
     public function __construct(
@@ -62,7 +62,7 @@ final class MeliApiClient implements MeliReadClientInterface
      * Metadatos no sensibles de la respuesta anterior. Se exponen para que
      * procesos forenses puedan distinguir 200, 206 y campos omitidos.
      *
-     * @return array{status:int,headers:array<string,string>,request_id:string}|null
+     * @return array{status:int,headers:array<string,string>,request_id:string,response_item_count:int,response_count_state:string}|null
      */
     public function lastResponseMetadata(): ?array
     {
@@ -286,7 +286,12 @@ final class MeliApiClient implements MeliReadClientInterface
                 // La marca persistente anterior evita un segundo envío ciego.
                 $dispatchBoundaryCrossed = true;
                 $transportResult = ApiExecutionMetadataContext::withTransportMetadata(
-                    ['transport_meli_account_id' => $this->accountId],
+                    [
+                        'transport_meli_account_id' => $this->accountId,
+                        'transport_operation_key' => (string) $profile['key'],
+                        'transport_method' => $method,
+                        'transport_endpoint' => $path,
+                    ],
                     fn (): array => $this->transport->request(
                         $method,
                         $url,
@@ -406,6 +411,8 @@ final class MeliApiClient implements MeliReadClientInterface
                     'status' => $status,
                     'headers' => $safeHeaders,
                     'request_id' => $requestId,
+                    'response_item_count' => (int) $responseCount['count'],
+                    'response_count_state' => (string) $responseCount['state'],
                 ];
                 $guard->recordRequest($this->accountId, $requestId, $method, $path, $status, $durationMs, $retryAfter, $attempt, false, null, null, null, $meta);
                 (new MeliOperationTelemetryService())->record($this->accountId, $requestId, $profile, $durationMs, $wireBytes, $decodedBytes, $status, true, $telemetryMeta);

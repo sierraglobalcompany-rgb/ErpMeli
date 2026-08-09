@@ -4,6 +4,15 @@ namespace App\QueueCore;
 use App\Services\OrderSyncService;
 final class OrderExactHandler implements QueueHandler
 {
+    /** @var \Closure(int):OrderSyncService */
+    private \Closure $syncFactory;
+
+    /** @param null|callable(int):OrderSyncService $syncFactory */
+    public function __construct(?callable $syncFactory=null)
+    {
+        $this->syncFactory=$syncFactory!==null?\Closure::fromCallable($syncFactory):static fn(int $accountId):OrderSyncService=>new OrderSyncService($accountId);
+    }
+
     public function handle(QueueClaim $job,QueueExecutionContext $context): QueueResult
-    {if(!$context->hasTime(1.0))return QueueResult::retry('deadline',gmdate('Y-m-d H:i:s',time()+5));$id=(string)($job->payload['order_id']??$job->resourceId??'');if($id===''||!ctype_digit($id))return QueueResult::dead('invalid_order_identity');(new OrderSyncService($job->meliAccountId))->syncOrderById($id,['job_type'=>'order_exact','source'=>'queue_core','queue_core_job_id'=>$job->id]);return QueueResult::completed(1,0);}
+    {if(!$context->hasTime(1.0))return QueueResult::retry('deadline',gmdate('Y-m-d H:i:s',time()+5));$id=(string)($job->payload['order_id']??$job->resourceId??'');if($id===''||!ctype_digit($id))return QueueResult::dead('invalid_order_identity');$sync=($this->syncFactory)($job->meliAccountId);$sync->syncOrderByIdForQueueCore($id,['job_type'=>'order_exact','source'=>'queue_core','queue_core_job_id'=>$job->id]);return QueueResult::completed(1,1);}
 }

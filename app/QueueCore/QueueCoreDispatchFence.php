@@ -6,6 +6,7 @@ namespace App\QueueCore;
 use App\Core\Database;
 use App\Services\ApiExecutionMetadataContext;
 use App\Services\EmergencyControlService;
+use RuntimeException;
 final class QueueCoreDispatchFence
 {
     public static function beforeTransport(string $method,string $endpoint): void
@@ -15,6 +16,7 @@ final class QueueCoreDispatchFence
         if(($m['queue_core_launcher']??'')==='cron_v4' && (new EmergencyControlService())->automationStopped()){
             throw new QueueCorePreRemoteBlockedException('Automation Stop denied Cron V4 transport.');
         }
+        self::assertCapability($m,$method,$endpoint);
         $claim=self::claim($m);
         $attempt=max(0,(int)($m['queue_core_attempt_id']??0));
         if($attempt<1 || !self::renewFences($m,$claim)
@@ -27,6 +29,7 @@ final class QueueCoreDispatchFence
     {
         $m=ApiExecutionMetadataContext::current();
         if(($m['source']??'')!=='queue_core')return;
+        self::assertCapability($m,$method,$endpoint);
         $claim=self::claim($m);$attempt=max(0,(int)($m['queue_core_attempt_id']??0));
         if($attempt<1 || !self::renewFences($m,$claim)
             || !(new QueueCoreRepository(Database::connectionFresh()))->physicalTransportStarted($claim,$attempt,$method,$endpoint)){
@@ -66,5 +69,29 @@ final class QueueCoreDispatchFence
         if($owner==='')return true;
         $lease=new QueueExecutionLease((string)($m['queue_core_launcher']??'test'),$owner,$generation,max(5,(int)($m['queue_core_execution_lease_seconds']??60)));
         return (new QueueExecutionLeaseService($pdo))->heartbeat($lease);
+    }
+
+    /** @param array<string,scalar|null> $m */
+    private static function assertCapability(array $m,string $method,string $endpoint): void
+    {
+        $launcher=(string)($m['queue_core_launcher']??'');
+        $boundLauncher=(string)($m['queue_core_capability_launcher']??'');
+        $domain=(string)($m['queue_core_domain']??'');
+        $expectedMethod=strtoupper((string)($m['queue_core_expected_method']??''));
+        $pattern=(string)($m['queue_core_expected_endpoint_pattern']??'');
+        $expectedOperation=(string)($m['queue_core_expected_operation']??'');
+        $actualOperation=(string)($m['transport_operation_key']??'');
+        $maxCalls=max(0,(int)($m['queue_core_max_remote_calls']??0));
+        $usesApi=(int)($m['queue_core_uses_api']??0)===1;
+        $validDomain=($launcher==='cron_v4'&&$domain==='operational')
+            || ($launcher==='manual'&&$domain==='manual')
+            || ($launcher==='test'&&in_array($domain,['operational','manual'],true));
+        if(!$usesApi || $launcher!==$boundLauncher || !$validDomain || $maxCalls!==1
+            || $expectedMethod==='' || strtoupper($method)!==$expectedMethod
+            || $pattern==='' || @preg_match($pattern,$endpoint)!==1
+            || $expectedOperation==='' || $actualOperation!==$expectedOperation
+            || $actualOperation==='unknown_read'){
+            throw new QueueCorePreRemoteBlockedException('Queue Core capability denied the physical transport.');
+        }
     }
 }

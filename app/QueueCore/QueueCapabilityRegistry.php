@@ -5,11 +5,11 @@ namespace App\QueueCore;
 
 final class QueueCapabilityRegistry
 {
-    /** @var array<string,array{lanes:list<string>,scope:string,operation:string,transport:string,retry:string,result:string,test:string}> */
+    /** @var array<string,array{lanes:list<string>,scope:string,operation:string,transport:string,retry:string,result:string,test:string,domain:string,launchers:list<string>,method:?string,endpoint_pattern:?string,profile:?string,max_remote_calls:int}> */
     private const CAPABILITIES = [
-        'fresh_orders_discovery' => ['lanes' => ['fresh_orders'], 'scope' => 'company_account', 'operation' => 'orders_search_page', 'transport' => 'documented_read', 'retry' => 'safe_read', 'result' => 'checkpoint_and_exact_jobs', 'test' => 'producer_checkpoint_overlap'],
-        'order_exact' => ['lanes' => ['fresh_orders'], 'scope' => 'company_account', 'operation' => 'order_exact', 'transport' => 'documented_read', 'retry' => 'safe_read', 'result' => 'order_persisted', 'test' => 'duplicate_producer_call'],
-        'manual_exact' => ['lanes' => ['normal','local'], 'scope' => 'company_account', 'operation' => 'adapter_exact', 'transport' => 'adapter_declared', 'retry' => 'adapter_exact', 'result' => 'adapter_terminal', 'test' => 'manual_cron_same_claim_path'],
+        'fresh_orders_discovery' => ['lanes' => ['fresh_orders'], 'scope' => 'company_account', 'operation' => 'orders_search_page', 'transport' => 'documented_read', 'retry' => 'safe_read', 'result' => 'checkpoint_and_exact_jobs', 'test' => 'producer_checkpoint_overlap', 'domain'=>'operational','launchers'=>['cron_v4','test'],'method'=>'GET','endpoint_pattern'=>'~^/orders/search$~','profile'=>'orders_search','max_remote_calls'=>1],
+        'order_exact' => ['lanes' => ['fresh_orders'], 'scope' => 'company_account', 'operation' => 'order_exact', 'transport' => 'documented_read', 'retry' => 'safe_read', 'result' => 'order_persisted', 'test' => 'duplicate_producer_call', 'domain'=>'operational','launchers'=>['cron_v4','test'],'method'=>'GET','endpoint_pattern'=>'~^/orders/[0-9]+$~','profile'=>'order_exact','max_remote_calls'=>1],
+        'manual_exact' => ['lanes' => ['normal','local'], 'scope' => 'company_account', 'operation' => 'adapter_exact', 'transport' => 'adapter_declared', 'retry' => 'adapter_exact', 'result' => 'adapter_terminal', 'test' => 'manual_cron_same_claim_path', 'domain'=>'manual','launchers'=>['manual','test'],'method'=>null,'endpoint_pattern'=>null,'profile'=>null,'max_remote_calls'=>1],
     ];
 
     public function certified(string $workType, QueueHandlerRegistry $handlers): bool
@@ -27,9 +27,38 @@ final class QueueCapabilityRegistry
         return array_values(array_filter(array_keys(self::CAPABILITIES), fn (string $type): bool => $this->certified($type, $handlers)));
     }
 
-    /** @return array{lanes:list<string>,scope:string,operation:string,transport:string,retry:string,result:string,test:string}|null */
+    /** @return array<string,mixed>|null */
     public function definition(string $workType): ?array
     {
         return self::CAPABILITIES[$workType] ?? null;
+    }
+
+    /** @return array{domain:string,launcher:string,method:string,endpoint_pattern:string,profile:string,max_remote_calls:int,uses_api:bool}|null */
+    public function transportContract(QueueClaim $claim,string $launcher): ?array
+    {
+        $definition=self::CAPABILITIES[$claim->workType]??null;
+        if(!is_array($definition) || !in_array($launcher,$definition['launchers'],true))return null;
+        if($claim->workType==='manual_exact'){
+            $dynamic=$claim->payload['remote_contract']??null;
+            if(!is_array($dynamic))return [
+                'domain'=>'manual','launcher'=>$launcher,'method'=>'','endpoint_pattern'=>'',
+                'profile'=>'','max_remote_calls'=>0,'uses_api'=>false,
+            ];
+            return [
+                'domain'=>'manual','launcher'=>$launcher,
+                'method'=>(string)($dynamic['method']??''),
+                'endpoint_pattern'=>(string)($dynamic['endpoint_pattern']??''),
+                'profile'=>(string)($dynamic['operation_key']??''),
+                'max_remote_calls'=>max(0,(int)($dynamic['max_remote_calls']??0)),
+                'uses_api'=>true,
+            ];
+        }
+        return [
+            'domain'=>(string)$definition['domain'],'launcher'=>$launcher,
+            'method'=>(string)$definition['method'],
+            'endpoint_pattern'=>(string)$definition['endpoint_pattern'],
+            'profile'=>(string)$definition['profile'],
+            'max_remote_calls'=>(int)$definition['max_remote_calls'],'uses_api'=>true,
+        ];
     }
 }

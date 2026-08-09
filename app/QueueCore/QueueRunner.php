@@ -30,6 +30,7 @@ final class QueueRunner
             $summary['claimed']++;
             try{$attempt=$this->repository->beginAttempt($claim,$request->launcher);}catch(Throwable){$summary['lease_lost']++;continue;}
             $context=new QueueExecutionContext($attempt,$request->deadline,$request->launcher);
+            $transportContract=$this->capabilities->transportContract($claim,$request->launcher);
             try{
                 $result=ApiExecutionMetadataContext::run([
                     'source'=>'queue_core','company_id'=>$claim->companyId,'account_id'=>$claim->meliAccountId,
@@ -40,6 +41,13 @@ final class QueueRunner
                     'queue_core_execution_owner'=>$request->executionLease?->ownerToken,
                     'queue_core_execution_generation'=>$request->executionLease?->generation,
                     'queue_core_execution_lease_seconds'=>$request->executionLease?->leaseSeconds,
+                    'queue_core_domain'=>$transportContract['domain']??($request->domain()??''),
+                    'queue_core_capability_launcher'=>$transportContract['launcher']??'',
+                    'queue_core_expected_method'=>$transportContract['method']??'',
+                    'queue_core_expected_endpoint_pattern'=>$transportContract['endpoint_pattern']??'',
+                    'queue_core_expected_operation'=>$transportContract['profile']??'',
+                    'queue_core_max_remote_calls'=>$transportContract['max_remote_calls']??0,
+                    'queue_core_uses_api'=>!empty($transportContract['uses_api'])?1:0,
                 ],fn():QueueResult=>$this->handlers->get($claim->workType)->handle($claim,$context));
             }catch(RemoteResultUncertainException){$result=QueueResult::review('remote_result_uncertain');
             }catch(OAuthRefreshRequiredException){$result=QueueResult::waitingOAuth();

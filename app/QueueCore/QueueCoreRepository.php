@@ -17,14 +17,14 @@ final class QueueCoreRepository
         if($ownsTransaction)$this->pdo->beginTransaction();
         try{
         $sql = 'INSERT INTO queue_core_jobs
-            (company_id,meli_account_id,work_type,resource_type,resource_id,lane,priority,
+            (company_id,meli_account_id,work_type,resource_type,resource_id,lane,queue_domain,priority,
              idempotency_key,input_version,state,max_attempts,available_at,source,source_ref,payload_json,provenance_json)
-            VALUES (?,?,?,?,?,?,?,?,?,\'pending\',?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,\'pending\',?,?,?,?,?,?)
             ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)';
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute([
             $job->companyId, $job->meliAccountId, $job->workType, $job->resourceType,
-            $job->resourceId, $job->lane, $job->priority, $job->idempotencyKey,
+            $job->resourceId, $job->lane, $job->domain(), $job->priority, $job->idempotencyKey,
             $job->inputVersion, $job->maxAttempts,
             $job->availableAt ?? gmdate('Y-m-d H:i:s'), $job->source, $job->sourceRef,
             self::json($job->payload), self::json($job->provenance),
@@ -216,14 +216,16 @@ final class QueueCoreRepository
         $params=[];
         $in=implode(',',array_fill(0,count($types),'?'));$params=array_merge($params,$types);
         $sql="SELECT j.* FROM queue_core_jobs j WHERE j.work_type IN ($in) AND ((j.state='pending' AND j.available_at<=UTC_TIMESTAMP(3)) OR (j.state='retry_wait' AND j.next_attempt_at<=UTC_TIMESTAMP(3)) OR (j.state='waiting_oauth' AND EXISTS (SELECT 1 FROM meli_tokens t WHERE t.meli_account_id=j.meli_account_id AND t.refresh_version>COALESCE(j.wait_refresh_version,0) AND t.expires_at>DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 120 SECOND))))";
-        if($request->allowedJobIds!==[]){$sql.=' AND j.id IN ('.implode(',',array_fill(0,count($request->allowedJobIds),'?')).')';$params=array_merge($params,$request->allowedJobIds);}
         if($request->allowedWorkTypes!==[]){$sql.=' AND j.work_type IN ('.implode(',',array_fill(0,count($request->allowedWorkTypes),'?')).')';$params=array_merge($params,$request->allowedWorkTypes);}
         if($request->accountId!==null){$sql.=' AND j.meli_account_id=?';$params[]=$request->accountId;}
+        if($request->domain()!==null){$sql.=' AND j.queue_domain=?';$params[]=$request->domain();}
         // Retry/wait rows keep their original id. While blocked they are not
         // executable; once eligible again they re-enter at that stable FIFO
         // position instead of receiving a new priority or arrival sequence.
         $sql.=" ORDER BY j.id ASC LIMIT 1 FOR UPDATE";
-        $s=$this->pdo->prepare($sql);$s->execute($params);$r=$s->fetch(PDO::FETCH_ASSOC);return is_array($r)?$r:null;
+        $s=$this->pdo->prepare($sql);$s->execute($params);$r=$s->fetch(PDO::FETCH_ASSOC);
+        if(is_array($r) && $request->targetJobId!==null && (int)$r['id']!==$request->targetJobId)return null;
+        return is_array($r)?$r:null;
     }
 
     private function lockFence(QueueClaim $claim,string $state): bool

@@ -85,6 +85,40 @@ final class WebhookTriggerService
         ];
     }
 
+    /**
+     * Atomically binds one durable spool observation to the trigger generation
+     * it advanced. A crash can expose neither a trigger-only observation nor a
+     * materialized lifecycle row without its trigger.
+     *
+     * @param array<string,mixed> $validation
+     * @return array<string,mixed>
+     */
+    public function observeSpool(array $validation, string $spoolKey): array
+    {
+        $pdo = $this->connection();
+        if ($pdo->inTransaction()) {
+            throw new RuntimeException('Webhook spool observation requires its own transaction.');
+        }
+        $pdo->beginTransaction();
+        try {
+            $result = $this->observe($validation);
+            if (!empty($result['accepted'])) {
+                $this->spoolLifecycle()->markMaterialized(
+                    $spoolKey,
+                    (int) $result['company_id'],
+                    (int) $result['account_id'],
+                    (int) $result['trigger_id'],
+                    (int) $result['watermark'],
+                );
+            }
+            $pdo->commit();
+            return $result;
+        } catch (Throwable $error) {
+            self::rollbackIfActive($pdo);
+            throw $error;
+        }
+    }
+
     /** @return array<string,mixed>|null */
     public function trigger(int $id, int $companyId, int $accountId): ?array
     {
@@ -104,24 +138,63 @@ final class WebhookTriggerService
         int $jobId,
         int $scheduledWatermark
     ): bool {
-        $stmt = $this->connection()->prepare(
-            "UPDATE queue_core_webhook_triggers
-             SET completed_watermark=GREATEST(completed_watermark,?),
-                 state=IF(desired_watermark>?, 'pending', 'idle'),
-                 inflight_job_id=NULL,last_error_class=NULL,completed_at=UTC_TIMESTAMP(3)
-             WHERE id=? AND company_id=? AND meli_account_id=?
-               AND state='inflight' AND inflight_job_id=? AND scheduled_watermark=?"
-        );
-        $stmt->execute([
-            $scheduledWatermark, $scheduledWatermark, $triggerId, $companyId,
-            $accountId, $jobId, $scheduledWatermark,
-        ]);
-        return $stmt->rowCount() === 1;
+        $pdo = $this->connection();
+        $ownsTransaction = !$pdo->inTransaction();
+        if ($ownsTransaction) {
+            $pdo->beginTransaction();
+        }
+        try {
+            $stmt = $pdo->prepare(
+                "UPDATE queue_core_webhook_triggers
+                 SET completed_watermark=GREATEST(completed_watermark,?),
+                     state=IF(desired_watermark>?, 'pending', 'idle'),
+                     inflight_job_id=NULL,last_error_class=NULL,completed_at=UTC_TIMESTAMP(3)
+                 WHERE id=? AND company_id=? AND meli_account_id=?
+                   AND state='inflight' AND inflight_job_id=? AND scheduled_watermark=?"
+            );
+            $stmt->execute([
+                $scheduledWatermark, $scheduledWatermark, $triggerId, $companyId,
+                $accountId, $jobId, $scheduledWatermark,
+            ]);
+            if ($stmt->rowCount() !== 1) {
+                if ($ownsTransaction) {
+                    $pdo->rollBack();
+                }
+                return false;
+            }
+            $this->spoolLifecycle()->resolveForTrigger(
+                $triggerId,
+                $companyId,
+                $accountId,
+                $scheduledWatermark,
+            );
+            if ($ownsTransaction) {
+                $pdo->commit();
+            }
+            return true;
+        } catch (Throwable $error) {
+            if ($ownsTransaction) {
+                self::rollbackIfActive($pdo);
+            }
+            throw $error;
+        }
+    }
+
+    public function spoolLifecycle(): WebhookSpoolLifecycleService
+    {
+        return new WebhookSpoolLifecycleService($this->connection());
     }
 
     private function connection(): PDO
     {
         return $this->pdo ?? Database::connectionFresh();
+    }
+
+    private static function rollbackIfActive(PDO $pdo): void
+    {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
     }
 
     /** @return array{accepted:false,terminal:true,reason:string,trigger_id:null,company_id:null,account_id:null,resource_type:null,resource_id:null,watermark:null} */

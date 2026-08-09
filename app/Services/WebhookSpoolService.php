@@ -204,6 +204,8 @@ final class WebhookSpoolService
             return false;
         }
         $record = [
+            'spool_id' => bin2hex(random_bytes(32)),
+            'lifecycle' => 'received',
             'spooled_at' => gmdate(DATE_ATOM),
             'payload' => Logger::redact($payload),
         ];
@@ -361,16 +363,21 @@ final class WebhookSpoolService
                         }
                         break;
                     }
-                    $trimmed = trim($line);
-                    $decoded = json_decode($trimmed, true);
-                    $payload = is_array($decoded['payload'] ?? null) ? $decoded['payload'] : null;
+                    $normalized = $this->normalizedRecord(trim($line));
+                    $trimmed = $normalized['line'];
+                    $payload = $normalized['payload'];
                     if ($processed + $quarantined >= $limit) {
                         $remaining[] = $trimmed;
                         continue;
                     }
                     if ($payload === null) {
-                        $this->quarantine($trimmed, 'invalid_spool_record');
-                        $quarantined++;
+                        if ($this->quarantine($trimmed, 'invalid_spool_record')
+                            && $this->archiveLine($trimmed, 'archived')) {
+                            $quarantined++;
+                        } else {
+                            $remaining[] = $trimmed;
+                            $errors++;
+                        }
                         continue;
                     }
                     $result = (new WebhookService())->receiveResult(
@@ -379,9 +386,24 @@ final class WebhookSpoolService
                         false
                     );
                     if (!empty($result['accepted'])) {
-                        $processed++;
+                        if ($this->archiveLine($trimmed, 'archived')) {
+                            $processed++;
+                        } else {
+                            $remaining[] = $trimmed;
+                            $errors++;
+                        }
                     } elseif (!empty($result['terminal'])) {
-                        $quarantined++;
+                        $raw = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}';
+                        if (!empty($result['quarantined'])
+                            && $this->archiveLine($trimmed, 'archived')) {
+                            $quarantined++;
+                        } elseif ($this->quarantine($raw, 'legacy_terminal')
+                            && $this->archiveLine($trimmed, 'archived')) {
+                            $quarantined++;
+                        } else {
+                            $remaining[] = $trimmed;
+                            $errors++;
+                        }
                     } else {
                         $remaining[] = $trimmed;
                         $errors++;
@@ -449,7 +471,8 @@ final class WebhookSpoolService
             $remaining = [];
             try {
                 while (($line = fgets($handle)) !== false) {
-                    $trimmed = trim($line);
+                    $normalized = $this->normalizedRecord(trim($line));
+                    $trimmed = $normalized['line'];
                     if ($deadline !== null && microtime(true) >= $deadline - 0.25) {
                         $remaining[] = $trimmed;
                         while (($rest = fgets($handle)) !== false) {
@@ -461,29 +484,83 @@ final class WebhookSpoolService
                         $remaining[] = $trimmed;
                         continue;
                     }
-                    $record = json_decode($trimmed, true);
-                    $payload = is_array($record['payload'] ?? null) ? $record['payload'] : null;
+                    $payload = $normalized['payload'];
+                    $spoolKey = $normalized['spool_id'];
                     $raw = is_array($payload)
                         ? (json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}')
                         : $trimmed;
-                    $validation = $payload !== null ? $this->validateIngress($raw) : ['valid' => false, 'reason' => 'invalid_spool_record'];
-                    if (empty($validation['valid'])) {
-                        $this->quarantine($raw, (string) ($validation['reason'] ?? 'invalid_spool_record'));
-                        $quarantined++;
+                    if ($payload === null || $spoolKey === null) {
+                        if ($this->quarantine($raw, 'invalid_spool_record')
+                            && $this->archiveLine($trimmed, 'archived')) {
+                            $quarantined++;
+                        } else {
+                            $remaining[] = $trimmed;
+                            $errors++;
+                        }
                         continue;
                     }
+                    $lifecycle = $triggers->spoolLifecycle();
                     try {
-                        $result = $triggers->observe($validation);
+                        $lifecycle->ensureReceived($spoolKey, $payload);
+                        $lifecycleState = $lifecycle->beginMaterialization($spoolKey);
                     } catch (Throwable) {
                         $remaining[] = $trimmed;
                         $errors++;
                         continue;
                     }
+                    if (in_array($lifecycleState, ['materialized', 'resolved', 'archived'], true)) {
+                        if ($this->archiveLine($trimmed, $lifecycleState)) {
+                            $processed++;
+                        } else {
+                            $remaining[] = $trimmed;
+                            $errors++;
+                        }
+                        continue;
+                    }
+                    if ($lifecycleState === 'busy') {
+                        $remaining[] = $trimmed;
+                        continue;
+                    }
+                    $validation = $this->validateIngress($raw);
+                    if (empty($validation['valid'])) {
+                        $reason = (string) ($validation['reason'] ?? 'invalid_spool_record');
+                        if ($this->quarantine($raw, $reason)
+                            && $lifecycle->markArchived($spoolKey, $reason)
+                            && $this->archiveLine($trimmed, 'archived')) {
+                            $quarantined++;
+                        } else {
+                            $lifecycle->returnToReceived($spoolKey, 'quarantine_persistence_failed');
+                            $remaining[] = $trimmed;
+                            $errors++;
+                        }
+                        continue;
+                    }
+                    try {
+                        $result = $triggers->observeSpool($validation, $spoolKey);
+                    } catch (Throwable) {
+                        $lifecycle->returnToReceived($spoolKey, 'trigger_materialization_failed');
+                        $remaining[] = $trimmed;
+                        $errors++;
+                        continue;
+                    }
                     if (!empty($result['accepted'])) {
-                        $processed++;
+                        if ($this->archiveLine($trimmed, 'materialized')) {
+                            $processed++;
+                        } else {
+                            $remaining[] = $trimmed;
+                            $errors++;
+                        }
                     } elseif (!empty($result['terminal'])) {
-                        $this->quarantine($raw, $result['reason']);
-                        $quarantined++;
+                        $reason = (string) ($result['reason'] ?? 'terminal_observation');
+                        if ($this->quarantine($raw, $reason)
+                            && $lifecycle->markArchived($spoolKey, $reason)
+                            && $this->archiveLine($trimmed, 'archived')) {
+                            $quarantined++;
+                        } else {
+                            $lifecycle->returnToReceived($spoolKey, 'quarantine_persistence_failed');
+                            $remaining[] = $trimmed;
+                            $errors++;
+                        }
                     } else {
                         $remaining[] = $trimmed;
                         $errors++;
@@ -520,6 +597,62 @@ final class WebhookSpoolService
             'reason' => $reason,
             'message' => $message,
         ];
+    }
+
+    /** @return array{line:string,payload:?array,spool_id:?string} */
+    private function normalizedRecord(string $line): array
+    {
+        $record = json_decode($line, true);
+        if (!is_array($record)) {
+            return ['line' => $line, 'payload' => null, 'spool_id' => null];
+        }
+        $payload = is_array($record['payload'] ?? null) ? $record['payload'] : null;
+        $spoolId = strtolower(trim((string) ($record['spool_id'] ?? '')));
+        if (preg_match('/^[a-f0-9]{64}$/', $spoolId) !== 1) {
+            $spoolId = bin2hex(random_bytes(32));
+            $record['spool_id'] = $spoolId;
+            $record['lifecycle'] = 'received';
+            $encoded = json_encode($record, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if (is_string($encoded)) {
+                $line = $encoded;
+            }
+        }
+        return ['line' => $line, 'payload' => $payload, 'spool_id' => $spoolId];
+    }
+
+    private function archiveLine(string $line, string $lifecycle): bool
+    {
+        $directory = AppPaths::storage('spool/mercadolibre-webhooks-archive');
+        if (!is_dir($directory) && !@mkdir($directory, 0770, true) && !is_dir($directory)) {
+            return false;
+        }
+        $record = json_decode($line, true);
+        if (!is_array($record)) {
+            $record = ['source_sha256' => hash('sha256', $line), 'payload' => null];
+        }
+        $record['lifecycle'] = in_array(
+            $lifecycle,
+            ['received', 'materializing', 'materialized', 'resolved', 'archived'],
+            true
+        ) ? $lifecycle : 'archived';
+        $record['lifecycle_at'] = gmdate(DATE_ATOM);
+        $encoded = json_encode($record, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($encoded)) {
+            return false;
+        }
+        $maxBytes = max(1048576, min(
+            1073741824,
+            (int) Env::get('WEBHOOK_SPOOL_ARCHIVE_MAX_BYTES', '536870912')
+        ));
+        $usage = 0;
+        foreach (glob($directory . '/archive-*.jsonl') ?: [] as $candidate) {
+            $usage += max(0, (int) @filesize($candidate));
+        }
+        if ($usage + strlen($encoded) + 1 > $maxBytes) {
+            return false;
+        }
+        $file = $directory . '/archive-' . gmdate('Y-m-d') . '.jsonl';
+        return @file_put_contents($file, $encoded . PHP_EOL, FILE_APPEND | LOCK_EX) !== false;
     }
 
     public function pendingCount(): int

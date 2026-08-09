@@ -19,6 +19,9 @@ final class NotificationCoalescerService
 
     public function processDue(?int $limit = null, ?float $deadline = null): array
     {
+        if (\App\QueueCore\QueueCoreOwnershipGuard::v4OwnsWebhook()) {
+            return \App\QueueCore\QueueCoreOwnershipGuard::skippedResult();
+        }
         $deadline = $this->effectiveDeadline($deadline);
         $canonical = new NotificationWorkItemService();
         if ($canonical->available()) {

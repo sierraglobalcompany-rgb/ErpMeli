@@ -20,7 +20,9 @@ use App\QueueCore\QueueExecutionContext;
 use App\QueueCore\WebhookExactGateway;
 use App\QueueCore\WebhookOrderExactHandler;
 use App\QueueCore\WebhookProducer;
+use App\QueueCore\WebhookSpoolLifecycleService;
 use App\QueueCore\WebhookTriggerService;
+use App\Services\QueueCoreRollbackService;
 
 $dsn = getenv('QUEUE_CORE_TEST_DSN') ?: '';
 if ($dsn === '') {
@@ -48,7 +50,7 @@ $pdo->exec("CREATE TABLE queue_core_jobs(
  work_type VARCHAR(80) NOT NULL,resource_type VARCHAR(80) NOT NULL,resource_id VARCHAR(191),lane VARCHAR(40) NOT NULL,
  queue_domain VARCHAR(20) NOT NULL,priority INT NOT NULL,idempotency_key VARCHAR(191) NOT NULL,input_version VARCHAR(191) NOT NULL,
  state VARCHAR(30) NOT NULL,max_attempts INT NOT NULL,available_at DATETIME(3) NOT NULL,source VARCHAR(80) NOT NULL,source_ref VARCHAR(191),
- payload_json JSON NOT NULL,provenance_json JSON NOT NULL,created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+ payload_json JSON NOT NULL,provenance_json JSON NOT NULL,dispatch_state VARCHAR(40) NOT NULL DEFAULT 'NOT_DISPATCHED',created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
  UNIQUE KEY uq_job(company_id,meli_account_id,work_type,idempotency_key,input_version)) ENGINE=InnoDB");
 $pdo->exec("CREATE TABLE queue_core_events(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,job_id BIGINT UNSIGNED NULL,company_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,lane VARCHAR(40),event_type VARCHAR(40),event_count INT,resources_count INT) ENGINE=InnoDB");
 $pdo->exec("CREATE TABLE queue_core_scheduler_state(scheduler_key VARCHAR(32) PRIMARY KEY,cycle_position INT NOT NULL DEFAULT 0,generation BIGINT UNSIGNED NOT NULL DEFAULT 0) ENGINE=InnoDB");
@@ -57,6 +59,8 @@ $pdo->exec("CREATE TABLE queue_engine_control(control_key VARCHAR(32) PRIMARY KE
 $pdo->exec("INSERT INTO queue_engine_control VALUES('primary','v4',1,UTC_TIMESTAMP(3),'test')");
 $migration = preg_replace('/^--.*$/m', '', (string) file_get_contents($root . '/database/migrations/285_queue_core_webhook_ownership_b2.sql'));
 $pdo->exec((string) $migration);
+$lifecycleMigration = preg_replace('/^--.*$/m', '', (string) file_get_contents($root . '/database/migrations/289_queue_core_webhook_lifecycle_b2_1.sql'));
+$pdo->exec((string) $lifecycleMigration);
 
 $assert = static function (bool $ok, string $message): void {
     if (!$ok) {
@@ -108,8 +112,8 @@ $assert((string) $row['state'] === 'pending' && (int) $row['completed_watermark'
 $second = $producer->schedule(100, null, false);
 $assert($second['enqueued'] === 1 && (int) $pdo->query('SELECT COUNT(*) FROM queue_core_jobs')->fetchColumn() === 2, 'desired rerun did not create its exact next version');
 
-// Fresh and webhook observations share one active exact order fetch. The
-// existing FIFO id remains authoritative; the webhook trigger attaches to it.
+// A later webhook observation must never attach to a GET that may already
+// have crossed the transport boundary. FIFO serializes the distinct rerun.
 $freshId = $repository->enqueue(new QueueJob(
     1, 11, 'order_exact', 'order', '9100', 'fresh_orders', 0,
     'order:9100', 'snapshot:9100', 'fresh_orders_discovery', 'order:9100',
@@ -121,10 +125,41 @@ $coalesced = $producer->schedule(100, null, false);
 $attached = (int) $pdo->query(
     "SELECT inflight_job_id FROM queue_core_webhook_triggers WHERE resource_id='9100'"
 )->fetchColumn();
-$assert($attached === $freshId, 'webhook did not attach to the active Fresh exact job');
-$assert((int) $pdo->query('SELECT COUNT(*) FROM queue_core_jobs')->fetchColumn() === $before,
-    'Fresh plus webhook created a concurrent duplicate exact job');
-$assert($coalesced['duplicates'] >= 1, 'coalesced trigger was not reported as an existing logical job');
+$assert($attached !== $freshId, 'later webhook generation attached to an already active GET');
+$assert((int) $pdo->query('SELECT COUNT(*) FROM queue_core_jobs')->fetchColumn() === $before + 1,
+    'webhook generation did not retain its exact rerun');
+$assert($coalesced['enqueued'] >= 1, 'distinct webhook generation was not reported as enqueued');
+
+// A crash in materializing is reclaimable with the same spool identity.
+$lifecycle = new WebhookSpoolLifecycleService($pdo);
+$crashKey = hash('sha256', 'crash-spool-1');
+$crashPayload = ['topic' => 'orders_v2', 'resource' => '/orders/9300', 'user_id' => 101];
+$lifecycle->ensureReceived($crashKey, $crashPayload);
+$assert($lifecycle->beginMaterialization($crashKey) === 'materializing', 'received spool was not claimed');
+$pdo->prepare('UPDATE queue_core_webhook_spool_items SET materializing_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 11 MINUTE) WHERE spool_key=?')
+    ->execute([$crashKey]);
+$assert($lifecycle->beginMaterialization($crashKey) === 'materializing', 'stale materializing spool did not recover');
+$lifecycle->returnToReceived($crashKey, 'simulated_crash');
+
+// Rollback cannot report ready while an unresolved webhook remains, and a
+// bounded replay can make the next invocation ready without remote HTTP.
+$pdo->exec("CREATE TABLE queue_core_execution_leases(launcher VARCHAR(40),expires_at DATETIME(3)) ENGINE=InnoDB");
+$pdo->exec("CREATE TABLE queue_core_historical_checkpoints(enabled TINYINT,state VARCHAR(30),generation BIGINT UNSIGNED,last_error_class VARCHAR(100)) ENGINE=InnoDB");
+$pdo->exec("CREATE TABLE queue_core_historical_receipts(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,closure_state VARCHAR(30)) ENGINE=InnoDB");
+$rollbackCalls = 0;
+$rollbackReplay = static function (int $limit) use ($pdo, &$rollbackCalls): array {
+    $rollbackCalls++;
+    if ($rollbackCalls === 1) {
+        return ['replayed' => 0, 'errors' => 0, 'remaining' => 1];
+    }
+    $pdo->exec("UPDATE queue_core_webhook_spool_items SET lifecycle='archived',archived_at=UTC_TIMESTAMP(3) WHERE lifecycle IN ('received','materializing','materialized')");
+    return ['replayed' => 1, 'errors' => 0, 'remaining' => 0];
+};
+$rollback = new QueueCoreRollbackService($pdo, static fn (): bool => true, $rollbackReplay);
+$blocked = $rollback->prepare(1, 10);
+$assert(!$blocked['ok'] && $blocked['webhooks_remaining'] === 1, 'rollback ignored unresolved webhook lifecycle');
+$ready = $rollback->prepare((int) $blocked['generation'], 10);
+$assert($ready['ok'] && $ready['webhooks_replayed'] === 1, 'rollback replay did not reach ready state');
 
 $assert(!$triggers->observe($validation(999, 'order', '1'))['accepted'], 'unknown seller was not quarantinable');
 $scope = $triggers->observe($validation(202, 'shipment', '7001'));

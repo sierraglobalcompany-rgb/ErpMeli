@@ -27,8 +27,11 @@ $trigger = $read('app/QueueCore/WebhookTriggerService.php');
 $gateway = $read('app/QueueCore/MeliWebhookExactGateway.php');
 $legacyJob = $read('jobs/process_sync_queue.php');
 $legacyWork = $read('app/Services/NotificationWorkItemService.php');
+$legacyCoalescer = $read('app/Services/NotificationCoalescerService.php');
 $repository = $read('app/QueueCore/QueueCoreRepository.php');
 $migration = $read('database/migrations/285_queue_core_webhook_ownership_b2.sql');
+$lifecycleMigration = $read('database/migrations/289_queue_core_webhook_lifecycle_b2_1.sql');
+$rollback = $read('app/Services/QueueCoreRollbackService.php');
 
 $appendAt = strpos($public, '$spooled = $spool->append($raw)');
 $check($appendAt !== false, 'El request web no termina en spool+ACK.');
@@ -37,6 +40,7 @@ $validateMethod = substr($spool, (int) strpos($spool, 'function validateLinkedAc
 $validateMethod = substr($validateMethod, 0, (int) strpos($validateMethod, 'function resolveLinkedAccount'));
 $check(!str_contains($validateMethod, 'Database::') && !str_contains($validateMethod, 'PDO'), 'La validación web abre DB.');
 $check(str_contains($spool, 'replayToQueueCore') && str_contains($spool, '$triggers->observe'), 'El spool no desemboca en autoridad V4.');
+$check(str_contains($spool, 'archiveLine') && str_contains($spool, 'quarantine_persistence_failed'), 'El spool piloto todavía puede borrar source sin archivo/cuarentena.');
 $check(str_contains($spool, "'stop_reason' => 'SKIPPED_V4_OWNER'") && str_contains($spool, "'http' => 0"), 'El replay legacy no corta V4 con HTTP0.');
 
 foreach (['order', 'pack', 'shipment'] as $type) {
@@ -48,9 +52,12 @@ $check(str_contains($producer, 'ORDER BY last_observed_at ASC,id ASC')
     'El productor webhook no conserva el FIFO estable por llegada.');
 $check(str_contains($trigger, 'desired_watermark=desired_watermark+1') && str_contains($trigger, "IF(state='inflight','inflight','pending')"), 'Coalescing/inflight rerun no usa desired watermark.');
 $check(str_contains($migration, 'UNIQUE KEY uq_queue_core_webhook_resource'), 'Cien duplicados podrían crecer sin límite.');
+$check(str_contains($lifecycleMigration, "ENUM('received','materializing','materialized','resolved','archived')"), 'Falta lifecycle durable del spool.');
+$check(str_contains($rollback, 'webhooks_remaining') && str_contains($rollback, 'replayUnresolvedToLegacy'), 'Rollback no cerca/reinyecta webhooks unresolved.');
 $check(str_contains($trigger, 'LIMIT 2') && str_contains($trigger, 'a.company_id') && str_contains($trigger, 'c.status=1'), 'La identidad seller/company no falla cerrada.');
 $check(str_contains($legacyJob, 'SKIPPED_V4_OWNER') && str_contains($legacyJob, 'http=0'), 'El launcher legacy no corta V4 con HTTP0.');
 $check(substr_count($legacyWork, 'QueueCoreOwnershipGuard::v4OwnsWebhook()') >= 2, 'Los consumidores legacy exact/due no están cercados.');
+$check(str_contains($legacyCoalescer, 'QueueCoreOwnershipGuard::v4OwnsWebhook()'), 'El fallback coalescer legacy no corta V4 con HTTP0.');
 $check(!preg_match('/->\s*(post|put|patch|delete)\s*\(/i', $gateway), 'El gateway webhook contiene mutación remota.');
 $check(str_contains($repository, "'webhook_order_exact'") && str_contains($repository, "'webhook_pack_exact'") && str_contains($repository, "'webhook_shipment_exact'"), 'Los GET exactos conocidos no tienen retry seguro.');
 $check(str_contains($gateway, 'syncOrderByIdForQueueCore') && str_contains($gateway, 'syncPackByIdForQueueCore') && str_contains($gateway, 'syncShipmentByIdForQueueCore'), 'El catálogo exacto GET está incompleto.');

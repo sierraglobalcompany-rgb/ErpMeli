@@ -18,6 +18,8 @@ final class QueueCoreDeploymentGateService
         '285_queue_core_webhook_ownership_b2.sql',
         '286_queue_core_historical_deploy_b2.sql',
         '287_queue_core_readiness_observability_b2.sql',
+        '289_queue_core_webhook_lifecycle_b2_1.sql',
+        '290_queue_core_sales_dependency_graph_b2_1.sql',
         '291_queue_core_release_health_capacity_b2_1.sql',
     ];
     private const REQUIRED_TABLES = [
@@ -30,6 +32,7 @@ final class QueueCoreDeploymentGateService
         'queue_core_pending_capabilities',
         'queue_core_capability_dependencies',
         'queue_core_webhook_triggers',
+        'queue_core_webhook_spool_items',
         'queue_core_runs',
         'queue_core_readiness_receipts',
         'queue_core_health_snapshots',

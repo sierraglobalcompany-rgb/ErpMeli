@@ -20,6 +20,7 @@ final class QueueCorePreflightService
         'queue_core_jobs', 'queue_core_attempts', 'queue_core_dispatch_journal',
         'queue_core_producer_checkpoints', 'queue_core_pending_capabilities',
         'queue_core_capability_dependencies', 'queue_core_webhook_triggers',
+        'queue_core_webhook_spool_items',
         'queue_core_execution_leases', 'queue_engine_control',
         'queue_core_runs', 'queue_core_readiness_receipts',
         'queue_core_health_snapshots', 'queue_core_feature_flags',
@@ -64,6 +65,7 @@ final class QueueCorePreflightService
             '285_queue_core_webhook_ownership_b2.sql',
             '286_queue_core_historical_deploy_b2.sql',
             '287_queue_core_readiness_observability_b2.sql',
+            '289_queue_core_webhook_lifecycle_b2_1.sql',
         ];
         $applied = [];
         if (!in_array('schema_migrations', $missing, true)) {

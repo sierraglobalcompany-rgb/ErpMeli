@@ -93,12 +93,11 @@ final class WebhookProducer
                     null,
                     'operational'
                 );
-                $jobId = $type === 'order'
-                    ? $this->repository->enqueueCoalescedExact($job, ['order_exact','webhook_order_exact'])
-                    : $this->repository->enqueueCoalescedExact(
-                        $job,
-                        [$type . '_exact','webhook_' . $type . '_exact']
-                    );
+                // Each scheduled generation owns a distinct FIFO job. It may
+                // sit behind an exact fetch already running for this resource,
+                // but it must never attach a later observation to a GET whose
+                // physical request may already have happened.
+                $jobId = $this->repository->enqueue($job);
                 $created = $this->repository->lastEnqueueCreated();
                 $update = $this->pdo->prepare(
                     "UPDATE queue_core_webhook_triggers

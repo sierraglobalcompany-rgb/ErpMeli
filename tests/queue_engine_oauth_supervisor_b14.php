@@ -125,6 +125,7 @@ $migrations = [
     '285_queue_core_webhook_ownership_b2.sql',
     '286_queue_core_historical_deploy_b2.sql',
     '287_queue_core_readiness_observability_b2.sql',
+    '289_queue_core_webhook_lifecycle_b2_1.sql',
 ];
 foreach ([1, 2] as $passNumber) {
     foreach ($migrations as $migration) {

@@ -117,6 +117,8 @@ $pdo->prepare('INSERT INTO schema_migrations(version) VALUES (?)')->execute(['28
 $apply($pdo, $root . '/database/migrations/287_queue_core_readiness_observability_b2.sql');
 $apply($pdo, $root . '/database/migrations/287_queue_core_readiness_observability_b2.sql');
 $pdo->prepare('INSERT INTO schema_migrations(version) VALUES (?)')->execute(['287_queue_core_readiness_observability_b2.sql']);
+$apply($pdo, $root . '/database/migrations/289_queue_core_webhook_lifecycle_b2_1.sql');
+$pdo->prepare('INSERT INTO schema_migrations(version) VALUES (?)')->execute(['289_queue_core_webhook_lifecycle_b2_1.sql']);
 
 $results = [];
 $scenario = static function (string $name, callable $test) use (&$results): void {

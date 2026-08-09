@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Core\Env;
+use App\QueueCore\QueueCoreReleaseEvidenceService;
 use PDO;
 
 final class QueueCoreDeploymentGateService
@@ -33,6 +34,7 @@ final class QueueCoreDeploymentGateService
         'queue_core_historical_reviews',
         'queue_core_pending_capabilities',
         'queue_core_capability_dependencies',
+        'queue_core_capability_edges',
         'queue_core_webhook_triggers',
         'queue_core_webhook_spool_items',
         'queue_core_runs',
@@ -146,16 +148,13 @@ final class QueueCoreDeploymentGateService
     /** @return array{ok:bool,exists:bool,sha256:?string,bytes:int} */
     public function backupCheck(string $path, string $expectedSha256): array
     {
-        $exists = $path !== '' && is_file($path) && is_readable($path);
-        $sha = $exists ? hash_file('sha256', $path) : false;
-        $expected = strtolower(trim($expectedSha256));
-        $ok = is_string($sha) && preg_match('/^[a-f0-9]{64}$/', $expected) === 1
-            && hash_equals($expected, strtolower($sha));
+        $verification = (new QueueCoreReleaseEvidenceService($this->pdo))
+            ->verifyBackup($path, $expectedSha256);
         return [
-            'ok' => $ok,
-            'exists' => $exists,
-            'sha256' => is_string($sha) ? strtoupper($sha) : null,
-            'bytes' => $exists ? max(0, (int) filesize($path)) : 0,
+            'ok' => $verification['ok'],
+            'exists' => is_file($path) && is_readable($path),
+            'sha256' => $verification['sha256'],
+            'bytes' => $verification['bytes'],
         ];
     }
 

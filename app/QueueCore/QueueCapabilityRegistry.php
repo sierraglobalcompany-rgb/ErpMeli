@@ -40,6 +40,11 @@ final class QueueCapabilityRegistry
         return self::CAPABILITIES[$workType] ?? null;
     }
 
+    public function authorityHash(): string
+    {
+        return hash('sha256', json_encode(self::CAPABILITIES, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+    }
+
     /** @return array{domain:string,launcher:string,method:string,endpoint_pattern:string,profile:string,max_remote_calls:int,uses_api:bool}|null */
     public function transportContract(QueueClaim $claim,string $launcher): ?array
     {

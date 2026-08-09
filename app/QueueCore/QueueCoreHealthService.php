@@ -152,6 +152,9 @@ final class QueueCoreHealthService
                         $evidenceGeneration,
                         $type,
                         $contextHash,
+                        null,
+                        null,
+                        $engine['active_engine'] !== 'v4' || $type === 'capacity',
                     );
                     if (!$evidence['ok']) {
                         $reasons[] = $evidence['reason'];
@@ -274,12 +277,17 @@ final class QueueCoreHealthService
     /** @return array<string,mixed>|null */
     public function latestPersisted(): ?array
     {
-        $row = $this->pdo->query(
+        $engine=(new QueueEngineControlService($this->pdo))->snapshot();
+        $statement=$this->pdo->prepare(
             'SELECT id,engine_generation,health_state,account_count,eligible_depth,
                     waiting_oauth,waiting_dependency,review_depth,dead_depth,
                     oldest_eligible_seconds,freshness_lag_seconds,reasons_json,generated_at
-             FROM queue_core_health_snapshots ORDER BY id DESC LIMIT 1'
-        )->fetch(PDO::FETCH_ASSOC);
+             FROM queue_core_health_snapshots
+             WHERE engine_generation=? AND generated_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 5 MINUTE)
+             ORDER BY id DESC LIMIT 1'
+        );
+        $statement->execute([max(0,(int)$engine['generation'])]);
+        $row=$statement->fetch(PDO::FETCH_ASSOC);
         if (!is_array($row)) {
             return null;
         }
@@ -350,7 +358,7 @@ final class QueueCoreHealthService
                    FROM queue_core_release_evidence
                    GROUP BY evidence_type,company_id,meli_account_id
                  ) latest ON latest.id=e.id
-                 WHERE e.status='fail' OR e.expires_at<=UTC_TIMESTAMP(3)"
+                 WHERE e.status='fail'"
             )->fetchColumn() > 0;
         } catch (Throwable) {
             return true;

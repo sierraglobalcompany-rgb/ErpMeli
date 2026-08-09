@@ -327,7 +327,8 @@ final class QueueCoreRepository
     {
         if($jobId<1 || !in_array($expectedWorkType,['fresh_orders_discovery','order_exact','oauth_refresh'],true)
             || $expectedInputVersion==='')return false;
-        $this->pdo->beginTransaction();
+        $ownsTransaction=!$this->pdo->inTransaction();
+        if($ownsTransaction)$this->pdo->beginTransaction();
         try{
             $s=$this->pdo->prepare('SELECT * FROM queue_core_jobs WHERE id=? AND work_type=? AND input_version=? FOR UPDATE');
             $s->execute([$jobId,$expectedWorkType,$expectedInputVersion]);
@@ -336,14 +337,14 @@ final class QueueCoreRepository
                 || ($expectedCompanyId!==null && (int)$row['company_id']!==$expectedCompanyId)
                 || ($expectedAccountId!==null && (int)$row['meli_account_id']!==$expectedAccountId)
                 || !$this->revivableTransient($row)
-                || (strtotime((string)$row['updated_at'].' UTC')?:time())>time()-60){$this->pdo->rollBack();return false;}
+                || (strtotime((string)$row['updated_at'].' UTC')?:time())>time()-60){if($ownsTransaction)$this->pdo->rollBack();return false;}
             $generation=(int)$row['lease_generation'];
             $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state='pending',attempt_count=0,revival_count=revival_count+1,available_at=UTC_TIMESTAMP(3),next_attempt_at=NULL,dispatch_state='NOT_DISPATCHED',completed_at=NULL,last_error_class=NULL,last_http_status=NULL,lease_owner=NULL,lease_expires_at=NULL,lease_heartbeat_at=NULL,lease_generation=lease_generation+1,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND company_id=? AND meli_account_id=? AND work_type=? AND input_version=? AND state='dead' AND lease_generation=? AND updated_at<=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 60 SECOND)");
             $u->execute([$jobId,(int)$row['company_id'],(int)$row['meli_account_id'],$expectedWorkType,$expectedInputVersion,$generation]);
-            if($u->rowCount()!==1){$this->pdo->rollBack();return false;}
+            if($u->rowCount()!==1){if($ownsTransaction)$this->pdo->rollBack();return false;}
             $this->event($jobId,(int)$row['company_id'],(int)$row['meli_account_id'],(string)$row['lane'],'revived');
-            $this->pdo->commit();return true;
-        }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
+            if($ownsTransaction)$this->pdo->commit();return true;
+        }catch(Throwable $e){if($ownsTransaction&&$this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
     }
 
     /**

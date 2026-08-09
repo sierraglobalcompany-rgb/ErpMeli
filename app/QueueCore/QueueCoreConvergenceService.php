@@ -31,10 +31,10 @@ final class QueueCoreConvergenceService
             throw new RuntimeException('Queue Core convergence readiness authority is unavailable.');
         }
         $captureQuery=$this->pdo->prepare(
-            'SELECT id,window_from,window_to,response_count
+            'SELECT id,window_from,window_to,page_offset,response_count,complete
              FROM queue_core_readiness_captures
              WHERE engine_generation=? AND readiness_context_hash=?
-               AND company_id=? AND meli_account_id=? AND complete=1
+               AND company_id=? AND meli_account_id=?
                AND window_to>=? AND window_from<=?
              ORDER BY window_from,page_offset,id LIMIT '.($limit+1)
         );
@@ -42,12 +42,28 @@ final class QueueCoreConvergenceService
         $captureQuery->execute([$generation,$contextHash,$companyId,$accountId,$fromSql,$toSql]);
         $captures=$captureQuery->fetchAll(PDO::FETCH_ASSOC);
         if(count($captures)>$limit)throw new RuntimeException('Queue Core convergence evidence exceeds its bounded limit.');
-        $windows=[];$captureIds=[];
+        $windows=[];$captureIds=[];$groups=[];
         foreach($captures as $capture){
-            $start=strtotime((string)$capture['window_from'].' UTC');
-            $end=strtotime((string)$capture['window_to'].' UTC');
+            $key=(string)$capture['window_from'].'|'.(string)$capture['window_to'];
+            $groups[$key][]=$capture;
+        }
+        foreach($groups as $pages){
+            usort($pages,static fn(array $a,array $b):int=>(int)$a['page_offset']<=>(int)$b['page_offset']);
+            $expectedOffset=0;$terminal=false;$pageIds=[];
+            foreach($pages as $page){
+                if((int)$page['page_offset']!==$expectedOffset || $terminal){
+                    $pageIds=[];break;
+                }
+                $pageIds[]=(int)$page['id'];
+                $expectedOffset+=(int)$page['response_count'];
+                $terminal=(int)$page['complete']===1;
+            }
+            if(!$terminal||$pageIds===[])continue;
+            $start=strtotime((string)$pages[0]['window_from'].' UTC');
+            $end=strtotime((string)$pages[0]['window_to'].' UTC');
             if($start===false||$end===false)continue;
-            $windows[]=[max($from,$start),min($to,$end)];$captureIds[]=(int)$capture['id'];
+            $windows[]=[max($from,$start),min($to,$end)];
+            array_push($captureIds,...$pageIds);
         }
         $coverage=$this->continuousCoverage($windows,$from,$to);
         $remote=$this->remoteIdentities($captureIds,$limit);
@@ -113,7 +129,7 @@ final class QueueCoreConvergenceService
     {
         $statement=$this->pdo->prepare(
             "SELECT COUNT(*) FROM queue_core_jobs WHERE company_id=? AND meli_account_id=?
-             AND work_type IN ('order_exact','webhook_order_exact')
+             AND work_type IN ('fresh_orders_discovery','order_exact','webhook_order_exact')
              AND state IN ('pending','claimed','running','retry_wait','waiting_oauth','review','dead')"
         );
         $statement->execute([$companyId,$accountId]);return max(0,(int)$statement->fetchColumn());

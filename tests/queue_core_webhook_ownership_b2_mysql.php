@@ -37,7 +37,9 @@ $pdo = new PDO($dsn, getenv('QUEUE_CORE_TEST_USER') ?: '', getenv('QUEUE_CORE_TE
 $pdo->exec("SET time_zone='+00:00'");
 Database::setConnection($pdo);
 $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
-foreach (['queue_core_webhook_triggers', 'queue_core_events', 'queue_core_jobs', 'queue_core_scheduler_state', 'queue_engine_control', 'meli_accounts', 'companies'] as $table) {
+foreach (['queue_core_historical_receipts', 'queue_core_historical_checkpoints', 'queue_core_execution_leases',
+    'queue_core_webhook_spool_items', 'queue_core_webhook_triggers', 'queue_core_events', 'queue_core_jobs',
+    'queue_core_scheduler_state', 'queue_engine_control', 'meli_accounts', 'companies'] as $table) {
     $pdo->exec("DROP TABLE IF EXISTS `{$table}`");
 }
 $pdo->exec('SET FOREIGN_KEY_CHECKS=1');

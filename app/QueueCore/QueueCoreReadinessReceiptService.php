@@ -93,6 +93,10 @@ final class QueueCoreReadinessReceiptService
             || !hash_equals($authority['readiness_context_hash'], $contextHash)) {
             return ['ok' => false, 'reason' => 'readiness_context_changed'];
         }
+        $preflight = (new QueueCorePreflightService($this->pdo))->check(false);
+        if (empty($preflight['ok'])) {
+            return ['ok' => false, 'reason' => 'current_preflight_failed'];
+        }
         $flags = new QueueCoreFeatureFlagService($this->pdo);
         foreach (['fresh_producer', 'webhook_producer', 'pack_shipment_followups'] as $feature) {
             if (!$flags->enabled($feature)) {
@@ -130,6 +134,21 @@ final class QueueCoreReadinessReceiptService
                 return ['ok' => false, 'reason' => $evidence['reason']];
             }
         }
+        $manifest = (new \App\Services\QueueCoreDeploymentGateService($this->pdo))->runtimeManifestCheck();
+        if (!$manifest['ok']) {
+            return ['ok' => false, 'reason' => 'runtime_manifest_mismatch'];
+        }
+        $blockers = (int) $this->pdo->query(
+            "SELECT COUNT(*) FROM queue_core_jobs
+             WHERE queue_domain='operational'
+               AND (state IN ('review','dead') OR dispatch_state='DISPATCHED_RESULT_UNCERTAIN')"
+        )->fetchColumn();
+        if ($blockers > 0) {
+            return ['ok' => false, 'reason' => 'go_live_work_blocked'];
+        }
+        if ((new QueueCoreHealthService($this->pdo))->snapshot()['health'] === 'RED') {
+            return ['ok' => false, 'reason' => 'health_red'];
+        }
         return ['ok' => true, 'reason' => 'ready'];
     }
 
@@ -141,6 +160,9 @@ final class QueueCoreReadinessReceiptService
              FROM queue_core_feature_flags ORDER BY feature_key'
         )->fetchAll(PDO::FETCH_ASSOC);
         $safety = (new EmergencyControlService())->status();
+        $manifestPath = dirname(__DIR__, 2) . '/resources/runtime-manifest.json';
+        $manifestHash = is_file($manifestPath) ? hash_file('sha256', $manifestPath) : false;
+        $profile = $this->runtimeProfile();
         $context = [
             'engine_generation' => max(0, $engineGeneration),
             'accounts' => $accounts,
@@ -150,13 +172,49 @@ final class QueueCoreReadinessReceiptService
                 'cron_v3' => Env::bool('CRON_V3_ENABLED', false),
                 'cron_v3_shadow' => Env::bool('CRON_V3_SHADOW_ENABLED', false),
                 'ml_write' => Env::bool('ML_WRITE_ENABLED', false),
+                'profile' => $profile,
             ],
+            'release_manifest_hash' => is_string($manifestHash) ? $manifestHash : 'missing',
+            'capability_registry_hash' => (new QueueCapabilityRegistry())->authorityHash(),
             'safety' => [
                 'api' => (string) ($safety['api'] ?? 'unknown'),
-                'automation' => (string) ($safety['automation'] ?? 'unknown'),
+                // Automation STOP is revalidated in the activation CAS. It is
+                // a precondition, not part of the post-cutover health identity.
+                'automation_required_at_activation' => 'stopped',
             ],
         ];
         return hash('sha256', json_encode($context, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+    }
+
+    /** @return array{cadence_seconds:int,runtime_seconds:int,safe_close_seconds:int,max_remote_jobs:int,safe_http_per_minute:float} */
+    public function runtimeProfile(): array
+    {
+        $defaults = [
+            'cadence_seconds' => 60,
+            'runtime_seconds' => 45,
+            'safe_close_seconds' => 10,
+            'max_remote_jobs' => 3,
+            'safe_http_per_minute' => 3.0,
+        ];
+        $statement = $this->pdo->query(
+            "SELECT setting_key,setting_value FROM app_settings
+             WHERE setting_key IN (
+               'queue_core.v4.cadence_seconds','queue_core.v4.runtime_seconds',
+               'queue_core.v4.safe_close_seconds','queue_core.v4.max_remote_jobs',
+               'queue_core.v4.safe_http_per_minute'
+             )"
+        );
+        $values = [];
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $values[(string) $row['setting_key']] = (string) $row['setting_value'];
+        }
+        return [
+            'cadence_seconds' => max(1, (int) ($values['queue_core.v4.cadence_seconds'] ?? $defaults['cadence_seconds'])),
+            'runtime_seconds' => max(5, (int) ($values['queue_core.v4.runtime_seconds'] ?? $defaults['runtime_seconds'])),
+            'safe_close_seconds' => max(1, (int) ($values['queue_core.v4.safe_close_seconds'] ?? $defaults['safe_close_seconds'])),
+            'max_remote_jobs' => max(1, (int) ($values['queue_core.v4.max_remote_jobs'] ?? $defaults['max_remote_jobs'])),
+            'safe_http_per_minute' => max(0.1, (float) ($values['queue_core.v4.safe_http_per_minute'] ?? $defaults['safe_http_per_minute'])),
+        ];
     }
 
     /** @return array{active_engine:string,readiness_mode:string,readiness_context_hash:string,generation:int} */
@@ -207,7 +265,9 @@ final class QueueCoreReadinessReceiptService
     {
         $statement = $this->pdo->query(
             'SELECT a.company_id,a.id meli_account_id,a.meli_user_id,
-                    COALESCE(t.refresh_version,0) refresh_version
+                    COALESCE(t.refresh_version,0) refresh_version,t.expires_at,
+                    (t.access_token_encrypted IS NOT NULL AND t.access_token_encrypted<>"") access_present,
+                    (t.refresh_token_encrypted IS NOT NULL AND t.refresh_token_encrypted<>"") refresh_present
              FROM meli_accounts a
              LEFT JOIN meli_tokens t ON t.meli_account_id=a.id
              WHERE a.status IN ("conectado","connected")
@@ -220,6 +280,9 @@ final class QueueCoreReadinessReceiptService
                 'meli_account_id' => (int) $row['meli_account_id'],
                 'identity' => $includeIdentity ? hash('sha256', (string) ($row['meli_user_id'] ?? '')) : '',
                 'refresh_version' => max(0, (int) $row['refresh_version']),
+                'expires_at' => $includeIdentity ? (string) ($row['expires_at'] ?? '') : '',
+                'access_present' => $includeIdentity ? (int) ($row['access_present'] ?? 0) : 0,
+                'refresh_present' => $includeIdentity ? (int) ($row['refresh_present'] ?? 0) : 0,
             ];
         }
         return $accounts;

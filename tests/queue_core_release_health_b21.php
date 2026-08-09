@@ -63,14 +63,34 @@ $assert(!$evidence->requireLatest(4, 'capacity', $context)['ok'], 'An older PASS
 $assert(!$evidence->requireLatest(4, 'capacity', hash('sha256', 'changed'))['ok'], 'Changed context accepted old evidence.');
 
 $capacity = (new QueueCoreCapacityService())->calculate(0.1, 3.0, 1.0, 5.0, 3.0, 60, 45, 10, 3);
+$capacity['measurement_known_responses'] = 3;
+$capacity['measurement_resources_persisted'] = 1;
+$capacity['measurement_window_minutes'] = 60;
 $certified = $evidence->certifyCapacity(4, $context, $capacity, [
     'cadence_seconds' => 60, 'runtime_seconds' => 45, 'safe_close_seconds' => 10, 'max_remote_jobs' => 3,
 ], 120.0);
 $assert($certified['ok'], 'Positive capacity margin did not certify.');
 $failedCapacity = (new QueueCoreCapacityService())->calculate(2.0, 3.0, 1.0, 5.0, 3.0, 60, 45, 10, 3);
+$failedCapacity['measurement_known_responses'] = 3;
+$failedCapacity['measurement_resources_persisted'] = 1;
+$failedCapacity['measurement_window_minutes'] = 60;
 $assert(!$evidence->certifyCapacity(4, $context, $failedCapacity, [
     'cadence_seconds' => 60, 'runtime_seconds' => 45, 'safe_close_seconds' => 10, 'max_remote_jobs' => 3,
 ], null)['ok'], 'Insufficient sustainable capacity certified.');
+
+$backupFixture = tempnam(sys_get_temp_dir(), 'b21-backup-') . '.sql.gz';
+$backupSql = "CREATE TABLE `meli_accounts` (`id` BIGINT);\n"
+    . "CREATE TABLE `meli_orders` (`id` BIGINT);\n"
+    . "CREATE TABLE `schema_migrations` (`version` VARCHAR(100));\n"
+    . "INSERT INTO `meli_accounts` VALUES (1);\n";
+file_put_contents($backupFixture, gzencode($backupSql, 6));
+$backupHash = hash_file('sha256', $backupFixture);
+$assert(is_string($backupHash) && $evidence->verifyBackup($backupFixture, $backupHash)['ok'], 'Structured SQL backup was rejected.');
+$invalidBackup = tempnam(sys_get_temp_dir(), 'b21-invalid-');
+file_put_contents($invalidBackup, 'not a database backup');
+$invalidHash = hash_file('sha256', $invalidBackup);
+$assert(is_string($invalidHash) && !$evidence->verifyBackup($invalidBackup, $invalidHash)['ok'], 'Arbitrary file was accepted as backup evidence.');
+@unlink($backupFixture);@unlink($invalidBackup);
 
 $pdo->exec("INSERT INTO meli_accounts VALUES(1,10,'connected',NULL)");
 $pdo->exec("INSERT INTO meli_tokens VALUES(1,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 HOUR),2)");
@@ -95,6 +115,17 @@ $pdo->prepare("INSERT INTO queue_core_attempts(run_id,job_id,physical_http_calls
 $ledger->finish($runId, 'completed', 'metrics_renderer_failed', ['claimed' => 0]);
 $claimed = (int) $pdo->query('SELECT jobs_claimed FROM queue_core_runs WHERE id=' . $runId)->fetchColumn();
 $assert($claimed === 1, 'Run ledger lost measured claims when summary rendering failed.');
+$pdo->prepare("INSERT INTO queue_core_attempts(run_id,job_id,physical_http_calls,response_known_at,resources_persisted,outcome) VALUES(?,?,1,UTC_TIMESTAMP(3),1,'completed'),(?,?,1,UTC_TIMESTAMP(3),1,'completed')")
+    ->execute([$runId, 1, $runId, 1]);
+$measured = $evidence->measuredCapacity(60, [
+    'cadence_seconds' => 60, 'runtime_seconds' => 45, 'safe_close_seconds' => 10,
+    'max_remote_jobs' => 3, 'safe_http_per_minute' => 3.0,
+]);
+$assert((int) $measured['measurement_known_responses'] >= 3, 'Capacity did not use measured known responses.');
+$assert($evidence->certifyCapacity(4, $context, $measured, [
+    'cadence_seconds' => 60, 'runtime_seconds' => 45, 'safe_close_seconds' => 10,
+    'max_remote_jobs' => 3,
+], null)['ok'], 'Measured positive capacity did not certify.');
 
 $deploy = (new QueueCoreDeploymentGateService($pdo))->inspect();
 $assert(in_array('backup_evidence_required', $deploy['issues'], true), 'Deployment gate accepted missing backup evidence.');

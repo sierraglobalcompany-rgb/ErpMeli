@@ -52,12 +52,14 @@ $apply = static function (PDO $pdo, string $file) use ($split): void {
 $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
 foreach ([
     'queue_core_historical_reviews', 'queue_core_historical_receipts', 'queue_core_historical_checkpoints',
+    'queue_core_release_evidence', 'queue_core_readiness_capture_items', 'queue_core_readiness_captures',
     'queue_core_health_snapshots', 'queue_core_readiness_receipts', 'queue_core_runs',
-    'queue_core_feature_flags', 'queue_core_webhook_triggers', 'queue_core_capability_dependencies',
+    'queue_core_feature_flags', 'queue_core_webhook_spool_items', 'queue_core_webhook_triggers',
+    'queue_core_capability_edges', 'queue_core_capability_dependencies',
     'queue_core_pending_capabilities', 'queue_core_dispatch_journal', 'queue_core_attempts',
     'queue_core_events', 'queue_core_jobs', 'queue_core_producer_checkpoints',
     'queue_core_scheduler_state', 'queue_core_execution_leases', 'queue_engine_control',
-    'meli_notification_work_items', 'meli_orders', 'meli_accounts', 'schema_migrations',
+    'meli_notification_work_items', 'meli_orders', 'meli_accounts', 'app_settings', 'schema_migrations',
 ] as $table) {
     $pdo->exec("DROP TABLE IF EXISTS `$table`");
 }
@@ -92,6 +94,12 @@ $pdo->exec('CREATE TABLE schema_migrations (
     version VARCHAR(100) NOT NULL PRIMARY KEY,
     applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB');
+$pdo->exec('CREATE TABLE app_settings (
+    setting_key VARCHAR(120) NOT NULL PRIMARY KEY,
+    setting_value LONGTEXT NULL,
+    is_encrypted TINYINT(1) NOT NULL DEFAULT 0,
+    setting_group VARCHAR(80) NOT NULL DEFAULT "general"
+) ENGINE=InnoDB');
 
 $root = dirname(__DIR__);
 foreach ([
@@ -117,8 +125,17 @@ $pdo->prepare('INSERT INTO schema_migrations(version) VALUES (?)')->execute(['28
 $apply($pdo, $root . '/database/migrations/287_queue_core_readiness_observability_b2.sql');
 $apply($pdo, $root . '/database/migrations/287_queue_core_readiness_observability_b2.sql');
 $pdo->prepare('INSERT INTO schema_migrations(version) VALUES (?)')->execute(['287_queue_core_readiness_observability_b2.sql']);
-$apply($pdo, $root . '/database/migrations/289_queue_core_webhook_lifecycle_b2_1.sql');
-$pdo->prepare('INSERT INTO schema_migrations(version) VALUES (?)')->execute(['289_queue_core_webhook_lifecycle_b2_1.sql']);
+foreach ([
+    '288_queue_core_readiness_authority_b2_1.sql',
+    '289_queue_core_webhook_lifecycle_b2_1.sql',
+    '290_queue_core_sales_dependency_graph_b2_1.sql',
+    '291_queue_core_release_health_capacity_b2_1.sql',
+    '292_queue_core_authoritative_convergence_b2_1.sql',
+] as $migration) {
+    $apply($pdo, $root . '/database/migrations/' . $migration);
+    $apply($pdo, $root . '/database/migrations/' . $migration);
+    $pdo->prepare('INSERT INTO schema_migrations(version) VALUES (?)')->execute([$migration]);
+}
 
 $results = [];
 $scenario = static function (string $name, callable $test) use (&$results): void {
@@ -331,7 +348,10 @@ $scenario('deployment_gate_verifies_schema_and_backup', static function () use (
     if (!is_string($backup)) {
         throw new RuntimeException('temporary backup could not be created');
     }
-    file_put_contents($backup, 'immutable-backup-fixture');
+    file_put_contents($backup, "CREATE TABLE `meli_accounts` (`id` BIGINT);\n"
+        . "CREATE TABLE `meli_orders` (`id` BIGINT);\n"
+        . "CREATE TABLE `schema_migrations` (`version` VARCHAR(100));\n"
+        . "INSERT INTO `meli_accounts` VALUES (1);\n");
     try {
         $sha = hash_file('sha256', $backup);
         $gate = (new QueueCoreDeploymentGateService($pdo))->inspect($backup, is_string($sha) ? $sha : '');

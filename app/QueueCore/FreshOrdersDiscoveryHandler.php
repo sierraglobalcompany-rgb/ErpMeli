@@ -16,7 +16,7 @@ final class FreshOrdersDiscoveryHandler implements QueueHandler
         $from=(string)($job->payload['from']??'');$to=(string)($job->payload['to']??'');$cursor=isset($job->payload['cursor'])?(string)$job->payload['cursor']:null;$generation=(int)($job->payload['generation']??-1);$limit=max(1,min(20,(int)($job->payload['limit']??20)));
         if($from===''||$to===''||$generation<0) return QueueResult::dead('invalid_fresh_window');
         $page=$this->gateway->fetch($job->companyId,$job->meliAccountId,$from,$to,$cursor,$limit);
-        $discovered=0;$revivalCandidates=[];
+        $discovered=0;
         $status=(int)($page['http_status']??200);
         $countState=(string)($page['response_count_state']??'complete');
         $requestedOffset=max(0,(int)($cursor??'0'));
@@ -54,7 +54,12 @@ final class FreshOrdersDiscoveryHandler implements QueueHandler
                     $child,
                     ['order_exact','webhook_order_exact']
                 );
-                $revivalCandidates[]=[$childId,$child->workType,$child->inputVersion];
+                // Revival is part of the same transaction that advances the
+                // source checkpoint. A crash can therefore neither publish a
+                // new checkpoint nor strand a previously dead exact child.
+                $this->repository->reviveExhaustedTransient(
+                    $childId,$child->workType,$child->inputVersion,$job->companyId,$job->meliAccountId
+                );
                 $discovered++;
             }
             $nextGeneration=$generation+1;
@@ -67,11 +72,9 @@ final class FreshOrdersDiscoveryHandler implements QueueHandler
                 $to,
                 $pagingOffset,
                 $page['orders'],
+                !$page['has_more'],
             );
             $this->pdo->commit();
-            foreach($revivalCandidates as [$reviveId,$reviveType,$reviveVersion]){
-                $this->repository->reviveExhaustedTransient($reviveId,$reviveType,$reviveVersion);
-            }
             if($page['has_more']&&$page['next_cursor']!==null){$next=new QueueJob($job->companyId,$job->meliAccountId,'fresh_orders_discovery','orders_window',null,'fresh_orders',100,hash('sha256',implode('|',[$job->companyId,$job->meliAccountId,$from,$to,(string)$page['next_cursor'],$nextGeneration])),(string)$nextGeneration,'fresh_orders_producer','checkpoint:fresh_orders:'.$job->meliAccountId,['from'=>$from,'to'=>$to,'cursor'=>(string)$page['next_cursor'],'generation'=>$nextGeneration,'limit'=>$limit],['producer'=>'native_fresh_orders'],5);$nextId=$this->repository->enqueue($next);$this->repository->reviveExhaustedTransient($nextId,$next->workType,$next->inputVersion);}
         }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
         return QueueResult::completed(0,$discovered);
@@ -83,6 +86,7 @@ final class FreshOrdersDiscoveryHandler implements QueueHandler
         string $to,
         int $pageOffset,
         array $orders,
+        bool $complete,
     ): void {
         $authority=$this->pdo->query(
             "SELECT generation,readiness_context_hash FROM queue_engine_control
@@ -106,14 +110,14 @@ final class FreshOrdersDiscoveryHandler implements QueueHandler
             'INSERT IGNORE INTO queue_core_readiness_captures
              (engine_generation,readiness_context_hash,company_id,meli_account_id,
               discovery_job_id,window_from,window_to,page_offset,response_count,capture_hash,complete)
-             VALUES (?,?,?,?,?,?,?,?,?,?,1)'
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)'
         );
         $insert->execute([
             $generation,$contextHash,$job->companyId,$job->meliAccountId,$job->id,
-            self::sqlTime($from),self::sqlTime($to),max(0,$pageOffset),count($ids),$captureHash,
+            self::sqlTime($from),self::sqlTime($to),max(0,$pageOffset),count($ids),$captureHash,$complete?1:0,
         ]);
         $lookup=$this->pdo->prepare(
-            'SELECT id,readiness_context_hash,capture_hash,response_count
+            'SELECT id,readiness_context_hash,capture_hash,response_count,complete
              FROM queue_core_readiness_captures
              WHERE engine_generation=? AND company_id=? AND meli_account_id=? AND discovery_job_id=? FOR UPDATE'
         );
@@ -122,7 +126,8 @@ final class FreshOrdersDiscoveryHandler implements QueueHandler
         if(!is_array($capture)
             || !hash_equals($contextHash,(string)$capture['readiness_context_hash'])
             || !hash_equals($captureHash,(string)$capture['capture_hash'])
-            || (int)$capture['response_count']!==count($ids)){
+            || (int)$capture['response_count']!==count($ids)
+            || (int)$capture['complete']!==($complete?1:0)){
             throw new RuntimeException('Queue Core readiness capture changed during publication.');
         }
         $item=$this->pdo->prepare(

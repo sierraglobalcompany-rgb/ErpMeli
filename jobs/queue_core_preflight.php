@@ -14,12 +14,12 @@ try {
     $pdo = \App\Core\Database::connectionFresh();
     $result = (new \App\QueueCore\QueueCorePreflightService($pdo))->check(true);
     $record = in_array('--record', $argv ?? [], true);
-    if ($record && !empty($result['ok'])) {
+    if ($record) {
         $engine = (new \App\QueueCore\QueueEngineControlService($pdo))->snapshot();
         (new \App\QueueCore\QueueCoreReadinessReceiptService($pdo))->record(
             $engine['generation'],
             'preflight',
-            true,
+            !empty($result['ok']),
             [
                 'connected_accounts' => count($result['accounts'] ?? []),
                 'capabilities' => count($result['capabilities'] ?? []),

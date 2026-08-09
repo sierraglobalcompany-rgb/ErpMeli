@@ -175,6 +175,9 @@ foreach ([
     'CRON_V3_ENABLED' => 'false',
     'CRON_V3_SHADOW_ENABLED' => 'false',
     'ML_WRITE_ENABLED' => 'false',
+    'MELI_CLIENT_ID' => 'fixture-client',
+    'MELI_CLIENT_SECRET' => 'fixture-secret',
+    'MELI_REDIRECT_URI' => 'https://example.invalid/oauth/callback',
 ] as $key => $value) {
     putenv($key . '=' . $value);
     $_ENV[$key] = $value;
@@ -183,6 +186,12 @@ foreach ([
 $pdo->exec("INSERT INTO meli_accounts VALUES
     (1,1,'101','A','conectado',NULL),(2,1,'102','B','conectado',NULL),
     (3,1,'103','C','conectado',NULL)");
+$pdo->exec("INSERT INTO meli_tokens
+    (meli_account_id,access_token_encrypted,refresh_token_encrypted,expires_at,scope,token_type,refresh_version)
+    VALUES
+    (1,'fixture-access','fixture-refresh',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR),'read','Bearer',0),
+    (2,'fixture-access','fixture-refresh',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR),'read','Bearer',0),
+    (3,'fixture-access','fixture-refresh',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR),'read','Bearer',0)");
 $pdo->exec("UPDATE queue_core_feature_flags SET enabled=1,generation=generation+1
             WHERE feature_key IN ('fresh_producer','webhook_producer','pack_shipment_followups')");
 $recordReadiness = static function (int $generation, array $accountIds) use ($pdo): void {
@@ -207,7 +216,10 @@ $recordReadiness(1, [1, 2, 3]);
 $readinessReceipts=new QueueCoreReadinessReceiptService($pdo);
 $readinessReceipts->record(1,'canary',false,['fixture'=>'newer-fail'],3600,1,1);
 $latestFail=$readinessReceipts->canActivateV4(1);
-$check(!$latestFail['ok']&&$latestFail['reason']==='canary_account_receipts_missing','newer failed canary did not invalidate an older PASS');
+$check(
+    !$latestFail['ok'] && $latestFail['reason'] === 'canary_account_receipts_missing',
+    'newer failed canary did not invalidate an older PASS: ' . json_encode($latestFail)
+);
 $readinessReceipts->record(1,'canary',true,['fixture'=>'recovered-pass'],3600,1,1);
 $contextHash=$readinessReceipts->currentContextHash(1);
 $releaseEvidence=new QueueCoreReleaseEvidenceService($pdo);
@@ -262,6 +274,16 @@ foreach(['8001','8002'] as $identity){$captureItem->execute([$captureId,$identit
 foreach([8001,8002,8003] as $identity){$insertLocal->execute([$identity,$unexpectedFrom]);}
 $localExtra=(new QueueCoreConvergenceService($pdo))->compare(1,1,$unexpectedFrom,$unexpectedTo,20);
 $check(!$localExtra['ok']&&$localExtra['unexpected_local_count']===1,'REMOTE {A,B} versus LOCAL {A,B,C} passed convergence');
+$incompleteFrom=gmdate('Y-m-d H:i:s',time()-3000);$incompleteTo=gmdate('Y-m-d H:i:s',time()-2700);
+$pdo->prepare("INSERT INTO queue_core_readiness_captures
+    (engine_generation,readiness_context_hash,company_id,meli_account_id,discovery_job_id,
+     window_from,window_to,page_offset,response_count,capture_hash,complete)
+    VALUES (1,?,1,1,9003,?,?,0,1,?,0)")
+    ->execute([$contextHash,$incompleteFrom,$incompleteTo,hash('sha256','90001')]);
+$captureId=(int)$pdo->lastInsertId();$captureItem->execute([$captureId,'90001']);
+$insertLocal->execute([90001,$incompleteFrom]);
+$incomplete=(new QueueCoreConvergenceService($pdo))->compare(1,1,$incompleteFrom,$incompleteTo,20);
+$check(!$incomplete['ok']&&!$incomplete['continuous_coverage'],'first page without terminal page passed convergence');
 $crossCompanyBlocked=false;
 try{(new QueueCoreConvergenceService($pdo))->compare(99,1,$windowFrom,$windowTo,20);}catch(RuntimeException){$crossCompanyBlocked=true;}
 $check($crossCompanyBlocked,'cross-company convergence scope was accepted');
@@ -305,7 +327,11 @@ $encryptedRefresh = Crypto::encrypt('refresh-old');
 $insertToken = $pdo->prepare(
     "INSERT INTO meli_tokens
      (meli_account_id,access_token_encrypted,refresh_token_encrypted,expires_at,scope,token_type,refresh_version)
-     VALUES (?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL ? SECOND),'read','Bearer',0)"
+     VALUES (?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL ? SECOND),'read','Bearer',0)
+     ON DUPLICATE KEY UPDATE
+       access_token_encrypted=VALUES(access_token_encrypted),
+       refresh_token_encrypted=VALUES(refresh_token_encrypted),
+       expires_at=VALUES(expires_at),scope=VALUES(scope),token_type=VALUES(token_type),refresh_version=0"
 );
 $insertToken->execute([1, $encryptedAccess, $encryptedRefresh, -60]);
 $insertToken->execute([2, $encryptedAccess, $encryptedRefresh, 3600]);

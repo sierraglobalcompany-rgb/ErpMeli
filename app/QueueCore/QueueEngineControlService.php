@@ -79,6 +79,35 @@ final class QueueEngineControlService
         }
     }
 
+    /**
+     * Reserves the same V4 operational advisory lock used by cutover and
+     * runtime, while the engine remains disabled in bounded readiness mode.
+     * This prevents a CAS from changing ownership during an in-flight canary.
+     *
+     * @return array{ok:bool,reason:string,permit:?QueueEngineRuntimePermit,active_engine:string,generation:int}
+     */
+    public function acquireReadinessRuntime(int $expectedGeneration): array
+    {
+        $lockName=$this->runtimeLockName('v4','operational');
+        if($expectedGeneration<0||$this->lockIsHeld($lockName)){
+            return ['ok'=>false,'reason'=>'engine_runtime_busy','permit'=>null]+$this->snapshot();
+        }
+        $lock=$this->pdo->prepare('SELECT GET_LOCK(?,0)');$lock->execute([$lockName]);
+        if((int)$lock->fetchColumn()!==1){
+            return ['ok'=>false,'reason'=>'engine_runtime_busy','permit'=>null]+$this->snapshot();
+        }
+        try{
+            $snapshot=$this->snapshot();
+            if($snapshot['active_engine']!=='disabled'||$snapshot['readiness_mode']!=='preparing'
+                ||$snapshot['generation']!==$expectedGeneration){
+                $this->releaseLock($lockName);
+                return ['ok'=>false,'reason'=>'readiness_mode_not_current','permit'=>null]+$snapshot;
+            }
+            return ['ok'=>true,'reason'=>'readiness',
+                'permit'=>new QueueEngineRuntimePermit('v4','operational',$snapshot['generation'],$lockName)]+$snapshot;
+        }catch(Throwable $error){$this->releaseLock($lockName);throw $error;}
+    }
+
     public function stillCurrent(QueueEngineRuntimePermit $permit): bool
     {
         $snapshot = $this->snapshot();

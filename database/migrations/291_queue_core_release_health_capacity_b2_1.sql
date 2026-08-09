@@ -24,3 +24,12 @@ ON DUPLICATE KEY UPDATE
   setting_value=VALUES(setting_value),
   is_encrypted=0,
   setting_group='app';
+
+INSERT INTO app_settings(setting_key,setting_value,is_encrypted,setting_group) VALUES
+  ('queue_core.v4.cadence_seconds','60',0,'queue_core'),
+  ('queue_core.v4.runtime_seconds','45',0,'queue_core'),
+  ('queue_core.v4.safe_close_seconds','10',0,'queue_core'),
+  ('queue_core.v4.max_remote_jobs','3',0,'queue_core'),
+  ('queue_core.v4.safe_http_per_minute','3',0,'queue_core')
+ON DUPLICATE KEY UPDATE
+  setting_value=VALUES(setting_value),is_encrypted=0,setting_group='queue_core';

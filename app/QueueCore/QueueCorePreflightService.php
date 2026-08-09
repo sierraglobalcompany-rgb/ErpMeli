@@ -19,12 +19,12 @@ final class QueueCorePreflightService
         'schema_migrations',
         'queue_core_jobs', 'queue_core_attempts', 'queue_core_dispatch_journal',
         'queue_core_producer_checkpoints', 'queue_core_pending_capabilities',
-        'queue_core_capability_dependencies', 'queue_core_webhook_triggers',
+        'queue_core_capability_dependencies', 'queue_core_capability_edges', 'queue_core_webhook_triggers',
         'queue_core_webhook_spool_items',
         'queue_core_execution_leases', 'queue_engine_control',
         'queue_core_runs', 'queue_core_readiness_receipts',
         'queue_core_readiness_captures', 'queue_core_readiness_capture_items',
-        'queue_core_health_snapshots', 'queue_core_feature_flags',
+        'queue_core_health_snapshots', 'queue_core_feature_flags', 'queue_core_release_evidence',
         'queue_core_historical_checkpoints', 'queue_core_historical_receipts',
         'queue_core_historical_reviews',
         'api_rhythm_states', 'api_remote_permits', 'meli_accounts', 'meli_tokens',
@@ -148,6 +148,8 @@ final class QueueCorePreflightService
                 'SELECT a.company_id,a.id meli_account_id,a.status,
                         (a.meli_user_id IS NOT NULL AND a.meli_user_id<>"") identity_present,
                         (t.meli_account_id IS NOT NULL) token_row_present,
+                        (t.access_token_encrypted IS NOT NULL AND t.access_token_encrypted<>"") access_present,
+                        (t.refresh_token_encrypted IS NOT NULL AND t.refresh_token_encrypted<>"") refresh_present,
                         t.expires_at,t.refresh_version
                  FROM meli_accounts a
                  LEFT JOIN meli_tokens t ON t.meli_account_id=a.id
@@ -155,7 +157,11 @@ final class QueueCorePreflightService
                  ORDER BY a.company_id,a.id'
             );
             foreach ($query->fetchAll(PDO::FETCH_ASSOC) as $row) {
-                $valid = (int) $row['identity_present'] === 1 && (int) $row['token_row_present'] === 1;
+                $valid = (int) $row['identity_present'] === 1
+                    && (int) $row['token_row_present'] === 1
+                    && (int) $row['access_present'] === 1
+                    && (int) $row['refresh_present'] === 1
+                    && !empty($row['expires_at']);
                 if (!$valid) {
                     $issues[] = 'account_identity_or_token_missing';
                 }
@@ -164,6 +170,8 @@ final class QueueCorePreflightService
                     'meli_account_id' => (int) $row['meli_account_id'],
                     'identity_present' => (bool) $row['identity_present'],
                     'token_row_present' => (bool) $row['token_row_present'],
+                    'access_present' => (bool) $row['access_present'],
+                    'refresh_present' => (bool) $row['refresh_present'],
                     'token_expired' => !empty($row['expires_at'])
                         && strtotime((string) $row['expires_at'] . ' UTC') <= time(),
                     'refresh_version' => max(0, (int) ($row['refresh_version'] ?? 0)),

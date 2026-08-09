@@ -33,7 +33,7 @@ final class QueueRunner
             $claim=$this->repository->claimNext($request,$this->capabilities->certifiedTypes($this->handlers));
             if($claim===null)break;
             $summary['claimed']++;
-            try{$attempt=$this->repository->beginAttempt($claim,$request->launcher);}catch(Throwable){$summary['lease_lost']++;continue;}
+            try{$attempt=$this->repository->beginAttempt($claim,$request->launcher,$request->runId);}catch(Throwable){$summary['lease_lost']++;continue;}
             $context=new QueueExecutionContext($attempt,$request->deadline,$request->launcher);
             $transportContract=$this->capabilities->transportContract($claim,$request->launcher);
             try{

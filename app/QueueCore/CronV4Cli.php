@@ -38,11 +38,17 @@ final class CronV4Cli
         $executionLease = null;
         $engineControl = null;
         $enginePermit = null;
+        $runLedger = null;
+        $runId = 0;
+        $runFinalized = false;
         try {
             if ($this->pdo === null) {
                 Database::useProfile('cli');
             }
             $pdo = $this->pdo ?? Database::connectionFresh();
+            if (!(new QueueCorePreflightService($pdo))->runtimeSchemaReady()) {
+                return ['ok' => false, 'status' => 'BLOCKED_SCHEMA_INCOMPLETE', 'side_effects' => 0, 'claimed' => 0, 'http' => 0];
+            }
             $core = QueueCoreFactory::build($pdo);
 
             // Preserve the web-manual exclusion even while the active engine is
@@ -92,12 +98,33 @@ final class CronV4Cli
                 ];
             }
 
+            $runLedger = new QueueCoreRunLedger($pdo);
+            $runId = $runLedger->begin($enginePermit->generation, 'cron_v4', $worker);
+
+            if (!$this->advancePhase($runLedger, $runId, 'stale_recovery', $core, $executionLease, 3)) {
+                $result = ['ok'=>true,'status'=>'STOPPED_SAFE_CLOSE','claimed'=>0,'http'=>0,'run'=>['claimed'=>0,'reason'=>'deadline']];
+                $runLedger->finish($runId, 'stopped', 'deadline_before_stale_recovery', $result);
+                $runFinalized = true;
+                return $result;
+            }
             $recovered = $core['repository']->recoverStale(min(100, $max));
+            if (!$this->advancePhase($runLedger, $runId, 'oauth_supervisor', $core, $executionLease, 3)) {
+                $result = ['ok'=>true,'status'=>'STOPPED_SAFE_CLOSE','recovered'=>$recovered,'claimed'=>0,'http'=>0,'run'=>['claimed'=>0,'reason'=>'deadline']];
+                $runLedger->finish($runId, 'stopped', 'deadline_before_oauth_supervisor', $result);
+                $runFinalized = true;
+                return $result;
+            }
             $oauthProduced = $core['oauth_supervisor']->scheduleDueAccounts(min(20, $max));
+            if (!$this->advancePhase($runLedger, $runId, 'fresh_producer', $core, $executionLease, 3)) {
+                $result = ['ok'=>true,'status'=>'STOPPED_SAFE_CLOSE','recovered'=>$recovered,'oauth_supervisor'=>$oauthProduced,'claimed'=>0,'http'=>0,'run'=>['claimed'=>0,'reason'=>'deadline']];
+                $runLedger->finish($runId, 'stopped', 'deadline_before_fresh_producer', $result);
+                $runFinalized = true;
+                return $result;
+            }
             $produced = $core['producer']->scheduleDueAccounts(min(20, $max));
             $effectiveDeadline = CronDeadlineContext::deadline() ?? $deadline;
             if (!$engineControl->stillCurrent($enginePermit)) {
-                return [
+                $result = [
                     'ok' => true,
                     'status' => 'ENGINE_GENERATION_CHANGED',
                     'side_effects' => 0,
@@ -106,6 +133,9 @@ final class CronV4Cli
                     'claimed' => 0,
                     'http' => 0,
                 ];
+                $runLedger->finish($runId, 'stopped', 'engine_generation_changed', $result);
+                $runFinalized = true;
+                return $result;
             }
             // Un solo consumidor preserva FIFO absoluto. OAuth no obtiene un
             // carril privilegiado: los trabajos que requieren token esperan en
@@ -120,9 +150,12 @@ final class CronV4Cli
                 [],
                 null,
                 $executionLease,
+                null,
+                null,
+                $runId,
             ));
 
-            return [
+            $result = [
                 'ok' => true,
                 'status' => 'COMPLETE',
                 'oauth_supervisor' => $oauthProduced,
@@ -131,7 +164,22 @@ final class CronV4Cli
                 'run' => $run,
                 'metrics' => (new QueueMetricsService($pdo))->snapshot(),
             ];
+            $runLedger->finish(
+                $runId,
+                ($run['reason'] ?? '') === 'execution_lease_lost' ? 'lease_lost' : 'completed',
+                (string) ($run['reason'] ?? 'complete'),
+                $result
+            );
+            $runFinalized = true;
+            return $result;
         } catch (Throwable $error) {
+            if ($runLedger instanceof QueueCoreRunLedger && $runId > 0 && !$runFinalized) {
+                try {
+                    $runLedger->finish($runId, 'failed', 'local_failure', ['claimed'=>0]);
+                    $runFinalized = true;
+                } catch (Throwable) {
+                }
+            }
             return [
                 'ok' => false,
                 'status' => 'LOCAL_FAILURE',
@@ -149,6 +197,27 @@ final class CronV4Cli
             }
             CronDeadlineContext::clear();
         }
+    }
+
+    /** @param array<string,mixed> $core */
+    private function advancePhase(
+        QueueCoreRunLedger $ledger,
+        int $runId,
+        string $phase,
+        array $core,
+        QueueExecutionLease $lease,
+        int $reserveSeconds,
+    ): bool {
+        if (!CronDeadlineContext::canAcceptWork($reserveSeconds)) {
+            return false;
+        }
+        if (!isset($core['execution_leases'])
+            || !$core['execution_leases'] instanceof QueueExecutionLeaseService
+            || !$core['execution_leases']->heartbeat($lease)) {
+            return false;
+        }
+        $ledger->phase($runId, $phase);
+        return true;
     }
 
     /** @param list<string> $argv */

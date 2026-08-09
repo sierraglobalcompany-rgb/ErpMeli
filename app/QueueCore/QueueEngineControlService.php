@@ -99,6 +99,12 @@ final class QueueEngineControlService
         if (!in_array($desiredEngine, self::ENGINES, true) || $expectedGeneration < 0) {
             throw new RuntimeException('Queue Engine cutover request is invalid.');
         }
+        if ($desiredEngine === 'v4') {
+            $readiness = (new QueueCoreReadinessReceiptService($this->pdo))->canActivateV4($expectedGeneration);
+            if (!$readiness['ok']) {
+                return ['ok' => false, 'reason' => $readiness['reason']] + $this->snapshot();
+            }
+        }
         $locks = [];
         try {
             foreach (self::RUNTIME_LOCKS as $runtime) {

@@ -17,6 +17,9 @@ final class QueueCoreDispatchFence
         if(($m['queue_core_launcher']??'')==='cron_v4' && (new EmergencyControlService())->automationStopped()){
             throw new QueueCorePreRemoteBlockedException('Automation Stop denied Cron V4 transport.');
         }
+        if(($m['queue_core_launcher']??'')==='canary_v4' && !(new EmergencyControlService())->automationStopped()){
+            throw new QueueCorePreRemoteBlockedException('Automation must remain stopped during a V4 canary.');
+        }
         self::assertCapability($m,$method,$endpoint);
         $claim=self::claim($m);
         $attempt=max(0,(int)($m['queue_core_attempt_id']??0));
@@ -32,6 +35,9 @@ final class QueueCoreDispatchFence
         if(($m['source']??'')!=='queue_core')return;
         if(($m['queue_core_launcher']??'')==='cron_v4' && (new EmergencyControlService())->automationStopped()){
             throw new QueueCorePreRemoteBlockedException('Automation Stop denied the physical HTTP boundary.');
+        }
+        if(($m['queue_core_launcher']??'')==='canary_v4' && !(new EmergencyControlService())->automationStopped()){
+            throw new QueueCorePreRemoteBlockedException('Automation resumed before the V4 canary transport.');
         }
         self::assertCapability($m,$method,$endpoint);
         $claim=self::claim($m);$attempt=max(0,(int)($m['queue_core_attempt_id']??0));
@@ -71,6 +77,9 @@ final class QueueCoreDispatchFence
             }
             if(($m['queue_core_launcher']??'')==='cron_v4' && (new EmergencyControlService())->automationStopped()){
                 throw new QueueCorePreRemoteBlockedException('Automation Stop changed immediately before cURL.');
+            }
+            if(($m['queue_core_launcher']??'')==='canary_v4' && !(new EmergencyControlService())->automationStopped()){
+                throw new QueueCorePreRemoteBlockedException('Automation resumed immediately before the V4 canary cURL.');
             }
             (new MeliEmergencyStopService())->assertTransportAllowed($method,$endpoint);
         }catch(\Throwable $blocked){
@@ -139,7 +148,7 @@ final class QueueCoreDispatchFence
         $actualOperation=(string)($m['transport_operation_key']??'');
         $maxCalls=max(0,(int)($m['queue_core_max_remote_calls']??0));
         $usesApi=(int)($m['queue_core_uses_api']??0)===1;
-        $validDomain=($launcher==='cron_v4'&&$domain==='operational')
+        $validDomain=(in_array($launcher,['cron_v4','canary_v4'],true)&&$domain==='operational')
             || ($launcher==='manual'&&$domain==='manual')
             || ($launcher==='test'&&in_array($domain,['operational','manual'],true));
         if(!$usesApi || $launcher!==$boundLauncher || !$validDomain || $maxCalls!==1

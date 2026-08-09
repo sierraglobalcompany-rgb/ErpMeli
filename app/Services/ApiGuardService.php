@@ -140,25 +140,37 @@ final class ApiGuardService
     {
         $companyId = max(0, (int) ($meta['company_id'] ?? 0));
         if ($accountId !== null && $accountId > 0) {
-            if ($companyId <= 0) {
-                static $companies = [];
-                if (!array_key_exists($accountId, $companies)) {
-                    try {
-                        $stmt = Database::connection()->prepare('SELECT company_id FROM meli_accounts WHERE id=? LIMIT 1');
-                        $stmt->execute([$accountId]);
-                        $companies[$accountId] = max(0, (int) $stmt->fetchColumn());
-                    } catch (Throwable) {
-                        $companies[$accountId] = 0;
-                    }
-                }
-                $companyId = (int) $companies[$accountId];
-            }
+            $companyId = $this->accountCompanyId($accountId);
             return ['company_id' => $companyId > 0 ? $companyId : null, 'scope_kind' => 'account'];
         }
         if ($companyId > 0) {
             return ['company_id' => $companyId, 'scope_kind' => 'company'];
         }
         return ['company_id' => null, 'scope_kind' => 'application'];
+    }
+
+    /** @param array<string,mixed> $meta */
+    public function assertMetadataScope(?int $accountId, array $meta): void
+    {
+        if ($accountId === null || $accountId < 1) {
+            return;
+        }
+        $actual = $this->accountCompanyId($accountId);
+        $declared = max(0, (int) ($meta['company_id'] ?? 0));
+        if ($actual < 1 || ($declared > 0 && $declared !== $actual)) {
+            throw new \RuntimeException('La cuenta remota no coincide con el alcance empresarial declarado.');
+        }
+    }
+
+    private function accountCompanyId(int $accountId): int
+    {
+        static $companies = [];
+        if (!array_key_exists($accountId, $companies)) {
+            $stmt = Database::connection()->prepare('SELECT company_id FROM meli_accounts WHERE id=? LIMIT 1');
+            $stmt->execute([$accountId]);
+            $companies[$accountId] = max(0, (int) $stmt->fetchColumn());
+        }
+        return (int) $companies[$accountId];
     }
 
     public function afterFailure(?int $accountId, string $method, string $path, int $status, ?int $retryAfter, string $message, array $classification = []): void

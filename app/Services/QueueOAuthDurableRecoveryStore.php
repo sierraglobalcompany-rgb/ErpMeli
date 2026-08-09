@@ -60,12 +60,13 @@ final class QueueOAuthDurableRecoveryStore
             'created_at' => gmdate(DATE_ATOM),
         ];
         $sealed = Crypto::encrypt(json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+        $identityFence = hash_hmac('sha256', trim($expectedMeliUserId), $sealed);
         $this->atomicWrite($this->path($accountId), [
             'version' => 1,
             'state' => 'pending_db_persist',
             'company_id' => $companyId,
             'meli_account_id' => $accountId,
-            'expected_meli_user_id' => trim($expectedMeliUserId),
+            'identity_fence' => $identityFence,
             'previous_refresh_version' => $previousRefreshVersion,
             'target_refresh_version' => $targetVersion,
             'sealed_payload' => $sealed,
@@ -83,7 +84,10 @@ final class QueueOAuthDurableRecoveryStore
         if (!is_array($document) || ($document['state'] ?? '') !== 'pending_db_persist'
             || (int) ($document['company_id'] ?? 0) !== $companyId
             || (int) ($document['meli_account_id'] ?? 0) !== $accountId
-            || !hash_equals((string) ($document['expected_meli_user_id'] ?? ''), trim($expectedMeliUserId))) {
+            || !hash_equals(
+                (string) ($document['identity_fence'] ?? ''),
+                hash_hmac('sha256', trim($expectedMeliUserId), (string) ($document['sealed_payload'] ?? ''))
+            )) {
             throw new RuntimeException('Queue OAuth recovery belongs to another scope.');
         }
         try {
@@ -151,12 +155,17 @@ final class QueueOAuthDurableRecoveryStore
         } finally {
             fclose($handle);
         }
-        @chmod($temporary, 0600);
+        if (DIRECTORY_SEPARATOR === '/' && !@chmod($temporary, 0600)) {
+            @unlink($temporary);
+            throw new RuntimeException('Queue OAuth recovery temporary permissions could not be restricted.');
+        }
         if (!@rename($temporary, $path)) {
             @unlink($temporary);
             throw new RuntimeException('Queue OAuth recovery could not be published atomically.');
         }
-        @chmod($path, 0600);
+        if (DIRECTORY_SEPARATOR === '/' && (!@chmod($path, 0600) || (((int) @fileperms($path)) & 0077) !== 0)) {
+            throw new RuntimeException('Queue OAuth recovery file permissions are not private.');
+        }
         $this->syncDirectory($directory);
     }
 
@@ -165,9 +174,45 @@ final class QueueOAuthDurableRecoveryStore
         if (!is_dir($directory) && !@mkdir($directory, 0700, true) && !is_dir($directory)) {
             throw new RuntimeException('Queue OAuth recovery directory is unavailable.');
         }
-        @chmod($directory, 0700);
+        $this->assertPrivateLocation($directory);
+        if (DIRECTORY_SEPARATOR === '/' && !@chmod($directory, 0700)) {
+            throw new RuntimeException('Queue OAuth recovery directory permissions could not be restricted.');
+        }
         if (!is_writable($directory)) {
             throw new RuntimeException('Queue OAuth recovery directory is not writable.');
+        }
+        if (DIRECTORY_SEPARATOR === '/' && ((int) @fileperms($directory) & 0077) !== 0) {
+            throw new RuntimeException('Queue OAuth recovery directory permissions are not private.');
+        }
+    }
+
+    private function assertPrivateLocation(string $directory): void
+    {
+        $real = realpath($directory);
+        if ($real === false || is_link($directory)) {
+            throw new RuntimeException('Queue OAuth recovery path is not a trusted directory.');
+        }
+        $candidate = str_replace('\\', '/', rtrim($real, '/\\')) . '/';
+        $served = array_filter([
+            $_SERVER['DOCUMENT_ROOT'] ?? null,
+            AppPaths::releaseRoot(),
+        ], 'is_string');
+        foreach ($served as $root) {
+            $servedReal = realpath((string) $root);
+            if ($servedReal === false) {
+                continue;
+            }
+            $servedPath = str_replace('\\', '/', rtrim($servedReal, '/\\')) . '/';
+            if (str_starts_with($candidate, $servedPath)) {
+                throw new RuntimeException('Queue OAuth recovery path must remain outside the served application tree.');
+            }
+        }
+        $cursor = $real;
+        while ($cursor !== dirname($cursor)) {
+            if (is_link($cursor)) {
+                throw new RuntimeException('Queue OAuth recovery path cannot traverse a symbolic link.');
+            }
+            $cursor = dirname($cursor);
         }
     }
 

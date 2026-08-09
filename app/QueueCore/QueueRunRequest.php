@@ -8,11 +8,11 @@ final readonly class QueueRunRequest
         public float $deadline,public int $leaseSeconds=60,public array $allowedJobIds=[],
         public array $allowedWorkTypes=[],public ?int $accountId=null,
         public ?QueueExecutionLease $executionLease=null,public ?string $queueDomain=null,
-        public ?int $targetJobId=null) {}
+        public ?int $targetJobId=null,public ?int $runId=null) {}
 
     public function domain(): ?string
     {
         if($this->queueDomain!==null)return $this->queueDomain;
-        return match($this->launcher){'cron_v4'=>'operational','manual'=>'manual',default=>null};
+        return match($this->launcher){'cron_v4','canary_v4'=>'operational','manual'=>'manual',default=>null};
     }
 }

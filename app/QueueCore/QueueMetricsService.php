@@ -14,6 +14,12 @@ final class QueueMetricsService
         $last=$this->pdo->query("SELECT MAX(response_known_at) last_http_response_known_at,MAX(CASE WHEN resources_persisted>0 THEN finished_at END) last_resource_persisted_at,MAX(source_closed_at) last_source_closed_at FROM queue_core_attempts")->fetch(PDO::FETCH_ASSOC)?:[];
         $cumulative=$this->pdo->query("SELECT COUNT(*) jobs_total,SUM(state='completed') completed_jobs,SUM(state='review') review_jobs,SUM(state='dead') dead_jobs FROM queue_core_jobs")->fetch(PDO::FETCH_ASSOC)?:[];
         $window=['created'=>(int)($events['created']['events']??0),'claimed'=>(int)($events['claimed']['events']??0),'dispatch_reserved'=>(int)($attempts['dispatch_reserved']??0),'physical_http_started'=>(int)($attempts['physical_http']??0),'response_known'=>(int)($attempts['response_known']??0),'completed_jobs'=>(int)($attempts['completed_jobs']??0),'resources_discovered'=>(int)($attempts['discovered']??0),'resources_persisted'=>(int)($attempts['persisted']??0)];
+        $usefulCandidates=array_values(array_filter([
+            $last['last_resource_persisted_at']??null,
+            $last['last_source_closed_at']??null,
+        ],static fn(mixed $value):bool=>is_string($value)&&$value!==''));
+        sort($usefulCandidates,SORT_STRING);
+        $lastUseful=$usefulCandidates===[]?null:$usefulCandidates[array_key_last($usefulCandidates)];
         return [
             'window_60m'=>$window,
             'current_depth'=>$depth,
@@ -27,7 +33,7 @@ final class QueueMetricsService
             'jobs_dispatched'=>$window['physical_http_started'],'jobs_successful'=>$window['completed_jobs'],
             'jobs_retry_wait'=>(int)($events['retry_wait']['events']??0),'jobs_dead'=>(int)($events['dead']['events']??0),
             'fresh_orders_discovered'=>$window['resources_discovered'],'resources_persisted'=>$window['resources_persisted'],
-            'queue_depth'=>$depth,'last_useful_progress_at'=>$last['last_resource_persisted_at']?:$last['last_http_response_known_at']?:null,
+            'queue_depth'=>$depth,'last_useful_progress_at'=>$lastUseful,
         ];
     }
 }

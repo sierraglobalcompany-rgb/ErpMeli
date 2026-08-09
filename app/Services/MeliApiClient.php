@@ -75,7 +75,9 @@ final class MeliApiClient implements MeliReadClientInterface
         $mutation = $mutation || strtoupper($method) !== 'GET';
         WriteGuard::assertAllowed($mutation);
         $meta = array_replace($meta, ApiExecutionMetadataContext::current());
-        (new ApiGuardService())->assertAllowed($this->accountId, $method, $path);
+        $requestGuard = new ApiGuardService();
+        $requestGuard->assertMetadataScope($this->accountId, $meta);
+        $requestGuard->assertAllowed($this->accountId, $method, $path);
         $token = $this->validToken();
         $url = rtrim(Env::get('MELI_API_BASE', 'https://api.mercadolibre.com'), '/') . '/' . ltrim($path, '/');
         return $this->send($method, $url, $data, ['Authorization: Bearer ' . $token], $mutation, false, $meta);
@@ -146,6 +148,7 @@ final class MeliApiClient implements MeliReadClientInterface
         $meta['load_class'] = $profile['load_class'];
         $meta['workload_units'] = $profile['workload_units'];
         try {
+            $guard->assertMetadataScope($this->accountId, $meta);
             $guard->assertAllowed($this->accountId, $method, $path, $meta);
         } catch (\Throwable $blocked) {
             ApiExecutionMetadataContext::markRemoteAttempted();

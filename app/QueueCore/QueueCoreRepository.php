@@ -96,7 +96,7 @@ final class QueueCoreRepository
         }
     }
 
-    public function beginAttempt(QueueClaim $claim, string $launcher): int
+    public function beginAttempt(QueueClaim $claim, string $launcher, ?int $runId = null): int
     {
         $this->pdo->beginTransaction();
         try {
@@ -109,8 +109,8 @@ final class QueueCoreRepository
             $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state='running',started_at=COALESCE(started_at,UTC_TIMESTAMP(3)),dispatch_state=CASE WHEN ?=1 THEN 'NOT_DISPATCHED' ELSE dispatch_state END,last_http_status=CASE WHEN ?=1 THEN NULL ELSE last_http_status END,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND state='claimed'");
             $u->execute([$resetKnown?1:0,$resetKnown?1:0,$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
             if($u->rowCount()!==1) throw new RuntimeException('Queue Core lease changed before handler start.');
-            $a=$this->pdo->prepare("INSERT INTO queue_core_attempts (job_id,company_id,meli_account_id,lease_owner,lease_generation,launcher) VALUES (?,?,?,?,?,?)");
-            $a->execute([$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration,$launcher]);
+            $a=$this->pdo->prepare("INSERT INTO queue_core_attempts (run_id,job_id,company_id,meli_account_id,lease_owner,lease_generation,launcher) VALUES (?,?,?,?,?,?,?)");
+            $a->execute([$runId,$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration,$launcher]);
             $attempt=(int)$this->pdo->lastInsertId();
             $this->event($claim->id,$claim->companyId,$claim->meliAccountId,$claim->lane,'started');
             $this->pdo->commit();
@@ -352,6 +352,28 @@ final class QueueCoreRepository
     /** @return array<string,mixed>|null */
     public function job(int $id): ?array
     { $s=$this->pdo->prepare('SELECT * FROM queue_core_jobs WHERE id=?');$s->execute([$id]);$r=$s->fetch(PDO::FETCH_ASSOC);return is_array($r)?$r:null; }
+
+    /** @param list<string> $types @return array<string,mixed>|null */
+    public function peekOldestEligible(array $types, string $domain = 'operational'): ?array
+    {
+        $types=array_values(array_unique(array_filter(array_map('strval',$types))));
+        if($types===[])return null;
+        $in=implode(',',array_fill(0,count($types),'?'));
+        $sql="SELECT id,company_id,meli_account_id,work_type,state FROM queue_core_jobs
+              WHERE work_type IN ($in) AND queue_domain=? AND
+              ((state='pending' AND available_at<=UTC_TIMESTAMP(3))
+               OR (state='retry_wait' AND next_attempt_at<=UTC_TIMESTAMP(3))
+               OR (state='waiting_oauth' AND EXISTS (
+                    SELECT 1 FROM meli_tokens t
+                    WHERE t.meli_account_id=queue_core_jobs.meli_account_id
+                      AND t.refresh_version>COALESCE(queue_core_jobs.wait_refresh_version,0)
+                      AND t.expires_at>DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 120 SECOND))))
+              ORDER BY id ASC LIMIT 1";
+        $statement=$this->pdo->prepare($sql);
+        $statement->execute([...$types,$domain]);
+        $row=$statement->fetch(PDO::FETCH_ASSOC);
+        return is_array($row)?$row:null;
+    }
 
     /** @param list<string> $types @return array<string,mixed>|null */
     private function candidate(QueueRunRequest $request,array $types): ?array

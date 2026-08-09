@@ -290,29 +290,40 @@ final class OrderSyncService
         $pdo = Database::connection();
         $externalId = (string) $order['id'];
         $incomingUpdated = $this->dateNormalizer->normalize($order['last_updated'] ?? null, 'orders.last_updated');
-        if (!empty($incomingUpdated['utc']) && (new SchemaInspectorService())->hasColumn('meli_orders', 'last_updated_utc')) {
-            $current = $pdo->prepare(
-                'SELECT id,last_updated_utc FROM meli_orders WHERE meli_account_id=? AND external_order_id=? LIMIT 1'
-            );
-            $current->execute([$this->accountId, $externalId]);
-            $local = $current->fetch(PDO::FETCH_ASSOC);
-            if (is_array($local) && !empty($local['last_updated_utc'])
-                && strcmp((string) $local['last_updated_utc'], (string) $incomingUpdated['utc']) > 0) {
-                Logger::write('info', 'Snapshot de orden antiguo ignorado.', [
-                    'account_id' => $this->accountId,
-                    'external_order_id' => $externalId,
-                ]);
-                return (int) $local['id'];
-            }
-        }
         $rawPayload = json_encode(
             $order,
             JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
         );
+        $schema = new SchemaInspectorService();
+        $hasLastUpdatedUtc = $schema->hasColumn('meli_orders', 'last_updated_utc');
+        $hasQueueSnapshot = $schema->hasColumn('meli_orders', 'queue_snapshot_version');
+        $queueSnapshotVersion = hash('sha256', $rawPayload);
         $pdo->beginTransaction();
         try {
             if ($beforePersist !== null) {
                 $beforePersist($pdo);
+            }
+            // The monotonic check and the write share the same row lock. Two
+            // distinct input versions can no longer let an older API snapshot
+            // overwrite a newer order after a concurrent worker commits.
+            if ($hasLastUpdatedUtc || $hasQueueSnapshot) {
+                $snapshotTimestampColumn = $hasLastUpdatedUtc ? 'last_updated_utc' : 'queue_snapshot_at';
+                $current = $pdo->prepare(
+                    'SELECT id,`' . $snapshotTimestampColumn . '` AS current_snapshot_at FROM meli_orders
+                     WHERE meli_account_id=? AND external_order_id=? LIMIT 1 FOR UPDATE'
+                );
+                $current->execute([$this->accountId, $externalId]);
+                $local = $current->fetch(PDO::FETCH_ASSOC);
+                if (is_array($local) && !empty($local['current_snapshot_at'])
+                    && !empty($incomingUpdated['utc'])
+                    && strcmp((string) $local['current_snapshot_at'], (string) $incomingUpdated['utc']) > 0) {
+                    $pdo->commit();
+                    Logger::write('info', 'Snapshot de orden antiguo ignorado.', [
+                        'account_id' => $this->accountId,
+                        'external_order_id' => $externalId,
+                    ]);
+                    return (int) $local['id'];
+                }
             }
             $created = $this->dateNormalizer->normalize($order['date_created'] ?? null, 'orders.date_created');
             $closed = $this->dateNormalizer->normalize($order['date_closed'] ?? null, 'orders.date_closed');
@@ -372,6 +383,14 @@ final class OrderSyncService
                 'synced_at=NOW()',
                 'id=LAST_INSERT_ID(id)',
             ];
+            if ($hasQueueSnapshot) {
+                $columns['queue_snapshot_version'] = ':queue_snapshot_version';
+                $columns['queue_snapshot_at'] = ':queue_snapshot_at';
+                $params['queue_snapshot_version'] = $queueSnapshotVersion;
+                $params['queue_snapshot_at'] = $incomingUpdated['utc'] ?? null;
+                $updates[] = 'queue_snapshot_version=VALUES(queue_snapshot_version)';
+                $updates[] = 'queue_snapshot_at=VALUES(queue_snapshot_at)';
+            }
             $this->addNormalizedColumns($columns, $params, $updates, 'meli_orders', 'date_created', $created);
             $this->addNormalizedColumns($columns, $params, $updates, 'meli_orders', 'date_closed', $closed);
             $this->addNormalizedColumns($columns, $params, $updates, 'meli_orders', 'last_updated', $updated);
@@ -448,6 +467,36 @@ final class OrderSyncService
         $companyId = (int) $company->fetchColumn();
         if ($companyId < 1) {
             throw new \RuntimeException('Queue Core could not confirm the order company scope.');
+        }
+        $schema = new SchemaInspectorService();
+        if ($schema->hasColumn('queue_core_pending_capabilities', 'lifecycle_generation')
+            && $schema->hasColumn('meli_orders', 'queue_snapshot_version')) {
+            $snapshot = $pdo->prepare(
+                'SELECT queue_snapshot_version FROM meli_orders
+                 WHERE id=? AND meli_account_id=? LIMIT 1'
+            );
+            $snapshot->execute([$orderId, $this->accountId]);
+            $version = trim((string) ($snapshot->fetchColumn() ?: ''));
+            if ($version === '') {
+                throw new \RuntimeException('Queue Core order snapshot version is unavailable.');
+            }
+            // A repeated observation of the same snapshot does not reopen a
+            // resolved graph. A genuinely new snapshot advances the lifecycle
+            // generation while retaining all previous dependency evidence.
+            $pdo->prepare(
+                'INSERT INTO queue_core_pending_capabilities
+                    (company_id,meli_account_id,resource_type,resource_id,capability_key,state,input_version)
+                 VALUES (?, ?, "order", ?, ?, "pending_b2", ?)
+                 ON DUPLICATE KEY UPDATE
+                    state=IF(input_version<=>VALUES(input_version),state,"pending_b2"),
+                    lifecycle_generation=IF(input_version<=>VALUES(input_version),lifecycle_generation,lifecycle_generation+1),
+                    required_dependencies=IF(input_version<=>VALUES(input_version),required_dependencies,0),
+                    completed_dependencies=IF(input_version<=>VALUES(input_version),completed_dependencies,0),
+                    last_error_class=IF(input_version<=>VALUES(input_version),last_error_class,NULL),
+                    resolved_at=IF(input_version<=>VALUES(input_version),resolved_at,NULL),
+                    input_version=VALUES(input_version),updated_at=UTC_TIMESTAMP(3)'
+            )->execute([$companyId, $this->accountId, (string) $orderId, $capability, $version]);
+            return;
         }
         $pdo->prepare(
             'INSERT INTO queue_core_pending_capabilities

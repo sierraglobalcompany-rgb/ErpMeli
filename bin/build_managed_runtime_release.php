@@ -106,6 +106,7 @@ if ($outputDirectory === false || !is_dir($outputDirectory) || !is_writable($out
 $finalOutput = $outputDirectory . DIRECTORY_SEPARATOR . basename($output);
 $temporary = $finalOutput . '.tmp-' . bin2hex(random_bytes(6));
 $zip = new ZipArchive();
+$check = null;
 $zipOpen = false;
 $checkOpen = false;
 try {
@@ -119,12 +120,12 @@ try {
         if (!$zip->addFromString($path, $files[$path])) {
             throw new RuntimeException('Unable to add Git blob: ' . $path);
         }
-        if (method_exists($zip, 'setMtimeName')) {
-            $zip->setMtimeName($path, $timestamp);
+        if (!$zip->setMtimeName($path, $timestamp)) {
+            throw new RuntimeException('Unable to set deterministic archive time: ' . $path);
         }
-        if (method_exists($zip, 'setExternalAttributesName')) {
-            $mode = $entry['mode'] === '100755' ? 0100755 : 0100644;
-            $zip->setExternalAttributesName($path, ZipArchive::OPSYS_UNIX, $mode << 16);
+        $mode = $entry['mode'] === '100755' ? 0100755 : 0100644;
+        if (!$zip->setExternalAttributesName($path, ZipArchive::OPSYS_UNIX, $mode << 16)) {
+            throw new RuntimeException('Unable to set archive mode: ' . $path);
         }
     }
     if (!$zip->close()) {
@@ -141,7 +142,7 @@ try {
     $seen = [];
     for ($index = 0; $index < $check->numFiles; $index++) {
         $stat = $check->statIndex($index);
-        $path = is_array($stat) ? (string) ($stat['name'] ?? '') : '';
+        $path = is_array($stat) ? (string) $stat['name'] : '';
         $bytes = $path !== '' ? $check->getFromIndex($index) : false;
         if (!isset($files[$path]) || !is_string($bytes)
             || !hash_equals(hash('sha256', $files[$path]), hash('sha256', $bytes))
@@ -171,10 +172,10 @@ try {
         'output' => $finalOutput,
     ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
 } catch (Throwable $exception) {
-    if ($checkOpen && isset($check) && $check instanceof ZipArchive) {
+    if ($checkOpen) {
         @$check->close();
     }
-    if ($zipOpen && isset($zip) && $zip instanceof ZipArchive) {
+    if ($zipOpen) {
         @$zip->close();
     }
     if (is_file($temporary)) {

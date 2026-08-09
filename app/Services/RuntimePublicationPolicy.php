@@ -26,7 +26,6 @@ final class RuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const MANIFEST_CLASSIFICATIONS = ['RUNTIME_REQUIRED', 'MIGRATION_DEPLOY_REQUIRED'];
     private const DEPENDENCY_REGISTRY = 'resources/release/queue-core-runtime-dependencies.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
@@ -490,19 +489,6 @@ final class RuntimePublicationPolicy
         return $tree;
     }
 
-    /** @return list<string> */
-    private static function changedPaths(string $root, string $base, string $head): array
-    {
-        $raw = self::git($root, ['diff', '--name-only', '-z', '--diff-filter=ACMR', '--no-renames', $base, $head]);
-        $paths = array_values(array_filter(explode("\0", $raw), static fn (string $path): bool => $path !== ''));
-        foreach ($paths as $path) {
-            if (!self::safePath($path)) {
-                throw new RuntimeException('Unsafe changed path: ' . $path);
-            }
-        }
-        return $paths;
-    }
-
     /** @param list<string> $paths @param array<string,array{mode:string,type:string,object:string}> $tree */
     private static function assertTreePaths(array $paths, array $tree, string $purpose): void
     {
@@ -608,12 +594,6 @@ final class RuntimePublicationPolicy
     }
 
     /** @return array{classification_rules:list<array<string,mixed>>,runtime_dependencies:list<array<string,mixed>>,runtime_manifest_paths_sha256:string} */
-    private static function dependencyRegistry(string $root, string $head): array
-    {
-        return self::parseDependencyRegistry(self::gitBlob($root, $head, self::DEPENDENCY_REGISTRY));
-    }
-
-    /** @return array{classification_rules:list<array<string,mixed>>,runtime_dependencies:list<array<string,mixed>>,runtime_manifest_paths_sha256:string} */
     private static function parseDependencyRegistry(string $bytes): array
     {
         $decoded = json_decode($bytes, true);
@@ -704,33 +684,6 @@ final class RuntimePublicationPolicy
             throw new RuntimeException('Runtime path must match exactly one classification rule: ' . $path);
         }
         return $matches[0];
-    }
-
-    /** @param array{classification_rules:list<array<string,mixed>>,runtime_dependencies:list<array<string,mixed>>,runtime_manifest_paths_sha256:string} $registry */
-    private static function frontendArtifactAttested(string $path, array $registry): bool
-    {
-        foreach ($registry['runtime_dependencies'] as $dependency) {
-            if ((string) ($dependency['path'] ?? '') === $path
-                && ($dependency['artifact_attested'] ?? null) === true
-            ) {
-                return true;
-            }
-        }
-        foreach ($registry['classification_rules'] as $rule) {
-            if (($rule['classification'] ?? null) !== 'FRONTEND_STATIC'
-                || ($rule['artifact_attested'] ?? null) !== true
-            ) {
-                continue;
-            }
-            $kind = (string) ($rule['kind'] ?? '');
-            if ($kind === 'exact' && in_array($path, array_map('strval', (array) ($rule['values'] ?? [])), true)) {
-                return true;
-            }
-            if ($kind === 'regex' && preg_match((string) ($rule['value'] ?? ''), $path) === 1) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static function safePath(string $path): bool

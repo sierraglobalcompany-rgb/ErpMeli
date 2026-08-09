@@ -53,6 +53,10 @@ try {
         'VERSION', 'asset.php', 'bootstrap.php', 'index.php', 'login.php', 'actualizar.php',
         'stop.php', 'mantenimiento.php', 'recuperar.php', 'cron-status.php', 'launcher/entrypoint.php',
         'public/index.php', 'resources/runtime-manifest.json', 'app/Test.php',
+        'bin/create_admin.php', 'bin/database_growth_audit.php', 'bin/database_physical_recovery.php',
+        'bin/db_explain_audit.php', 'bin/meli_api_audit.php', 'bin/migrate.php',
+        'bin/query_performance_report.php', 'bin/queue_core_dependency_check.php',
+        'bin/runtime_process_audit.php',
     ] as $path) {
         rpWrite($root, $path, $path === 'VERSION' ? "2.36.1\n" : "<?php // {$path}\n");
     }
@@ -65,6 +69,15 @@ try {
             'actualizar.php',
             'app/Test.php',
             'asset.php',
+            'bin/create_admin.php',
+            'bin/database_growth_audit.php',
+            'bin/database_physical_recovery.php',
+            'bin/db_explain_audit.php',
+            'bin/meli_api_audit.php',
+            'bin/migrate.php',
+            'bin/query_performance_report.php',
+            'bin/queue_core_dependency_check.php',
+            'bin/runtime_process_audit.php',
             'bootstrap.php',
             'cron-status.php',
             'index.php',

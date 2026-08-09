@@ -114,7 +114,7 @@ try {
         putenv('CRON_V3_ENABLED=' . $previousEnabled);
     }
 
-    $raceGuard = strpos($clientSource, '$cronV3RemoteContext && (new EmergencyControlService())->automationStopped()');
+    $raceGuard = strpos($clientSource, 'if (($cronV3RemoteContext || ($queueCoreContext');
     $transport = strpos($clientSource, '$this->transport->request(');
     $check($raceGuard !== false && $transport !== false && $raceGuard < $transport,
         'La segunda barrera no está antes del transporte físico.');

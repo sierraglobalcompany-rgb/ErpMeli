@@ -107,8 +107,12 @@ final class QueueCoreOAuthRefreshHandler implements QueueHandler
                     $accountId,
                     $companyId,
                 ]);
-                if($update->rowCount()!==1){
-                    throw new \RuntimeException('OAuth reconnect state changed before the fenced update.');
+                if($update->rowCount()===0){
+                    $verify=$pdo->prepare("SELECT COUNT(*) FROM meli_accounts WHERE id=? AND company_id=? AND status='vencido'");
+                    $verify->execute([$accountId,$companyId]);
+                    if((int)$verify->fetchColumn()!==1){
+                        throw new \RuntimeException('OAuth reconnect state changed before the fenced update.');
+                    }
                 }
             }
             if ($ownsTransaction) {

@@ -234,7 +234,7 @@ final class OAuthTokenRefreshService
                 $queueScope = $this->queueRecoveryContext();
                 $statement = Database::connectionFresh()->prepare(
                     is_array($queueScope)
-                        ? "UPDATE meli_accounts SET status='vencido',last_error=? WHERE id=? AND company_id=?"
+                        ? "UPDATE meli_accounts SET status='vencido',last_error=? WHERE id=? AND company_id=? AND meli_user_id=?"
                         : "UPDATE meli_accounts SET status='vencido',last_error=? WHERE id=?"
                 );
                 $parameters = [
@@ -243,8 +243,16 @@ final class OAuthTokenRefreshService
                 ];
                 if (is_array($queueScope)) {
                     $parameters[] = $queueScope['company_id'];
+                    $parameters[] = $queueScope['expected_meli_user_id'];
                 }
                 $statement->execute($parameters);
+                if($statement->rowCount()===0 && is_array($queueScope)){
+                    $verify=Database::connectionFresh()->prepare("SELECT COUNT(*) FROM meli_accounts WHERE id=? AND company_id=? AND meli_user_id=? AND status='vencido'");
+                    $verify->execute([$this->accountId,$queueScope['company_id'],$queueScope['expected_meli_user_id']]);
+                    if((int)$verify->fetchColumn()!==1){
+                        throw new RuntimeException('OAuth invalid_grant identity fence changed.');
+                    }
+                }
             }
             throw $error;
         } finally {

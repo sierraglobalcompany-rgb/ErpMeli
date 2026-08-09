@@ -68,8 +68,9 @@ final class FreshOrdersProducer
                 $this->pdo->commit();
                 $job=$this->discoveryJob($company,$accountId,$from,$to,$cursor,$generation);
                 $jobId=$this->repository->enqueue($job);
-                $this->repository->reviveExhaustedTransient($jobId,$job->workType,$job->inputVersion);
-                $accounts++;$enqueued++;
+                $created=$this->repository->lastEnqueueCreated();
+                $revived=$this->repository->reviveExhaustedTransient($jobId,$job->workType,$job->inputVersion);
+                $accounts++;if($created||$revived)$enqueued++;
             }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
         }
         return compact('accounts','enqueued','bootstrap_required');

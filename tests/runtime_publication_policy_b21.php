@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-require dirname(__DIR__) . '/app/Services/RuntimePublicationPolicy.php';
+require dirname(__DIR__) . '/app/Services/ManagedRuntimePublicationPolicy.php';
 
-use App\Services\RuntimePublicationPolicy;
+use App\Services\ManagedRuntimePublicationPolicy;
 
 function rpAssert(bool $condition, string $message): void
 {
@@ -51,35 +51,61 @@ try {
     rpGit($root, ['config', 'user.name', 'Runtime Policy Test']);
     foreach ([
         'VERSION', 'asset.php', 'bootstrap.php', 'index.php', 'login.php', 'actualizar.php',
-        'stop.php', 'mantenimiento.php', 'recuperar.php', 'launcher/entrypoint.php',
+        'stop.php', 'mantenimiento.php', 'recuperar.php', 'cron-status.php', 'launcher/entrypoint.php',
         'public/index.php', 'resources/runtime-manifest.json', 'app/Test.php',
+        'bin/create_admin.php', 'bin/database_growth_audit.php', 'bin/database_physical_recovery.php',
+        'bin/db_explain_audit.php', 'bin/meli_api_audit.php', 'bin/migrate.php',
+        'bin/query_performance_report.php', 'bin/queue_core_dependency_check.php',
+        'bin/runtime_process_audit.php',
     ] as $path) {
-        rpWrite($root, $path, $path === 'VERSION' ? "2.36.0\n" : "<?php // {$path}\n");
+        rpWrite($root, $path, $path === 'VERSION' ? "2.36.1\n" : "<?php // {$path}\n");
     }
-    rpWrite($root, 'resources/data.json', "{}\n");
+    rpWrite($root, 'config.env.example', "EXAMPLE=1\n");
+    rpWrite($root, 'resources/mercadolibre-api/generated/data.json', "{}\n");
     $registry = [
         'schema_version' => 1,
         'runtime_manifest_paths_sha256' => hash('sha256', implode("\n", [
+            'VERSION',
+            'actualizar.php',
             'app/Test.php',
-            'resources/data.json',
-            'resources/release/queue-core-runtime-dependencies.json',
+            'asset.php',
+            'bin/create_admin.php',
+            'bin/database_growth_audit.php',
+            'bin/database_physical_recovery.php',
+            'bin/db_explain_audit.php',
+            'bin/meli_api_audit.php',
+            'bin/migrate.php',
+            'bin/query_performance_report.php',
+            'bin/queue_core_dependency_check.php',
+            'bin/runtime_process_audit.php',
+            'bootstrap.php',
+            'cron-status.php',
+            'index.php',
+            'launcher/entrypoint.php',
+            'login.php',
+            'mantenimiento.php',
+            'public/index.php',
+            'recuperar.php',
+            'resources/mercadolibre-api/generated/data.json',
+            'resources/release/managed-runtime-dependencies-2.36.1.json',
+            'stop.php',
         ]) . "\n"),
         'classification_rules' => [
             ['id' => 'runtime-files', 'classification' => 'RUNTIME_REQUIRED', 'kind' => 'regex',
-                'value' => '#^(?:app/.*\\.php|resources/(?:data\\.json|release/queue-core-runtime-dependencies\\.json))$#D'],
+                'value' => '#^(?:app/.*\\.php|resources/(?:mercadolibre-api/generated/data\\.json|release/managed-runtime-dependencies-2\\.36\\.1\\.json))$#D'],
         ],
         'runtime_dependencies' => [
-            ['id' => 'registry', 'path' => 'resources/release/queue-core-runtime-dependencies.json',
+            ['id' => 'registry', 'path' => 'resources/release/managed-runtime-dependencies-2.36.1.json',
                 'classification' => 'RUNTIME_REQUIRED', 'required_in_runtime_manifest' => true,
                 'consumers' => [['source_path' => 'app/Test.php', 'symbol' => 'test', 'path_literal' => 'registry']],
                 'provenance' => ['kind' => 'generated']],
-            ['id' => 'data', 'path' => 'resources/data.json', 'classification' => 'RUNTIME_REQUIRED',
+            ['id' => 'data', 'path' => 'resources/mercadolibre-api/generated/data.json', 'classification' => 'RUNTIME_REQUIRED',
                 'required_in_runtime_manifest' => true,
                 'consumers' => [['source_path' => 'app/Test.php', 'symbol' => 'test', 'path_literal' => 'data']],
                 'provenance' => ['kind' => 'source']],
         ],
     ];
-    rpWrite($root, 'resources/release/queue-core-runtime-dependencies.json',
+    rpWrite($root, 'resources/release/managed-runtime-dependencies-2.36.1.json',
         json_encode($registry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
     rpGit($root, ['add', '.']);
     rpGit($root, ['commit', '--quiet', '-m', 'base']);
@@ -89,15 +115,15 @@ try {
     rpGit($root, ['add', 'app/Test.php']);
     rpGit($root, ['commit', '--quiet', '-m', 'head']);
     $head = rpGit($root, ['rev-parse', 'HEAD']);
-    $manifest = RuntimePublicationPolicy::buildManifest($root, $head, $base);
-    rpAssert(RuntimePublicationPolicy::manifestIssues($root, $manifest, $head, $base) === [], 'valid manifest rejected');
-    rpAssert(RuntimePublicationPolicy::installedManifestIssues($root, $manifest) === [], 'installed completeness rejected');
+    $manifest = ManagedRuntimePublicationPolicy::buildManifest($root, $head, $base);
+    rpAssert(ManagedRuntimePublicationPolicy::manifestIssues($root, $manifest, $head, $base) === [], 'valid manifest rejected');
+    rpAssert(ManagedRuntimePublicationPolicy::installedManifestIssues($root, $manifest) === [], 'installed completeness rejected');
 
     $missing = $manifest;
-    unset($missing['components']['runtime_resources_data_json']);
-    rpAssert((bool) array_filter(RuntimePublicationPolicy::manifestIssues($root, $missing, $head, $base),
+    unset($missing['components']['runtime_resources_mercadolibre_api_generated_data_json']);
+    rpAssert((bool) array_filter(ManagedRuntimePublicationPolicy::manifestIssues($root, $missing, $head, $base),
         static fn (string $issue): bool => str_starts_with($issue, 'manifest_component_missing:')), 'missing not detected');
-    rpAssert((bool) array_filter(RuntimePublicationPolicy::installedManifestIssues($root, $missing),
+    rpAssert((bool) array_filter(ManagedRuntimePublicationPolicy::installedManifestIssues($root, $missing),
         static fn (string $issue): bool => str_starts_with($issue, 'manifest_required_dependency_missing:')),
         'installed readiness accepted an unmanifested runtime dependency');
 
@@ -111,31 +137,31 @@ try {
     $partial['publication_policy']['component_count'] = count($partialPaths);
     $partial['publication_policy']['paths_sha256'] = hash('sha256', implode("\n", $partialPaths) . "\n");
     rpAssert(in_array('manifest_installed_inventory_mismatch',
-        RuntimePublicationPolicy::installedManifestIssues($root, $partial), true),
+        ManagedRuntimePublicationPolicy::installedManifestIssues($root, $partial), true),
         'installed readiness accepted a self-consistent partial manifest');
 
     $stale = $manifest;
     $stale['components']['runtime_app_test_php']['sha256'] = str_repeat('0', 64);
     rpAssert(in_array('manifest_raw_hash_mismatch:app/Test.php',
-        RuntimePublicationPolicy::manifestIssues($root, $stale, $head, $base), true), 'stale hash not detected');
+        ManagedRuntimePublicationPolicy::manifestIssues($root, $stale, $head, $base), true), 'stale hash not detected');
 
     $orphan = $manifest;
-    $orphan['components']['runtime_version'] = [
-        'path' => 'VERSION', 'sha256' => hash('sha256', "2.36.0\n"),
-        'sha256_lf' => hash('sha256', "2.36.0\n"), 'text' => true,
+    $orphan['components']['runtime_config_env_example'] = [
+        'path' => 'config.env.example', 'sha256' => hash('sha256', "EXAMPLE=1\n"),
+        'sha256_lf' => hash('sha256', "EXAMPLE=1\n"), 'text' => true,
     ];
-    rpAssert(in_array('manifest_component_orphan:VERSION',
-        RuntimePublicationPolicy::manifestIssues($root, $orphan, $head, $base), true), 'orphan not detected');
+    rpAssert(in_array('manifest_component_orphan:config.env.example',
+        ManagedRuntimePublicationPolicy::manifestIssues($root, $orphan, $head, $base), true), 'orphan not detected');
 
     $case = $manifest;
     $case['components']['case_collision'] = $case['components']['runtime_app_test_php'];
     $case['components']['case_collision']['path'] = 'APP/Test.php';
-    rpAssert((bool) array_filter(RuntimePublicationPolicy::manifestIssues($root, $case, $head, $base),
+    rpAssert((bool) array_filter(ManagedRuntimePublicationPolicy::manifestIssues($root, $case, $head, $base),
         static fn (string $issue): bool => str_starts_with($issue, 'manifest_path_case_collision:')), 'case collision not detected');
 
     $workingHashBefore = hash_file('sha256', $root . '/app/Test.php');
     rpWrite($root, 'app/Test.php', "<?php // uncommitted mismatch\n");
-    $entry = array_values(array_filter(RuntimePublicationPolicy::packageEntries($root, $head),
+    $entry = array_values(array_filter(ManagedRuntimePublicationPolicy::packageEntries($root, $head),
         static fn (array $row): bool => $row['path'] === 'app/Test.php'))[0] ?? null;
     rpAssert(is_array($entry) && $entry['sha256'] === $manifest['components']['runtime_app_test_php']['sha256'],
         'package did not use exact Git blob');
@@ -148,7 +174,7 @@ try {
     $symlinkHead = rpGit($root, ['rev-parse', 'HEAD']);
     $symlinkRejected = false;
     try {
-        RuntimePublicationPolicy::packageEntries($root, $symlinkHead);
+        ManagedRuntimePublicationPolicy::packageEntries($root, $symlinkHead);
     } catch (RuntimeException $exception) {
         $symlinkRejected = str_contains($exception->getMessage(), 'unsafe Git type/mode');
     }

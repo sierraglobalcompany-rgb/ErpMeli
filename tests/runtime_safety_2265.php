@@ -40,44 +40,14 @@ if (!class_exists(ZipArchive::class)) {
 } else {
     $temporary = sys_get_temp_dir() . '/erp-runtime-package-' . bin2hex(random_bytes(6));
     mkdir($temporary, 0700, true);
-    $keyPath = $temporary . '/private.pem';
-    $packagePath = $temporary . '/runtime.erpupd';
-    $opensslConfig = dirname(PHP_BINARY) . '/extras/ssl/openssl.cnf';
-    if (is_file($opensslConfig)) {
-        putenv('OPENSSL_CONF=' . $opensslConfig);
-    }
-    $key = openssl_pkey_new([
-        'private_key_bits' => 2048,
-        'private_key_type' => OPENSSL_KEYTYPE_RSA,
-        'config' => is_file($opensslConfig) ? $opensslConfig : null,
-    ]);
-    $private = '';
-    $generateExit = $key !== false
-        && openssl_pkey_export(
-            $key,
-            $private,
-            null,
-            ['config' => is_file($opensslConfig) ? $opensslConfig : null]
-        )
-        ? 0
-        : 2;
-    if ($generateExit === 0) {
-        file_put_contents($keyPath, $private, LOCK_EX);
-    }
-    $assert(
-        $generateExit === 0 && is_file($keyPath) && (int) filesize($keyPath) > 100,
-        'No se pudo preparar la clave de prueba.'
-    );
+    $packagePath = $temporary . '/runtime.zip';
     $command = escapeshellarg(PHP_BINARY)
-        . ' ' . escapeshellarg($root . '/bin/build_update_package.php')
+        . ' ' . escapeshellarg($root . '/bin/build_managed_runtime_release.php')
         . ' --source=' . escapeshellarg($root)
         . ' --output=' . escapeshellarg($packagePath)
-        . ' --private-key=' . escapeshellarg($keyPath)
-        . ' --key-id=runtime-test'
-        . ' --release-id=runtime-safety-test'
-        . ' --sequence=1';
+        . ' --ref=HEAD';
     exec($command . ' 2>&1', $output, $exitCode);
-    $assert($exitCode === 0 && is_file($packagePath), 'El empaquetador allowlist no produjo una release válida.');
+    $assert($exitCode === 0 && is_file($packagePath), 'El builder managed Git-exact no produjo una release válida.');
 
     if (is_file($packagePath)) {
         $zip = new ZipArchive();
@@ -102,7 +72,6 @@ if (!class_exists(ZipArchive::class)) {
         }
     }
     @unlink($packagePath);
-    @unlink($keyPath);
     @rmdir($temporary);
 }
 

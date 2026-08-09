@@ -2,16 +2,27 @@
 
 declare(strict_types=1);
 
-require dirname(__DIR__) . '/app/Services/RuntimePublicationPolicy.php';
+require dirname(__DIR__) . '/app/Services/ManagedRuntimePublicationPolicy.php';
 
-use App\Services\RuntimePublicationPolicy;
+use App\Services\ManagedRuntimePublicationPolicy;
 
 $root = dirname(__DIR__);
-$dryRun = in_array('--dry-run', is_array($_SERVER['argv'] ?? null) ? $_SERVER['argv'] : [], true);
+$arguments = is_array($_SERVER['argv'] ?? null) ? $_SERVER['argv'] : [];
+$dryRun = in_array('--dry-run', $arguments, true);
+$ref = 'HEAD';
+foreach ($arguments as $argument) {
+    if (str_starts_with($argument, '--ref=')) {
+        $ref = trim(substr($argument, strlen('--ref=')));
+    }
+}
+if ($ref === '') {
+    fwrite(STDERR, "Manifest ref cannot be empty.\n");
+    exit(2);
+}
 if ($dryRun) {
-    $manifest = json_decode((string) file_get_contents($root . '/resources/runtime-manifest.json'), true);
-    $issues = is_array($manifest) ? RuntimePublicationPolicy::manifestIssues($root, $manifest) : ['manifest_malformed'];
-    $package = RuntimePublicationPolicy::packageEntries($root);
+    $manifest = json_decode(ManagedRuntimePublicationPolicy::gitBlob($root, $ref, 'resources/runtime-manifest.json'), true);
+    $issues = is_array($manifest) ? ManagedRuntimePublicationPolicy::manifestIssues($root, $manifest, $ref) : ['manifest_malformed'];
+    $package = ManagedRuntimePublicationPolicy::packageEntries($root, $ref);
     fwrite(STDOUT, json_encode([
         'ok' => $issues === [],
         'manifest_components' => is_array($manifest['components'] ?? null) ? count($manifest['components']) : 0,
@@ -21,7 +32,7 @@ if ($dryRun) {
     exit($issues === [] ? 0 : 1);
 }
 
-$manifest = RuntimePublicationPolicy::buildManifest($root);
+$manifest = ManagedRuntimePublicationPolicy::buildManifest($root, $ref);
 $json = json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n";
 if (file_put_contents($root . '/resources/runtime-manifest.json', $json, LOCK_EX) !== strlen($json)) {
     fwrite(STDERR, "Unable to publish runtime manifest.\n");

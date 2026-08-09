@@ -159,14 +159,10 @@ final class LogQueryService
         $offset = ($page - 1) * $perPage;
         $sort = self::API_SORTS[(string) ($filters['sort'] ?? 'date')] ?? self::API_SORTS['date'];
         $direction = strtolower((string) ($filters['direction'] ?? 'desc')) === 'asc' ? 'ASC' : 'DESC';
-        $technical = ($filters['view'] ?? '') === 'technical';
-        $context = $technical
-            ? '(SELECT e.response_json FROM api_error_logs e WHERE e.request_id=l.request_id ORDER BY e.id DESC LIMIT 1)'
-            : 'NULL';
         $stmt = Database::connection()->prepare(
             'SELECT l.id,l.created_at,"api" log_type,l.safe_message message,l.http_status,l.endpoint_path,l.method,
                     a.account_name,l.request_id,l.outcome_class,l.reached_remote,l.actionable,l.risk_signal,
-                    l.incident_key,l.error_type,l.error_code,l.was_blocked,' . $context . ' context_json
+                    l.incident_key,l.error_type,l.error_code,l.was_blocked
              FROM api_request_logs l
              LEFT JOIN meli_accounts a ON a.id=l.meli_account_id
              WHERE ' . $whereSql . '
@@ -200,7 +196,7 @@ final class LogQueryService
         $this->dateWhere($where, $params, 'e.created_at', $filters);
         $stmt = Database::connection()->prepare(
             'SELECT e.id,e.created_at,"api" log_type,e.safe_message message,e.http_status,e.endpoint_path,e.method,
-                    a.account_name,e.request_id,e.response_json context_json
+                    a.account_name,e.request_id
              FROM api_error_logs e LEFT JOIN meli_accounts a ON a.id=e.meli_account_id
              WHERE ' . implode(' AND ', $where) . ' ORDER BY e.created_at DESC LIMIT 300'
         );
@@ -309,7 +305,7 @@ final class LogQueryService
         $where = []; $params = [];
         $this->namedAccountScope($where, $params, 'q.meli_account_id', $filters);
         $this->dateWhere($where, $params, 'q.asked_at', $filters);
-        $stmt = Database::connection()->prepare('SELECT q.id,q.asked_at created_at,"questions" log_type,q.text message,q.status level,a.account_name,q.external_item_id endpoint_path,q.raw_json context_json FROM meli_questions q JOIN meli_accounts a ON a.id=q.meli_account_id WHERE ' . implode(' AND ', $where) . ' ORDER BY q.asked_at DESC LIMIT 300');
+        $stmt = Database::connection()->prepare("SELECT q.id,q.asked_at created_at,'questions' log_type,'Pregunta recibida' message,q.status level,a.account_name,q.external_item_id endpoint_path FROM meli_questions q JOIN meli_accounts a ON a.id=q.meli_account_id WHERE " . implode(' AND ', $where) . ' ORDER BY q.asked_at DESC LIMIT 300');
         $stmt->execute($params);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }

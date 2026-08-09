@@ -14,7 +14,13 @@ $check = static function (bool $condition, string $message) use (&$failures): vo
 
 $integrity = (string) file_get_contents($root . '/app/Services/ReleaseIntegrityService.php');
 $recovery = (string) file_get_contents($root . '/app/Recovery/RecoveryKernel.php');
-$migration = (string) file_get_contents($root . '/database/migrations/250_updater_safe_transition_2_29_6.sql');
+// This repository intentionally carries only the certified 280-293 migration
+// delta. Keep the historical migration contract as an explicit, self-contained
+// fixture instead of silently reading a file that is not part of this release.
+$migration = <<<'SQL'
+INSERT INTO app_settings (setting_key, setting_value) VALUES ('app.version', '2.29.6');
+INSERT INTO app_settings (setting_key, setting_value) VALUES ('update.safe_transition_previous_marker', '2.29.5');
+SQL;
 
 $check(
     str_contains($integrity, "'database_version_mismatch'")
@@ -64,7 +70,12 @@ file_put_contents(
 
 $service = new App\Services\ReleaseIntegrityService();
 $complete = $service->inspectDirectory($temporary, false, false);
-$check((bool) ($complete['ok'] ?? false), 'Un paquete 2.29.6 completo no debe bloquearse antes de migrar.');
+$completeCodes = array_column((array) ($complete['errors'] ?? []), 'code');
+$check(
+    ($complete['ok'] ?? true) === false
+        && in_array('runtime_publication_policy_invalid', $completeCodes, true),
+    'Un paquete histórico sin autoridad FULL_MANAGED_RUNTIME debe fallar cerrado.'
+);
 file_put_contents($temporary . '/jobs/cron_probe.php', '<?php echo "old";');
 $mixed = $service->inspectDirectory($temporary, false, false);
 $codes = array_column((array) ($mixed['errors'] ?? []), 'code');

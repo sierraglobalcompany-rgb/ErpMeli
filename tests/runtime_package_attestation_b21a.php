@@ -3,9 +3,9 @@
 declare(strict_types=1);
 
 require dirname(__DIR__) . '/app/Services/MeliNotificationTopicRegistry.php';
-require dirname(__DIR__) . '/app/Services/RuntimePublicationPolicy.php';
+require dirname(__DIR__) . '/app/Services/ManagedRuntimePublicationPolicy.php';
 
-use App\Services\RuntimePublicationPolicy;
+use App\Services\ManagedRuntimePublicationPolicy;
 
 $root = dirname(__DIR__);
 $checks = 0;
@@ -21,16 +21,16 @@ $has = static fn (array $issues, string $prefix): bool => (bool) array_filter(
 );
 
 $manifest = json_decode(
-    RuntimePublicationPolicy::gitBlob($root, 'HEAD', 'resources/runtime-manifest.json'),
+    ManagedRuntimePublicationPolicy::gitBlob($root, 'HEAD', 'resources/runtime-manifest.json'),
     true,
     512,
     JSON_THROW_ON_ERROR,
 );
 $files = [];
-foreach (RuntimePublicationPolicy::packageEntries($root) as $entry) {
-    $files[$entry['path']] = RuntimePublicationPolicy::gitBlob($root, 'HEAD', $entry['path']);
+foreach (ManagedRuntimePublicationPolicy::packageEntries($root) as $entry) {
+    $files[$entry['path']] = ManagedRuntimePublicationPolicy::gitBlob($root, 'HEAD', $entry['path']);
 }
-$assert(RuntimePublicationPolicy::packageIssues($root, $manifest, $files) === [], 'The Git-exact package was rejected.');
+$assert(ManagedRuntimePublicationPolicy::packageIssues($root, $manifest, $files) === [], 'The Git-exact package was rejected.');
 
 $topicsPath = 'resources/mercadolibre-api/generated/notification-topics.json';
 $topicsKey = null;
@@ -44,61 +44,61 @@ $assert(is_string($topicsKey), 'The notification topic component is absent.');
 
 $missing = $files;
 unset($missing[$topicsPath]);
-$issues = RuntimePublicationPolicy::packageIssues($root, $manifest, $missing);
+$issues = ManagedRuntimePublicationPolicy::packageIssues($root, $manifest, $missing);
 $assert($has($issues, 'package_required_missing:' . $topicsPath), 'Missing topics did not fail.');
 
 $stale = $files;
-$stale[$topicsPath] = RuntimePublicationPolicy::gitBlob(
+$stale[$topicsPath] = ManagedRuntimePublicationPolicy::gitBlob(
     $root,
-    RuntimePublicationPolicy::BASE_COMMIT,
+    ManagedRuntimePublicationPolicy::INSTALLED_BASE_COMMIT,
     $topicsPath,
 );
-$issues = RuntimePublicationPolicy::packageIssues($root, $manifest, $stale);
+$issues = ManagedRuntimePublicationPolicy::packageIssues($root, $manifest, $stale);
 $assert($has($issues, 'package_git_blob_mismatch:' . $topicsPath), 'Stale topics did not fail raw identity.');
 $assert($has($issues, 'package_notification_topics_semantic_invalid'), 'Stale topics did not fail pack semantics.');
 
 $malformed = $files;
 $malformed[$topicsPath] = "{\"rules\":[";
-$issues = RuntimePublicationPolicy::packageIssues($root, $manifest, $malformed);
+$issues = ManagedRuntimePublicationPolicy::packageIssues($root, $manifest, $malformed);
 $assert($has($issues, 'package_git_blob_mismatch:' . $topicsPath), 'Malformed topics with stale manifest did not fail.');
 $assert($has($issues, 'package_notification_topics_semantic_invalid'), 'Malformed topics did not fail semantic validation.');
 
 $matchingMalformedManifest = $manifest;
 $matchingMalformedManifest['components'][$topicsKey]['sha256'] = hash('sha256', $malformed[$topicsPath]);
 $matchingMalformedManifest['components'][$topicsKey]['sha256_lf'] = hash('sha256', $malformed[$topicsPath]);
-$issues = RuntimePublicationPolicy::packageIssues($root, $matchingMalformedManifest, $malformed);
+$issues = ManagedRuntimePublicationPolicy::packageIssues($root, $matchingMalformedManifest, $malformed);
 $assert($has($issues, 'package_notification_topics_semantic_invalid'), 'A matching malformed manifest bypassed semantics.');
 
 $caseChanged = $files;
 unset($caseChanged[$topicsPath]);
 $caseChanged['Resources/mercadolibre-api/generated/notification-topics.json'] = $files[$topicsPath];
-$issues = RuntimePublicationPolicy::packageIssues($root, $manifest, $caseChanged);
+$issues = ManagedRuntimePublicationPolicy::packageIssues($root, $manifest, $caseChanged);
 $assert($has($issues, 'package_unsafe_extra:'), 'Case-changed path did not fail.');
 
 $shadow = $files;
 $shadow['Resources/mercadolibre-api/generated/notification-topics.json'] = $files[$topicsPath];
-$issues = RuntimePublicationPolicy::packageIssues($root, $manifest, $shadow);
+$issues = ManagedRuntimePublicationPolicy::packageIssues($root, $manifest, $shadow);
 $assert($has($issues, 'package_path_case_collision:'), 'Case shadow did not fail.');
 
 $missingComponent = $manifest;
 $missingComponent['components'][$topicsKey]['path'] = 'resources/mercadolibre-api/generated/missing.json';
-$issues = RuntimePublicationPolicy::packageIssues($root, $missingComponent, $files);
+$issues = ManagedRuntimePublicationPolicy::packageIssues($root, $missingComponent, $files);
 $assert($has($issues, 'manifest_path_not_in_git:'), 'Manifest missing-file pointer did not fail.');
 
 $unmanifested = $manifest;
 unset($unmanifested['components'][$topicsKey]);
-$issues = RuntimePublicationPolicy::packageIssues($root, $unmanifested, $files);
+$issues = ManagedRuntimePublicationPolicy::packageIssues($root, $unmanifested, $files);
 $assert($has($issues, 'manifest_component_missing:' . $topicsPath), 'Required unmanifested runtime did not fail.');
 
 $different = $files;
 $different['app/Services/MeliNotificationTopicRegistry.php'] .= "\n";
-$issues = RuntimePublicationPolicy::packageIssues($root, $manifest, $different);
+$issues = ManagedRuntimePublicationPolicy::packageIssues($root, $manifest, $different);
 $assert($has($issues, 'package_git_blob_mismatch:app/Services/MeliNotificationTopicRegistry.php'), 'Git blob mismatch did not fail.');
 
 foreach (['../escape.json', 'C:\\escape.json', 'resources\\escape.json'] as $unsafePath) {
     $unsafe = $files;
     $unsafe[$unsafePath] = '{}';
-    $assert($has(RuntimePublicationPolicy::packageIssues($root, $manifest, $unsafe), 'package_path_unsafe'), 'Unsafe path passed: ' . $unsafePath);
+    $assert($has(ManagedRuntimePublicationPolicy::packageIssues($root, $manifest, $unsafe), 'package_path_unsafe'), 'Unsafe path passed: ' . $unsafePath);
 }
 
 $run = static function (array $command, ?string $cwd = null): array {
@@ -144,43 +144,30 @@ try {
     file_put_contents($clone . DIRECTORY_SEPARATOR . 'VERSION', "dirty-working-tree-version\n");
     [$dirtyExit, $dirtyOutput] = $run([
         PHP_BINARY,
-        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',
+        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_managed_runtime_release.php',
         '--source=' . $clone,
         '--dry-run=1',
-        '--git-exact=1',
-        '--release-id=b21a-dirty-version-test',
+        '--ref=HEAD',
     ], $clone);
     $assert($dirtyExit === 0 && str_contains($dirtyOutput, '"ok":true'), 'Dirty working-tree VERSION influenced the Git-exact builder.');
-    [$nonExactExit, , $nonExactError] = $run([
-        PHP_BINARY,
-        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',
-        '--source=' . $clone,
-        '--dry-run=1',
-        '--release-id=b21a-non-exact-bypass-test',
-    ], $clone);
-    $assert($nonExactExit !== 0 && str_contains($nonExactError, 'exige --git-exact=1'),
-        'Dirty working-tree VERSION bypassed mandatory Git-exact publication.');
     $export = $clone . DIRECTORY_SEPARATOR . 'non-git-export';
     mkdir($export);
-    file_put_contents($export . DIRECTORY_SEPARATOR . 'VERSION', "2.36.0\n");
+    file_put_contents($export . DIRECTORY_SEPARATOR . 'VERSION', "2.36.1\n");
     [$exportExit, , $exportError] = $run([
         PHP_BINARY,
-        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',
+        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_managed_runtime_release.php',
         '--source=' . $export,
         '--dry-run=1',
-        '--release-id=b21a-export-bypass-test',
     ], $clone);
-    $assert($exportExit !== 0 && str_contains($exportError, 'exige --git-exact=1'),
-        'A non-Git 2.36.0 export bypassed mandatory Git-exact publication.');
+    $assert($exportExit !== 0 && str_contains($exportError, 'exact Git toplevel'),
+        'A non-Git 2.36.1 export bypassed mandatory Git-exact publication.');
     [$subdirExit, , $subdirError] = $run([
         PHP_BINARY,
-        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',
+        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_managed_runtime_release.php',
         '--source=' . $clone . DIRECTORY_SEPARATOR . 'app',
         '--dry-run=1',
-        '--git-exact=1',
-        '--release-id=b21a-subdir-test',
     ], $clone);
-    $assert($subdirExit !== 0 && str_contains($subdirError, 'toplevel Git'), 'A Git subdirectory was accepted as the release source.');
+    $assert($subdirExit !== 0 && str_contains($subdirError, 'exact Git toplevel'), 'A Git subdirectory was accepted as the release source.');
 } finally {
     if (is_dir($clone)) {
         $removeTree($clone);

@@ -29,7 +29,7 @@ $run = static function (array $arguments) use ($root): array {
 };
 
 $authority = json_decode((string) file_get_contents(
-    $root . '/resources/release/queue-core-runtime-dependencies.json'
+    $root . '/resources/release/managed-runtime-dependencies-2.36.1.json'
 ), true, 512, JSON_THROW_ON_ERROR);
 $snapshot = $authority['blocked_rc_snapshot'] ?? [];
 $target = (string) ($snapshot['commit'] ?? '');
@@ -90,7 +90,7 @@ $assert($final['exit'] === 0 && ($final['json']['ok'] ?? false) === true,
 $finalDiscovered = array_column($final['json']['STATIC_RUNTIME_DEPENDENCIES_DISCOVERED'] ?? [], 'path');
 $assert(in_array('resources/mercadolibre-api/generated/notification-topics.json', $finalDiscovered, true),
     'final static discovery lost notification-topics.json');
-$assert(in_array('resources/release/queue-core-runtime-dependencies.json', $finalDiscovered, true),
+$assert(in_array('resources/release/managed-runtime-dependencies-2.36.1.json', $finalDiscovered, true),
     'final static discovery lost its installed registry authority');
 $assert(($final['json']['DYNAMIC_RUNTIME_PATHS_UNBOUNDED'] ?? null) === [],
     'the final release contains an unbounded dynamic runtime path');

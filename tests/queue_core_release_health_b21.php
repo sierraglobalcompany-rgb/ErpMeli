@@ -53,6 +53,7 @@ $pdo->exec("CREATE TABLE queue_core_webhook_triggers(id BIGINT PRIMARY KEY AUTO_
 $pdo->exec("CREATE TABLE queue_core_readiness_receipts(id BIGINT PRIMARY KEY AUTO_INCREMENT,engine_generation BIGINT,receipt_type VARCHAR(30),company_id BIGINT NULL,meli_account_id BIGINT NULL,status VARCHAR(10),evidence_hash CHAR(64),metrics_json JSON,expires_at DATETIME(3),created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3))");
 $pdo->exec("CREATE TABLE queue_core_health_snapshots(id BIGINT PRIMARY KEY AUTO_INCREMENT,engine_generation BIGINT,health_state VARCHAR(20),account_count INT,eligible_depth INT,waiting_oauth INT,waiting_dependency INT,review_depth INT,dead_depth INT,oldest_eligible_seconds INT NULL,freshness_lag_seconds INT NULL,reasons_json JSON,generated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3))");
 $pdo->exec((string) file_get_contents(dirname(__DIR__) . '/database/migrations/291_queue_core_release_health_capacity_b2_1.sql'));
+$pdo->exec((string) file_get_contents(dirname(__DIR__) . '/database/migrations/293_queue_core_runtime_profile_defaults_b2_1.sql'));
 
 $context = hash('sha256', 'b2.1-context');
 $evidence = new QueueCoreReleaseEvidenceService($pdo);

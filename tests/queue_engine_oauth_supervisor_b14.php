@@ -134,6 +134,7 @@ $migrations = [
     '290_queue_core_sales_dependency_graph_b2_1.sql',
     '291_queue_core_release_health_capacity_b2_1.sql',
     '292_queue_core_authoritative_convergence_b2_1.sql',
+    '293_queue_core_runtime_profile_defaults_b2_1.sql',
 ];
 foreach ([1, 2] as $passNumber) {
     foreach ($migrations as $migration) {

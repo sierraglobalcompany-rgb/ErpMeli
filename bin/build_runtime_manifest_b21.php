@@ -5,7 +5,7 @@ declare(strict_types=1);
 $root = dirname(__DIR__);
 $base = 'f91cd534d271b964db1ad9e682260475eca96820';
 $version = '2.36.0';
-$minimumMigration = '292_queue_core_authoritative_convergence_b2_1.sql';
+$minimumMigration = '293_queue_core_runtime_profile_defaults_b2_1.sql';
 
 $command = sprintf(
     'git -C %s diff --name-only %s HEAD',

@@ -208,6 +208,87 @@ final class OrderSyncService
         return $this->persistShipment($orderId, $packId, $shipment);
     }
 
+    /**
+     * Snapshot exacto de Queue Core: un GET y solo relaciones locales.
+     *
+     * @param array<string,mixed> $meta
+     */
+    public function syncShipmentByIdForQueueCore(int|string $externalShipmentId, array $meta = []): int
+    {
+        $externalShipmentId = trim((string) $externalShipmentId);
+        if ($externalShipmentId === '' || !ctype_digit($externalShipmentId)) {
+            throw new \InvalidArgumentException('Envío Mercado Libre inválido.');
+        }
+        $shipment = $this->api->get(
+            '/shipments/' . rawurlencode($externalShipmentId),
+            [],
+            array_replace(['job_type' => 'webhook_shipment_exact', 'source' => 'queue_core_webhook'], $meta)
+        );
+        if ((string) ($shipment['id'] ?? '') !== $externalShipmentId) {
+            throw new \RuntimeException('La respuesta del envío no coincide con el recurso solicitado.');
+        }
+        $externalOrderId = $shipment['order_id']
+            ?? ($shipment['order']['id'] ?? null)
+            ?? ($shipment['orders'][0]['id'] ?? null);
+        $orderId = null;
+        if ($externalOrderId !== null && ctype_digit((string) $externalOrderId)) {
+            $order = Database::connection()->prepare(
+                'SELECT id FROM meli_orders WHERE meli_account_id=? AND external_order_id=? LIMIT 1'
+            );
+            $order->execute([$this->accountId, (string) $externalOrderId]);
+            $value = $order->fetchColumn();
+            $orderId = $value !== false ? (int) $value : null;
+        }
+        $packId = null;
+        $externalPackId = trim((string) ($shipment['pack_id'] ?? ''));
+        if ($externalPackId !== '') {
+            $pack = Database::connection()->prepare(
+                'SELECT id FROM meli_packs WHERE meli_account_id=? AND external_pack_id=? LIMIT 1'
+            );
+            $pack->execute([$this->accountId, $externalPackId]);
+            $value = $pack->fetchColumn();
+            $packId = $value !== false ? (int) $value : null;
+        }
+        return $this->persistShipment($orderId, $packId, $shipment);
+    }
+
+    /**
+     * Snapshot exacto de Queue Core: un GET y enlaces únicamente a órdenes locales.
+     *
+     * @param array<string,mixed> $meta
+     */
+    public function syncPackByIdForQueueCore(int|string $externalPackId, array $meta = []): int
+    {
+        $externalPackId = trim((string) $externalPackId);
+        if ($externalPackId === '' || !ctype_digit($externalPackId)) {
+            throw new \InvalidArgumentException('Paquete Mercado Libre inválido.');
+        }
+        $pack = $this->api->get(
+            '/packs/' . rawurlencode($externalPackId),
+            [],
+            array_replace(['job_type' => 'webhook_pack_exact', 'source' => 'queue_core_webhook'], $meta)
+        );
+        if ((string) ($pack['id'] ?? '') !== $externalPackId) {
+            throw new \RuntimeException('La respuesta del paquete no coincide con el recurso solicitado.');
+        }
+        $orderId = 0;
+        foreach ((array) ($pack['orders'] ?? []) as $remoteOrder) {
+            $externalOrderId = trim((string) ($remoteOrder['id'] ?? ''));
+            if ($externalOrderId === '' || !ctype_digit($externalOrderId)) {
+                continue;
+            }
+            $order = Database::connection()->prepare(
+                'SELECT id FROM meli_orders WHERE meli_account_id=? AND external_order_id=? LIMIT 1'
+            );
+            $order->execute([$this->accountId, $externalOrderId]);
+            $orderId = (int) ($order->fetchColumn() ?: 0);
+            if ($orderId > 0) {
+                break;
+            }
+        }
+        return $this->persistPack($orderId, $pack);
+    }
+
     public function syncRangeChunk(
         DateTimeImmutable $from,
         DateTimeImmutable $to,

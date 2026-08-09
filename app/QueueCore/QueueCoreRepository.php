@@ -400,7 +400,10 @@ final class QueueCoreRepository
     {$s=$this->pdo->prepare('SELECT * FROM queue_core_jobs WHERE id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? FOR UPDATE');$s->execute([$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);$r=$s->fetch(PDO::FETCH_ASSOC);return is_array($r)?$r:null;}
     private function knownResponseRetryAllowed(QueueClaim $claim,int $httpStatus=0): bool
     {
-        if(in_array($claim->workType,['fresh_orders_discovery','order_exact'],true))return true;
+        if(in_array($claim->workType,[
+            'fresh_orders_discovery','order_exact','webhook_order_exact',
+            'webhook_pack_exact','webhook_shipment_exact',
+        ],true))return true;
         if($claim->workType==='oauth_refresh'){
             if($httpStatus===429 || $httpStatus>=500)return true;
             if($httpStatus<200 || $httpStatus>=300)return false;

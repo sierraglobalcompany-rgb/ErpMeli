@@ -219,6 +219,20 @@ define('ERP_CRON_BOOTSTRAP_LOADED', true);
 \App\Services\ApiExecutionMetadataContext::resetRemoteDispatchCount();
 cron_entry_state_write('bootstrap_loaded', $runtimeVersion, $runtimeBuild, ['result' => 'running']);
 
+if (\App\QueueCore\QueueCoreOwnershipGuard::v4OwnsWebhook(\App\Core\Database::connectionFresh())) {
+    cron_entry_state_write('v4_owner_skip', $runtimeVersion, $runtimeBuild, [
+        'result' => 'skipped',
+        'reason' => 'SKIPPED_V4_OWNER',
+        'remote' => false,
+        'http' => 0,
+    ]);
+    echo 'ERP_CRON_SKIP component=process_sync_queue'
+        . ' version=' . preg_replace('/[^A-Za-z0-9_.-]/', '_', $runtimeVersion)
+        . ' build=' . preg_replace('/[^A-Za-z0-9_.-]/', '_', $runtimeBuild)
+        . ' reason=SKIPPED_V4_OWNER remote=false http=0' . PHP_EOL;
+    exit(0);
+}
+
 if ((new \App\Services\CronV3OperationalModeService())->enabled()) {
     cron_entry_state_write('v3_operational_skip', $runtimeVersion, $runtimeBuild, [
         'result' => 'skipped',

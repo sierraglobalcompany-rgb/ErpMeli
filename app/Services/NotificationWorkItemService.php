@@ -131,6 +131,9 @@ final class NotificationWorkItemService
     /** @return array<string,mixed> */
     public function processDue(?int $limit = null, ?float $deadline = null): array
     {
+        if (\App\QueueCore\QueueCoreOwnershipGuard::v4OwnsWebhook()) {
+            return \App\QueueCore\QueueCoreOwnershipGuard::skippedResult();
+        }
         if (!$this->settings->bool('notifications.webhook_first_enabled', true)) {
             return ['processed' => 0, 'ignored' => 0, 'errors' => 0, 'skipped' => true, 'stop_reason' => 'feature_disabled'];
         }
@@ -527,6 +530,9 @@ final class NotificationWorkItemService
         CampaignExecutionContext $context,
         bool $allowContinuation=true
     ): array {
+        if (\App\QueueCore\QueueCoreOwnershipGuard::v4OwnsWebhook()) {
+            return \App\QueueCore\QueueCoreOwnershipGuard::skippedResult();
+        }
         if (!$this->canStartResource($context->deadline)) {
             return [
                 'status' => 'deferred',

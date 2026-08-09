@@ -23,6 +23,16 @@
       "actionable": true
     },
     {
+      "canonical": "pack",
+      "aliases": ["packs"],
+      "resource_type": "pack",
+      "resource_patterns": ["~^/packs/(?<id>[0-9]+)$~"],
+      "endpoint": "/packs/{id}",
+      "policy": "sync_exact",
+      "priority": 15,
+      "actionable": true
+    },
+    {
       "canonical": "claim",
       "aliases": ["post_purchase", "claims", "claims_actions"],
       "resource_type": "claim",

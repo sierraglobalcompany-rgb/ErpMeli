@@ -7,6 +7,8 @@ namespace App\Services;
 use App\Core\AppPaths;
 use App\Core\Database;
 use App\Core\Env;
+use App\QueueCore\QueueCoreOwnershipGuard;
+use App\QueueCore\WebhookTriggerService;
 use PDO;
 use Throwable;
 
@@ -99,13 +101,45 @@ final class WebhookSpoolService
                 'company_id' => null,
             ];
         }
+        // La petición web solo valida forma y hace spool. La identidad de
+        // tenant se resuelve durablemente por el productor CLI.
+        return [
+            'valid' => true,
+            'terminal' => false,
+            'http_status' => 200,
+            'reason' => 'account_resolution_deferred',
+            'message' => 'La cuenta se resolverá al consumir el spool.',
+            'account_id' => null,
+            'company_id' => null,
+        ];
+    }
+
+    /**
+     * Resolución durable exclusiva de consumidores CLI/locales.
+     *
+     * @return array{valid:bool,terminal:bool,http_status:int,reason:string,message:string,account_id:?int,company_id:?int}
+     */
+    public function resolveLinkedAccount(int $userId): array
+    {
+        if ($userId <= 0) {
+            return [
+                'valid' => false,
+                'terminal' => true,
+                'http_status' => 403,
+                'reason' => 'unlinked_account',
+                'message' => 'La cuenta de la notificación no está vinculada.',
+                'account_id' => null,
+                'company_id' => null,
+            ];
+        }
         try {
             $stmt = Database::connectionFresh()->prepare(
                 'SELECT a.id,a.company_id
                  FROM meli_accounts a
                  INNER JOIN companies c ON c.id=a.company_id
                  WHERE a.meli_user_id=:user AND c.status=1
-                 ORDER BY a.id LIMIT 2'
+                   AND a.status IN ("conectado","connected")
+                 ORDER BY a.company_id,a.id LIMIT 2'
             );
             $stmt->execute(['user' => $userId]);
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -285,9 +319,16 @@ final class WebhookSpoolService
         }
     }
 
-    /** @return array{processed:int,completed:int,quarantined:int,errors:int,files:int} */
+    /** @return array<string,int|bool|string> */
     public function replay(int $limit = 100, ?float $deadline = null): array
     {
+        if (QueueCoreOwnershipGuard::v4OwnsWebhook()) {
+            return [
+                'processed' => 0, 'completed' => 0, 'quarantined' => 0,
+                'errors' => 0, 'files' => 0, 'skipped' => true,
+                'stop_reason' => 'SKIPPED_V4_OWNER', 'http' => 0,
+            ];
+        }
         $directory = AppPaths::storage('spool/mercadolibre-webhooks');
         if (!is_dir($directory)) {
             return ['processed' => 0, 'completed' => 0, 'quarantined' => 0, 'errors' => 0, 'files' => 0];
@@ -348,6 +389,106 @@ final class WebhookSpoolService
                 }
             } catch (Throwable) {
                 $errors++;
+            } finally {
+                fclose($handle);
+            }
+            $files++;
+            if ($remaining === []) {
+                @unlink($claimed);
+            } else {
+                $this->restoreRemaining($directory, $claimed, $remaining);
+            }
+        }
+        if ($processed + $quarantined > 0) {
+            $this->adjustCounter($directory, -($processed + $quarantined));
+        }
+        return [
+            'processed' => $processed,
+            'completed' => $processed,
+            'quarantined' => $quarantined,
+            'errors' => $errors,
+            'files' => $files,
+        ];
+    }
+
+    /**
+     * Consume el spool hacia la autoridad V4 sin crear eventos/trabajo legacy.
+     * No realiza transporte remoto.
+     *
+     * @return array{processed:int,completed:int,quarantined:int,errors:int,files:int}
+     */
+    public function replayToQueueCore(
+        WebhookTriggerService $triggers,
+        int $limit = 100,
+        ?float $deadline = null
+    ): array {
+        $directory = AppPaths::storage('spool/mercadolibre-webhooks');
+        if (!is_dir($directory)) {
+            return ['processed' => 0, 'completed' => 0, 'quarantined' => 0, 'errors' => 0, 'files' => 0];
+        }
+        $limit = max(1, min(1000, $limit));
+        $processed = 0;
+        $quarantined = 0;
+        $errors = 0;
+        $files = 0;
+        $this->recoverAbandonedClaims($directory);
+        foreach (glob($directory . '/webhooks-*.jsonl') ?: [] as $file) {
+            if ($processed + $quarantined >= $limit
+                || ($deadline !== null && microtime(true) >= $deadline - 0.25)) {
+                break;
+            }
+            $claimed = $this->claim($directory, $file);
+            if ($claimed === null) {
+                continue;
+            }
+            $handle = @fopen($claimed, 'rb');
+            if ($handle === false) {
+                $errors++;
+                continue;
+            }
+            $remaining = [];
+            try {
+                while (($line = fgets($handle)) !== false) {
+                    $trimmed = trim($line);
+                    if ($deadline !== null && microtime(true) >= $deadline - 0.25) {
+                        $remaining[] = $trimmed;
+                        while (($rest = fgets($handle)) !== false) {
+                            $remaining[] = trim($rest);
+                        }
+                        break;
+                    }
+                    if ($processed + $quarantined >= $limit) {
+                        $remaining[] = $trimmed;
+                        continue;
+                    }
+                    $record = json_decode($trimmed, true);
+                    $payload = is_array($record['payload'] ?? null) ? $record['payload'] : null;
+                    $raw = is_array($payload)
+                        ? (json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}')
+                        : $trimmed;
+                    $validation = $payload !== null ? $this->validateIngress($raw) : ['valid' => false, 'reason' => 'invalid_spool_record'];
+                    if (empty($validation['valid'])) {
+                        $this->quarantine($raw, (string) ($validation['reason'] ?? 'invalid_spool_record'));
+                        $quarantined++;
+                        continue;
+                    }
+                    try {
+                        $result = $triggers->observe($validation);
+                    } catch (Throwable) {
+                        $remaining[] = $trimmed;
+                        $errors++;
+                        continue;
+                    }
+                    if (!empty($result['accepted'])) {
+                        $processed++;
+                    } elseif (!empty($result['terminal'])) {
+                        $this->quarantine($raw, $result['reason']);
+                        $quarantined++;
+                    } else {
+                        $remaining[] = $trimmed;
+                        $errors++;
+                    }
+                }
             } finally {
                 fclose($handle);
             }

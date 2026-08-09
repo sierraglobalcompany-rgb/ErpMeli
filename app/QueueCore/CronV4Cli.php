@@ -115,8 +115,17 @@ final class CronV4Cli
                 return $result;
             }
             $oauthProduced = $core['oauth_supervisor']->scheduleDueAccounts(min(20, $max));
-            if (!$this->advancePhase($runLedger, $runId, 'fresh_producer', $core, $executionLease, 3)) {
+            if (!$this->advancePhase($runLedger, $runId, 'webhook_producer', $core, $executionLease, 3)) {
                 $result = ['ok'=>true,'status'=>'STOPPED_SAFE_CLOSE','recovered'=>$recovered,'oauth_supervisor'=>$oauthProduced,'claimed'=>0,'http'=>0,'run'=>['claimed'=>0,'reason'=>'deadline']];
+                $runLedger->finish($runId, 'stopped', 'deadline_before_webhook_producer', $result);
+                $runFinalized = true;
+                return $result;
+            }
+            $webhookProduced = $core['feature_flags']->enabled('webhook_producer')
+                ? $core['webhook_producer']->schedule(min(100, max(1, $max * 4)), CronDeadlineContext::deadline())
+                : ['spooled'=>0,'quarantined'=>0,'spool_errors'=>0,'reconciled'=>0,'enqueued'=>0,'duplicates'=>0,'disabled'=>1];
+            if (!$this->advancePhase($runLedger, $runId, 'fresh_producer', $core, $executionLease, 3)) {
+                $result = ['ok'=>true,'status'=>'STOPPED_SAFE_CLOSE','recovered'=>$recovered,'oauth_supervisor'=>$oauthProduced,'webhook_producer'=>$webhookProduced,'claimed'=>0,'http'=>0,'run'=>['claimed'=>0,'reason'=>'deadline']];
                 $runLedger->finish($runId, 'stopped', 'deadline_before_fresh_producer', $result);
                 $runFinalized = true;
                 return $result;
@@ -134,6 +143,7 @@ final class CronV4Cli
                     'status' => 'ENGINE_GENERATION_CHANGED',
                     'side_effects' => 0,
                     'oauth_supervisor' => $oauthProduced,
+                    'webhook_producer' => $webhookProduced,
                     'producer' => $produced,
                     'sale_pipeline' => $saleMaterialized,
                     'claimed' => 0,
@@ -165,6 +175,7 @@ final class CronV4Cli
                 'ok' => true,
                 'status' => 'COMPLETE',
                 'oauth_supervisor' => $oauthProduced,
+                'webhook_producer' => $webhookProduced,
                 'producer' => $produced,
                 'sale_pipeline' => $saleMaterialized,
                 'recovered' => $recovered,

@@ -5,7 +5,7 @@ declare(strict_types=1);
 $root = dirname(__DIR__);
 $base = 'f91cd534d271b964db1ad9e682260475eca96820';
 $version = '2.36.0';
-$minimumMigration = '291_queue_core_release_health_capacity_b2_1.sql';
+$minimumMigration = '292_queue_core_authoritative_convergence_b2_1.sql';
 
 $command = sprintf(
     'git -C %s diff --name-only %s HEAD',
@@ -77,4 +77,3 @@ if (file_put_contents($root . '/resources/runtime-manifest.json', $json, LOCK_EX
     exit(1);
 }
 fwrite(STDOUT, 'Manifest components: ' . count($components) . "\n");
-

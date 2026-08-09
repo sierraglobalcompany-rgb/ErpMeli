@@ -23,6 +23,7 @@ final class QueueCorePreflightService
         'queue_core_webhook_spool_items',
         'queue_core_execution_leases', 'queue_engine_control',
         'queue_core_runs', 'queue_core_readiness_receipts',
+        'queue_core_readiness_captures', 'queue_core_readiness_capture_items',
         'queue_core_health_snapshots', 'queue_core_feature_flags',
         'queue_core_historical_checkpoints', 'queue_core_historical_receipts',
         'queue_core_historical_reviews',
@@ -65,7 +66,11 @@ final class QueueCorePreflightService
             '285_queue_core_webhook_ownership_b2.sql',
             '286_queue_core_historical_deploy_b2.sql',
             '287_queue_core_readiness_observability_b2.sql',
+            '288_queue_core_readiness_authority_b2_1.sql',
             '289_queue_core_webhook_lifecycle_b2_1.sql',
+            '290_queue_core_sales_dependency_graph_b2_1.sql',
+            '291_queue_core_release_health_capacity_b2_1.sql',
+            '292_queue_core_authoritative_convergence_b2_1.sql',
         ];
         $applied = [];
         if (!in_array('schema_migrations', $missing, true)) {
@@ -89,6 +94,7 @@ final class QueueCorePreflightService
             'queue_core_historical_checkpoints' => ['idx_qc_historical_enabled'],
             'queue_core_historical_receipts' => ['idx_qc_historical_receipt_job'],
             'queue_core_health_snapshots' => ['idx_queue_core_health_latest'],
+            'queue_core_readiness_captures' => ['idx_queue_core_readiness_capture_window'],
         ];
         $missingIndexes = [];
         foreach ($requiredIndexes as $table => $indexes) {
@@ -226,7 +232,7 @@ final class QueueCorePreflightService
     private function databaseTime(): ?string
     {
         try {
-            $value = $this->pdo->query('SELECT DATE_FORMAT(UTC_TIMESTAMP(3),"%Y-%m-%d %H:%i:%s.%f")')?->fetchColumn();
+            $value = $this->pdo->query('SELECT DATE_FORMAT(UTC_TIMESTAMP(3),"%Y-%m-%d %H:%i:%s.%f")')->fetchColumn();
             return is_string($value) && $value !== '' ? $value : null;
         } catch (Throwable) {
             return null;

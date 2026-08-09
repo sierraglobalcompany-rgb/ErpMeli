@@ -100,6 +100,7 @@ $pdo->exec("CREATE TABLE schema_migrations (
 $pdo->exec("CREATE TABLE meli_orders (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     meli_account_id BIGINT UNSIGNED NOT NULL,
+    external_order_id BIGINT UNSIGNED NOT NULL,
     synced_at DATETIME NULL
 ) ENGINE=InnoDB");
 $pdo->exec("INSERT INTO app_settings(setting_key,setting_value,setting_group)
@@ -131,6 +132,7 @@ $migrations = [
     '289_queue_core_webhook_lifecycle_b2_1.sql',
     '290_queue_core_sales_dependency_graph_b2_1.sql',
     '291_queue_core_release_health_capacity_b2_1.sql',
+    '292_queue_core_authoritative_convergence_b2_1.sql',
 ];
 foreach ([1, 2] as $passNumber) {
     foreach ($migrations as $migration) {
@@ -227,6 +229,11 @@ $pdo->prepare("UPDATE queue_core_jobs SET state='completed',dispatch_state='DISP
     ->execute([$emptyDiscoveryId]);
 $pdo->prepare("INSERT INTO queue_core_attempts(job_id,company_id,meli_account_id,lease_owner,lease_generation,launcher,outcome,dispatch_state,physical_http_calls,resources_discovered,resources_persisted,http_status,response_known_at,source_closed_at,finished_at) VALUES (?,?,?,'readiness-fixture',1,'canary_v4','completed','DISPATCHED_RESULT_KNOWN',1,0,0,200,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),UTC_TIMESTAMP(3))")
     ->execute([$emptyDiscoveryId,1,1]);
+$pdo->prepare("INSERT INTO queue_core_readiness_captures
+    (engine_generation,readiness_context_hash,company_id,meli_account_id,discovery_job_id,
+     window_from,window_to,page_offset,response_count,capture_hash,complete)
+    VALUES (1,?,1,1,?,?,?,0,0,?,1)")
+    ->execute([$contextHash,$emptyDiscoveryId,$windowFrom,$windowTo,hash('sha256','')]);
 $emptyConvergence=(new QueueCoreConvergenceService($pdo))->compare(1,1,$windowFrom,$windowTo,20);
 $check($emptyConvergence['ok']&&!empty($emptyConvergence['authoritative_empty_window']),'known complete empty window did not converge');
 $crossCompanyBlocked=false;

@@ -22,6 +22,7 @@ final class QueueCoreDeploymentGateService
         '289_queue_core_webhook_lifecycle_b2_1.sql',
         '290_queue_core_sales_dependency_graph_b2_1.sql',
         '291_queue_core_release_health_capacity_b2_1.sql',
+        '292_queue_core_authoritative_convergence_b2_1.sql',
     ];
     private const REQUIRED_TABLES = [
         'queue_core_jobs',
@@ -36,6 +37,8 @@ final class QueueCoreDeploymentGateService
         'queue_core_webhook_spool_items',
         'queue_core_runs',
         'queue_core_readiness_receipts',
+        'queue_core_readiness_captures',
+        'queue_core_readiness_capture_items',
         'queue_core_health_snapshots',
         'queue_core_feature_flags',
         'queue_engine_control',

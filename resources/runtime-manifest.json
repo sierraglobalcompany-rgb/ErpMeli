@@ -8,7 +8,7 @@
         "base_commit": "f91cd534d271b964db1ad9e682260475eca96820",
         "component_count": 131,
         "paths_sha256": "ca29d9de4736f35880286e84583509c38f7e72972c92009c6d686c114176b564",
-        "dependency_registry_sha256": "aa83f09bc59f97575303df06d4b53bc27a3aecbfd7a3a219d2a540bc9bab9748",
+        "dependency_registry_sha256": "d405badc33e4f1fb3a114b431f80f9c1a489ae2e05e59741b377010a2ef6c84c",
         "raw_git_blobs": true
     },
     "components": {
@@ -602,8 +602,8 @@
         },
         "runtime_app_services_runtimepublicationpolicy_php": {
             "path": "app/Services/RuntimePublicationPolicy.php",
-            "sha256": "ac23530da23919100cdadaabcfe8fa8043d6202655d94f59314021f2914db37f",
-            "sha256_lf": "ac23530da23919100cdadaabcfe8fa8043d6202655d94f59314021f2914db37f",
+            "sha256": "778f0cd06316bdd9de01dc02e315c10e376cb33d4fcae4b77ce6b0ed5bfcfaa0",
+            "sha256_lf": "778f0cd06316bdd9de01dc02e315c10e376cb33d4fcae4b77ce6b0ed5bfcfaa0",
             "text": true
         },
         "runtime_app_services_salefinancialservice_php": {
@@ -788,14 +788,14 @@
         },
         "runtime_resources_mercadolibre_api_generated_notification_topics_json": {
             "path": "resources/mercadolibre-api/generated/notification-topics.json",
-            "sha256": "994d48d62dd4fbb52ff3049579bd1bf953e6aed0db4a519b94a8faf97d6acbdc",
-            "sha256_lf": "994d48d62dd4fbb52ff3049579bd1bf953e6aed0db4a519b94a8faf97d6acbdc",
+            "sha256": "cca009bce48c8ceb3bb663b34cb6688c2fb20923a2a02cb6a4efc809a7b47ae8",
+            "sha256_lf": "cca009bce48c8ceb3bb663b34cb6688c2fb20923a2a02cb6a4efc809a7b47ae8",
             "text": true
         },
         "runtime_resources_release_queue_core_runtime_dependencies_json": {
             "path": "resources/release/queue-core-runtime-dependencies.json",
-            "sha256": "aa83f09bc59f97575303df06d4b53bc27a3aecbfd7a3a219d2a540bc9bab9748",
-            "sha256_lf": "aa83f09bc59f97575303df06d4b53bc27a3aecbfd7a3a219d2a540bc9bab9748",
+            "sha256": "d405badc33e4f1fb3a114b431f80f9c1a489ae2e05e59741b377010a2ef6c84c",
+            "sha256_lf": "d405badc33e4f1fb3a114b431f80f9c1a489ae2e05e59741b377010a2ef6c84c",
             "text": true
         }
     }

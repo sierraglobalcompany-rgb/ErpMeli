@@ -92,6 +92,11 @@
           "source_path": "app/Services/ManagedRuntimePublicationPolicy.php",
           "symbol": "App\\Services\\ManagedRuntimePublicationPolicy::installedManifestIssues",
           "path_literal": "resources/release/queue-core-runtime-dependencies.json"
+        },
+        {
+          "source_path": "app/Services/RuntimePublicationPolicy.php",
+          "symbol": "App\\Services\\RuntimePublicationPolicy::installedManifestIssues",
+          "path_literal": "resources/release/queue-core-runtime-dependencies.json"
         }
       ],
       "provenance": {
@@ -244,6 +249,13 @@
         "operations": ["file_get_contents"],
         "bounded_by": "Exact resources/release/queue-core-runtime-dependencies.json authority under the installed release root.",
         "data_kind": "release_authority"
+      },
+      {
+        "id": "frozen-updater-publication-installed-registry",
+        "source_regex": "#^app/Services/RuntimePublicationPolicy\\.php$#D",
+        "operations": ["file_get_contents"],
+        "bounded_by": "Exact resources/release/queue-core-runtime-dependencies.json authority; implementation remains byte-identical to 2.36.0.",
+        "data_kind": "frozen_updater_release_authority"
       },
       {
         "id": "notification-topic-generated-contract",

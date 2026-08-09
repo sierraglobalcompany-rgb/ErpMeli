@@ -291,9 +291,9 @@ final class MeliApiClient implements MeliReadClientInterface
                         'rhythm_fence_stale'
                     );
                 }
-                // Desde este punto el transporte puede haber salido aunque el
-                // proceso termine antes de que cURL devuelva una respuesta.
-                // La marca persistente anterior evita un segundo envío ciego.
+                // Legacy callers have no Queue Core attempt journal. Queue
+                // Core decides this boundary exclusively from the persisted
+                // physical marker written next to curl_exec by its transport.
                 $dispatchBoundaryCrossed = true;
                 $transportResult = ApiExecutionMetadataContext::withTransportMetadata(
                     [
@@ -316,18 +316,43 @@ final class MeliApiClient implements MeliReadClientInterface
                     )
                 );
             } catch (Throwable $transportBlocked) {
-                if ($queueCoreContext && ($transportBlocked instanceof QueueCorePreRemoteBlockedException
-                    || $transportBlocked instanceof ApiManualPauseException)) {
-                    // Queue Core's final physical fence proves curl_exec never
-                    // started. Return every local permit even if the rhythm
-                    // reservation had already moved to dispatched.
-                    $budget->releaseReservation($budgetReservation);
-                    $rhythm->cancelBeforeTransport($rhythmPermit);
-                    if ($executionAttemptId > 0) {
-                        $executionJournal->dispatchCancelledBeforeRemote($executionAttemptId,$executionLeaseGeneration);
+                if ($queueCoreContext) {
+                    // Do not infer physical dispatch merely because control
+                    // was handed to the transport object. curl_init, option
+                    // validation, API Stop and Automation Stop can still fail
+                    // before curl_exec. The attempt journal is the authority.
+                    try {
+                        $queueCorePhysicalStarted = \App\QueueCore\QueueCoreDispatchFence::physicalTransportRecorded();
+                    } catch (Throwable) {
+                        // If the authority itself is unavailable, fail closed:
+                        // a retry cannot be proven safe.
+                        $queueCorePhysicalStarted = true;
                     }
-                    ApiExecutionMetadataContext::markRemoteBlocked();
-                    throw $transportBlocked;
+                    if (!$queueCorePhysicalStarted) {
+                        $compensationFailure = null;
+                        try {
+                            $budget->releaseReservation($budgetReservation,true);
+                        } catch (Throwable $failure) {
+                            $compensationFailure = $failure;
+                        }
+                        try {
+                            $rhythm->cancelBeforeTransport($rhythmPermit,true);
+                        } catch (Throwable $failure) {
+                            $compensationFailure ??= $failure;
+                        }
+                        if ($executionAttemptId > 0) {
+                            try {
+                                $executionJournal->dispatchCancelledBeforeRemote($executionAttemptId,$executionLeaseGeneration);
+                            } catch (Throwable $failure) {
+                                $compensationFailure ??= $failure;
+                            }
+                        }
+                        ApiExecutionMetadataContext::markRemoteBlocked();
+                        if ($compensationFailure !== null) {
+                            throw $compensationFailure;
+                        }
+                        throw $transportBlocked;
+                    }
                 }
                 // La barrera del transporte OAuth se ejecuta dentro del
                 // adaptador pero todavía antes de curl_init/curl_exec. Una

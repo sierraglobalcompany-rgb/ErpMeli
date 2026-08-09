@@ -78,6 +78,13 @@ final class ManualSingleStepService
                 $row,
                 $authority
             );
+            // Cada preview consumible representa una intención humana. Repetir
+            // el mismo POST conserva dedupe; un preview nuevo puede ejecutar
+            // otro paso sobre la misma versión durable ya revisada.
+            $explicitAttemptKey = hash('sha256', implode('|', [
+                'manual-explicit', $previewToken, (string) $userId,
+                $queueKey, $sourceId, $inputVersion,
+            ]));
             // Manual and Cron V4 are launchers only. Both enter the same
             // QueueRunner, scheduler, claim, fencing and retry path.
             $result = (new ManualQueueLauncher())->runExact(
@@ -89,6 +96,7 @@ final class ManualSingleStepService
                 $authority->operationKey,
                 $inputVersion,
                 $authority->durableInputVersion,
+                $explicitAttemptKey,
                 $authority->remoteContract
             );
             // Solo se consume después de que Queue Core adquirió exclusión,

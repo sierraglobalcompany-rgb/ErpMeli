@@ -6,6 +6,7 @@ namespace App\QueueCore;
 use App\Core\Database;
 use App\Services\ApiExecutionMetadataContext;
 use App\Services\EmergencyControlService;
+use App\Services\MeliEmergencyStopService;
 use RuntimeException;
 final class QueueCoreDispatchFence
 {
@@ -40,9 +41,27 @@ final class QueueCoreDispatchFence
         if(($m['queue_core_launcher']??'')==='cron_v4' && (new EmergencyControlService())->automationStopped()){
             throw new QueueCorePreRemoteBlockedException('Automation Stop changed before the physical HTTP boundary.');
         }
+        // The physical API stop is checked again at the last Queue Core
+        // instruction before persisting the boundary. CurlMeliHttpTransport
+        // invokes curl_exec immediately after this method returns.
+        try{
+            (new MeliEmergencyStopService())->assertTransportAllowed($method,$endpoint);
+        }catch(\App\Services\ApiManualPauseException $blocked){
+            throw new QueueCorePreRemoteBlockedException('API Stop changed before the physical HTTP boundary.',0,$blocked);
+        }
         if(!(new QueueCoreRepository(Database::connectionFresh()))->physicalTransportStarted($claim,$attempt,$method,$endpoint)){
             throw new QueueCorePreRemoteBlockedException('Queue Core fencing denied the physical HTTP boundary.');
         }
+    }
+
+    /** True only when the exact current attempt has a persisted physical HTTP marker. */
+    public static function physicalTransportRecorded(): bool
+    {
+        $m=ApiExecutionMetadataContext::current();
+        if(($m['source']??'')!=='queue_core')return false;
+        $attempt=max(0,(int)($m['queue_core_attempt_id']??0));
+        return $attempt>0 && (new QueueCoreRepository(Database::connectionFresh()))
+            ->physicalTransportRecorded(self::claim($m),$attempt);
     }
 
     public static function heartbeat(): bool

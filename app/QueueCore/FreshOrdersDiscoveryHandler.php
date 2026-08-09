@@ -12,7 +12,7 @@ final class FreshOrdersDiscoveryHandler implements QueueHandler
     public function __construct(private readonly PDO $pdo,private readonly QueueCoreRepository $repository,private readonly FreshOrdersGateway $gateway){}
     public function handle(QueueClaim $job,QueueExecutionContext $context): QueueResult
     {
-        if(!$context->hasTime(1.0))return QueueResult::retry('deadline',gmdate('Y-m-d H:i:s',time()+5));
+        if(!$context->hasTime(1.0))return QueueResult::automaticWait('deadline',gmdate('Y-m-d H:i:s',time()+5));
         $from=(string)($job->payload['from']??'');$to=(string)($job->payload['to']??'');$cursor=isset($job->payload['cursor'])?(string)$job->payload['cursor']:null;$generation=(int)($job->payload['generation']??-1);$limit=max(1,min(20,(int)($job->payload['limit']??20)));
         if($from===''||$to===''||$generation<0) return QueueResult::dead('invalid_fresh_window');
         $page=$this->gateway->fetch($job->companyId,$job->meliAccountId,$from,$to,$cursor,$limit);

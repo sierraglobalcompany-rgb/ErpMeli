@@ -20,6 +20,7 @@ final class ManualQueueLauncher
         string $operationKey,
         string $inputVersion,
         string $sourceAuthorityVersion,
+        string $explicitAttemptKey,
         ?array $contract=null
     ): array {
         $core=QueueCoreFactory::build();
@@ -28,6 +29,7 @@ final class ManualQueueLauncher
         if($lease===null)throw new RuntimeException('Ya hay un paso manual en curso. Espere su resultado.');
         try {
             if($usesApi&&$contract===null)throw new RuntimeException('El trabajo manual no tiene un contrato remoto certificado.');
+            if(preg_match('/^[a-f0-9]{64}$/',$explicitAttemptKey)!==1)throw new RuntimeException('La intención manual explícita no es válida.');
             $pdo=Database::connectionFresh();
             $core['repository']->recoverAbandonedManualJobs();
             $busy=$pdo->query("SELECT id FROM queue_core_jobs WHERE queue_domain='manual' AND state IN ('pending','claimed','running','retry_wait','waiting_oauth') ORDER BY id LIMIT 1")->fetchColumn();
@@ -37,16 +39,17 @@ final class ManualQueueLauncher
             $jobId=$core['repository']->enqueue(new QueueJob(
                 $companyId,$accountId,'manual_exact',$queueKey,$sourceId,
                 $usesApi?'normal':'local',80,
-                hash('sha256',implode('|',[$companyId,$accountId,$queueKey,$sourceId,$inputVersion])),
+                self::idempotencyKey($companyId,$accountId,$queueKey,$sourceId,$inputVersion,$explicitAttemptKey),
                 $inputVersion,'manual_web','manual:'.$queueKey.':'.$sourceId,
                 [
                     'queue_key'=>$queueKey,
                     'source_id'=>$sourceId,
                     'operation_key'=>$operationKey,
                     'source_authority_version'=>$sourceAuthorityVersion,
+                    'explicit_attempt_key'=>$explicitAttemptKey,
                     'remote_contract'=>$contract,
                 ],
-                ['launcher'=>'manual_single_step','durable_input_version'=>$inputVersion],
+                ['launcher'=>'manual_single_step','durable_input_version'=>$inputVersion,'explicit_attempt_key'=>$explicitAttemptKey],
                 1,null,'manual'
             ));
             try{
@@ -87,5 +90,10 @@ final class ManualQueueLauncher
             'dead','review'=>'El paso quedó cerrado para revisión; no se repetirá en segundo plano.',
             default=>'El paso manual terminó sin continuación automática.',
         };
+    }
+
+    public static function idempotencyKey(int $companyId,int $accountId,string $queueKey,string $sourceId,string $inputVersion,string $explicitAttemptKey): string
+    {
+        return hash('sha256',implode('|',[$companyId,$accountId,$queueKey,$sourceId,$inputVersion,$explicitAttemptKey]));
     }
 }

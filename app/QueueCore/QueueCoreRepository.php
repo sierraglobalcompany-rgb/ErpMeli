@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\QueueCore;
 
+use App\Services\QueueOAuthDurableRecoveryStore;
 use PDO;
 use RuntimeException;
 use Throwable;
@@ -86,7 +87,12 @@ final class QueueCoreRepository
     {
         $this->pdo->beginTransaction();
         try {
-            $resetKnown=$claim->dispatchState==='DISPATCHED_RESULT_KNOWN' && self::knownResponseRetryAllowed($claim);
+            $locked=$this->lockedJob($claim);
+            if(!is_array($locked) || (string)$locked['state']!=='claimed'){
+                throw new RuntimeException('Queue Core lease changed before handler start.');
+            }
+            $resetKnown=$claim->dispatchState==='DISPATCHED_RESULT_KNOWN'
+                && $this->knownResponseRetryAllowed($claim,(int)($locked['last_http_status']??0));
             $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state='running',started_at=COALESCE(started_at,UTC_TIMESTAMP(3)),dispatch_state=CASE WHEN ?=1 THEN 'NOT_DISPATCHED' ELSE dispatch_state END,last_http_status=CASE WHEN ?=1 THEN NULL ELSE last_http_status END,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND state='claimed'");
             $u->execute([$resetKnown?1:0,$resetKnown?1:0,$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
             if($u->rowCount()!==1) throw new RuntimeException('Queue Core lease changed before handler start.');
@@ -142,6 +148,14 @@ final class QueueCoreRepository
         }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
     }
 
+    /** Persistent authority for whether this exact fenced attempt crossed the physical HTTP boundary. */
+    public function physicalTransportRecorded(QueueClaim $claim,int $attemptId): bool
+    {
+        $s=$this->pdo->prepare("SELECT 1 FROM queue_core_attempts WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND physical_http_calls=1 AND physical_http_started_at IS NOT NULL LIMIT 1");
+        $s->execute([$attemptId,$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
+        return (bool)$s->fetchColumn();
+    }
+
     /** Backward-compatible name; this now means the physical boundary. */
     public function dispatchStarted(QueueClaim $claim,int $attemptId,string $method,string $endpoint): bool
     {
@@ -175,7 +189,7 @@ final class QueueCoreRepository
             $outcome=$result->outcome;
             if((string)$row['dispatch_state']==='DISPATCHED_RESULT_UNCERTAIN')$outcome='review';
             if($outcome==='retry_wait' && (string)$row['dispatch_state']==='DISPATCHED_RESULT_KNOWN'
-                && !self::knownResponseRetryAllowed($claim))$outcome='review';
+                && !$this->knownResponseRetryAllowed($claim,(int)($row['last_http_status']??0)))$outcome='review';
             $failureAttempts=max(0,(int)$row['attempt_count']-($result->consumesFailureAttempt?0:1));
             if($outcome==='retry_wait' && $result->consumesFailureAttempt
                 && $failureAttempts >= (int)$row['max_attempts'])$outcome='dead';
@@ -195,9 +209,10 @@ final class QueueCoreRepository
         }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
     }
 
-    public function reviveExhaustedTransient(int $jobId,string $expectedWorkType,string $expectedInputVersion): bool
+    public function reviveExhaustedTransient(int $jobId,string $expectedWorkType,string $expectedInputVersion,
+        ?int $expectedCompanyId=null,?int $expectedAccountId=null): bool
     {
-        if($jobId<1 || !in_array($expectedWorkType,['fresh_orders_discovery','order_exact'],true)
+        if($jobId<1 || !in_array($expectedWorkType,['fresh_orders_discovery','order_exact','oauth_refresh'],true)
             || $expectedInputVersion==='')return false;
         $this->pdo->beginTransaction();
         try{
@@ -205,7 +220,9 @@ final class QueueCoreRepository
             $s->execute([$jobId,$expectedWorkType,$expectedInputVersion]);
             $row=$s->fetch(PDO::FETCH_ASSOC);
             if(!is_array($row) || (string)$row['state']!=='dead'
-                || !self::revivableTransient($row)
+                || ($expectedCompanyId!==null && (int)$row['company_id']!==$expectedCompanyId)
+                || ($expectedAccountId!==null && (int)$row['meli_account_id']!==$expectedAccountId)
+                || !$this->revivableTransient($row)
                 || (strtotime((string)$row['updated_at'].' UTC')?:time())>time()-60){$this->pdo->rollBack();return false;}
             $generation=(int)$row['lease_generation'];
             $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state='pending',attempt_count=0,revival_count=revival_count+1,available_at=UTC_TIMESTAMP(3),next_attempt_at=NULL,dispatch_state='NOT_DISPATCHED',completed_at=NULL,last_error_class=NULL,last_http_status=NULL,lease_owner=NULL,lease_expires_at=NULL,lease_heartbeat_at=NULL,lease_generation=lease_generation+1,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND company_id=? AND meli_account_id=? AND work_type=? AND input_version=? AND state='dead' AND lease_generation=? AND updated_at<=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 60 SECOND)");
@@ -257,16 +274,17 @@ final class QueueCoreRepository
     {
         $this->pdo->beginTransaction();
         try{
-            $q=$this->pdo->query("SELECT * FROM queue_core_jobs WHERE queue_domain='manual' AND work_type='manual_exact' AND (state IN ('pending','retry_wait','waiting_oauth') OR (state IN ('claimed','running') AND lease_expires_at<=UTC_TIMESTAMP(3))) ORDER BY id FOR UPDATE");
+            $q=$this->pdo->query("SELECT * FROM queue_core_jobs WHERE queue_domain='manual' AND work_type='manual_exact' AND state IN ('claimed','running') AND lease_expires_at<=UTC_TIMESTAMP(3) ORDER BY id FOR UPDATE");
             $recovered=0;
             foreach($q->fetchAll(PDO::FETCH_ASSOC) as $row){
                 $uncertain=(string)$row['dispatch_state']==='DISPATCHED_RESULT_UNCERTAIN';
                 $reason=$uncertain?'remote_result_uncertain':'manual_launcher_abandoned';
-                $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state='review',completed_at=UTC_TIMESTAMP(3),next_attempt_at=NULL,wait_refresh_version=NULL,last_error_class=?,lease_owner=NULL,lease_expires_at=NULL,lease_heartbeat_at=NULL,lease_generation=lease_generation+1,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND queue_domain='manual' AND work_type='manual_exact' AND (state IN ('pending','retry_wait','waiting_oauth') OR (state IN ('claimed','running') AND lease_expires_at<=UTC_TIMESTAMP(3)))");
+                $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state='review',completed_at=UTC_TIMESTAMP(3),next_attempt_at=NULL,wait_refresh_version=NULL,last_error_class=?,lease_owner=NULL,lease_expires_at=NULL,lease_heartbeat_at=NULL,lease_generation=lease_generation+1,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND queue_domain='manual' AND work_type='manual_exact' AND state IN ('claimed','running') AND lease_expires_at<=UTC_TIMESTAMP(3)");
                 $u->execute([$reason,(int)$row['id']]);
                 if($u->rowCount()!==1)continue;
                 $a=$this->pdo->prepare("UPDATE queue_core_attempts SET outcome='review',error_class=?,finished_at=UTC_TIMESTAMP(3) WHERE job_id=? AND finished_at IS NULL");
                 $a->execute([$reason,(int)$row['id']]);
+                if((string)$row['state']==='running' && $a->rowCount()!==1)throw new RuntimeException('Queue Core manual recovery lost its exact attempt fence.');
                 $this->event((int)$row['id'],(int)$row['company_id'],(int)$row['meli_account_id'],(string)$row['lane'],'review');
                 $recovered++;
             }
@@ -284,13 +302,13 @@ final class QueueCoreRepository
             foreach($q->fetchAll(PDO::FETCH_ASSOC) as $row){
                 $dispatch=(string)$row['dispatch_state'];
                 $safeKnownRead = $dispatch === 'DISPATCHED_RESULT_KNOWN'
-                    && in_array((string) $row['work_type'], ['fresh_orders_discovery','order_exact'], true);
+                    && $this->knownResponseRetryAllowed($this->claimFromRow($row),(int)($row['last_http_status']??0));
                 $state=($dispatch==='NOT_DISPATCHED'||$safeKnownRead)?(((int)$row['attempt_count']>=(int)$row['max_attempts'])?'dead':'retry_wait'):'review';
                 $next=$state==='retry_wait'?QueueRetryPolicy::nextAttemptAt((int)$row['attempt_count']):null;
                 $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state=?,next_attempt_at=?,available_at=COALESCE(?,available_at),last_error_class=?,completed_at=CASE WHEN ? IN ('review','dead') THEN UTC_TIMESTAMP(3) ELSE NULL END,lease_owner=NULL,lease_expires_at=NULL,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND lease_generation=? AND state IN ('claimed','running')");
                 $errorClass=$dispatch==='NOT_DISPATCHED'?'lease_expired_before_dispatch':($safeKnownRead?'lease_expired_after_known_read':'lease_expired_after_dispatch');
                 $u->execute([$state,$next,$next,$errorClass,$state,(int)$row['id'],(int)$row['lease_generation']]);
-                if($u->rowCount()===1){$counts[$state]++;$this->pdo->prepare("UPDATE queue_core_attempts SET outcome=?,error_class=?,finished_at=UTC_TIMESTAMP(3) WHERE job_id=? AND lease_generation=? AND outcome='started'")->execute([$state,$errorClass,(int)$row['id'],(int)$row['lease_generation']]);$this->event((int)$row['id'],(int)$row['company_id'],(int)$row['meli_account_id'],(string)$row['lane'],'recovered');}
+                if($u->rowCount()===1){$a=$this->pdo->prepare("UPDATE queue_core_attempts SET outcome=?,error_class=?,finished_at=UTC_TIMESTAMP(3) WHERE job_id=? AND lease_generation=? AND outcome='started'");$a->execute([$state,$errorClass,(int)$row['id'],(int)$row['lease_generation']]);if((string)$row['state']==='running'&&$a->rowCount()!==1)throw new RuntimeException('Queue Core stale recovery lost its exact attempt fence.');$counts[$state]++;$this->event((int)$row['id'],(int)$row['company_id'],(int)$row['meli_account_id'],(string)$row['lane'],'recovered');}
             }
             $this->pdo->commit();return $counts;
         }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
@@ -323,19 +341,39 @@ final class QueueCoreRepository
     /** @return array<string,mixed>|null */
     private function lockedJob(QueueClaim $claim): ?array
     {$s=$this->pdo->prepare('SELECT * FROM queue_core_jobs WHERE id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? FOR UPDATE');$s->execute([$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);$r=$s->fetch(PDO::FETCH_ASSOC);return is_array($r)?$r:null;}
-    private static function knownResponseRetryAllowed(QueueClaim $claim): bool
+    private function knownResponseRetryAllowed(QueueClaim $claim,int $httpStatus=0): bool
     {
         if(in_array($claim->workType,['fresh_orders_discovery','order_exact'],true))return true;
+        if($claim->workType==='oauth_refresh'){
+            if($httpStatus===429 || $httpStatus>=500)return true;
+            if($httpStatus<200 || $httpStatus>=300)return false;
+            $identity=trim((string)($claim->payload['expected_meli_user_id']??''));
+            if($identity==='')return false;
+            try{
+                return (new QueueOAuthDurableRecoveryStore())->load(
+                    $claim->companyId,$claim->meliAccountId,$identity
+                )!==null;
+            }catch(Throwable){return false;}
+        }
         if($claim->workType!=='manual_exact')return false;
         $contract=$claim->payload['remote_contract']??null;
         return is_array($contract) && strtoupper((string)($contract['method']??''))==='GET'
             && (int)($contract['max_remote_calls']??0)===1;
     }
     /** @param array<string,mixed> $row */
-    private static function revivableTransient(array $row): bool
+    private function revivableTransient(array $row): bool
     {
         if(!in_array((string)($row['dispatch_state']??''),['NOT_DISPATCHED','DISPATCHED_RESULT_KNOWN'],true))return false;
         $error=(string)($row['last_error_class']??'');
+        if((string)($row['work_type']??'')==='oauth_refresh'){
+            if((string)$row['dispatch_state']==='NOT_DISPATCHED'){
+                return in_array($error,['oauth_refresh_busy','deadline','deadline_deferred','policy_deferred','rhythm_deferred','pre_remote_blocked','oauth_local_failure'],true);
+            }
+            $claim=$this->claimFromRow($row);
+            $status=(int)($row['last_http_status']??0);
+            if($error==='oauth_remote_failure')return $status===429 || $status>=500;
+            return $error==='oauth_local_failure' && $this->knownResponseRetryAllowed($claim,$status);
+        }
         $allowed=['partial_remote_page','incoherent_remote_paging','lease_expired_before_dispatch',
             'lease_expired_after_known_read','policy_deferred','pre_remote_blocked','deadline'];
         if(in_array($error,$allowed,true))return true;

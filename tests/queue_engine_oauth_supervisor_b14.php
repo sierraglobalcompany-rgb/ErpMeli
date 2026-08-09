@@ -183,6 +183,22 @@ $supervisor->scheduleDueAccounts();
 $oauthJobs = (int) $pdo->query("SELECT COUNT(*) FROM queue_core_jobs WHERE work_type='oauth_refresh'")->fetchColumn();
 $check($firstSchedule['due'] === 1 && $oauthJobs === 1, 'OAuth due producer is not idempotent');
 
+// Three accounts due at once remain independent and create one logical job
+// per account/version without a cross-account identity.
+$pdo->exec("INSERT INTO meli_accounts VALUES
+    (11,2,'201','C','conectado',NULL),(12,2,'202','D','conectado',NULL),(13,2,'203','E','conectado',NULL)");
+foreach ([11, 12, 13] as $dueAccount) {
+    $insertToken->execute([$dueAccount, $encryptedAccess, $encryptedRefresh, -60]);
+}
+$threeDue = $supervisor->scheduleDueAccounts(10);
+$threeIds = $pdo->query(
+    "SELECT COUNT(DISTINCT meli_account_id) FROM queue_core_jobs
+     WHERE work_type='oauth_refresh' AND meli_account_id IN (11,12,13)"
+)->fetchColumn();
+$check($threeDue['due'] >= 3 && (int) $threeIds === 3, 'three due accounts did not receive isolated OAuth work');
+$pdo->exec("UPDATE queue_core_jobs SET state='completed',completed_at=UTC_TIMESTAMP(3)
+            WHERE work_type='oauth_refresh' AND meli_account_id IN (11,12,13)");
+
 $waitingId = $repository->enqueue(new QueueJob(
     1, 1, 'order_exact', 'order', '9001', 'normal', 0,
     'waiting-order', 'v1', 'test', null, [], [], 3, null, 'operational'
@@ -248,6 +264,7 @@ $refreshed = ApiExecutionMetadataContext::run([
     return ApiExecutionMetadataContext::withTransportMetadata([
         'transport_meli_account_id' => 1,
         'expected_meli_user_id' => '101',
+        'expected_refresh_version' => 2,
         'queue_core_oauth_refresh' => 1,
     ], static function () use (&$realCalls): array {
         return (new OAuthTokenRefreshService(1))->refresh(static function () use (&$realCalls): array {
@@ -288,6 +305,7 @@ try {
         return ApiExecutionMetadataContext::withTransportMetadata([
             'transport_meli_account_id' => 1,
             'expected_meli_user_id' => '101',
+            'expected_refresh_version' => 3,
             'queue_core_oauth_refresh' => 1,
         ], static function () use (&$combinedCalls, $pdo, $recoveryRoot): array {
             return (new OAuthTokenRefreshService(1))->refresh(
@@ -334,7 +352,8 @@ try {
     ApiExecutionMetadataContext::run([
         'source' => 'queue_core', 'company_id' => 1, 'account_id' => 1,
         'queue_core_work_type' => 'oauth_refresh', 'transport_meli_account_id' => 1,
-        'expected_meli_user_id' => '101', 'queue_core_oauth_refresh' => 1,
+        'expected_meli_user_id' => '101', 'expected_refresh_version' => 0,
+        'queue_core_oauth_refresh' => 1,
     ], static fn (): array => (new OAuthTokenRefreshService(1))->refresh(
         static fn (): array => throw new RuntimeException('must not call transport')
     ));
@@ -346,7 +365,52 @@ try {
 }
 $check($busyCaught, 'per-account OAuth single-flight did not block the second worker');
 
+// The seller identity is checked again after the single-flight lock and
+// immediately before the callback that represents POST /oauth/token.
+$pdo->prepare("UPDATE meli_accounts SET meli_user_id='changed-seller',status='conectado' WHERE id=1 AND company_id=1")
+    ->execute();
+$identityCalls = 0;
+$identityRejected = false;
+try {
+    ApiExecutionMetadataContext::run([
+        'source' => 'queue_core', 'company_id' => 1, 'account_id' => 1,
+        'queue_core_work_type' => 'oauth_refresh', 'transport_meli_account_id' => 1,
+        'expected_meli_user_id' => '101', 'expected_refresh_version' => 0,
+        'queue_core_oauth_refresh' => 1,
+    ], static fn (): array => (new OAuthTokenRefreshService(1))->refresh(
+        static function () use (&$identityCalls): array {
+            $identityCalls++;
+            return [];
+        }
+    ));
+} catch (Throwable) {
+    $identityRejected = true;
+}
+$check($identityRejected && $identityCalls === 0, 'stale seller identity crossed the OAuth transport boundary');
+$pdo->prepare("UPDATE meli_accounts SET meli_user_id='101' WHERE id=1 AND company_id=1")->execute();
+
+// A job from an older refresh generation is a local no-op even when the
+// current token remains inside the refresh skew.
+$pdo->prepare("UPDATE meli_tokens SET refresh_version=1,expires_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 MINUTE) WHERE meli_account_id=1")
+    ->execute();
+$advancedCalls = 0;
+$advanced = ApiExecutionMetadataContext::run([
+    'source' => 'queue_core', 'company_id' => 1, 'account_id' => 1,
+    'queue_core_work_type' => 'oauth_refresh', 'transport_meli_account_id' => 1,
+    'expected_meli_user_id' => '101', 'expected_refresh_version' => 0,
+    'queue_core_oauth_refresh' => 1,
+], static fn (): array => (new OAuthTokenRefreshService(1))->refresh(
+    static function () use (&$advancedCalls): array {
+        $advancedCalls++;
+        return [];
+    }
+));
+$check($advancedCalls === 0 && (int) ($advanced['refresh_version'] ?? -1) === 1,
+    'an already advanced OAuth generation started another transport');
+
 // invalid_grant is terminal for one account only.
+$pdo->prepare("UPDATE meli_tokens SET refresh_version=0,expires_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 MINUTE) WHERE meli_account_id=1")
+    ->execute();
 $invalidHandler = new QueueCoreOAuthRefreshHandler(
     static fn (): array => throw new MeliApiException('invalid_grant', 400, 'fake', ['error' => 'invalid_grant']),
     $pdo,

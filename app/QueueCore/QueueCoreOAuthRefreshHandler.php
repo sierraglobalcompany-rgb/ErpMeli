@@ -47,23 +47,28 @@ final class QueueCoreOAuthRefreshHandler implements QueueHandler
         if (!in_array((string) ($source['status'] ?? ''), ['conectado', 'connected'], true)) {
             return QueueResult::review('oauth_account_not_connected');
         }
-        if ((int) ($source['refresh_version'] ?? 0) < $expectedVersion) {
+        $currentVersion = (int) ($source['refresh_version'] ?? 0);
+        if ($currentVersion > $expectedVersion) {
+            return QueueResult::completed(0);
+        }
+        if ($currentVersion < $expectedVersion) {
             return QueueResult::review('oauth_refresh_version_regressed');
         }
         if (!$context->hasTime(2.0)) {
-            return QueueResult::retry('deadline_deferred', gmdate('Y-m-d H:i:s', time() + 30));
+            return QueueResult::automaticWait('deadline_deferred', gmdate('Y-m-d H:i:s', time() + 30));
         }
 
         try {
             ApiExecutionMetadataContext::withTransportMetadata([
                 'transport_meli_account_id' => $job->meliAccountId,
                 'expected_meli_user_id' => $expectedIdentity,
+                'expected_refresh_version' => $expectedVersion,
                 'queue_core_oauth_refresh' => 1,
                 'job_type' => 'oauth_refresh',
             ], fn (): array => ($this->refresh)($job->meliAccountId));
             return QueueResult::completed(1);
         } catch (OAuthRefreshBusyException) {
-            return QueueResult::retry('oauth_refresh_busy', gmdate('Y-m-d H:i:s', time() + 5));
+            return QueueResult::automaticWait('oauth_refresh_busy', gmdate('Y-m-d H:i:s', time() + 5));
         } catch (RotatedCredentialRecoveryUnavailableException) {
             return QueueResult::review('rotated_credential_recovery_unavailable');
         } catch (MeliApiException $error) {
@@ -102,6 +107,9 @@ final class QueueCoreOAuthRefreshHandler implements QueueHandler
                     $accountId,
                     $companyId,
                 ]);
+                if($update->rowCount()!==1){
+                    throw new \RuntimeException('OAuth reconnect state changed before the fenced update.');
+                }
             }
             if ($ownsTransaction) {
                 $pdo->commit();

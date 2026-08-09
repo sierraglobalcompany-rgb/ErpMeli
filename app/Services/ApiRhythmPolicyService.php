@@ -239,7 +239,7 @@ final class ApiRhythmPolicyService
             // diagnóstico. El límite autoritativo es la ventana rodante de
             // api_remote_permits y nunca se reinicia en el cambio de minuto.
             $pauseMs = 0;
-            $pdo->prepare(
+            $stateUpdate=$pdo->prepare(
                 "UPDATE api_rhythm_states
                  SET calls_in_block=?,block_started_at=COALESCE(block_started_at,UTC_TIMESTAMP(3)),
                      next_allowed_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? MICROSECOND),
@@ -247,17 +247,21 @@ final class ApiRhythmPolicyService
                                             ELSE block_pause_until END,
                      last_dispatched_at=UTC_TIMESTAMP(3),updated_at=UTC_TIMESTAMP(3)
                  WHERE scope_key='global' AND generation=?"
-            )->execute([
+            );
+            $stateUpdate->execute([
                 $calls,
                 (int) $policy['minimum_interval_ms'] * 1000,
                 $pauseMs,
                 $pauseMs * 1000,
                 (int) $row['generation'],
             ]);
-            $pdo->prepare(
+            if($stateUpdate->rowCount()!==1){$pdo->rollBack();return false;}
+            $permitUpdate=$pdo->prepare(
                 'UPDATE api_remote_permits SET status="dispatched",dispatched_at=UTC_TIMESTAMP(3),updated_at=UTC_TIMESTAMP(3)
                  WHERE id=? AND status="reserved" AND generation=?'
-            )->execute([(int) $row['id'], (int) $row['generation']]);
+            );
+            $permitUpdate->execute([(int) $row['id'], (int) $row['generation']]);
+            if($permitUpdate->rowCount()!==1){$pdo->rollBack();return false;}
             $pdo->commit();
             return true;
         } catch (Throwable $error) {
@@ -364,7 +368,7 @@ final class ApiRhythmPolicyService
     }
 
     /** @param array<string,mixed> $permit */
-    public function cancelBeforeTransport(array $permit): void
+    public function cancelBeforeTransport(array $permit,bool $strict=false): void
     {
         if (empty($permit['enabled']) || empty($permit['permit_token'])) {
             return;
@@ -387,21 +391,25 @@ final class ApiRhythmPolicyService
                 return;
             }
             if ((string) $row['status'] === 'dispatched') {
-                $pdo->prepare(
+                $stateUpdate=$pdo->prepare(
                     "UPDATE api_rhythm_states
                      SET calls_in_block=IF(calls_in_block>0,calls_in_block-1,0),
                          updated_at=UTC_TIMESTAMP(3)
                      WHERE scope_key='global' AND generation=?"
-                )->execute([(int) $row['generation']]);
+                );
+                $stateUpdate->execute([(int) $row['generation']]);
+                if($strict && $stateUpdate->rowCount()!==1)throw new \RuntimeException('Queue Core rhythm refund lost the global generation fence.');
             }
-            $pdo->prepare(
+            $permitUpdate=$pdo->prepare(
                 'UPDATE api_remote_permits
                  SET status="released",released_at=UTC_TIMESTAMP(3),dispatched_at=NULL,
                      blocking_scope="cancelled_before_transport",updated_at=UTC_TIMESTAMP(3)
                  WHERE id=? AND generation=? AND status=?'
-            )->execute([(int) $row['id'], (int) $row['generation'], (string) $row['status']]);
+            );
+            $permitUpdate->execute([(int) $row['id'], (int) $row['generation'], (string) $row['status']]);
+            if($strict && $permitUpdate->rowCount()!==1)throw new \RuntimeException('Queue Core rhythm permit refund lost its fence.');
             if ((string) $row['status'] === 'dispatched') {
-                $pdo->prepare(
+                $nextUpdate=$pdo->prepare(
                     "UPDATE api_rhythm_states SET
                        next_allowed_at=(SELECT DATE_ADD(MAX(dispatched_at),INTERVAL ? MICROSECOND)
                                         FROM api_remote_permits
@@ -409,7 +417,9 @@ final class ApiRhythmPolicyService
                        last_dispatched_at=(SELECT MAX(dispatched_at) FROM api_remote_permits
                                            WHERE status IN ('dispatched','completed') AND dispatched_at IS NOT NULL)
                      WHERE scope_key='global' AND generation=?"
-                )->execute([(int)$this->configuration()['minimum_interval_ms']*1000,(int)$row['generation']]);
+                );
+                $nextUpdate->execute([(int)$this->configuration()['minimum_interval_ms']*1000,(int)$row['generation']]);
+                if($strict && $nextUpdate->rowCount()!==1)throw new \RuntimeException('Queue Core rhythm recalculation lost its generation fence.');
             }
             $pdo->commit();
         } catch (Throwable $error) {

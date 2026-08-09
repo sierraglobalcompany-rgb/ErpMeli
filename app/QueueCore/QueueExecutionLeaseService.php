@@ -24,6 +24,10 @@ final class QueueExecutionLeaseService
             $generation = max(0, (int) ($row['generation'] ?? 0)) + 1;
             $stmt = $this->pdo->prepare("UPDATE queue_core_execution_leases SET launcher=?,owner_token=?,generation=?,heartbeat_at=UTC_TIMESTAMP(3),expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND) WHERE lease_key='global'");
             $stmt->execute([$launcher, $ownerToken, $generation, $leaseSeconds]);
+            if($stmt->rowCount()!==1){
+                $this->pdo->rollBack();
+                return null;
+            }
             $this->pdo->commit();
             return new QueueExecutionLease($launcher, $ownerToken, $generation, $leaseSeconds);
         } catch (Throwable $error) {

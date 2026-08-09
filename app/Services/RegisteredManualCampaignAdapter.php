@@ -120,6 +120,21 @@ final class RegisteredManualCampaignAdapter implements InteractiveCampaignAdapte
         if (!$sourceState->exists) {
             throw new RuntimeException('El recurso exacto ya no existe dentro del alcance congelado por la campaña.');
         }
+        if($context->expectedSourceAuthorityVersion!==null){
+            $latestState=(new ManualCampaignSourceInspector())->inspect(
+                $this->queueKey(),$sourceId,$accountId,$context->companyId
+            );
+            if(!$latestState->exists||$latestState->terminal||!$latestState->eligible){
+                throw new ManualStaleSourceException();
+            }
+            $latestAuthority=(new \App\QueueCore\ManualSourceAuthorityService())->inspect(
+                $this->queueKey(),$sourceId,$accountId,$context->companyId,$latestState
+            );
+            if($latestAuthority->explicitlyUnsupported
+                || !hash_equals($context->expectedSourceAuthorityVersion,$latestAuthority->durableInputVersion)){
+                throw new ManualStaleSourceException();
+            }
+        }
         $id = (int) explode(':', $sourceId, 2)[0];
         $queueKey = $this->queueKey();
         $result = match ($queueKey) {

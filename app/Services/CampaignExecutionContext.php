@@ -14,6 +14,7 @@ final readonly class CampaignExecutionContext
         public int $leaseGeneration,
         public float $deadline,
         public int $requestedBlockSize,
+        public ?string $expectedSourceAuthorityVersion = null,
     ) {
     }
 }

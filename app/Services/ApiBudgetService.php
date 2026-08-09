@@ -163,7 +163,7 @@ final class ApiBudgetService
      *
      * @param array<string,mixed> $reservation
      */
-    public function releaseReservation(array $reservation): void
+    public function releaseReservation(array $reservation,bool $strict=false): void
     {
         $windowStart = trim((string) ($reservation['window_started_at'] ?? ''));
         $windowSeconds = (int) ($reservation['window_seconds'] ?? 0);
@@ -187,11 +187,15 @@ final class ApiBudgetService
                         'window_started_at' => $windowStart,
                         'window_seconds' => $windowSeconds,
                     ]);
+                    if($strict && $stmt->rowCount()!==1){
+                        throw new \RuntimeException('Queue Core budget refund lost an exact scope fence.');
+                    }
                 }
             } catch (Throwable $error) {
                 Logger::write('warning', 'No se pudo devolver una reserva API no despachada.', [
                     'error' => Logger::redactString($error->getMessage()),
                 ]);
+                if($strict)throw $error;
             }
         }
 

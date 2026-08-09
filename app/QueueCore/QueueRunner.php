@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\QueueCore;
 
 use App\Services\ApiBudgetExhaustedException;
+use App\Services\ApiRhythmDeferredException;
 use App\Services\ApiExecutionMetadataContext;
 use App\Services\ApiManualPauseException;
 use App\Services\CronDeadlineDeferredException;
@@ -59,6 +60,7 @@ final class QueueRunner
             }catch(CronDeadlineDeferredException $e){$result=QueueResult::automaticWait('deadline',$e->nextSafeAt??gmdate('Y-m-d H:i:s',time()+60));
             }catch(ApiManualPauseException $e){$result=QueueResult::automaticWait('api_paused',$e->resumeAt??gmdate('Y-m-d H:i:s',time()+60));
             }catch(QueueCorePreRemoteBlockedException){$result=QueueResult::automaticWait('pre_remote_blocked',gmdate('Y-m-d H:i:s',time()+5));
+            }catch(ApiRhythmDeferredException $e){$result=QueueResult::automaticWait('rhythm_deferred',$e->nextSafeAt);
             }catch(ApiBudgetExhaustedException $e){$result=QueueResult::automaticWait('policy_deferred',$e->nextSafeAt);
             }catch(ManualRemoteCallLimitException){$result=QueueResult::review('remote_call_limit_exceeded');
             }catch(MeliApiException $e){$result=QueueResult::retry('meli_http_error',null,$e->httpStatus);

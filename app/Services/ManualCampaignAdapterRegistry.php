@@ -53,22 +53,48 @@ final class ManualCampaignAdapterRegistry
     {
         $ready = [];
         $pending = [];
+        $exactCertified = [];
+        $explicitlyUnsupported = [];
+        $eligibleWithoutSourceBoundCapability = [];
         $adapters=[];
+        $remoteCapabilities = new \App\QueueCore\ManualRemoteCapabilityRegistry();
         foreach ($this->definitions() as $definition) {
             $adapter=new RegisteredManualCampaignAdapter($definition);
-            if ($adapter->supportsExact()) {
-                $ready[] = $adapter->queueKey();
-            } else {
+            $usesApi=(bool)($definition['uses_api']??false);
+            $operationKey=(string)($definition['operation_key']??'local_maintenance');
+            $hasStaticCapability=!$usesApi || $remoteCapabilities->forOperation($operationKey)!==null;
+            if (!$adapter->supportsExact()) {
+                $status='explicitly_unsupported';
+                $explicitlyUnsupported[]=$adapter->queueKey();
                 $pending[] = $adapter->queueKey();
+            } elseif (!$hasStaticCapability) {
+                // Esta categoría no se mezcla con «no soportado»: el adaptador
+                // afirma elegibilidad exacta, pero no puede probar un contrato
+                // físico source-bound. Debe permanecer fail-closed.
+                $status='eligible_without_source_bound_capability';
+                $eligibleWithoutSourceBoundCapability[]=$adapter->queueKey();
+                $pending[] = $adapter->queueKey();
+            } else {
+                $status='exact_certified';
+                $exactCertified[]=$adapter->queueKey();
+                $ready[] = $adapter->queueKey();
             }
             $adapters[$adapter->queueKey()]=[
-                'status'=>$adapter->supportsExact()?'exact_single_step':'unsupported',
-                'uses_api'=>(bool)($definition['uses_api']??false),
-                'operation_key'=>(string)($definition['operation_key']??'local_maintenance'),
+                'status'=>$status,
+                'uses_api'=>$usesApi,
+                'operation_key'=>$operationKey,
                 'background_continuation'=>false,
             ];
         }
-        return ['ready' => $ready, 'pending' => $pending, 'all_exact' => $pending === [],'adapters'=>$adapters];
+        return [
+            'ready'=>$ready,
+            'pending'=>$pending,
+            'all_exact'=>$pending===[],
+            'exact_certified'=>$exactCertified,
+            'explicitly_unsupported'=>$explicitlyUnsupported,
+            'eligible_without_source_bound_capability'=>$eligibleWithoutSourceBoundCapability,
+            'adapters'=>$adapters,
+        ];
     }
 
     /** @return array<string,mixed> */

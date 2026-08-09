@@ -4860,8 +4860,8 @@
         },
         "runtime_resources_release_production_legacy_quarantine_2_36_2_json": {
             "path": "resources/release/production-legacy-quarantine-2.36.2.json",
-            "sha256": "d7a0fefe15d2925afcd18e58558dc014b57ecaf489e98c69728cbcb369257a0b",
-            "sha256_lf": "d7a0fefe15d2925afcd18e58558dc014b57ecaf489e98c69728cbcb369257a0b",
+            "sha256": "1c9979bef2ff6ffbafe2ffa76c6ba5bc6f399fbd989c17afc68e2ea069b286cf",
+            "sha256_lf": "1c9979bef2ff6ffbafe2ffa76c6ba5bc6f399fbd989c17afc68e2ea069b286cf",
             "text": true
         },
         "runtime_resources_release_queue_core_runtime_dependencies_json": {

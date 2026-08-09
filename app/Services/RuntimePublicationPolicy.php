@@ -28,6 +28,18 @@ final class RuntimePublicationPolicy
     ];
     private const MANIFEST_CLASSIFICATIONS = ['RUNTIME_REQUIRED', 'MIGRATION_DEPLOY_REQUIRED'];
     private const DEPENDENCY_REGISTRY = 'resources/release/queue-core-runtime-dependencies.json';
+    /** @var list<string> */
+    private const OPERATOR_RUNTIME_BIN = [
+        'bin/create_admin.php',
+        'bin/database_growth_audit.php',
+        'bin/database_physical_recovery.php',
+        'bin/db_explain_audit.php',
+        'bin/meli_api_audit.php',
+        'bin/migrate.php',
+        'bin/query_performance_report.php',
+        'bin/queue_core_dependency_check.php',
+        'bin/runtime_process_audit.php',
+    ];
     public const BASE_COMMIT = '0cb5ddab368d033e15bdb040b53bb8592248246c';
     public const INSTALLED_BASE_COMMIT = 'f91cd534d271b964db1ad9e682260475eca96820';
     public const VERSION = '2.36.1';
@@ -348,7 +360,7 @@ final class RuntimePublicationPolicy
         $required = [
             'VERSION', 'asset.php', 'bootstrap.php', 'index.php', 'login.php', 'actualizar.php',
             'stop.php', 'mantenimiento.php', 'recuperar.php', 'cron-status.php', 'launcher/entrypoint.php',
-            'public/index.php', 'resources/runtime-manifest.json',
+            'public/index.php', 'bin/migrate.php', 'resources/runtime-manifest.json',
         ];
         foreach ($required as $path) {
             if (!in_array($path, $paths, true)) {
@@ -549,6 +561,9 @@ final class RuntimePublicationPolicy
         $top = strtolower($segments[0]);
         if ($top === 'tests') {
             return 'TEST_ONLY';
+        }
+        if ($top === 'bin' && in_array($path, self::OPERATOR_RUNTIME_BIN, true)) {
+            return 'MANAGED_RUNTIME';
         }
         if (in_array($top, ['bin', '.github', 'tools'], true)) {
             return 'BUILD_ONLY';

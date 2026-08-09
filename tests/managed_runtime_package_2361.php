@@ -35,6 +35,10 @@ foreach ([
     'public/index.php', 'public/assets/app.css', 'resources/runtime-manifest.json',
     'resources/mercadolibre-api/generated/endpoints.json',
     'resources/release/queue-core-runtime-dependencies.json',
+    'bin/create_admin.php', 'bin/database_growth_audit.php', 'bin/database_physical_recovery.php',
+    'bin/db_explain_audit.php', 'bin/meli_api_audit.php', 'bin/migrate.php',
+    'bin/query_performance_report.php', 'bin/queue_core_dependency_check.php',
+    'bin/runtime_process_audit.php',
 ] as $required) {
     $assert(isset($pathSet[$required]), 'Required managed runtime missing: ' . $required);
 }

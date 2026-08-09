@@ -55,8 +55,8 @@ $pdo->exec("CREATE TABLE queue_core_jobs(
 $pdo->exec("CREATE TABLE queue_core_events(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,job_id BIGINT UNSIGNED NULL,company_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,lane VARCHAR(40),event_type VARCHAR(40),event_count INT,resources_count INT) ENGINE=InnoDB");
 $pdo->exec("CREATE TABLE queue_core_scheduler_state(scheduler_key VARCHAR(32) PRIMARY KEY,cycle_position INT NOT NULL DEFAULT 0,generation BIGINT UNSIGNED NOT NULL DEFAULT 0) ENGINE=InnoDB");
 $pdo->exec("INSERT INTO queue_core_scheduler_state VALUES('default',0,0)");
-$pdo->exec("CREATE TABLE queue_engine_control(control_key VARCHAR(32) PRIMARY KEY,active_engine VARCHAR(16) NOT NULL,generation BIGINT UNSIGNED NOT NULL,changed_at DATETIME(3) NOT NULL,changed_by VARCHAR(96) NOT NULL) ENGINE=InnoDB");
-$pdo->exec("INSERT INTO queue_engine_control VALUES('primary','v4',1,UTC_TIMESTAMP(3),'test')");
+$pdo->exec("CREATE TABLE queue_engine_control(control_key VARCHAR(32) PRIMARY KEY,active_engine VARCHAR(16) NOT NULL,readiness_mode ENUM('idle','preparing') NOT NULL DEFAULT 'idle',readiness_context_hash CHAR(64) NULL,generation BIGINT UNSIGNED NOT NULL,changed_at DATETIME(3) NOT NULL,changed_by VARCHAR(96) NOT NULL) ENGINE=InnoDB");
+$pdo->exec("INSERT INTO queue_engine_control VALUES('primary','v4','idle',NULL,1,UTC_TIMESTAMP(3),'test')");
 $migration = preg_replace('/^--.*$/m', '', (string) file_get_contents($root . '/database/migrations/285_queue_core_webhook_ownership_b2.sql'));
 $pdo->exec((string) $migration);
 $lifecycleMigration = preg_replace('/^--.*$/m', '', (string) file_get_contents($root . '/database/migrations/289_queue_core_webhook_lifecycle_b2_1.sql'));

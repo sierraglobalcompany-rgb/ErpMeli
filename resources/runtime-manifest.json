@@ -10,7 +10,7 @@
         "package_file_count": 810,
         "component_count": 809,
         "paths_sha256": "61263f2d00d462bbb6286d75ab09232a4449eb5d54ca2c2b991ed76c68bd73ff",
-        "dependency_registry_sha256": "292f6c66b11d69941015bcc5cb74463d6e2e343c695a508cc942d5ace8a2ada9",
+        "dependency_registry_sha256": "d87f568b04cdefc1b423c9e8c42e7a367d433ef4e63f098fc6fe462c8505dab5",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -4848,8 +4848,8 @@
         },
         "runtime_resources_release_queue_core_runtime_dependencies_json": {
             "path": "resources/release/queue-core-runtime-dependencies.json",
-            "sha256": "292f6c66b11d69941015bcc5cb74463d6e2e343c695a508cc942d5ace8a2ada9",
-            "sha256_lf": "292f6c66b11d69941015bcc5cb74463d6e2e343c695a508cc942d5ace8a2ada9",
+            "sha256": "d87f568b04cdefc1b423c9e8c42e7a367d433ef4e63f098fc6fe462c8505dab5",
+            "sha256_lf": "d87f568b04cdefc1b423c9e8c42e7a367d433ef4e63f098fc6fe462c8505dab5",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

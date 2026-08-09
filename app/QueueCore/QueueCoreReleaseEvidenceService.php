@@ -100,7 +100,7 @@ final class QueueCoreReleaseEvidenceService
         ];
     }
 
-    /** @return array{ok:bool,sha256:?string,bytes:int,path_verified:bool,format_valid:bool,table_count:int,data_statements:int,current_table_count:int,missing_table_count:int,schema_mismatch_count:int,critical_data_missing_count:int,critical_row_count_mismatch_count:int} */
+    /** @return array{ok:bool,sha256:?string,bytes:int,path_verified:bool,format_valid:bool,table_count:int,data_statements:int,current_table_count:int,missing_table_count:int,schema_mismatch_count:int,identity_mismatch_count:int,critical_data_missing_count:int,critical_row_count_mismatch_count:int} */
     public function verifyBackup(string $path, string $expectedSha256, bool $allowCommercialGrowth = false): array
     {
         $expected = strtolower(trim($expectedSha256));
@@ -211,7 +211,6 @@ final class QueueCoreReleaseEvidenceService
         $persistedSample = (int) ($calculation['measurement_resources_persisted'] ?? 0);
         $backlogResources = max(0, (int) ($calculation['measurement_backlog_resources'] ?? 0));
         $catchupMinutes = isset($calculation['catchup_minutes'])
-            && is_numeric($calculation['catchup_minutes'])
             ? (float) $calculation['catchup_minutes']
             : null;
         $profileValid = $profile['cadence_seconds'] > 0
@@ -468,6 +467,37 @@ final class QueueCoreReleaseEvidenceService
         return strtolower(rtrim($sql," ;\t\r\n"));
     }
 
+    private function queueSnapshotColumnsMatchMigration284(): bool
+    {
+        $statement=$this->pdo->query(
+            "SELECT LOWER(column_name) column_name,LOWER(data_type) data_type,
+                    character_maximum_length,datetime_precision,UPPER(is_nullable) is_nullable
+             FROM information_schema.columns
+             WHERE table_schema=DATABASE()
+               AND table_name='meli_orders'
+               AND column_name IN ('queue_snapshot_version','queue_snapshot_at')"
+        );
+        $columns=[];
+        foreach($statement->fetchAll(PDO::FETCH_NUM) as $column){
+            $columns[(string)($column[0]??'')]=[
+                'data_type'=>(string)($column[1]??''),
+                'character_maximum_length'=>$column[2]??null,
+                'datetime_precision'=>$column[3]??null,
+                'is_nullable'=>(string)($column[4]??''),
+            ];
+        }
+        $version=$columns['queue_snapshot_version']??null;
+        $timestamp=$columns['queue_snapshot_at']??null;
+        return is_array($version)
+            && $version['data_type']==='char'
+            && (int)($version['character_maximum_length']??0)===64
+            && $version['is_nullable']==='YES'
+            && is_array($timestamp)
+            && $timestamp['data_type']==='datetime'
+            && (int)($timestamp['datetime_precision']??-1)===3
+            && $timestamp['is_nullable']==='YES';
+    }
+
     private function countSqlValueTuples(string $sql): int
     {
         $count=0;$depth=0;$quote=null;$escaped=false;$length=strlen($sql);
@@ -595,8 +625,13 @@ final class QueueCoreReleaseEvidenceService
         );
         $current=array_map('strval',$statement->fetchAll(PDO::FETCH_COLUMN));
         $missing=0;$schemaMismatch=0;$schemaMismatchTables=[];
+        $queueSnapshotContractValid=$this->queueSnapshotColumnsMatchMigration284();
+        if(!$queueSnapshotContractValid){
+            $schemaMismatch++;$schemaMismatchTables[]='meli_orders';
+        }
         foreach($current as $table){
             if(!isset($dumpTables[strtolower($table)]))$missing++;
+            if($table==='meli_orders'&&!$queueSnapshotContractValid)continue;
             $show=$this->pdo->query('SHOW CREATE TABLE `'.$table.'`')->fetch(PDO::FETCH_NUM);
             $liveCreate=is_array($show)?(string)($show[1]??''):'';
             $liveHash=$liveCreate!==''?hash('sha256',$this->canonicalCreateSql($liveCreate,$table)):'';

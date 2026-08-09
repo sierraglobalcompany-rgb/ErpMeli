@@ -31,9 +31,14 @@
       "classification": "RUNTIME_REQUIRED",
       "kind": "exact",
       "values": [
-        "resources/mercadolibre-api/generated/notification-topics.json",
-        "resources/release/queue-core-runtime-dependencies.json"
+        "resources/mercadolibre-api/generated/notification-topics.json"
       ]
+    },
+    {
+      "id": "runtime-release-authorities",
+      "classification": "RUNTIME_REQUIRED",
+      "kind": "regex",
+      "value": "#^resources/release/[A-Za-z0-9._-]+\\.json$#D"
     },
     {
       "id": "runtime-php",
@@ -53,6 +58,7 @@
       "kind": "exact",
       "values": [
         ".gitattributes",
+        ".gitignore",
         "VERSION",
         "bin/build_runtime_manifest_b21.php",
         "bin/build_managed_runtime_release.php",
@@ -67,6 +73,12 @@
       "classification": "TEST_ONLY",
       "kind": "regex",
       "value": "#^tests/.+\\.php$#D"
+    },
+    {
+      "id": "documentation",
+      "classification": "DOCUMENTATION",
+      "kind": "regex",
+      "value": "#^docs/.+$#D"
     }
   ],
   "runtime_dependencies": [
@@ -218,6 +230,13 @@
         "operations": ["file_get_contents", "require", "require_once"],
         "bounded_by": "Release root bootstrap, fixed jobs helpers and runtime-manifest.",
         "data_kind": "packaged_runtime_code"
+      },
+      {
+        "id": "exports-view-tabs",
+        "source_regex": "#^app/Views/exports/index\\.php$#D",
+        "operations": ["require"],
+        "bounded_by": "Exact packaged runtime view app/Views/reports/_tabs.php.",
+        "data_kind": "packaged_runtime_view"
       },
       {
         "id": "runtime-publication-installed-registry",

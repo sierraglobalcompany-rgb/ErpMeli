@@ -64,26 +64,25 @@ $gitTopLevel = static function (string $path): ?string {
     $resolved = realpath(trim($stdout));
     return $resolved === false ? null : $resolved;
 };
-if ($gitExact) {
-    $topLevel = $gitTopLevel($source);
-    $sameRoot = $topLevel !== null && (PHP_OS_FAMILY === 'Windows'
-        ? strcasecmp($topLevel, $source) === 0
-        : $topLevel === $source);
-    if (!$sameRoot) {
+$topLevel = $gitTopLevel($source);
+$sameRoot = $topLevel !== null && (PHP_OS_FAMILY === 'Windows'
+    ? strcasecmp($topLevel, $source) === 0
+    : $topLevel === $source);
+if ($gitExact && !$sameRoot) {
         fwrite(STDERR, "--source debe ser exactamente el toplevel Git para construir una release Git-exact.\n");
         exit(3);
-    }
+}
+$headVersion = $sameRoot ? trim(RuntimePublicationPolicy::gitBlob($source, 'HEAD', 'VERSION')) : null;
+if ($headVersion === RuntimePublicationPolicy::VERSION && !$gitExact) {
+    fwrite(STDERR, "La release 2.36.0 exige --git-exact=1.\n");
+    exit(3);
 }
 $version = $gitExact
-    ? trim(RuntimePublicationPolicy::gitBlob($source, 'HEAD', 'VERSION'))
+    ? (string) $headVersion
     : trim((string) (@file_get_contents($source . '/VERSION') ?: ($arguments['version'] ?? '')));
 if (preg_match('/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?$/', $version) !== 1) {
     fwrite(STDERR, "VERSION no es válida.\n");
     exit(2);
-}
-if ($version === RuntimePublicationPolicy::VERSION && !$gitExact) {
-    fwrite(STDERR, "La release 2.36.0 exige --git-exact=1.\n");
-    exit(3);
 }
 $releaseId = strtolower((string) ($arguments['release-id'] ?? ($version . '-' . gmdate('YmdHis'))));
 if (preg_match('/^[a-z0-9][a-z0-9._-]{2,119}$/', $releaseId) !== 1) {

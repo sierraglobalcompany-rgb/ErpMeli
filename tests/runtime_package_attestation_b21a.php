@@ -151,6 +151,15 @@ try {
         '--release-id=b21a-dirty-version-test',
     ], $clone);
     $assert($dirtyExit === 0 && str_contains($dirtyOutput, '"ok":true'), 'Dirty working-tree VERSION influenced the Git-exact builder.');
+    [$nonExactExit, , $nonExactError] = $run([
+        PHP_BINARY,
+        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',
+        '--source=' . $clone,
+        '--dry-run=1',
+        '--release-id=b21a-non-exact-bypass-test',
+    ], $clone);
+    $assert($nonExactExit !== 0 && str_contains($nonExactError, 'exige --git-exact=1'),
+        'Dirty working-tree VERSION bypassed mandatory Git-exact publication.');
     [$subdirExit, , $subdirError] = $run([
         PHP_BINARY,
         $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',

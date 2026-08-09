@@ -3,7 +3,7 @@
     "version": "2.36.0",
     "build_id": "erp-meli-2.36.0-cron-v4-readonly-rc1-20260809",
     "built_at": "2026-08-09T00:00:00Z",
-    "minimum_migration": "292_queue_core_authoritative_convergence_b2_1.sql",
+    "minimum_migration": "293_queue_core_runtime_profile_defaults_b2_1.sql",
     "components": {
         "runtime_app_controllers_meliaccountcontroller_php": {
             "path": "app/Controllers/MeliAccountController.php",
@@ -241,8 +241,8 @@
         },
         "runtime_app_queuecore_queuecorepreflightservice_php": {
             "path": "app/QueueCore/QueueCorePreflightService.php",
-            "sha256": "e96d644062a9ea73eac5aeabf0993a50962987d386e82ea98f9a8cb524521176",
-            "sha256_lf": "8dcf40979647f3925712c8be3d5c15cd1af9182146a1818f5bfb15c9002b7d56",
+            "sha256": "8c879fac0a10719f06c44ca0de40083d7ad56f636a1e6a8e454ad874a630c783",
+            "sha256_lf": "487316b223c5013351e49d63258e27144702106e667797d6f9361cc355316ea0",
             "text": true
         },
         "runtime_app_queuecore_queuecorereadinessreceiptservice_php": {
@@ -547,8 +547,8 @@
         },
         "runtime_app_services_queuecoredeploymentgateservice_php": {
             "path": "app/Services/QueueCoreDeploymentGateService.php",
-            "sha256": "61c32b9d02c96d0badb6577f979fde2e52c1d4012d0230a66f370c9891b9022b",
-            "sha256_lf": "e91b2f233123bfb624700892104e763ba03fba2ef19b3cbc489e2161989ca385",
+            "sha256": "58310f55351b77eca09a9c16c763f3be229aa0a7bc7f05697d893d02535b53d2",
+            "sha256_lf": "7207b72d41d8530b43326a00abe0414fccd493ea7f35235bee3d336e230114f1",
             "text": true
         },
         "runtime_app_services_queuecorerollbackservice_php": {
@@ -667,14 +667,20 @@
         },
         "runtime_database_migrations_291_queue_core_release_health_capacity_b2_1_sql": {
             "path": "database/migrations/291_queue_core_release_health_capacity_b2_1.sql",
-            "sha256": "ca91f1e4328d6d5800bb48f2bee808908a0611ef254632e2e2ad6567954139ec",
-            "sha256_lf": "ca91f1e4328d6d5800bb48f2bee808908a0611ef254632e2e2ad6567954139ec",
+            "sha256": "f404b208c9ea0f6cf5f9b7a0b7102b3668666e75f03d108c23374db7160975e6",
+            "sha256_lf": "f404b208c9ea0f6cf5f9b7a0b7102b3668666e75f03d108c23374db7160975e6",
             "text": true
         },
         "runtime_database_migrations_292_queue_core_authoritative_convergence_b2_1_sql": {
             "path": "database/migrations/292_queue_core_authoritative_convergence_b2_1.sql",
             "sha256": "928f7ae60ba3a3ca05b664c7260b618317ae3b42b865d4a6e0d675d9695e219c",
             "sha256_lf": "928f7ae60ba3a3ca05b664c7260b618317ae3b42b865d4a6e0d675d9695e219c",
+            "text": true
+        },
+        "runtime_database_migrations_293_queue_core_runtime_profile_defaults_b2_1_sql": {
+            "path": "database/migrations/293_queue_core_runtime_profile_defaults_b2_1.sql",
+            "sha256": "63418ad78a46d2326eb2c34661a13665e9ee0b310abca16215cba51b61fed1dd",
+            "sha256_lf": "63418ad78a46d2326eb2c34661a13665e9ee0b310abca16215cba51b61fed1dd",
             "text": true
         },
         "cron_probe": {

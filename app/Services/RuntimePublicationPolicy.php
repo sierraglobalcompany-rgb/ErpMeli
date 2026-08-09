@@ -11,6 +11,10 @@ final class RuntimePublicationPolicy
 {
     /** @var array<string,list<array{path:string,mode:string,object:string,size:int,sha256:string}>> */
     private static array $packageEntryCache = [];
+    /** @var array<string,string> */
+    private static array $gitBlobCache = [];
+    /** @var array<string,string> */
+    private static array $resolvedRefCache = [];
     private const CLASSIFICATIONS = [
         'RUNTIME_REQUIRED',
         'RUNTIME_OPTIONAL_FAIL_CLOSED',
@@ -359,7 +363,13 @@ final class RuntimePublicationPolicy
         if (!self::safePath($path)) {
             throw new RuntimeException('Unsafe Git path.');
         }
-        return self::git($root, ['show', $head . ':' . $path]);
+        $commit = self::resolveCommit($root, $head);
+        $cacheKey = str_replace('\\', '/', $root) . '|' . $commit . '|' . $path;
+        if (!array_key_exists($cacheKey, self::$gitBlobCache)) {
+            self::$gitBlobCache[$cacheKey] = self::git($root, ['show', $commit . ':' . $path]);
+        }
+
+        return self::$gitBlobCache[$cacheKey];
     }
 
     /** @return array<string,array{mode:string,type:string,object:string}> */
@@ -598,6 +608,19 @@ final class RuntimePublicationPolicy
     {
         sort($paths, SORT_STRING);
         return hash('sha256', implode("\n", $paths) . "\n");
+    }
+
+    private static function resolveCommit(string $root, string $head): string
+    {
+        if (preg_match('/^[a-f0-9]{40}$/', $head) === 1) {
+            return $head;
+        }
+        $cacheKey = str_replace('\\', '/', $root) . '|' . $head;
+        if (!isset(self::$resolvedRefCache[$cacheKey])) {
+            self::$resolvedRefCache[$cacheKey] = trim(self::git($root, ['rev-parse', $head]));
+        }
+
+        return self::$resolvedRefCache[$cacheKey];
     }
 
     /** @param list<string> $arguments */

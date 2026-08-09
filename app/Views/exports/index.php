@@ -16,5 +16,3 @@ $activeReportTab = 'exports';
     </div>
   </div>
 </section>
-
-

@@ -305,7 +305,7 @@ final class LogQueryService
         $where = []; $params = [];
         $this->namedAccountScope($where, $params, 'q.meli_account_id', $filters);
         $this->dateWhere($where, $params, 'q.asked_at', $filters);
-        $stmt = Database::connection()->prepare('SELECT q.id,q.asked_at created_at,"questions" log_type,q.text message,q.status level,a.account_name,q.external_item_id endpoint_path FROM meli_questions q JOIN meli_accounts a ON a.id=q.meli_account_id WHERE ' . implode(' AND ', $where) . ' ORDER BY q.asked_at DESC LIMIT 300');
+        $stmt = Database::connection()->prepare("SELECT q.id,q.asked_at created_at,'questions' log_type,'Pregunta recibida' message,q.status level,a.account_name,q.external_item_id endpoint_path FROM meli_questions q JOIN meli_accounts a ON a.id=q.meli_account_id WHERE " . implode(' AND ', $where) . ' ORDER BY q.asked_at DESC LIMIT 300');
         $stmt->execute($params);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }

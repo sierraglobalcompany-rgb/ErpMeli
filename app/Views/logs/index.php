@@ -154,7 +154,6 @@ if (empty($summary['available'])) {
     </div>
   </section>
 <?php endif; ?>
-
 <?php if (in_array($view, ['attention', 'technical'], true)): ?>
   <?php if ($view === 'attention'): ?>
   <section class="panel">
@@ -209,7 +208,6 @@ if (empty($summary['available'])) {
     <?php if ($result['pages'] > 1): ?><nav class="pagination" aria-label="Páginas de logs"><?php if ($result['page'] > 1): ?><a class="btn" href="?<?= View::e($query(['page' => $result['page'] - 1])) ?>">Anterior</a><?php endif; ?><span>Página <?= (int) $result['page'] ?> de <?= (int) $result['pages'] ?></span><?php if ($result['page'] < $result['pages']): ?><a class="btn" href="?<?= View::e($query(['page' => $result['page'] + 1])) ?>">Siguiente</a><?php endif; ?></nav><?php endif; ?>
   </section>
 <?php endif; ?>
-
 <details class="panel mt-2 api-log-guide">
   <summary>Cómo interpretar estos eventos</summary>
   <div class="api-log-guide-body"><p>Un código HTTP no determina por sí solo el riesgo. Un 404 suele indicar que el recurso no existe y no implica bloqueo. El ERP también evalúa la operación, repetición, cuenta y si la consulta llegó realmente a Mercado Libre.</p><div class="api-risk-legend" aria-label="Niveles de interpretación"><span><i class="risk-dot is-neutral"></i><strong>Informativo</strong> Dato opcional ausente o consulta correcta.</span><span><i class="risk-dot is-warning"></i><strong>Atención</strong> Conviene revisar; sin riesgo inmediato.</span><span><i class="risk-dot is-protected"></i><strong>Pausa preventiva</strong> El ERP aplazó la consulta.</span><span><i class="risk-dot is-critical"></i><strong>Crítico</strong> Señal real de autorización o exceso.</span></div></div>
@@ -220,5 +218,3 @@ if (empty($summary['available'])) {
 </section>
 <section class="panel table-panel"><header class="panel-head"><div><h2>Eventos recientes</h2><p>Más recientes primero</p></div></header><div class="table-scroll"><table class="data-table"><caption>Eventos técnicos del sistema</caption><thead><tr><th>Fecha</th><th>Tipo</th><th>Cuenta</th><th>Estado</th><th>Operación</th><th>Mensaje</th></tr></thead><tbody><?php foreach ($rows as $row): ?><tr><td><?= View::e(DateTimePresenter::format($row['created_at'] ?? null)) ?></td><td><?= View::e((string) ($row['log_type'] ?? '')) ?></td><td><?= View::e((string) ($row['account_name'] ?? '—')) ?></td><td><?= View::e((string) ($row['level'] ?? '—')) ?></td><td><?= View::e((string) ($row['endpoint_path'] ?? '—')) ?></td><td><?= View::e((string) ($row['message'] ?? '—')) ?></td></tr><?php endforeach; ?></tbody></table></div></section>
 <?php endif; ?>
-
-

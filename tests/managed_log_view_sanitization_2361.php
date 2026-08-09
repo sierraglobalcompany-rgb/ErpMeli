@@ -17,6 +17,12 @@ foreach (['response_json context_json', 'raw_json context_json', 'e.response_jso
         $failures[] = 'query_selects_' . str_replace([' ', '.'], '_', $unsafe);
     }
 }
+if (str_contains($query, 'q.text message')) {
+    $failures[] = 'query_selects_buyer_question_text';
+}
+if (!str_contains($query, "'Pregunta recibida' message")) {
+    $failures[] = 'fixed_question_message_missing';
+}
 
 if (!str_contains($query, 'BusinessScopeContext') || !str_contains($query, 'namedAccountScope')) {
     $failures[] = 'account_scope_missing';

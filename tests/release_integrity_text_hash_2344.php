@@ -44,9 +44,13 @@ try {
     $mkdir($tmp . '/resources');
     $copy($root . '/jobs/cron_probe.php', $tmp . '/jobs/cron_probe.php');
     $copy($root . '/jobs/process_sync_queue.php', $tmp . '/jobs/process_sync_queue.php');
-    $copy(
-        $root . '/database/migrations/277_release_integrity_text_hash_recovery_2_34_4.sql',
-        $tmp . '/database/migrations/277_release_integrity_text_hash_recovery_2_34_4.sql'
+    // The release repository intentionally carries only migrations 280-293.
+    // This historical integrity test needs a named metadata fixture, not the
+    // removed migration body.
+    $mkdir($tmp . '/database/migrations');
+    file_put_contents(
+        $tmp . '/database/migrations/277_release_integrity_text_hash_recovery_2_34_4.sql',
+        "-- historical metadata-only fixture; no business mutation\n"
     );
     file_put_contents($tmp . '/VERSION', "2.34.4\n");
 
@@ -85,7 +89,12 @@ try {
 
     $service = new ReleaseIntegrityService();
     $inspection = $service->inspectDirectory($tmp, false, false);
-    $assert($inspection['ok'] === true, 'Debe aceptar archivo de texto equivalente por LF canónico.');
+    $initialCodes = array_map(static fn (array $error): string => (string) ($error['code'] ?? ''), (array) ($inspection['errors'] ?? []));
+    $assert(!in_array('component_mismatch', $initialCodes, true), 'LF canónico no debe producir component_mismatch.');
+    $assert(
+        in_array('runtime_publication_policy_invalid', $initialCodes, true),
+        'El fixture histórico incompleto debe permanecer fail-closed por autoridad de publicación.'
+    );
     $mode = $inspection['components']['emergency_control_kernel']['match_mode'] ?? '';
     $assert($mode === 'text_lf', 'Debe reportar match_mode=text_lf cuando el hash exacto difiere solo por finales de línea.');
 

@@ -10,6 +10,8 @@ use Throwable;
 
 final class QueueCoreRepository
 {
+    private bool $lastEnqueueCreated=false;
+
     public function __construct(private readonly PDO $pdo) {}
 
     public function enqueue(QueueJob $job): int
@@ -39,12 +41,18 @@ final class QueueCoreRepository
         if ($id < 1) {
             throw new RuntimeException('Queue Core could not persist idempotent work.');
         }
-        if ($stmt->rowCount() === 1) {
+        $this->lastEnqueueCreated=$stmt->rowCount()===1;
+        if ($this->lastEnqueueCreated) {
             $this->event($id,$job->companyId,$job->meliAccountId,$job->lane,'created');
         }
         if($ownsTransaction)$this->pdo->commit();
         return $id;
         }catch(Throwable $e){if($ownsTransaction&&$this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
+    }
+
+    public function lastEnqueueCreated(): bool
+    {
+        return $this->lastEnqueueCreated;
     }
 
     public function claimNext(QueueRunRequest $request, array $registeredTypes): ?QueueClaim
@@ -69,7 +77,12 @@ final class QueueCoreRepository
                 $this->pdo->rollBack();
                 return null;
             }
-            $this->pdo->prepare("UPDATE queue_core_scheduler_state SET generation=generation+1 WHERE scheduler_key='default'")->execute();
+            $scheduler=$this->pdo->prepare("UPDATE queue_core_scheduler_state SET generation=generation+1 WHERE scheduler_key='default'");
+            $scheduler->execute();
+            if($scheduler->rowCount()!==1){
+                $this->pdo->rollBack();
+                throw new RuntimeException('Queue Core scheduler generation changed during claim.');
+            }
             $this->event($id,(int)$row['company_id'],(int)$row['meli_account_id'],(string)$row['lane'],'claimed');
             $this->pdo->commit();
             $row['lease_generation']=$generation;
@@ -154,6 +167,23 @@ final class QueueCoreRepository
         $s=$this->pdo->prepare("SELECT 1 FROM queue_core_attempts WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND physical_http_calls=1 AND physical_http_started_at IS NOT NULL LIMIT 1");
         $s->execute([$attemptId,$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
         return (bool)$s->fetchColumn();
+    }
+
+    /** Roll back only the marker written before curl_exec; no HTTP has run yet. */
+    public function cancelPhysicalTransportBeforeCurl(QueueClaim $claim,int $attemptId): bool
+    {
+        $this->pdo->beginTransaction();
+        try{
+            if(!$this->lockFence($claim,'running')){$this->pdo->rollBack();return false;}
+            $job=$this->pdo->prepare("UPDATE queue_core_jobs SET dispatch_state='NOT_DISPATCHED',updated_at=UTC_TIMESTAMP(3) WHERE id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND state='running' AND dispatch_state='DISPATCHED_RESULT_UNCERTAIN'");
+            $job->execute([$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
+            $attempt=$this->pdo->prepare("UPDATE queue_core_attempts SET dispatch_state='NOT_DISPATCHED',physical_http_calls=0,physical_http_started_at=NULL WHERE id=? AND job_id=? AND lease_owner=? AND lease_generation=? AND dispatch_state='DISPATCHED_RESULT_UNCERTAIN' AND physical_http_calls=1 AND response_known_at IS NULL");
+            $attempt->execute([$attemptId,$claim->id,$claim->leaseOwner,$claim->leaseGeneration]);
+            $journal=$this->pdo->prepare("UPDATE queue_core_dispatch_journal SET state='cancelled_before_remote' WHERE attempt_id=? AND lease_owner=? AND lease_generation=? AND state='in_flight'");
+            $journal->execute([$attemptId,$claim->leaseOwner,$claim->leaseGeneration]);
+            if($job->rowCount()!==1||$attempt->rowCount()!==1||$journal->rowCount()!==1){$this->pdo->rollBack();return false;}
+            $this->pdo->commit();return true;
+        }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
     }
 
     /** Backward-compatible name; this now means the physical boundary. */
@@ -259,6 +289,11 @@ final class QueueCoreRepository
             if($u->rowCount()!==1){$this->pdo->rollBack();return false;}
             $a=$this->pdo->prepare("UPDATE queue_core_attempts SET outcome='review',error_class=?,finished_at=UTC_TIMESTAMP(3) WHERE job_id=? AND finished_at IS NULL");
             $a->execute([$terminalReason,$jobId]);
+            $expectedAttempts=(string)$row['state']==='running'?1:0;
+            if($a->rowCount()!==$expectedAttempts){
+                $this->pdo->rollBack();
+                throw new RuntimeException('Queue Core manual abandon lost its exact attempt fence.');
+            }
             $this->event($jobId,(int)$row['company_id'],(int)$row['meli_account_id'],(string)$row['lane'],'review');
             $this->pdo->commit();return true;
         }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
@@ -377,6 +412,10 @@ final class QueueCoreRepository
         $allowed=['partial_remote_page','incoherent_remote_paging','lease_expired_before_dispatch',
             'lease_expired_after_known_read','policy_deferred','pre_remote_blocked','deadline'];
         if(in_array($error,$allowed,true))return true;
+        if($error==='remote_rate_limit'){
+            $status=(int)($row['last_http_status']??0);
+            return $status===429 || $status>=500;
+        }
         if($error!=='meli_http_error')return false;
         $status=(int)($row['last_http_status']??0);
         return $status===0 || $status===429 || $status>=500;

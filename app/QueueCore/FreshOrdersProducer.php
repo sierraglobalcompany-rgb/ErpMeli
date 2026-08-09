@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\QueueCore;
 
 use PDO;
+use RuntimeException;
 use Throwable;
 
 final class FreshOrdersProducer
@@ -47,8 +48,9 @@ final class FreshOrdersProducer
                         ? ['at'=>$watermarkTime,'source'=>'queue_core_checkpoint']
                         : $this->bootstrapAuthority($company,$accountId);
                     if($bootstrap===null){
-                        $this->pdo->prepare("UPDATE queue_core_producer_checkpoints SET last_error_class='bootstrap_required',next_due_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 HOUR),updated_at=UTC_TIMESTAMP(3) WHERE producer_key='fresh_orders' AND company_id=? AND meli_account_id=? AND generation=?")
-                            ->execute([$company,$accountId,$generation]);
+                        $blocked=$this->pdo->prepare("UPDATE queue_core_producer_checkpoints SET last_error_class='bootstrap_required',next_due_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 HOUR),updated_at=UTC_TIMESTAMP(3) WHERE producer_key='fresh_orders' AND company_id=? AND meli_account_id=? AND generation=?");
+                        $blocked->execute([$company,$accountId,$generation]);
+                        if($blocked->rowCount()!==1)throw new RuntimeException('Fresh Orders bootstrap fence changed.');
                         $this->pdo->commit();$bootstrap_required++;continue;
                     }
                     $base=(int)$bootstrap['at']-$this->overlapSeconds;
@@ -58,7 +60,9 @@ final class FreshOrdersProducer
                     if($windowTo<=$base)$windowTo=min($now,$base+300);
                     $from=gmdate('Y-m-d H:i:s',$base);
                     $to=gmdate('Y-m-d H:i:s',$windowTo);
-                    $this->pdo->prepare("UPDATE queue_core_producer_checkpoints SET window_from=?,window_to=?,cursor_value=NULL,last_error_class=NULL WHERE producer_key='fresh_orders' AND company_id=? AND meli_account_id=? AND generation=?")->execute([$from,$to,$company,$accountId,$generation]);
+                    $windowUpdate=$this->pdo->prepare("UPDATE queue_core_producer_checkpoints SET window_from=?,window_to=?,cursor_value=NULL,last_error_class=NULL WHERE producer_key='fresh_orders' AND company_id=? AND meli_account_id=? AND generation=?");
+                    $windowUpdate->execute([$from,$to,$company,$accountId,$generation]);
+                    if($windowUpdate->rowCount()!==1)throw new RuntimeException('Fresh Orders window fence changed.');
                 }
                 $cursor=$cp['cursor_value']!==null?(string)$cp['cursor_value']:null;
                 $this->pdo->commit();

@@ -152,12 +152,17 @@ final class OAuthTokenRefreshService
             $pdo = Database::connectionFresh();
             try {
                 $pdo->beginTransaction();
-                $update = $pdo->prepare(
-                    'UPDATE meli_tokens
-                     SET access_token_encrypted=?,refresh_token_encrypted=?,expires_at=?,scope=?,token_type=?,refresh_version=?
-                     WHERE meli_account_id=? AND refresh_version=?'
-                );
-                $update->execute([
+                $update = $pdo->prepare(is_array($queueRecovery)
+                    ? "UPDATE meli_tokens t
+                       INNER JOIN meli_accounts a ON a.id=t.meli_account_id
+                       SET t.access_token_encrypted=?,t.refresh_token_encrypted=?,t.expires_at=?,t.scope=?,t.token_type=?,t.refresh_version=?
+                       WHERE t.meli_account_id=? AND t.refresh_version=?
+                         AND a.company_id=? AND a.meli_user_id=?
+                         AND a.status IN ('conectado','connected')"
+                    : 'UPDATE meli_tokens
+                       SET access_token_encrypted=?,refresh_token_encrypted=?,expires_at=?,scope=?,token_type=?,refresh_version=?
+                       WHERE meli_account_id=? AND refresh_version=?');
+                $updateParameters = [
                     $accessEncrypted,
                     $refreshEncrypted,
                     $expiresAt,
@@ -166,7 +171,12 @@ final class OAuthTokenRefreshService
                     $previousRefreshVersion + 1,
                     $this->accountId,
                     $previousRefreshVersion,
-                ]);
+                ];
+                if(is_array($queueRecovery)){
+                    $updateParameters[]=$queueRecovery['company_id'];
+                    $updateParameters[]=$queueRecovery['expected_meli_user_id'];
+                }
+                $update->execute($updateParameters);
                 if ($update->rowCount() !== 1) {
                     throw new RuntimeException('No fue posible guardar el token OAuth renovado.');
                 }
@@ -178,6 +188,11 @@ final class OAuthTokenRefreshService
                     $accountParameters[] = $queueRecovery['company_id'];
                 }
                 $accountUpdate->execute($accountParameters);
+                if($accountUpdate->rowCount()===0 && is_array($queueRecovery)){
+                    $verified=$pdo->prepare("SELECT COUNT(*) FROM meli_accounts WHERE id=? AND company_id=? AND meli_user_id=? AND status IN ('conectado','connected') AND last_error IS NULL");
+                    $verified->execute([$this->accountId,$queueRecovery['company_id'],$queueRecovery['expected_meli_user_id']]);
+                    if((int)$verified->fetchColumn()!==1)throw new RuntimeException('OAuth account fence changed before commit.');
+                }
                 $pdo->commit();
             } catch (Throwable $error) {
                 if ($pdo->inTransaction()) {
@@ -355,12 +370,17 @@ final class OAuthTokenRefreshService
 
         $pdo->beginTransaction();
         try {
-            $update = $pdo->prepare(
-                'UPDATE meli_tokens
-                 SET access_token_encrypted=?,refresh_token_encrypted=?,expires_at=?,scope=?,token_type=?,refresh_version=?
-                 WHERE meli_account_id=? AND refresh_version=?'
-            );
-            $update->execute([
+            $update = $pdo->prepare($queueRecovery !== null
+                ? "UPDATE meli_tokens t
+                   INNER JOIN meli_accounts a ON a.id=t.meli_account_id
+                   SET t.access_token_encrypted=?,t.refresh_token_encrypted=?,t.expires_at=?,t.scope=?,t.token_type=?,t.refresh_version=?
+                   WHERE t.meli_account_id=? AND t.refresh_version=?
+                     AND a.company_id=? AND a.meli_user_id=?
+                     AND a.status IN ('conectado','connected')"
+                : 'UPDATE meli_tokens
+                   SET access_token_encrypted=?,refresh_token_encrypted=?,expires_at=?,scope=?,token_type=?,refresh_version=?
+                   WHERE meli_account_id=? AND refresh_version=?');
+            $updateParameters = [
                 (string) ($recovery['access_token_encrypted'] ?? ''),
                 (string) ($recovery['refresh_token_encrypted'] ?? ''),
                 (string) ($recovery['expires_at'] ?? ''),
@@ -369,7 +389,12 @@ final class OAuthTokenRefreshService
                 $targetVersion,
                 $this->accountId,
                 $previousVersion,
-            ]);
+            ];
+            if($queueRecovery!==null){
+                $updateParameters[]=$queueRecovery['company_id'];
+                $updateParameters[]=$queueRecovery['expected_meli_user_id'];
+            }
+            $update->execute($updateParameters);
             if ($update->rowCount() !== 1) {
                 throw new RuntimeException('No fue posible aplicar la recuperación OAuth pendiente.');
             }
@@ -381,6 +406,11 @@ final class OAuthTokenRefreshService
                 $accountParameters[] = $queueRecovery['company_id'];
             }
             $accountUpdate->execute($accountParameters);
+            if($accountUpdate->rowCount()===0 && $queueRecovery!==null){
+                $verified=$pdo->prepare("SELECT COUNT(*) FROM meli_accounts WHERE id=? AND company_id=? AND meli_user_id=? AND status IN ('conectado','connected') AND last_error IS NULL");
+                $verified->execute([$this->accountId,$queueRecovery['company_id'],$queueRecovery['expected_meli_user_id']]);
+                if((int)$verified->fetchColumn()!==1)throw new RuntimeException('OAuth recovery account fence changed before commit.');
+            }
             $pdo->commit();
         } catch (Throwable $error) {
             if ($pdo->inTransaction()) {

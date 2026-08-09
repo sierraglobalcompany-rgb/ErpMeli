@@ -87,6 +87,10 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
                 $method,
                 parse_url($url,PHP_URL_PATH)?:'/'
             );
+            \App\QueueCore\QueueCoreDispatchFence::immediatelyBeforeCurl(
+                $method,
+                parse_url($url,PHP_URL_PATH)?:'/'
+            );
         }
         $started = microtime(true);
         $raw = curl_exec($ch);

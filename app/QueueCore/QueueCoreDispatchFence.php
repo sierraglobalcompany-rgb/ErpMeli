@@ -54,6 +54,35 @@ final class QueueCoreDispatchFence
         }
     }
 
+    /**
+     * Last instruction before curl_exec. If a stop/fence changed while the
+     * physical marker was being persisted, cancel that marker atomically so
+     * the caller can refund rhythm and budget as HTTP=0.
+     */
+    public static function immediatelyBeforeCurl(string $method,string $endpoint): void
+    {
+        $m=ApiExecutionMetadataContext::current();
+        if(($m['source']??'')!=='queue_core')return;
+        $claim=self::claim($m);$attempt=max(0,(int)($m['queue_core_attempt_id']??0));
+        try{
+            self::assertCapability($m,$method,$endpoint);
+            if($attempt<1 || !self::renewFences($m,$claim)){
+                throw new QueueCorePreRemoteBlockedException('Queue Core fencing changed immediately before cURL.');
+            }
+            if(($m['queue_core_launcher']??'')==='cron_v4' && (new EmergencyControlService())->automationStopped()){
+                throw new QueueCorePreRemoteBlockedException('Automation Stop changed immediately before cURL.');
+            }
+            (new MeliEmergencyStopService())->assertTransportAllowed($method,$endpoint);
+        }catch(\Throwable $blocked){
+            $cancelled=$attempt>0 && (new QueueCoreRepository(Database::connectionFresh()))
+                ->cancelPhysicalTransportBeforeCurl($claim,$attempt);
+            if(!$cancelled){
+                throw new RuntimeException('Queue Core could not cancel a pre-cURL physical marker.',0,$blocked);
+            }
+            throw new QueueCorePreRemoteBlockedException('Queue Core stopped before cURL; no HTTP was sent.',0,$blocked);
+        }
+    }
+
     /** True only when the exact current attempt has a persisted physical HTTP marker. */
     public static function physicalTransportRecorded(): bool
     {

@@ -62,17 +62,18 @@ final class QueueCoreOAuthSupervisor
                 'operational',
             ));
             if ($jobId > 0) {
+                $created=$this->repository->lastEnqueueCreated();
                 // A transiently exhausted refresh is revived in place: the
                 // account/version dedupe identity and FIFO position remain
                 // stable, while permanent/uncertain OAuth failures stay put.
-                $this->repository->reviveExhaustedTransient(
+                $revived=$this->repository->reviveExhaustedTransient(
                     $jobId,
                     'oauth_refresh',
                     'refresh-version:' . $version,
                     (int) $row['company_id'],
                     $accountId,
                 );
-                $enqueued++;
+                if($created||$revived)$enqueued++;
             }
         }
         return ['inspected' => count($rows), 'due' => count($rows), 'enqueued' => $enqueued];

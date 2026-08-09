@@ -179,9 +179,11 @@ $insertToken->execute([2, $encryptedAccess, $encryptedRefresh, 3600]);
 $repository = new QueueCoreRepository($pdo);
 $supervisor = new QueueCoreOAuthSupervisor($pdo, $repository);
 $firstSchedule = $supervisor->scheduleDueAccounts();
-$supervisor->scheduleDueAccounts();
+$secondSchedule = $supervisor->scheduleDueAccounts();
 $oauthJobs = (int) $pdo->query("SELECT COUNT(*) FROM queue_core_jobs WHERE work_type='oauth_refresh'")->fetchColumn();
-$check($firstSchedule['due'] === 1 && $oauthJobs === 1, 'OAuth due producer is not idempotent');
+$check($firstSchedule['due'] === 1 && $firstSchedule['enqueued']===1
+    && $secondSchedule['enqueued']===0 && $oauthJobs === 1,
+    'OAuth due producer is not idempotent or overreported a deduplicated job');
 
 // Three accounts due at once remain independent and create one logical job
 // per account/version without a cross-account identity.

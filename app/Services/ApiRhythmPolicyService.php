@@ -396,10 +396,21 @@ final class ApiRhythmPolicyService
             }
             $pdo->prepare(
                 'UPDATE api_remote_permits
-                 SET status="released",released_at=UTC_TIMESTAMP(3),
+                 SET status="released",released_at=UTC_TIMESTAMP(3),dispatched_at=NULL,
                      blocking_scope="cancelled_before_transport",updated_at=UTC_TIMESTAMP(3)
                  WHERE id=? AND generation=? AND status=?'
             )->execute([(int) $row['id'], (int) $row['generation'], (string) $row['status']]);
+            if ((string) $row['status'] === 'dispatched') {
+                $pdo->prepare(
+                    "UPDATE api_rhythm_states SET
+                       next_allowed_at=(SELECT DATE_ADD(MAX(dispatched_at),INTERVAL ? MICROSECOND)
+                                        FROM api_remote_permits
+                                        WHERE status IN ('dispatched','completed') AND dispatched_at IS NOT NULL),
+                       last_dispatched_at=(SELECT MAX(dispatched_at) FROM api_remote_permits
+                                           WHERE status IN ('dispatched','completed') AND dispatched_at IS NOT NULL)
+                     WHERE scope_key='global' AND generation=?"
+                )->execute([(int)$this->configuration()['minimum_interval_ms']*1000,(int)$row['generation']]);
+            }
             $pdo->commit();
         } catch (Throwable $error) {
             if ($pdo->inTransaction()) {

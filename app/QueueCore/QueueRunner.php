@@ -13,16 +13,19 @@ use Throwable;
 
 final class QueueRunner
 {
-    public function __construct(private readonly QueueCoreRepository $repository,private readonly QueueHandlerRegistry $handlers){}
+    public function __construct(private readonly QueueCoreRepository $repository,private readonly QueueHandlerRegistry $handlers,
+        private readonly ?QueueExecutionLeaseService $executionLeases=null,
+        private readonly QueueCapabilityRegistry $capabilities=new QueueCapabilityRegistry()){}
 
     /** @return array{claimed:int,completed:int,retry_wait:int,review:int,dead:int,lease_lost:int,reason:string} */
     public function run(QueueRunRequest $request): array
     {
-        $summary=['claimed'=>0,'completed'=>0,'retry_wait'=>0,'review'=>0,'dead'=>0,'lease_lost'=>0,'reason'=>'drained'];
+        $summary=['claimed'=>0,'completed'=>0,'retry_wait'=>0,'waiting_oauth'=>0,'review'=>0,'dead'=>0,'lease_lost'=>0,'reason'=>'drained'];
         while($summary['claimed']<$request->maxJobs){
             if($request->launcher==='cron_v4' && (new EmergencyControlService())->automationStopped()){$summary['reason']='automation_stopped';break;}
+            if($request->executionLease!==null && ($this->executionLeases===null || !$this->executionLeases->heartbeat($request->executionLease))){$summary['reason']='execution_lease_lost';break;}
             if(microtime(true)>=($request->deadline-0.25)){$summary['reason']='deadline';break;}
-            $claim=$this->repository->claimNext($request,$this->handlers->workTypes());
+            $claim=$this->repository->claimNext($request,$this->capabilities->certifiedTypes($this->handlers));
             if($claim===null)break;
             $summary['claimed']++;
             try{$attempt=$this->repository->beginAttempt($claim,$request->launcher);}catch(Throwable){$summary['lease_lost']++;continue;}
@@ -33,9 +36,14 @@ final class QueueRunner
                     'queue_core_job_id'=>$claim->id,'queue_core_attempt_id'=>$attempt,'queue_core_work_type'=>$claim->workType,
                     'queue_core_lane'=>$claim->lane,'queue_core_attempt_count'=>$claim->attemptCount,'queue_core_max_attempts'=>$claim->maxAttempts,
                     'queue_core_lease_owner'=>$claim->leaseOwner,'queue_core_lease_generation'=>$claim->leaseGeneration,
+                    'queue_core_lease_seconds'=>$request->leaseSeconds,'queue_core_launcher'=>$request->launcher,
+                    'queue_core_execution_owner'=>$request->executionLease?->ownerToken,
+                    'queue_core_execution_generation'=>$request->executionLease?->generation,
+                    'queue_core_execution_lease_seconds'=>$request->executionLease?->leaseSeconds,
                 ],fn():QueueResult=>$this->handlers->get($claim->workType)->handle($claim,$context));
             }catch(RemoteResultUncertainException){$result=QueueResult::review('remote_result_uncertain');
-            }catch(OAuthRefreshRequiredException){$result=QueueResult::review('oauth_refresh_required');
+            }catch(OAuthRefreshRequiredException){$result=QueueResult::waitingOAuth();
+            }catch(QueueCorePreRemoteBlockedException){$result=QueueResult::retry('pre_remote_blocked',gmdate('Y-m-d H:i:s',time()+5));
             }catch(ApiBudgetExhaustedException $e){$result=QueueResult::retry('policy_deferred',$e->nextSafeAt);
             }catch(MeliApiException $e){$result=QueueResult::retry('meli_http_error',null,$e->httpStatus);
             }catch(Throwable $e){$result=QueueResult::retry(self::safeError($e));}

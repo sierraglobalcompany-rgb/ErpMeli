@@ -24,6 +24,11 @@ final class QueueHandlerRegistry
             ?? throw new RuntimeException('Queue Core has no handler for this work type.');
     }
 
+    public function has(string $workType): bool
+    {
+        return isset($this->handlers[$workType]);
+    }
+
     /** @return list<string> */
     public function workTypes(): array
     {

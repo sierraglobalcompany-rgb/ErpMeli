@@ -12,6 +12,7 @@ use DateTimeZone;
 use PDO;
 use RuntimeException;
 use Throwable;
+use App\QueueCore\QueueCorePreRemoteBlockedException;
 
 final class MeliApiClient implements MeliReadClientInterface
 {
@@ -245,7 +246,8 @@ final class MeliApiClient implements MeliReadClientInterface
                 // Segunda barrera para la carrera entre el guard del launcher y
                 // el transporte. Solo aplica al worker V3: las lecturas canarias
                 // manuales deben seguir siendo posibles con automatización parada.
-                if (($cronV3RemoteContext || $queueCoreContext) && (new EmergencyControlService())->automationStopped()) {
+                if (($cronV3RemoteContext || ($queueCoreContext && (string)($meta['queue_core_launcher']??'')==='cron_v4'))
+                    && (new EmergencyControlService())->automationStopped()) {
                     throw new RuntimeException(
                         'La automatización se detuvo antes del transporte remoto.'
                     );
@@ -299,6 +301,18 @@ final class MeliApiClient implements MeliReadClientInterface
                     )
                 );
             } catch (Throwable $transportBlocked) {
+                if ($queueCoreContext && $transportBlocked instanceof QueueCorePreRemoteBlockedException) {
+                    // Queue Core's final physical fence proves curl_exec never
+                    // started. Return every local permit even if the rhythm
+                    // reservation had already moved to dispatched.
+                    $budget->releaseReservation($budgetReservation);
+                    $rhythm->cancelBeforeTransport($rhythmPermit);
+                    if ($executionAttemptId > 0) {
+                        $executionJournal->dispatchCancelledBeforeRemote($executionAttemptId,$executionLeaseGeneration);
+                    }
+                    ApiExecutionMetadataContext::markRemoteBlocked();
+                    throw $transportBlocked;
+                }
                 // La barrera del transporte OAuth se ejecuta dentro del
                 // adaptador pero todavía antes de curl_init/curl_exec. Una
                 // denegación de emergencia en ese punto certifica cero HTTP,

@@ -13,7 +13,16 @@ final class FreshOrdersProducer
     /** @return array{accounts:int,enqueued:int} */
     public function scheduleDueAccounts(int $limit=20): array
     {
-        $q=$this->pdo->query("SELECT id,company_id FROM meli_accounts WHERE status IN ('conectado','connected') ORDER BY company_id,id LIMIT ".max(1,min(100,$limit)));
+        // Eligibility is filtered before LIMIT. Accounts with a future
+        // checkpoint cannot hide a later due account.
+        $q=$this->pdo->query("SELECT a.id,a.company_id
+            FROM meli_accounts a
+            LEFT JOIN queue_core_producer_checkpoints cp
+              ON cp.producer_key='fresh_orders' AND cp.company_id=a.company_id AND cp.meli_account_id=a.id
+            WHERE a.status IN ('conectado','connected')
+              AND (cp.meli_account_id IS NULL OR cp.next_due_at<=UTC_TIMESTAMP(3))
+            ORDER BY COALESCE(cp.next_due_at,'1970-01-01') ASC,a.company_id ASC,a.id ASC
+            LIMIT ".max(1,min(100,$limit)));
         $accounts=0;$enqueued=0;
         foreach($q->fetchAll(PDO::FETCH_ASSOC) as $account){
             $company=(int)$account['company_id'];$accountId=(int)$account['id'];if($company<1||$accountId<1)continue;

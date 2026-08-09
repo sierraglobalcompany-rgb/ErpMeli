@@ -23,9 +23,6 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         $emergency->assertTransportAllowed($method, $url);
         $executionSource=(string)(ApiExecutionMetadataContext::current()['source']??'');
         if($executionSource==='queue_core'){
-            if((new EmergencyControlService())->automationStopped()){
-                throw new RuntimeException('Automation Stop denied Queue Core transport.');
-            }
             // This is the Queue Core physical boundary. No DB lease may be
             // consumed after cURL is initialized or by a stale worker.
             \App\QueueCore\QueueCoreDispatchFence::beforeTransport(
@@ -70,6 +67,22 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
         }
 
+        if($executionSource==='queue_core'){
+            $lastHeartbeat=0.0;
+            curl_setopt($ch,CURLOPT_NOPROGRESS,false);
+            curl_setopt($ch,CURLOPT_XFERINFOFUNCTION,static function()use(&$lastHeartbeat):int{
+                $now=microtime(true);
+                if($now-$lastHeartbeat<1.0)return 0;
+                $lastHeartbeat=$now;
+                return \App\QueueCore\QueueCoreDispatchFence::heartbeat()?0:1;
+            });
+            // Persist the physical boundary only after cURL is fully prepared
+            // and immediately before curl_exec.
+            \App\QueueCore\QueueCoreDispatchFence::transportStarted(
+                $method,
+                parse_url($url,PHP_URL_PATH)?:'/'
+            );
+        }
         $started = microtime(true);
         $raw = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);

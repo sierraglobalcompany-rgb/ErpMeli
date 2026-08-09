@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Core\Database;
 use App\QueueCore\ManualQueueLauncher;
+use App\QueueCore\ManualInputVersion;
 use RuntimeException;
 use Throwable;
 
@@ -56,6 +57,7 @@ final class ManualSingleStepService
             }
 
             $previews->consume($previewToken, $userId);
+            $inputVersion = ManualInputVersion::derive($row,$state);
             // Manual and Cron V4 are launchers only. Both enter the same
             // QueueRunner, scheduler, claim, fencing and retry path.
             return (new ManualQueueLauncher())->runExact(
@@ -63,7 +65,8 @@ final class ManualSingleStepService
                 $accountId,
                 $queueKey,
                 $sourceId,
-                $state->usesApi
+                $state->usesApi,
+                $inputVersion
             );
         } finally {
             try {

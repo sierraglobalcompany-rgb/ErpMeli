@@ -58,7 +58,8 @@ $_ENV['ERP_PRIVATE_PATH'] = $private;
 $_SERVER['ERP_PRIVATE_PATH'] = $private;
 
 $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
-foreach (['queue_core_release_evidence', 'queue_core_health_snapshots', 'queue_core_readiness_receipts', 'queue_core_runs',
+foreach (['queue_core_readiness_capture_items', 'queue_core_readiness_captures',
+    'queue_core_release_evidence', 'queue_core_health_snapshots', 'queue_core_readiness_receipts', 'queue_core_runs',
     'queue_core_historical_reviews', 'queue_core_historical_receipts', 'queue_core_historical_checkpoints',
     'queue_core_webhook_triggers', 'queue_core_capability_dependencies', 'queue_core_feature_flags',
     'queue_core_pending_capabilities', 'queue_core_dispatch_journal', 'queue_core_attempts',
@@ -180,7 +181,8 @@ foreach ([
     $_SERVER[$key] = $value;
 }
 $pdo->exec("INSERT INTO meli_accounts VALUES
-    (1,1,'101','A','conectado',NULL),(2,1,'102','B','conectado',NULL)");
+    (1,1,'101','A','conectado',NULL),(2,1,'102','B','conectado',NULL),
+    (3,1,'103','C','conectado',NULL)");
 $pdo->exec("UPDATE queue_core_feature_flags SET enabled=1,generation=generation+1
             WHERE feature_key IN ('fresh_producer','webhook_producer','pack_shipment_followups')");
 $recordReadiness = static function (int $generation, array $accountIds) use ($pdo): void {
@@ -201,7 +203,7 @@ $initial = $control->snapshot();
 $check($initial['active_engine'] === 'disabled' && $initial['generation'] === 0, 'engine default is not disabled');
 $preparing=$control->compareAndSwapReadiness('preparing',0,'test');
 $check($preparing['ok']&&$preparing['generation']===1&&$preparing['readiness_mode']==='preparing','readiness preparation failed');
-$recordReadiness(1, [1, 2]);
+$recordReadiness(1, [1, 2, 3]);
 $readinessReceipts=new QueueCoreReadinessReceiptService($pdo);
 $readinessReceipts->record(1,'canary',false,['fixture'=>'newer-fail'],3600,1,1);
 $latestFail=$readinessReceipts->canActivateV4(1);
@@ -236,6 +238,30 @@ $pdo->prepare("INSERT INTO queue_core_readiness_captures
     ->execute([$contextHash,$emptyDiscoveryId,$windowFrom,$windowTo,hash('sha256','')]);
 $emptyConvergence=(new QueueCoreConvergenceService($pdo))->compare(1,1,$windowFrom,$windowTo,20);
 $check($emptyConvergence['ok']&&!empty($emptyConvergence['authoritative_empty_window']),'known complete empty window did not converge');
+$mismatchFrom=gmdate('Y-m-d H:i:s',time()-1800);$mismatchTo=gmdate('Y-m-d H:i:s',time()-1500);
+$pdo->prepare("INSERT INTO queue_core_readiness_captures
+    (engine_generation,readiness_context_hash,company_id,meli_account_id,discovery_job_id,
+     window_from,window_to,page_offset,response_count,capture_hash,complete)
+    VALUES (1,?,1,1,9001,?,?,0,3,?,1)")
+    ->execute([$contextHash,$mismatchFrom,$mismatchTo,hash('sha256',"7001\n7002\n7003")]);
+$captureId=(int)$pdo->lastInsertId();
+$captureItem=$pdo->prepare('INSERT INTO queue_core_readiness_capture_items(capture_id,resource_id) VALUES (?,?)');
+foreach(['7001','7002','7003'] as $identity){$captureItem->execute([$captureId,$identity]);}
+$insertLocal=$pdo->prepare('INSERT INTO meli_orders(meli_account_id,external_order_id,synced_at,date_created) VALUES (1,?,UTC_TIMESTAMP(3),?)');
+$insertLocal->execute([7001,$mismatchFrom]);$insertLocal->execute([7002,$mismatchFrom]);
+$remoteExtra=(new QueueCoreConvergenceService($pdo))->compare(1,1,$mismatchFrom,$mismatchTo,20);
+$check(!$remoteExtra['ok']&&$remoteExtra['missing_local_count']===1,'REMOTE {A,B,C} versus LOCAL {A,B} passed convergence');
+$unexpectedFrom=gmdate('Y-m-d H:i:s',time()-2400);$unexpectedTo=gmdate('Y-m-d H:i:s',time()-2100);
+$pdo->prepare("INSERT INTO queue_core_readiness_captures
+    (engine_generation,readiness_context_hash,company_id,meli_account_id,discovery_job_id,
+     window_from,window_to,page_offset,response_count,capture_hash,complete)
+    VALUES (1,?,1,1,9002,?,?,0,2,?,1)")
+    ->execute([$contextHash,$unexpectedFrom,$unexpectedTo,hash('sha256',"8001\n8002")]);
+$captureId=(int)$pdo->lastInsertId();
+foreach(['8001','8002'] as $identity){$captureItem->execute([$captureId,$identity]);}
+foreach([8001,8002,8003] as $identity){$insertLocal->execute([$identity,$unexpectedFrom]);}
+$localExtra=(new QueueCoreConvergenceService($pdo))->compare(1,1,$unexpectedFrom,$unexpectedTo,20);
+$check(!$localExtra['ok']&&$localExtra['unexpected_local_count']===1,'REMOTE {A,B} versus LOCAL {A,B,C} passed convergence');
 $crossCompanyBlocked=false;
 try{(new QueueCoreConvergenceService($pdo))->compare(99,1,$windowFrom,$windowTo,20);}catch(RuntimeException){$crossCompanyBlocked=true;}
 $check($crossCompanyBlocked,'cross-company convergence scope was accepted');

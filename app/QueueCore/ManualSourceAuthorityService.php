@@ -17,17 +17,19 @@ final class ManualSourceAuthorityService
 {
     /** @var array<string,list<string>> */
     private const DURABLE_FIELDS = [
-        'notification_fallback' => ['status', 'resource_type', 'remote_resource_id', 'latest_event_id', 'occurrence_count', 'rerun_requested'],
-        'orders_sync' => ['status', 'sync_type', 'date_from', 'date_to', 'cursor_offset', 'processed_count', 'estimated_total'],
-        'items_sync' => ['phase', 'search_mode', 'cursor_value', 'offset_value', 'discovered_count', 'processed_count', 'error_count'],
-        'catalog_descriptions' => ['item_status', 'external_item_id', 'meli_item_id', 'job_status'],
-        'sales_audit' => ['status', 'sync_sales_audit_run_id', 'next_offset', 'remote_reported_total', 'page_limit'],
-        'sales_repair' => ['status', 'processed_items', 'total_items', 'sync_sales_audit_id', 'input_version'],
-        'financial_recalc' => ['status', 'processed_items', 'total_items', 'source_type', 'source_id', 'input_version'],
-        'order_enrichment' => ['status', 'resource_type', 'external_resource_id', 'meli_order_id', 'input_version'],
-        'sale_pack_reconciliation' => ['status', 'operation', 'external_resource_id', 'meli_pack_id', 'input_version'],
-        'sale_financial_reconciliation' => ['status', 'sale_key', 'external_sale_id', 'input_version'],
-        'module_jobs' => ['status', 'module_id', 'job_type', 'stage', 'progress_current', 'progress_total', 'payload_json', 'checkpoint_json'],
+        'notification_fallback' => ['resource_type', 'remote_resource_id', 'latest_event_id'],
+        'orders_sync' => ['sync_type', 'date_from', 'date_to', 'cursor_offset'],
+        'items_sync' => ['phase', 'search_mode', 'cursor_value', 'offset_value'],
+        'catalog_descriptions' => ['external_item_id', 'meli_item_id'],
+        'sales_audit' => ['sync_sales_audit_run_id', 'next_offset', 'page_limit'],
+        'sales_repair' => ['sync_sales_audit_id', 'input_version'],
+        'financial_recalc' => ['source_type', 'source_id', 'input_version'],
+        'order_enrichment' => ['resource_type', 'external_resource_id', 'meli_order_id', 'input_version'],
+        'sale_pack_reconciliation' => ['operation', 'external_resource_id', 'meli_pack_id', 'input_version'],
+        'sale_financial_reconciliation' => ['sale_key', 'external_sale_id', 'input_version'],
+        // Los módulos son fail-closed. Estos campos solo documentan identidad;
+        // nunca habilitan ejecución hasta existir un contrato físico certificado.
+        'module_jobs' => ['module_id', 'job_type'],
     ];
 
     public function inspect(
@@ -61,6 +63,15 @@ final class ManualSourceAuthorityService
                 null,
                 true,
                 'El trabajo modular puede cambiar de endpoint por etapa y todavía no tiene un contrato exacto de una sola llamada.'
+            );
+        }
+
+        if($queueKey==='notification_fallback'
+            && strtolower((string)($row['resource_type']??''))==='shipment'
+            && !$this->shipmentHasLocalOrder($accountId,(string)($row['remote_resource_id']??''))){
+            return new ManualSourceAuthority(
+                $this->fingerprint($queueKey,$sourceId,$row),true,'shipment_exact',null,true,
+                'El envío todavía no tiene una orden local; resolverlo exigiría más de una consulta en este paso.'
             );
         }
 
@@ -163,6 +174,13 @@ final class ManualSourceAuthorityService
                 ? 'items_discovery'
                 : 'item_detail';
         }
+        if ($queueKey === 'sale_pack_reconciliation') {
+            return match (strtolower((string) ($row['operation'] ?? ''))) {
+                'recover_order' => 'order_exact',
+                'verify_pack' => 'pack_exact',
+                default => 'unsupported',
+            };
+        }
         return $queueKey === 'sales_audit' ? 'sales_audit' : $fallback;
     }
 
@@ -201,5 +219,12 @@ final class ManualSourceAuthorityService
             $value[$key] = $this->canonical($item);
         }
         return $value;
+    }
+
+    private function shipmentHasLocalOrder(int $accountId,string $shipmentId): bool
+    {
+        if($shipmentId==='' || preg_match('/^[0-9]+$/',$shipmentId)!==1)return false;
+        $s=Database::connectionFresh()->prepare('SELECT 1 FROM meli_shipments WHERE meli_account_id=? AND external_shipment_id=? AND meli_order_id IS NOT NULL LIMIT 1');
+        $s->execute([$accountId,$shipmentId]);return (bool)$s->fetchColumn();
     }
 }

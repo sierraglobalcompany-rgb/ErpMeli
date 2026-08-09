@@ -6,6 +6,8 @@ namespace App\Services;
 
 use App\Core\Database;
 use App\Core\Env;
+use App\QueueCore\QueueEngineControlService;
+use App\QueueCore\QueueEngineRuntimePermit;
 use Throwable;
 
 final class CronV3Cli
@@ -42,6 +44,8 @@ final class CronV3Cli
         );
 
         $lock = null;
+        $engineControl = null;
+        $enginePermit = null;
         try {
             $shadow = in_array('--shadow', $argv, true);
             $activeEnabled = self::envBool('CRON_V3_ENABLED', false);
@@ -94,12 +98,40 @@ final class CronV3Cli
                 return 0;
             }
             Database::useProfile('cli');
-            $kernel = CronV3::boot(Database::connection());
+            $pdo = Database::connection();
+            $engineControl = new QueueEngineControlService($pdo);
+            $engineRuntime = $engineControl->acquireRuntime('v3', $lane);
+            if (empty($engineRuntime['ok'])
+                || !(($engineRuntime['permit'] ?? null) instanceof QueueEngineRuntimePermit)) {
+                self::write([
+                    'ok' => true,
+                    'mode' => $shadow ? 'shadow' : 'active',
+                    'lane' => $lane,
+                    'status' => 'engine_inactive',
+                        'reason' => $engineRuntime['reason'],
+                        'active_engine' => $engineRuntime['active_engine'],
+                        'generation' => $engineRuntime['generation'],
+                    'http_calls' => 0,
+                    'source_mutations' => 0,
+                ]);
+                return 0;
+            }
+            $enginePermit = $engineRuntime['permit'];
+            $kernel = CronV3::boot($pdo);
             if (CronDeadlineContext::remainingSeconds() <= $safeCloseSeconds) {
                 self::write([
                     'ok' => true,
                     'lane' => $lane,
                     'status' => 'deadline_exhausted',
+                    'http_calls' => 0,
+                ]);
+                return 0;
+            }
+            if (!$engineControl->stillCurrent($enginePermit)) {
+                self::write([
+                    'ok' => true,
+                    'lane' => $lane,
+                    'status' => 'engine_generation_changed',
                     'http_calls' => 0,
                 ]);
                 return 0;
@@ -179,6 +211,11 @@ final class CronV3Cli
             ]);
             return 2;
         } finally {
+            if ($engineControl instanceof QueueEngineControlService) {
+                $engineControl->releaseRuntime(
+                    $enginePermit instanceof QueueEngineRuntimePermit ? $enginePermit : null
+                );
+            }
             CronDeadlineContext::clear();
             if (is_resource($lock)) {
                 flock($lock, LOCK_UN);

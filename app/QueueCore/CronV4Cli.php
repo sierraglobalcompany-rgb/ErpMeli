@@ -1,30 +1,164 @@
 <?php
+
 declare(strict_types=1);
+
 namespace App\QueueCore;
+
 use App\Core\Database;
 use App\Core\Env;
-use App\Services\EmergencyControlService;
 use App\Services\CronDeadlineContext;
-use Throwable;
+use App\Services\EmergencyControlService;
 use PDO;
+use Throwable;
+
 final class CronV4Cli
 {
-    public function __construct(private readonly ?PDO $pdo=null) {}
+    public function __construct(private readonly ?PDO $pdo = null)
+    {
+    }
+
     /** @param list<string> $argv @return array<string,mixed> */
     public function run(array $argv): array
     {
-        $runtime=$this->option($argv,'runtime',45,5,55);$max=$this->option($argv,'max-jobs',50,1,200);$started=microtime(true);$deadline=$started+$runtime;
-        // Mandatory pre-bootstrap barrier: no PDO, producer, claim or recovery
-        // may happen while automation is stopped.
-        if((new EmergencyControlService())->automationStopped())return ['ok'=>true,'status'=>'SKIPPED_AUTOMATION_STOPPED','side_effects'=>0,'claimed'=>0];
-        if(!Env::bool('CRON_V4_ENABLED',false))return ['ok'=>true,'status'=>'DISABLED','side_effects'=>0,'claimed'=>0];
-        if(Env::bool('ML_WRITE_ENABLED',false))return ['ok'=>false,'status'=>'BLOCKED_ML_WRITE_ENABLED','side_effects'=>0,'claimed'=>0];
-        $safeClose=min(10,max(1,$runtime-1));
-        CronDeadlineContext::start($runtime,$runtime-$safeClose,8,3);
-        $executionLease=null;
-        try{if($this->pdo===null)Database::useProfile('cli');$core=QueueCoreFactory::build($this->pdo);$worker='cron-v4-'.bin2hex(random_bytes(8));$executionLease=$core['execution_leases']->acquire('cron_v4',$worker,60);if($executionLease===null){$active=$core['execution_leases']->activeLauncher();return ['ok'=>true,'status'=>$active==='manual'?'SKIPPED_MANUAL_ACTIVE':'SKIPPED_LAUNCHER_ACTIVE','side_effects'=>0,'producer_calls'=>0,'stale_recovery'=>0,'claimed'=>0,'handlers'=>0,'http'=>0];}$recovered=$core['repository']->recoverStale(min(100,$max));$produced=$core['producer']->scheduleDueAccounts(min(20,$max));$effectiveDeadline=CronDeadlineContext::deadline()??$deadline;$run=$core['runner']->run(new QueueRunRequest('cron_v4',$worker,$max,$effectiveDeadline,60,[],[],null,$executionLease));return ['ok'=>true,'status'=>'COMPLETE','producer'=>$produced,'recovered'=>$recovered,'run'=>$run,'metrics'=>(new QueueMetricsService($this->pdo??Database::connectionFresh()))->snapshot()];}
-        catch(Throwable $e){return ['ok'=>false,'status'=>'LOCAL_FAILURE','error_class'=>strtolower((new \ReflectionClass($e))->getShortName()),'claimed'=>0];}
-        finally{if($executionLease!==null&&isset($core))$core['execution_leases']->release($executionLease);CronDeadlineContext::clear();}
+        $runtime = $this->option($argv, 'runtime', 45, 5, 55);
+        $max = $this->option($argv, 'max-jobs', 50, 1, 200);
+        $deadline = microtime(true) + $runtime;
+        if ((new EmergencyControlService())->automationStopped()) {
+            return ['ok' => true, 'status' => 'SKIPPED_AUTOMATION_STOPPED', 'side_effects' => 0, 'claimed' => 0];
+        }
+        if (!Env::bool('CRON_V4_ENABLED', false)) {
+            return ['ok' => true, 'status' => 'DISABLED', 'side_effects' => 0, 'claimed' => 0];
+        }
+        if (Env::bool('ML_WRITE_ENABLED', false)) {
+            return ['ok' => false, 'status' => 'BLOCKED_ML_WRITE_ENABLED', 'side_effects' => 0, 'claimed' => 0];
+        }
+
+        $safeClose = min(10, max(1, $runtime - 1));
+        CronDeadlineContext::start($runtime, $runtime - $safeClose, 8, 3);
+        $executionLease = null;
+        $engineControl = null;
+        $enginePermit = null;
+        try {
+            if ($this->pdo === null) {
+                Database::useProfile('cli');
+            }
+            $pdo = $this->pdo ?? Database::connectionFresh();
+            $core = QueueCoreFactory::build($pdo);
+
+            // Preserve the web-manual exclusion even while the active engine is
+            // disabled. This is a read-only check and cannot enqueue work.
+            if ($core['execution_leases']->activeLauncher() === 'manual') {
+                return [
+                    'ok' => true,
+                    'status' => 'SKIPPED_MANUAL_ACTIVE',
+                    'side_effects' => 0,
+                    'producer_calls' => 0,
+                    'stale_recovery' => 0,
+                    'claimed' => 0,
+                    'handlers' => 0,
+                    'http' => 0,
+                ];
+            }
+
+            $engineControl = new QueueEngineControlService($pdo);
+            $engineRuntime = $engineControl->acquireRuntime('v4', 'operational');
+            if (empty($engineRuntime['ok'])
+                || !(($engineRuntime['permit'] ?? null) instanceof QueueEngineRuntimePermit)) {
+                return [
+                    'ok' => true,
+                    'status' => 'SKIPPED_ENGINE_INACTIVE',
+                    'reason' => (string) ($engineRuntime['reason'] ?? 'engine_control_unavailable'),
+                    'active_engine' => (string) ($engineRuntime['active_engine'] ?? 'disabled'),
+                    'generation' => (int) ($engineRuntime['generation'] ?? 0),
+                    'side_effects' => 0,
+                    'claimed' => 0,
+                    'http' => 0,
+                ];
+            }
+            $enginePermit = $engineRuntime['permit'];
+
+            $worker = 'cron-v4-' . bin2hex(random_bytes(8));
+            $executionLease = $core['execution_leases']->acquire('cron_v4', $worker, 60);
+            if ($executionLease === null) {
+                return [
+                    'ok' => true,
+                    'status' => 'SKIPPED_LAUNCHER_ACTIVE',
+                    'side_effects' => 0,
+                    'producer_calls' => 0,
+                    'stale_recovery' => 0,
+                    'claimed' => 0,
+                    'handlers' => 0,
+                    'http' => 0,
+                ];
+            }
+
+            $recovered = $core['repository']->recoverStale(min(100, $max));
+            $oauthProduced = $core['oauth_supervisor']->scheduleDueAccounts(min(20, $max));
+            $produced = $core['producer']->scheduleDueAccounts(min(20, $max));
+            $effectiveDeadline = CronDeadlineContext::deadline() ?? $deadline;
+            if (!$engineControl->stillCurrent($enginePermit)) {
+                return [
+                    'ok' => true,
+                    'status' => 'ENGINE_GENERATION_CHANGED',
+                    'side_effects' => 0,
+                    'oauth_supervisor' => $oauthProduced,
+                    'producer' => $produced,
+                    'claimed' => 0,
+                    'http' => 0,
+                ];
+            }
+            // Un solo consumidor preserva FIFO absoluto. OAuth no obtiene un
+            // carril privilegiado: los trabajos que requieren token esperan en
+            // waiting_oauth y reanudan tras avanzar la generación de su cuenta.
+            $run = $core['runner']->run(new QueueRunRequest(
+                'cron_v4',
+                $worker,
+                $max,
+                $effectiveDeadline,
+                60,
+                [],
+                [],
+                null,
+                $executionLease,
+            ));
+
+            return [
+                'ok' => true,
+                'status' => 'COMPLETE',
+                'oauth_supervisor' => $oauthProduced,
+                'producer' => $produced,
+                'recovered' => $recovered,
+                'run' => $run,
+                'metrics' => (new QueueMetricsService($pdo))->snapshot(),
+            ];
+        } catch (Throwable $error) {
+            return [
+                'ok' => false,
+                'status' => 'LOCAL_FAILURE',
+                'error_class' => strtolower((new \ReflectionClass($error))->getShortName()),
+                'claimed' => 0,
+            ];
+        } finally {
+            if ($engineControl instanceof QueueEngineControlService) {
+                $engineControl->releaseRuntime(
+                    $enginePermit instanceof QueueEngineRuntimePermit ? $enginePermit : null
+                );
+            }
+            if ($executionLease !== null && isset($core)) {
+                $core['execution_leases']->release($executionLease);
+            }
+            CronDeadlineContext::clear();
+        }
     }
-    /** @param list<string> $argv */ private function option(array $argv,string $key,int $default,int $min,int $max):int{foreach($argv as $arg){if(str_starts_with($arg,'--'.$key.'='))return max($min,min($max,(int)substr($arg,strlen($key)+3)));}return $default;}
+
+    /** @param list<string> $argv */
+    private function option(array $argv, string $key, int $default, int $min, int $max): int
+    {
+        foreach ($argv as $argument) {
+            if (str_starts_with($argument, '--' . $key . '=')) {
+                return max($min, min($max, (int) substr($argument, strlen($key) + 3)));
+            }
+        }
+        return $default;
+    }
 }

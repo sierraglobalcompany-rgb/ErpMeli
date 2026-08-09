@@ -12,11 +12,11 @@ final class FreshOrdersProducer
         private readonly PDO $pdo,
         private readonly QueueCoreRepository $repository,
         private readonly int $overlapSeconds=300,
-        private readonly int $initialLookbackSeconds=86400,
+        private readonly int $initialLookbackSeconds=0,
         private readonly int $maximumWindowSeconds=86400,
     ){}
 
-    /** @return array{accounts:int,enqueued:int} */
+    /** @return array{accounts:int,enqueued:int,bootstrap_required:int} */
     public function scheduleDueAccounts(int $limit=20): array
     {
         // Eligibility is filtered before LIMIT. Accounts with a future
@@ -29,7 +29,7 @@ final class FreshOrdersProducer
               AND (cp.meli_account_id IS NULL OR cp.next_due_at<=UTC_TIMESTAMP(3))
             ORDER BY COALESCE(cp.next_due_at,'1970-01-01') ASC,a.company_id ASC,a.id ASC
             LIMIT ".max(1,min(100,$limit)));
-        $accounts=0;$enqueued=0;
+        $accounts=0;$enqueued=0;$bootstrap_required=0;
         foreach($q->fetchAll(PDO::FETCH_ASSOC) as $account){
             $company=(int)$account['company_id'];$accountId=(int)$account['id'];if($company<1||$accountId<1)continue;
             $this->pdo->beginTransaction();
@@ -43,24 +43,32 @@ final class FreshOrdersProducer
                     $now=time();
                     $watermark=(string)($cp['watermark_at']??'');
                     $watermarkTime=$watermark!==''?strtotime($watermark.' UTC'):false;
-                    $localTruth=$this->latestLocalOrderAt($accountId);
-                    $base=$watermarkTime!==false
-                        ? $watermarkTime-$this->overlapSeconds
-                        : (($localTruth??($now-$this->initialLookbackSeconds))-$this->overlapSeconds);
+                    $bootstrap=$watermarkTime!==false
+                        ? ['at'=>$watermarkTime,'source'=>'queue_core_checkpoint']
+                        : $this->bootstrapAuthority($company,$accountId);
+                    if($bootstrap===null){
+                        $this->pdo->prepare("UPDATE queue_core_producer_checkpoints SET last_error_class='bootstrap_required',next_due_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 HOUR),updated_at=UTC_TIMESTAMP(3) WHERE producer_key='fresh_orders' AND company_id=? AND meli_account_id=? AND generation=?")
+                            ->execute([$company,$accountId,$generation]);
+                        $this->pdo->commit();$bootstrap_required++;continue;
+                    }
+                    $base=(int)$bootstrap['at']-$this->overlapSeconds;
                     $base=max(0,min($base,$now));
                     $window=max(300,min(86400*7,$this->maximumWindowSeconds));
                     $windowTo=min($now,$base+$window);
                     if($windowTo<=$base)$windowTo=min($now,$base+300);
                     $from=gmdate('Y-m-d H:i:s',$base);
                     $to=gmdate('Y-m-d H:i:s',$windowTo);
-                    $this->pdo->prepare("UPDATE queue_core_producer_checkpoints SET window_from=?,window_to=?,cursor_value=NULL WHERE producer_key='fresh_orders' AND company_id=? AND meli_account_id=? AND generation=?")->execute([$from,$to,$company,$accountId,$generation]);
+                    $this->pdo->prepare("UPDATE queue_core_producer_checkpoints SET window_from=?,window_to=?,cursor_value=NULL,last_error_class=NULL WHERE producer_key='fresh_orders' AND company_id=? AND meli_account_id=? AND generation=?")->execute([$from,$to,$company,$accountId,$generation]);
                 }
                 $cursor=$cp['cursor_value']!==null?(string)$cp['cursor_value']:null;
                 $this->pdo->commit();
-                $this->repository->enqueue($this->discoveryJob($company,$accountId,$from,$to,$cursor,$generation));$accounts++;$enqueued++;
+                $job=$this->discoveryJob($company,$accountId,$from,$to,$cursor,$generation);
+                $jobId=$this->repository->enqueue($job);
+                $this->repository->reviveExhaustedTransient($jobId,$job->workType,$job->inputVersion);
+                $accounts++;$enqueued++;
             }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
         }
-        return compact('accounts','enqueued');
+        return compact('accounts','enqueued','bootstrap_required');
     }
 
     private function discoveryJob(int $company,int $account,string $from,string $to,?string $cursor,int $generation): QueueJob
@@ -69,20 +77,57 @@ final class FreshOrdersProducer
         return new QueueJob($company,$account,'fresh_orders_discovery','orders_window',null,'fresh_orders',100,$identity,(string)$generation,'fresh_orders_producer','checkpoint:fresh_orders:'.$account,['from'=>$from,'to'=>$to,'cursor'=>$cursor,'generation'=>$generation,'limit'=>20],['producer'=>'native_fresh_orders','overlap_seconds'=>$this->overlapSeconds],5);
     }
 
-    private function latestLocalOrderAt(int $accountId): ?int
+    /** @return array{at:int,source:string}|null */
+    private function bootstrapAuthority(int $companyId,int $accountId): ?array
+    {
+        $local=$this->latestLocalOrderAt($companyId,$accountId);
+        if($local!==null)return ['at'=>$local,'source'=>'local_order_max'];
+        $legacy=$this->certifiedLegacyCheckpointAt($companyId,$accountId);
+        if($legacy!==null)return ['at'=>$legacy,'source'=>'certified_legacy_checkpoint'];
+        $explicit=$this->explicitBootstrapAt($companyId,$accountId);
+        if($explicit!==null)return ['at'=>$explicit,'source'=>'explicit_bootstrap_from'];
+        if($this->initialLookbackSeconds>0)return ['at'=>time()-$this->initialLookbackSeconds,'source'=>'explicit_constructor_lookback'];
+        return null;
+    }
+
+    private function latestLocalOrderAt(int $companyId,int $accountId): ?int
     {
         $column=null;
         foreach(['date_created_ml','date_created_utc','date_created'] as $candidate){
             $s=$this->pdo->prepare('SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name="meli_orders" AND column_name=?');
             $s->execute([$candidate]);
-            if((int)$s->fetchColumn()>0){$column=$candidate;break;}
+            if((int)$s->fetchColumn()>0){
+                $max=$this->pdo->prepare('SELECT MAX(o.`'.$candidate.'`) FROM meli_orders o JOIN meli_accounts a ON a.id=o.meli_account_id WHERE o.meli_account_id=? AND a.company_id=?');
+                $max->execute([$accountId,$companyId]);
+                $value=trim((string)($max->fetchColumn()?:''));
+                if($value==='')continue;
+                $timestamp=strtotime($value.' UTC');
+                if($timestamp!==false)return $timestamp;
+            }
         }
-        if($column===null)return null;
-        $s=$this->pdo->prepare('SELECT MAX(`'.$column.'`) FROM meli_orders WHERE meli_account_id=?');
-        $s->execute([$accountId]);
-        $value=trim((string)($s->fetchColumn()?:''));
-        if($value==='')return null;
-        $timestamp=strtotime($value.' UTC');
-        return $timestamp===false?null:$timestamp;
+        return null;
+    }
+
+    private function certifiedLegacyCheckpointAt(int $companyId,int $accountId): ?int
+    {
+        if(!$this->tableExists('meli_sync_checkpoints'))return null;
+        $s=$this->pdo->prepare("SELECT c.range_to FROM meli_sync_checkpoints c JOIN meli_accounts a ON a.id=c.meli_account_id WHERE c.meli_account_id=? AND a.company_id=? AND c.sync_type='orders' AND c.cursor_value IS NULL AND c.status IN ('complete','completed') AND c.range_to IS NOT NULL AND c.range_to<=UTC_TIMESTAMP() ORDER BY c.range_to DESC LIMIT 1");
+        $s->execute([$accountId,$companyId]);$value=trim((string)($s->fetchColumn()?:''));
+        $at=$value===''?false:strtotime($value.' UTC');return $at===false?null:$at;
+    }
+
+    private function explicitBootstrapAt(int $companyId,int $accountId): ?int
+    {
+        if(!$this->tableExists('app_settings'))return null;
+        $key='queue_core.fresh_orders.bootstrap_from.'.$companyId.'.'.$accountId;
+        $s=$this->pdo->prepare('SELECT setting_value FROM app_settings WHERE setting_key=? LIMIT 1');
+        $s->execute([$key]);$value=trim((string)($s->fetchColumn()?:''));
+        $at=$value===''?false:strtotime($value.' UTC');return $at===false?null:$at;
+    }
+
+    private function tableExists(string $table): bool
+    {
+        $s=$this->pdo->prepare('SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?');
+        $s->execute([$table]);return (int)$s->fetchColumn()>0;
     }
 }

@@ -176,6 +176,13 @@ final class MeliApiClient implements MeliReadClientInterface
                 $rhythmPermit = $cronV3RemoteContext
                     ? ['enabled' => true, 'source' => 'cron_v3_rate_gate']
                     : $rhythm->reserve($this->accountId, $method, $path, $meta);
+                if ($queueCoreContext && empty($rhythmPermit['enabled'])) {
+                    throw new ApiRhythmDeferredException(
+                        'Queue Core no iniciará HTTP sin su autoridad persistente de ritmo.',
+                        gmdate('Y-m-d H:i:s', time() + 60),
+                        'rhythm_authority_unavailable'
+                    );
+                }
                 // Compatibilidad durante la ventana entre subir archivos y
                 // aplicar la migración que crea la autoridad persistente.
                 if (!$cronV3RemoteContext && empty($rhythmPermit['enabled'])) {
@@ -248,9 +255,12 @@ final class MeliApiClient implements MeliReadClientInterface
                 // manuales deben seguir siendo posibles con automatización parada.
                 if (($cronV3RemoteContext || ($queueCoreContext && (string)($meta['queue_core_launcher']??'')==='cron_v4'))
                     && (new EmergencyControlService())->automationStopped()) {
-                    throw new RuntimeException(
-                        'La automatización se detuvo antes del transporte remoto.'
-                    );
+                    if ($queueCoreContext) {
+                        throw new QueueCorePreRemoteBlockedException(
+                            'Automation Stop denied Queue Core before physical transport.'
+                        );
+                    }
+                    throw new RuntimeException('La automatización se detuvo antes del transporte remoto.');
                 }
                 // La ventana puede agotarse después de reservar ritmo y
                 // presupuesto. Se calcula dentro de la misma barrera que el
@@ -306,7 +316,8 @@ final class MeliApiClient implements MeliReadClientInterface
                     )
                 );
             } catch (Throwable $transportBlocked) {
-                if ($queueCoreContext && $transportBlocked instanceof QueueCorePreRemoteBlockedException) {
+                if ($queueCoreContext && ($transportBlocked instanceof QueueCorePreRemoteBlockedException
+                    || $transportBlocked instanceof ApiManualPauseException)) {
                     // Queue Core's final physical fence proves curl_exec never
                     // started. Return every local permit even if the rhythm
                     // reservation had already moved to dispatched.

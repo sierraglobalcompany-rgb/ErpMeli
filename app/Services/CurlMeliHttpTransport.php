@@ -20,15 +20,19 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         // Mercado Libre mientras exista la parada local de emergencia.
         $emergency = new MeliEmergencyStopService();
         $method = strtoupper($method);
-        $emergency->assertTransportAllowed($method, $url);
         $executionSource=(string)(ApiExecutionMetadataContext::current()['source']??'');
         if($executionSource==='queue_core'){
+            // Read the physical stop without consuming a canary yet. The
+            // authoritative check/claim is repeated immediately before cURL.
+            $emergency->assertAllowed();
             // This is the Queue Core physical boundary. No DB lease may be
             // consumed after cURL is initialized or by a stale worker.
             \App\QueueCore\QueueCoreDispatchFence::beforeTransport(
                 $method,
                 parse_url($url,PHP_URL_PATH)?:'/'
             );
+        }else{
+            $emergency->assertTransportAllowed($method, $url);
         }
         $ch = curl_init();
         if ($ch === false) {
@@ -78,6 +82,7 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             });
             // Persist the physical boundary only after cURL is fully prepared
             // and immediately before curl_exec.
+            $emergency->assertTransportAllowed($method, $url);
             \App\QueueCore\QueueCoreDispatchFence::transportStarted(
                 $method,
                 parse_url($url,PHP_URL_PATH)?:'/'

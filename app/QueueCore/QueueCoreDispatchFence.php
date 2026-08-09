@@ -29,10 +29,18 @@ final class QueueCoreDispatchFence
     {
         $m=ApiExecutionMetadataContext::current();
         if(($m['source']??'')!=='queue_core')return;
+        if(($m['queue_core_launcher']??'')==='cron_v4' && (new EmergencyControlService())->automationStopped()){
+            throw new QueueCorePreRemoteBlockedException('Automation Stop denied the physical HTTP boundary.');
+        }
         self::assertCapability($m,$method,$endpoint);
         $claim=self::claim($m);$attempt=max(0,(int)($m['queue_core_attempt_id']??0));
-        if($attempt<1 || !self::renewFences($m,$claim)
-            || !(new QueueCoreRepository(Database::connectionFresh()))->physicalTransportStarted($claim,$attempt,$method,$endpoint)){
+        if($attempt<1 || !self::renewFences($m,$claim)){
+            throw new QueueCorePreRemoteBlockedException('Queue Core fencing denied the physical HTTP boundary.');
+        }
+        if(($m['queue_core_launcher']??'')==='cron_v4' && (new EmergencyControlService())->automationStopped()){
+            throw new QueueCorePreRemoteBlockedException('Automation Stop changed before the physical HTTP boundary.');
+        }
+        if(!(new QueueCoreRepository(Database::connectionFresh()))->physicalTransportStarted($claim,$attempt,$method,$endpoint)){
             throw new QueueCorePreRemoteBlockedException('Queue Core fencing denied the physical HTTP boundary.');
         }
     }

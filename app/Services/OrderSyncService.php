@@ -145,6 +145,15 @@ final class OrderSyncService
         return $this->persistOrder($order, false, $beforePersist, false);
     }
 
+    /** Un paso web exacto: persiste la orden y no crea trabajo posterior. */
+    public function syncOrderByIdForManual(
+        int|string $externalOrderId,array $meta=[],?callable $beforePersist=null
+    ): int {
+        $meta=array_replace(['job_type'=>'order_exact','source'=>'manual_exact','bulk'=>false],$meta);
+        $order=$this->api->get('/orders/'.rawurlencode((string)$externalOrderId),[],$meta);
+        return $this->persistOrder($order,false,$beforePersist,false,false);
+    }
+
     /** @param array<string,mixed> $meta */
     public function syncShipmentById(int|string $externalShipmentId, array $meta = []): int
     {
@@ -274,7 +283,8 @@ final class OrderSyncService
         array $order,
         bool $allowInlineEnrichment = true,
         ?callable $beforePersist = null,
-        bool $allowFollowUpFanout = true
+        bool $allowFollowUpFanout = true,
+        bool $recordPendingCapabilities = true
     ): int
     {
         $pdo = Database::connection();
@@ -390,9 +400,11 @@ final class OrderSyncService
             }
         }
         if (!$allowFollowUpFanout) {
-            $this->recordQueueCorePendingCapability($orderId, 'financial_projection');
-            if (!empty($order['pack_id']) || !empty($order['shipping']['id'])) {
-                $this->recordQueueCorePendingCapability($orderId, 'order_enrichment');
+            if($recordPendingCapabilities){
+                $this->recordQueueCorePendingCapability($orderId, 'financial_projection');
+                if (!empty($order['pack_id']) || !empty($order['shipping']['id'])) {
+                    $this->recordQueueCorePendingCapability($orderId, 'order_enrichment');
+                }
             }
             return $orderId;
         }

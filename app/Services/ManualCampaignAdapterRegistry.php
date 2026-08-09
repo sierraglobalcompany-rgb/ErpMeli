@@ -53,14 +53,22 @@ final class ManualCampaignAdapterRegistry
     {
         $ready = [];
         $pending = [];
-        foreach ($this->all() as $adapter) {
+        $adapters=[];
+        foreach ($this->definitions() as $definition) {
+            $adapter=new RegisteredManualCampaignAdapter($definition);
             if ($adapter->supportsExact()) {
                 $ready[] = $adapter->queueKey();
             } else {
                 $pending[] = $adapter->queueKey();
             }
+            $adapters[$adapter->queueKey()]=[
+                'status'=>$adapter->supportsExact()?'exact_single_step':'unsupported',
+                'uses_api'=>(bool)($definition['uses_api']??false),
+                'operation_key'=>(string)($definition['operation_key']??'local_maintenance'),
+                'background_continuation'=>false,
+            ];
         }
-        return ['ready' => $ready, 'pending' => $pending, 'all_exact' => $pending === []];
+        return ['ready' => $ready, 'pending' => $pending, 'all_exact' => $pending === [],'adapters'=>$adapters];
     }
 
     /** @return array<string,mixed> */

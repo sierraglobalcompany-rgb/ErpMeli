@@ -86,8 +86,9 @@ final class QueueCoreRepository
     {
         $this->pdo->beginTransaction();
         try {
-            $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state='running',started_at=COALESCE(started_at,UTC_TIMESTAMP(3)),updated_at=UTC_TIMESTAMP(3) WHERE id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND state='claimed'");
-            $u->execute([$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
+            $resetKnown=$claim->dispatchState==='DISPATCHED_RESULT_KNOWN' && self::knownResponseRetryAllowed($claim);
+            $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state='running',started_at=COALESCE(started_at,UTC_TIMESTAMP(3)),dispatch_state=CASE WHEN ?=1 THEN 'NOT_DISPATCHED' ELSE dispatch_state END,last_http_status=CASE WHEN ?=1 THEN NULL ELSE last_http_status END,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND state='claimed'");
+            $u->execute([$resetKnown?1:0,$resetKnown?1:0,$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
             if($u->rowCount()!==1) throw new RuntimeException('Queue Core lease changed before handler start.');
             $a=$this->pdo->prepare("INSERT INTO queue_core_attempts (job_id,company_id,meli_account_id,lease_owner,lease_generation,launcher) VALUES (?,?,?,?,?,?)");
             $a->execute([$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration,$launcher]);
@@ -133,7 +134,9 @@ final class QueueCoreRepository
             if($u->rowCount()!==1){$this->pdo->rollBack();return false;}
             $j=$this->pdo->prepare("INSERT INTO queue_core_dispatch_journal (job_id,attempt_id,company_id,meli_account_id,lease_owner,lease_generation,method,endpoint_key,state) VALUES (?,?,?,?,?,?,?,?, 'in_flight')");
             $j->execute([$claim->id,$attemptId,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration,strtoupper($method),substr($endpoint,0,120)]);
-            $this->pdo->prepare("UPDATE queue_core_attempts SET dispatch_state='DISPATCHED_RESULT_UNCERTAIN',physical_http_calls=1,physical_http_started_at=UTC_TIMESTAMP(3) WHERE id=? AND job_id=? AND lease_owner=? AND lease_generation=?")->execute([$attemptId,$claim->id,$claim->leaseOwner,$claim->leaseGeneration]);
+            $attempt=$this->pdo->prepare("UPDATE queue_core_attempts SET dispatch_state='DISPATCHED_RESULT_UNCERTAIN',physical_http_calls=1,physical_http_started_at=UTC_TIMESTAMP(3) WHERE id=? AND job_id=? AND lease_owner=? AND lease_generation=? AND dispatch_state='NOT_DISPATCHED' AND physical_http_calls=0");
+            $attempt->execute([$attemptId,$claim->id,$claim->leaseOwner,$claim->leaseGeneration]);
+            if($j->rowCount()!==1 || $attempt->rowCount()!==1){$this->pdo->rollBack();return false;}
             $this->event($claim->id,$claim->companyId,$claim->meliAccountId,$claim->lane,'physical_http_started');
             $this->pdo->commit(); return true;
         }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
@@ -153,8 +156,11 @@ final class QueueCoreRepository
             $u=$this->pdo->prepare("UPDATE queue_core_jobs SET dispatch_state='DISPATCHED_RESULT_KNOWN',last_http_status=?,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND state='running' AND dispatch_state='DISPATCHED_RESULT_UNCERTAIN'");
             $u->execute([$status?:null,$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
             if($u->rowCount()!==1){$this->pdo->rollBack();return false;}
-            $this->pdo->prepare("UPDATE queue_core_dispatch_journal SET state='response_known',http_status=? WHERE attempt_id=? AND lease_owner=? AND lease_generation=?")->execute([$status?:null,$attemptId,$claim->leaseOwner,$claim->leaseGeneration]);
-            $this->pdo->prepare("UPDATE queue_core_attempts SET dispatch_state='DISPATCHED_RESULT_KNOWN',http_status=?,response_known_at=UTC_TIMESTAMP(3) WHERE id=? AND job_id=? AND lease_owner=? AND lease_generation=?")->execute([$status?:null,$attemptId,$claim->id,$claim->leaseOwner,$claim->leaseGeneration]);
+            $journal=$this->pdo->prepare("UPDATE queue_core_dispatch_journal SET state='response_known',http_status=? WHERE attempt_id=? AND lease_owner=? AND lease_generation=? AND state='in_flight'");
+            $journal->execute([$status?:null,$attemptId,$claim->leaseOwner,$claim->leaseGeneration]);
+            $attempt=$this->pdo->prepare("UPDATE queue_core_attempts SET dispatch_state='DISPATCHED_RESULT_KNOWN',http_status=?,response_known_at=UTC_TIMESTAMP(3) WHERE id=? AND job_id=? AND lease_owner=? AND lease_generation=? AND dispatch_state='DISPATCHED_RESULT_UNCERTAIN' AND physical_http_calls=1");
+            $attempt->execute([$status?:null,$attemptId,$claim->id,$claim->leaseOwner,$claim->leaseGeneration]);
+            if($journal->rowCount()!==1 || $attempt->rowCount()!==1){$this->pdo->rollBack();return false;}
             $this->event($claim->id,$claim->companyId,$claim->meliAccountId,$claim->lane,'response_known');
             $this->pdo->commit(); return true;
         }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
@@ -167,20 +173,104 @@ final class QueueCoreRepository
             $row=$this->lockedJob($claim);
             if(!is_array($row) || (string)$row['state']!=='running'){$this->pdo->rollBack();return false;}
             $outcome=$result->outcome;
-            if((string)$row['dispatch_state']==='DISPATCHED_RESULT_UNCERTAIN' && $outcome!=='completed')$outcome='review';
-            if($outcome==='retry_wait' && (int)$row['attempt_count'] >= (int)$row['max_attempts'])$outcome='dead';
+            if((string)$row['dispatch_state']==='DISPATCHED_RESULT_UNCERTAIN')$outcome='review';
+            if($outcome==='retry_wait' && (string)$row['dispatch_state']==='DISPATCHED_RESULT_KNOWN'
+                && !self::knownResponseRetryAllowed($claim))$outcome='review';
+            $failureAttempts=max(0,(int)$row['attempt_count']-($result->consumesFailureAttempt?0:1));
+            if($outcome==='retry_wait' && $result->consumesFailureAttempt
+                && $failureAttempts >= (int)$row['max_attempts'])$outcome='dead';
             $state=in_array($outcome,['completed','retry_wait','waiting_oauth','review','dead'],true)?$outcome:'review';
             $next=$state==='retry_wait'?($result->retryAt??QueueRetryPolicy::nextAttemptAt((int)$row['attempt_count'])):null;
             $waitVersion=null;
             if($state==='waiting_oauth'){$s=$this->pdo->prepare('SELECT COALESCE(refresh_version,0) FROM meli_tokens WHERE meli_account_id=? LIMIT 1');$s->execute([$claim->meliAccountId]);$waitVersion=max(0,(int)($s->fetchColumn()?:0));}
-            $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state=?,next_attempt_at=?,available_at=COALESCE(?,available_at),wait_refresh_version=?,completed_at=CASE WHEN ? IN ('completed','review','dead') THEN UTC_TIMESTAMP(3) ELSE NULL END,last_error_class=?,last_http_status=COALESCE(?,last_http_status),lease_owner=NULL,lease_expires_at=NULL,lease_heartbeat_at=NULL,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND state='running'");
-            $u->execute([$state,$next,$next,$waitVersion,$state,$result->errorClass,$result->httpStatus,$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
+            $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state=?,attempt_count=?,next_attempt_at=?,available_at=COALESCE(?,available_at),wait_refresh_version=?,completed_at=CASE WHEN ? IN ('completed','review','dead') THEN UTC_TIMESTAMP(3) ELSE NULL END,last_error_class=?,last_http_status=COALESCE(?,last_http_status),lease_owner=NULL,lease_expires_at=NULL,lease_heartbeat_at=NULL,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND state='running'");
+            $u->execute([$state,$failureAttempts,$next,$next,$waitVersion,$state,$result->errorClass,$result->httpStatus,$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
             if($u->rowCount()!==1){$this->pdo->rollBack();return false;}
             $a=$this->pdo->prepare("UPDATE queue_core_attempts SET outcome=?,resources_discovered=?,resources_persisted=?,error_class=?,http_status=COALESCE(?,http_status),source_closed_at=CASE WHEN ?='completed' THEN UTC_TIMESTAMP(3) ELSE source_closed_at END,finished_at=UTC_TIMESTAMP(3) WHERE id=? AND job_id=? AND lease_owner=? AND lease_generation=?");
             $a->execute([$state,$result->resourcesDiscovered,$result->resourcesPersisted,$result->errorClass,$result->httpStatus,$state,$attemptId,$claim->id,$claim->leaseOwner,$claim->leaseGeneration]);
+            if($a->rowCount()!==1){$this->pdo->rollBack();return false;}
             $this->event($claim->id,$claim->companyId,$claim->meliAccountId,$claim->lane,$state,1,$result->resourcesPersisted);
             if($state==='completed')$this->event($claim->id,$claim->companyId,$claim->meliAccountId,$claim->lane,'source_closed');
             $this->pdo->commit();return true;
+        }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
+    }
+
+    public function reviveExhaustedTransient(int $jobId,string $expectedWorkType,string $expectedInputVersion): bool
+    {
+        if($jobId<1 || !in_array($expectedWorkType,['fresh_orders_discovery','order_exact'],true)
+            || $expectedInputVersion==='')return false;
+        $this->pdo->beginTransaction();
+        try{
+            $s=$this->pdo->prepare('SELECT * FROM queue_core_jobs WHERE id=? AND work_type=? AND input_version=? FOR UPDATE');
+            $s->execute([$jobId,$expectedWorkType,$expectedInputVersion]);
+            $row=$s->fetch(PDO::FETCH_ASSOC);
+            if(!is_array($row) || (string)$row['state']!=='dead'
+                || !self::revivableTransient($row)
+                || (strtotime((string)$row['updated_at'].' UTC')?:time())>time()-60){$this->pdo->rollBack();return false;}
+            $generation=(int)$row['lease_generation'];
+            $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state='pending',attempt_count=0,revival_count=revival_count+1,available_at=UTC_TIMESTAMP(3),next_attempt_at=NULL,dispatch_state='NOT_DISPATCHED',completed_at=NULL,last_error_class=NULL,last_http_status=NULL,lease_owner=NULL,lease_expires_at=NULL,lease_heartbeat_at=NULL,lease_generation=lease_generation+1,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND company_id=? AND meli_account_id=? AND work_type=? AND input_version=? AND state='dead' AND lease_generation=? AND updated_at<=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 60 SECOND)");
+            $u->execute([$jobId,(int)$row['company_id'],(int)$row['meli_account_id'],$expectedWorkType,$expectedInputVersion,$generation]);
+            if($u->rowCount()!==1){$this->pdo->rollBack();return false;}
+            $this->event($jobId,(int)$row['company_id'],(int)$row['meli_account_id'],(string)$row['lane'],'revived');
+            $this->pdo->commit();return true;
+        }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
+    }
+
+    /**
+     * Close a web-manual job that could not reach QueueRunner's normal finish
+     * path. The row lock is the authority: no background continuation is
+     * created, and an uncertain physical dispatch is deliberately left for
+     * human review instead of being rewritten as safely abandoned.
+     */
+    public function abandonManualJob(int $jobId,string $reason): bool
+    {
+        if($jobId<1)return false;
+        $safeReason=substr(trim((string)preg_replace('/[^a-z0-9_]+/i','_',strtolower($reason)),'_'),0,100);
+        if($safeReason==='')$safeReason='manual_launcher_abandoned';
+        $this->pdo->beginTransaction();
+        try{
+            $s=$this->pdo->prepare("SELECT * FROM queue_core_jobs WHERE id=? AND queue_domain='manual' AND work_type='manual_exact' FOR UPDATE");
+            $s->execute([$jobId]);$row=$s->fetch(PDO::FETCH_ASSOC);
+            if(!is_array($row)
+                || !in_array((string)$row['state'],['pending','claimed','running','retry_wait','waiting_oauth'],true)){
+                $this->pdo->rollBack();return false;
+            }
+            $terminalReason=(string)$row['dispatch_state']==='DISPATCHED_RESULT_UNCERTAIN'
+                ? 'remote_result_uncertain':$safeReason;
+            $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state='review',completed_at=UTC_TIMESTAMP(3),next_attempt_at=NULL,wait_refresh_version=NULL,last_error_class=?,lease_owner=NULL,lease_expires_at=NULL,lease_heartbeat_at=NULL,lease_generation=lease_generation+1,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND queue_domain='manual' AND work_type='manual_exact' AND state IN ('pending','claimed','running','retry_wait','waiting_oauth')");
+            $u->execute([$terminalReason,$jobId]);
+            if($u->rowCount()!==1){$this->pdo->rollBack();return false;}
+            $a=$this->pdo->prepare("UPDATE queue_core_attempts SET outcome='review',error_class=?,finished_at=UTC_TIMESTAMP(3) WHERE job_id=? AND finished_at IS NULL");
+            $a->execute([$terminalReason,$jobId]);
+            $this->event($jobId,(int)$row['company_id'],(int)$row['meli_account_id'],(string)$row['lane'],'review');
+            $this->pdo->commit();return true;
+        }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
+    }
+
+    /**
+     * Reconcile durable manual leftovers after the caller has acquired the
+     * global manual execution lease. A still-live claimed/running row remains
+     * busy. An expired uncertain dispatch is closed only as action-required;
+     * it is never made retryable or presented as safely not dispatched.
+     */
+    public function recoverAbandonedManualJobs(): int
+    {
+        $this->pdo->beginTransaction();
+        try{
+            $q=$this->pdo->query("SELECT * FROM queue_core_jobs WHERE queue_domain='manual' AND work_type='manual_exact' AND (state IN ('pending','retry_wait','waiting_oauth') OR (state IN ('claimed','running') AND lease_expires_at<=UTC_TIMESTAMP(3))) ORDER BY id FOR UPDATE");
+            $recovered=0;
+            foreach($q->fetchAll(PDO::FETCH_ASSOC) as $row){
+                $uncertain=(string)$row['dispatch_state']==='DISPATCHED_RESULT_UNCERTAIN';
+                $reason=$uncertain?'remote_result_uncertain':'manual_launcher_abandoned';
+                $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state='review',completed_at=UTC_TIMESTAMP(3),next_attempt_at=NULL,wait_refresh_version=NULL,last_error_class=?,lease_owner=NULL,lease_expires_at=NULL,lease_heartbeat_at=NULL,lease_generation=lease_generation+1,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND queue_domain='manual' AND work_type='manual_exact' AND (state IN ('pending','retry_wait','waiting_oauth') OR (state IN ('claimed','running') AND lease_expires_at<=UTC_TIMESTAMP(3)))");
+                $u->execute([$reason,(int)$row['id']]);
+                if($u->rowCount()!==1)continue;
+                $a=$this->pdo->prepare("UPDATE queue_core_attempts SET outcome='review',error_class=?,finished_at=UTC_TIMESTAMP(3) WHERE job_id=? AND finished_at IS NULL");
+                $a->execute([$reason,(int)$row['id']]);
+                $this->event((int)$row['id'],(int)$row['company_id'],(int)$row['meli_account_id'],(string)$row['lane'],'review');
+                $recovered++;
+            }
+            $this->pdo->commit();return $recovered;
         }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
     }
 
@@ -233,6 +323,26 @@ final class QueueCoreRepository
     /** @return array<string,mixed>|null */
     private function lockedJob(QueueClaim $claim): ?array
     {$s=$this->pdo->prepare('SELECT * FROM queue_core_jobs WHERE id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? FOR UPDATE');$s->execute([$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);$r=$s->fetch(PDO::FETCH_ASSOC);return is_array($r)?$r:null;}
+    private static function knownResponseRetryAllowed(QueueClaim $claim): bool
+    {
+        if(in_array($claim->workType,['fresh_orders_discovery','order_exact'],true))return true;
+        if($claim->workType!=='manual_exact')return false;
+        $contract=$claim->payload['remote_contract']??null;
+        return is_array($contract) && strtoupper((string)($contract['method']??''))==='GET'
+            && (int)($contract['max_remote_calls']??0)===1;
+    }
+    /** @param array<string,mixed> $row */
+    private static function revivableTransient(array $row): bool
+    {
+        if(!in_array((string)($row['dispatch_state']??''),['NOT_DISPATCHED','DISPATCHED_RESULT_KNOWN'],true))return false;
+        $error=(string)($row['last_error_class']??'');
+        $allowed=['partial_remote_page','incoherent_remote_paging','lease_expired_before_dispatch',
+            'lease_expired_after_known_read','policy_deferred','pre_remote_blocked','deadline'];
+        if(in_array($error,$allowed,true))return true;
+        if($error!=='meli_http_error')return false;
+        $status=(int)($row['last_http_status']??0);
+        return $status===0 || $status===429 || $status>=500;
+    }
     /** @param array<string,mixed> $r */
     private function claimFromRow(array $r): QueueClaim
     {return new QueueClaim((int)$r['id'],(int)$r['company_id'],(int)$r['meli_account_id'],(string)$r['work_type'],(string)$r['resource_type'],$r['resource_id']!==null?(string)$r['resource_id']:null,(string)$r['lane'],(int)$r['priority'],(string)$r['state'],(int)$r['attempt_count'],(int)$r['max_attempts'],(string)$r['lease_owner'],(int)$r['lease_generation'],(string)$r['dispatch_state'],self::decode((string)$r['payload_json']),(string)$r['source'],$r['source_ref']!==null?(string)$r['source_ref']:null);}

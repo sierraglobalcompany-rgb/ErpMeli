@@ -118,10 +118,15 @@ final class SaleFinancialService
         return $this->processSelected(1, $jobId);
     }
 
-    /** @return array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} */
-    private function processSelected(int $limit, ?int $jobId): array
+    public function processManualExact(int $jobId): array
     {
-        if (PHP_SAPI !== 'cli') {
+        return $this->processSelected(1,$jobId,true);
+    }
+
+    /** @return array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} */
+    private function processSelected(int $limit, ?int $jobId, bool $manualExact=false): array
+    {
+        if (PHP_SAPI !== 'cli' && !$manualExact) {
             throw new HttpException(404, 'Esta operación solo está disponible para el lanzador CLI.');
         }
         if (!(new SchemaInspectorService())->hasTable('sale_financial_reconciliation_jobs')) {

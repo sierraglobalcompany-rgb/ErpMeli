@@ -74,14 +74,13 @@ final class ManualSingleStepService
                 );
             }
 
-            $previews->consume($previewToken, $userId);
             $inputVersion = ManualInputVersion::deriveFromSourceAuthority(
                 $row,
                 $authority
             );
             // Manual and Cron V4 are launchers only. Both enter the same
             // QueueRunner, scheduler, claim, fencing and retry path.
-            return (new ManualQueueLauncher())->runExact(
+            $result = (new ManualQueueLauncher())->runExact(
                 $companyId,
                 $accountId,
                 $queueKey,
@@ -89,8 +88,13 @@ final class ManualSingleStepService
                 $authority->usesApi,
                 $authority->operationKey,
                 $inputVersion,
+                $authority->durableInputVersion,
                 $authority->remoteContract
             );
+            // Solo se consume después de que Queue Core adquirió exclusión,
+            // persistió y ejecutó el único paso sin continuación automática.
+            $previews->consume($previewToken, $userId);
+            return $result;
         } finally {
             try {
                 $release = $pdo->prepare('SELECT RELEASE_LOCK(?)');

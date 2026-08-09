@@ -5,7 +5,11 @@ namespace App\QueueCore;
 
 use App\Services\ApiBudgetExhaustedException;
 use App\Services\ApiExecutionMetadataContext;
+use App\Services\ApiManualPauseException;
+use App\Services\CronDeadlineDeferredException;
 use App\Services\MeliApiException;
+use App\Services\ManualRemoteCallLimitException;
+use App\Services\OAuthRefreshBusyException;
 use App\Services\RemoteResultUncertainException;
 use App\Services\EmergencyControlService;
 use App\Services\OAuthRefreshRequiredException;
@@ -51,8 +55,12 @@ final class QueueRunner
                 ],fn():QueueResult=>$this->handlers->get($claim->workType)->handle($claim,$context));
             }catch(RemoteResultUncertainException){$result=QueueResult::review('remote_result_uncertain');
             }catch(OAuthRefreshRequiredException){$result=QueueResult::waitingOAuth();
-            }catch(QueueCorePreRemoteBlockedException){$result=QueueResult::retry('pre_remote_blocked',gmdate('Y-m-d H:i:s',time()+5));
-            }catch(ApiBudgetExhaustedException $e){$result=QueueResult::retry('policy_deferred',$e->nextSafeAt);
+            }catch(OAuthRefreshBusyException){$result=QueueResult::automaticWait('oauth_refresh_busy',gmdate('Y-m-d H:i:s',time()+5));
+            }catch(CronDeadlineDeferredException $e){$result=QueueResult::automaticWait('deadline',$e->nextSafeAt??gmdate('Y-m-d H:i:s',time()+60));
+            }catch(ApiManualPauseException $e){$result=QueueResult::automaticWait('api_paused',$e->resumeAt??gmdate('Y-m-d H:i:s',time()+60));
+            }catch(QueueCorePreRemoteBlockedException){$result=QueueResult::automaticWait('pre_remote_blocked',gmdate('Y-m-d H:i:s',time()+5));
+            }catch(ApiBudgetExhaustedException $e){$result=QueueResult::automaticWait('policy_deferred',$e->nextSafeAt);
+            }catch(ManualRemoteCallLimitException){$result=QueueResult::review('remote_call_limit_exceeded');
             }catch(MeliApiException $e){$result=QueueResult::retry('meli_http_error',null,$e->httpStatus);
             }catch(Throwable $e){$result=QueueResult::retry(self::safeError($e));}
             if(!$this->repository->finish($claim,$attempt,$result)){$summary['lease_lost']++;continue;}

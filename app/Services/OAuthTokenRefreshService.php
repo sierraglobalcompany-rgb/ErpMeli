@@ -43,7 +43,7 @@ final class OAuthTokenRefreshService
             if ($fresh !== null && !$this->expiresSoon($fresh)) {
                 return $fresh;
             }
-            throw new RuntimeException('Otra ejecución está renovando el token OAuth; el trabajo se reintentará.');
+            throw new OAuthRefreshBusyException('Otra ejecución está renovando el token OAuth; el trabajo se reintentará.');
         }
 
         try {
@@ -51,12 +51,20 @@ final class OAuthTokenRefreshService
             if ($current === null) {
                 throw new RuntimeException('Token OAuth no encontrado.');
             }
-            $recovered = $this->recoverEmergencyRotatedToken($pdo, $current);
+            $recovered = $this->recoverDurableRotatedToken($pdo, $current);
             if (is_array($recovered)) {
                 return $recovered;
             }
             if (!$this->expiresSoon($current)) {
                 return $current;
+            }
+
+            // Un POST OAuth puede rotar el refresh token. Queue Core solo cruza
+            // el transporte si el escrow por cuenta ya probó persistencia
+            // atómica y durable en el filesystem privado.
+            $queueRecoveryBeforeTransport = $this->queueRecoveryContext();
+            if (is_array($queueRecoveryBeforeTransport)) {
+                (new QueueOAuthDurableRecoveryStore())->assertStorageReady();
             }
 
             $response = $requestToken([
@@ -83,23 +91,37 @@ final class OAuthTokenRefreshService
             $scope = (string) ($response['scope'] ?? $current['scope'] ?? '');
             $storedTokenType = $tokenType !== '' ? $tokenType : (string) ($current['token_type'] ?? 'Bearer');
             $previousRefreshVersion = (int) ($current['refresh_version'] ?? 0);
-            $expectedMeliUserId = $this->manualEmergencyExpectedMeliUserId();
+            $manualExpectedMeliUserId = $this->manualEmergencyExpectedMeliUserId();
+            $queueRecovery = $this->queueRecoveryContext();
+            $expectedMeliUserId = $manualExpectedMeliUserId
+                ?? (is_array($queueRecovery) ? $queueRecovery['expected_meli_user_id'] : null);
             $recoveryStaged = false;
             $recoveryStageFailed = false;
             if ($expectedMeliUserId !== null) {
                 try {
-                    $this->emergencyControl->stageEmergencyOAuthTokenRecovery(
-                        $this->accountId,
-                        $expectedMeliUserId,
-                        $previousRefreshVersion,
-                        [
-                            'access_token_encrypted' => $accessEncrypted,
-                            'refresh_token_encrypted' => $refreshEncrypted,
-                            'expires_at' => $expiresAt,
-                            'scope' => $scope,
-                            'token_type' => $storedTokenType,
-                        ]
-                    );
+                    $tokenForRecovery = [
+                        'access_token_encrypted' => $accessEncrypted,
+                        'refresh_token_encrypted' => $refreshEncrypted,
+                        'expires_at' => $expiresAt,
+                        'scope' => $scope,
+                        'token_type' => $storedTokenType,
+                    ];
+                    if ($manualExpectedMeliUserId !== null) {
+                        $this->emergencyControl->stageEmergencyOAuthTokenRecovery(
+                            $this->accountId,
+                            $expectedMeliUserId,
+                            $previousRefreshVersion,
+                            $tokenForRecovery
+                        );
+                    } elseif (is_array($queueRecovery)) {
+                        (new QueueOAuthDurableRecoveryStore())->stage(
+                            $queueRecovery['company_id'],
+                            $this->accountId,
+                            $expectedMeliUserId,
+                            $previousRefreshVersion,
+                            $tokenForRecovery
+                        );
+                    }
                     $recoveryStaged = true;
                 } catch (Throwable) {
                     $recoveryStageFailed = true;
@@ -148,10 +170,17 @@ final class OAuthTokenRefreshService
             }
 
             if ($recoveryStaged) {
-                $this->emergencyControl->clearEmergencyOAuthTokenRecovery(
-                    $this->accountId,
-                    $previousRefreshVersion + 1
-                );
+                if ($manualExpectedMeliUserId !== null) {
+                    $this->emergencyControl->clearEmergencyOAuthTokenRecovery(
+                        $this->accountId,
+                        $previousRefreshVersion + 1
+                    );
+                } else {
+                    (new QueueOAuthDurableRecoveryStore())->clear(
+                        $this->accountId,
+                        $previousRefreshVersion + 1
+                    );
+                }
             }
 
             $current['access_token_encrypted'] = $accessEncrypted;
@@ -163,9 +192,20 @@ final class OAuthTokenRefreshService
             return $current;
         } catch (Throwable $error) {
             if ($this->isInvalidGrant($error)) {
-                Database::connectionFresh()->prepare(
-                    "UPDATE meli_accounts SET status='vencido',last_error=? WHERE id=?"
-                )->execute(['La autorización de Mercado Libre venció; conecte nuevamente la cuenta.', $this->accountId]);
+                $queueScope = $this->queueRecoveryContext();
+                $statement = Database::connectionFresh()->prepare(
+                    is_array($queueScope)
+                        ? "UPDATE meli_accounts SET status='vencido',last_error=? WHERE id=? AND company_id=?"
+                        : "UPDATE meli_accounts SET status='vencido',last_error=? WHERE id=?"
+                );
+                $parameters = [
+                    'La autorización de Mercado Libre venció; conecte nuevamente la cuenta.',
+                    $this->accountId,
+                ];
+                if (is_array($queueScope)) {
+                    $parameters[] = $queueScope['company_id'];
+                }
+                $statement->execute($parameters);
             }
             throw $error;
         } finally {
@@ -233,16 +273,25 @@ final class OAuthTokenRefreshService
      * @param array<string,mixed> $current
      * @return array<string,mixed>|null
      */
-    private function recoverEmergencyRotatedToken(PDO $pdo, array $current): ?array
+    private function recoverDurableRotatedToken(PDO $pdo, array $current): ?array
     {
-        $expectedMeliUserId = $this->manualEmergencyExpectedMeliUserId();
+        $manualExpectedMeliUserId = $this->manualEmergencyExpectedMeliUserId();
+        $queueRecovery = $this->queueRecoveryContext();
+        $expectedMeliUserId = $manualExpectedMeliUserId
+            ?? (is_array($queueRecovery) ? $queueRecovery['expected_meli_user_id'] : null);
         if ($expectedMeliUserId === null) {
             return null;
         }
-        $recovery = $this->emergencyControl->emergencyOAuthTokenRecovery(
-            $this->accountId,
-            $expectedMeliUserId
-        );
+        $recovery = $manualExpectedMeliUserId !== null
+            ? $this->emergencyControl->emergencyOAuthTokenRecovery(
+                $this->accountId,
+                $expectedMeliUserId
+            )
+            : (new QueueOAuthDurableRecoveryStore())->load(
+                (int) $queueRecovery['company_id'],
+                $this->accountId,
+                $expectedMeliUserId
+            );
         if (!is_array($recovery)) {
             return null;
         }
@@ -260,8 +309,9 @@ final class OAuthTokenRefreshService
             throw new RuntimeException('La recuperación OAuth pendiente tiene una generación inválida.');
         }
         if ($currentVersion >= $targetVersion) {
-            $this->emergencyControl->clearEmergencyOAuthTokenRecovery($this->accountId, $targetVersion);
-            $current['emergency_recovery_applied'] = true;
+            $this->clearDurableRecovery($manualExpectedMeliUserId !== null, $targetVersion);
+            $current['emergency_recovery_applied'] = $manualExpectedMeliUserId !== null;
+            $current['queue_recovery_applied'] = $manualExpectedMeliUserId === null;
             return $current;
         }
         if ($currentVersion !== $previousVersion) {
@@ -298,14 +348,44 @@ final class OAuthTokenRefreshService
             throw $error;
         }
 
-        $this->emergencyControl->clearEmergencyOAuthTokenRecovery($this->accountId, $targetVersion);
+        $this->clearDurableRecovery($manualExpectedMeliUserId !== null, $targetVersion);
         $current['access_token_encrypted'] = (string) $recovery['access_token_encrypted'];
         $current['refresh_token_encrypted'] = (string) $recovery['refresh_token_encrypted'];
         $current['expires_at'] = (string) $recovery['expires_at'];
         $current['scope'] = (string) ($recovery['scope'] ?? '');
         $current['token_type'] = (string) ($recovery['token_type'] ?? 'Bearer');
         $current['refresh_version'] = $targetVersion;
-        $current['emergency_recovery_applied'] = true;
+        $current['emergency_recovery_applied'] = $manualExpectedMeliUserId !== null;
+        $current['queue_recovery_applied'] = $manualExpectedMeliUserId === null;
         return $current;
+    }
+
+    /** @return array{company_id:int,expected_meli_user_id:string}|null */
+    private function queueRecoveryContext(): ?array
+    {
+        $metadata = ApiExecutionMetadataContext::current();
+        if ((string) ($metadata['source'] ?? '') !== 'queue_core'
+            || (string) ($metadata['queue_core_work_type'] ?? '') !== 'oauth_refresh'
+            || (int) ($metadata['queue_core_oauth_refresh'] ?? 0) !== 1) {
+            return null;
+        }
+        $accountId = (int) ($metadata['account_id'] ?? 0);
+        $transportAccountId = (int) ($metadata['transport_meli_account_id'] ?? $accountId);
+        $companyId = (int) ($metadata['company_id'] ?? 0);
+        $expected = trim((string) ($metadata['expected_meli_user_id'] ?? ''));
+        if ($accountId !== $this->accountId || $transportAccountId !== $this->accountId
+            || $companyId < 1 || $expected === '') {
+            throw new RuntimeException('Queue OAuth recovery context does not match its transport scope.');
+        }
+        return ['company_id' => $companyId, 'expected_meli_user_id' => $expected];
+    }
+
+    private function clearDurableRecovery(bool $manual, int $targetVersion): void
+    {
+        if ($manual) {
+            $this->emergencyControl->clearEmergencyOAuthTokenRecovery($this->accountId, $targetVersion);
+            return;
+        }
+        (new QueueOAuthDurableRecoveryStore())->clear($this->accountId, $targetVersion);
     }
 }

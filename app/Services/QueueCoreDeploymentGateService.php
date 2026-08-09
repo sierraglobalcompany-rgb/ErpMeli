@@ -18,6 +18,7 @@ final class QueueCoreDeploymentGateService
         '285_queue_core_webhook_ownership_b2.sql',
         '286_queue_core_historical_deploy_b2.sql',
         '287_queue_core_readiness_observability_b2.sql',
+        '288_queue_core_readiness_authority_b2_1.sql',
         '289_queue_core_webhook_lifecycle_b2_1.sql',
         '290_queue_core_sales_dependency_graph_b2_1.sql',
         '291_queue_core_release_health_capacity_b2_1.sql',
@@ -193,8 +194,17 @@ final class QueueCoreDeploymentGateService
             }
             $path = $root . '/' . ltrim(str_replace('\\', '/', $component['path']), '/');
             $expected = strtolower((string) ($component['sha256'] ?? ''));
-            if (!is_file($path) || preg_match('/^[a-f0-9]{64}$/', $expected) !== 1
-                || !hash_equals($expected, strtolower((string) hash_file('sha256', $path)))) {
+            $expectedLf = strtolower((string) ($component['sha256_lf'] ?? ''));
+            $contents = is_file($path) ? file_get_contents($path) : false;
+            $exact = is_string($contents) ? hash('sha256', $contents) : '';
+            $canonicalLf = is_string($contents)
+                ? hash('sha256', str_replace(["\r\n", "\r"], "\n", $contents))
+                : '';
+            $exactMatch = preg_match('/^[a-f0-9]{64}$/', $expected) === 1
+                && hash_equals($expected, $exact);
+            $canonicalMatch = preg_match('/^[a-f0-9]{64}$/', $expectedLf) === 1
+                && hash_equals($expectedLf, $canonicalLf);
+            if (!is_string($contents) || (!$exactMatch && !$canonicalMatch)) {
                 $invalid++;
             }
         }

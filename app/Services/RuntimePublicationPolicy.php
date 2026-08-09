@@ -9,6 +9,8 @@ use Throwable;
 
 final class RuntimePublicationPolicy
 {
+    /** @var array<string,list<array{path:string,mode:string,object:string,size:int,sha256:string}>> */
+    private static array $packageEntryCache = [];
     private const CLASSIFICATIONS = [
         'RUNTIME_REQUIRED',
         'RUNTIME_OPTIONAL_FAIL_CLOSED',
@@ -313,6 +315,10 @@ final class RuntimePublicationPolicy
     public static function packageEntries(string $root, string $head = 'HEAD'): array
     {
         $headCommit = trim(self::git($root, ['rev-parse', $head]));
+        $cacheKey = str_replace('\\', '/', $root) . '|' . $headCommit;
+        if (isset(self::$packageEntryCache[$cacheKey])) {
+            return self::$packageEntryCache[$cacheKey];
+        }
         $tree = self::gitTree($root, $headCommit);
         $paths = [];
         foreach ($tree as $path => $entry) {
@@ -343,6 +349,8 @@ final class RuntimePublicationPolicy
                 'sha256' => hash('sha256', $bytes),
             ];
         }
+        self::$packageEntryCache[$cacheKey] = $entries;
+
         return $entries;
     }
 

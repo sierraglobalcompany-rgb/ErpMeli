@@ -206,7 +206,7 @@ $options = getopt('', ['json', 'classification-only', 'target:', 'authority:']);
 $target = trim((string) ($options['target'] ?? 'HEAD'));
 $authority = trim((string) ($options['authority'] ?? $target));
 $registryResult = runGit($root, [
-    'show', $authority . ':resources/release/queue-core-runtime-dependencies.json',
+    'show', $authority . ':resources/release/managed-runtime-dependencies-2.36.1.json',
 ]);
 $registry = $registryResult['exit'] === 0 ? json_decode($registryResult['stdout'], true) : null;
 $issues = [];

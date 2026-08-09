@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "queue-core-b2.1-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "ca29d9de4736f35880286e84583509c38f7e72972c92009c6d686c114176b564",
+  "runtime_manifest_paths_sha256": "61263f2d00d462bbb6286d75ab09232a4449eb5d54ca2c2b991ed76c68bd73ff",
   "coverage_base_commit": "f91cd534d271b964db1ad9e682260475eca96820",
   "blocked_rc_snapshot": {
     "commit": "4ecd154f0a219a07d6ce0dc152be59037e9ef98b",
@@ -31,9 +31,14 @@
       "classification": "RUNTIME_REQUIRED",
       "kind": "exact",
       "values": [
-        "resources/mercadolibre-api/generated/notification-topics.json",
-        "resources/release/queue-core-runtime-dependencies.json"
+        "resources/mercadolibre-api/generated/notification-topics.json"
       ]
+    },
+    {
+      "id": "runtime-release-authorities",
+      "classification": "RUNTIME_REQUIRED",
+      "kind": "regex",
+      "value": "#^resources/release/[A-Za-z0-9._-]+\\.json$#D"
     },
     {
       "id": "runtime-php",
@@ -53,8 +58,10 @@
       "kind": "exact",
       "values": [
         ".gitattributes",
+        ".gitignore",
         "VERSION",
         "bin/build_runtime_manifest_b21.php",
+        "bin/build_managed_runtime_release.php",
         "bin/build_update_package.php",
         "bin/queue_core_dependency_check.php",
         "composer.json",
@@ -66,11 +73,35 @@
       "classification": "TEST_ONLY",
       "kind": "regex",
       "value": "#^tests/.+\\.php$#D"
+    },
+    {
+      "id": "documentation",
+      "classification": "DOCUMENTATION",
+      "kind": "regex",
+      "value": "#^docs/.+$#D"
     }
   ],
   "runtime_dependencies": [
     {
-      "id": "runtime-dependency-registry",
+      "id": "managed-runtime-dependency-registry",
+      "path": "resources/release/managed-runtime-dependencies-2.36.1.json",
+      "classification": "RUNTIME_REQUIRED",
+      "required_in_runtime_manifest": true,
+      "consumers": [
+        {
+          "source_path": "app/Services/ManagedRuntimePublicationPolicy.php",
+          "symbol": "App\\Services\\ManagedRuntimePublicationPolicy::installedManifestIssues",
+          "path_literal": "resources/release/managed-runtime-dependencies-2.36.1.json"
+        }
+      ],
+      "provenance": {
+        "kind": "static_tracked_release_authority",
+        "generator": "B2.1A release dependency classification"
+      },
+      "missing_effect": "Runtime manifest completeness and readiness fail closed."
+    },
+    {
+      "id": "frozen-updater-dependency-registry",
       "path": "resources/release/queue-core-runtime-dependencies.json",
       "classification": "RUNTIME_REQUIRED",
       "required_in_runtime_manifest": true,
@@ -82,10 +113,10 @@
         }
       ],
       "provenance": {
-        "kind": "static_tracked_release_authority",
-        "generator": "B2.1A release dependency classification"
+        "kind": "frozen_updater_authority",
+        "base_commit": "0cb5ddab368d033e15bdb040b53bb8592248246c"
       },
-      "missing_effect": "Runtime manifest completeness and readiness fail closed."
+      "missing_effect": "The frozen updater release integrity policy fails closed."
     },
     {
       "id": "notification-topics",
@@ -219,11 +250,25 @@
         "data_kind": "packaged_runtime_code"
       },
       {
+        "id": "exports-view-tabs",
+        "source_regex": "#^app/Views/exports/index\\.php$#D",
+        "operations": ["require"],
+        "bounded_by": "Exact packaged runtime view app/Views/reports/_tabs.php.",
+        "data_kind": "packaged_runtime_view"
+      },
+      {
         "id": "runtime-publication-installed-registry",
+        "source_regex": "#^app/Services/ManagedRuntimePublicationPolicy\\.php$#D",
+        "operations": ["file_get_contents"],
+        "bounded_by": "Exact resources/release/managed-runtime-dependencies-2.36.1.json authority under the installed release root.",
+        "data_kind": "release_authority"
+      },
+      {
+        "id": "frozen-updater-publication-installed-registry",
         "source_regex": "#^app/Services/RuntimePublicationPolicy\\.php$#D",
         "operations": ["file_get_contents"],
-        "bounded_by": "Exact resources/release/queue-core-runtime-dependencies.json authority under the installed release root.",
-        "data_kind": "release_authority"
+        "bounded_by": "Exact resources/release/queue-core-runtime-dependencies.json authority; implementation remains byte-identical to 2.36.0.",
+        "data_kind": "frozen_updater_release_authority"
       },
       {
         "id": "notification-topic-generated-contract",
@@ -235,3 +280,4 @@
     ]
   }
 }
+

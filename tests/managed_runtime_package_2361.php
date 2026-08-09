@@ -35,6 +35,7 @@ foreach ([
     'public/index.php', 'public/assets/app.css', 'resources/runtime-manifest.json',
     'resources/mercadolibre-api/generated/endpoints.json',
     'resources/release/queue-core-runtime-dependencies.json',
+    'resources/release/managed-runtime-dependencies-2.36.1.json',
     'bin/create_admin.php', 'bin/database_growth_audit.php', 'bin/database_physical_recovery.php',
     'bin/db_explain_audit.php', 'bin/meli_api_audit.php', 'bin/migrate.php',
     'bin/query_performance_report.php', 'bin/queue_core_dependency_check.php',

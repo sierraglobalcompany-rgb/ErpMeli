@@ -43,6 +43,7 @@ $files = [
     'database/migrations/293_queue_core_runtime_profile_defaults_b2_1.sql' => "SELECT 1;\n",
     'resources/runtime-manifest.json' => "{}\n",
     'resources/release/queue-core-runtime-dependencies.json' => "{}\n",
+    'resources/release/managed-runtime-dependencies-2.36.1.json' => "{}\n",
     'resources/mercadolibre-api/generated/endpoints.json' => "{}\n",
     'resources/mercadolibre-api/source/mercadolibre-api-index.json' => "{}\n",
     'bin/migrate.php' => $php('operator migration entrypoint'),

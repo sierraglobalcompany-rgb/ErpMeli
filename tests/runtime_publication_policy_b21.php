@@ -87,15 +87,15 @@ try {
             'public/index.php',
             'recuperar.php',
             'resources/mercadolibre-api/generated/data.json',
-            'resources/release/queue-core-runtime-dependencies.json',
+            'resources/release/managed-runtime-dependencies-2.36.1.json',
             'stop.php',
         ]) . "\n"),
         'classification_rules' => [
             ['id' => 'runtime-files', 'classification' => 'RUNTIME_REQUIRED', 'kind' => 'regex',
-                'value' => '#^(?:app/.*\\.php|resources/(?:mercadolibre-api/generated/data\\.json|release/queue-core-runtime-dependencies\\.json))$#D'],
+                'value' => '#^(?:app/.*\\.php|resources/(?:mercadolibre-api/generated/data\\.json|release/managed-runtime-dependencies-2\\.36\\.1\\.json))$#D'],
         ],
         'runtime_dependencies' => [
-            ['id' => 'registry', 'path' => 'resources/release/queue-core-runtime-dependencies.json',
+            ['id' => 'registry', 'path' => 'resources/release/managed-runtime-dependencies-2.36.1.json',
                 'classification' => 'RUNTIME_REQUIRED', 'required_in_runtime_manifest' => true,
                 'consumers' => [['source_path' => 'app/Test.php', 'symbol' => 'test', 'path_literal' => 'registry']],
                 'provenance' => ['kind' => 'generated']],
@@ -105,7 +105,7 @@ try {
                 'provenance' => ['kind' => 'source']],
         ],
     ];
-    rpWrite($root, 'resources/release/queue-core-runtime-dependencies.json',
+    rpWrite($root, 'resources/release/managed-runtime-dependencies-2.36.1.json',
         json_encode($registry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
     rpGit($root, ['add', '.']);
     rpGit($root, ['commit', '--quiet', '-m', 'base']);

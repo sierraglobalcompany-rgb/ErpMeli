@@ -144,43 +144,30 @@ try {
     file_put_contents($clone . DIRECTORY_SEPARATOR . 'VERSION', "dirty-working-tree-version\n");
     [$dirtyExit, $dirtyOutput] = $run([
         PHP_BINARY,
-        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',
+        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_managed_runtime_release.php',
         '--source=' . $clone,
         '--dry-run=1',
-        '--git-exact=1',
-        '--release-id=b21a-dirty-version-test',
+        '--ref=HEAD',
     ], $clone);
     $assert($dirtyExit === 0 && str_contains($dirtyOutput, '"ok":true'), 'Dirty working-tree VERSION influenced the Git-exact builder.');
-    [$nonExactExit, , $nonExactError] = $run([
-        PHP_BINARY,
-        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',
-        '--source=' . $clone,
-        '--dry-run=1',
-        '--release-id=b21a-non-exact-bypass-test',
-    ], $clone);
-    $assert($nonExactExit !== 0 && str_contains($nonExactError, 'exige --git-exact=1'),
-        'Dirty working-tree VERSION bypassed mandatory Git-exact publication.');
     $export = $clone . DIRECTORY_SEPARATOR . 'non-git-export';
     mkdir($export);
     file_put_contents($export . DIRECTORY_SEPARATOR . 'VERSION', "2.36.1\n");
     [$exportExit, , $exportError] = $run([
         PHP_BINARY,
-        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',
+        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_managed_runtime_release.php',
         '--source=' . $export,
         '--dry-run=1',
-        '--release-id=b21a-export-bypass-test',
     ], $clone);
-    $assert($exportExit !== 0 && str_contains($exportError, 'exige --git-exact=1'),
+    $assert($exportExit !== 0 && str_contains($exportError, 'exact Git toplevel'),
         'A non-Git 2.36.1 export bypassed mandatory Git-exact publication.');
     [$subdirExit, , $subdirError] = $run([
         PHP_BINARY,
-        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',
+        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_managed_runtime_release.php',
         '--source=' . $clone . DIRECTORY_SEPARATOR . 'app',
         '--dry-run=1',
-        '--git-exact=1',
-        '--release-id=b21a-subdir-test',
     ], $clone);
-    $assert($subdirExit !== 0 && str_contains($subdirError, 'toplevel Git'), 'A Git subdirectory was accepted as the release source.');
+    $assert($subdirExit !== 0 && str_contains($subdirError, 'exact Git toplevel'), 'A Git subdirectory was accepted as the release source.');
 } finally {
     if (is_dir($clone)) {
         $removeTree($clone);

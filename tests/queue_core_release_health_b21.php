@@ -3,6 +3,10 @@
 declare(strict_types=1);
 
 require dirname(__DIR__) . '/bootstrap.php';
+set_exception_handler(static function (Throwable $error): void {
+    fwrite(STDERR,$error::class.': '.$error->getMessage().PHP_EOL);
+    exit(1);
+});
 
 use App\QueueCore\QueueCoreCapacityService;
 use App\QueueCore\QueueCoreHealthService;
@@ -98,10 +102,11 @@ $assert(!$evidence->certifyCapacity(4, $context, $excessiveBacklog, [
 $backupFixture = tempnam(sys_get_temp_dir(), 'b21-backup-') . '.sql.gz';
 $accountCreate=$pdo->query('SHOW CREATE TABLE `meli_accounts`')->fetch(PDO::FETCH_NUM);
 $tokenCreate=$pdo->query('SHOW CREATE TABLE `meli_tokens`')->fetch(PDO::FETCH_NUM);
+$settingsCreate=$pdo->query('SHOW CREATE TABLE `app_settings`')->fetch(PDO::FETCH_NUM);
 $backupSql = (string)($accountCreate[1]??'').";\n"
     . "CREATE TABLE `companies` (`id` BIGINT);\n"
     . "CREATE TABLE `users` (`id` BIGINT);\n"
-    . "CREATE TABLE `app_settings` (`setting_key` VARCHAR(100));\n"
+    . (string)($settingsCreate[1]??'').";\n"
     . (string)($tokenCreate[1]??'').";\n"
     . "CREATE TABLE `meli_orders` (`id` BIGINT);\n"
     . "CREATE TABLE `meli_order_items` (`id` BIGINT);\n"
@@ -114,7 +119,9 @@ file_put_contents($backupFixture, gzencode($backupSql, 6));
 $backupHash = hash_file('sha256', $backupFixture);
 putenv('QUEUE_CORE_APPROVED_BACKUP_SHA256=' . $backupHash);
 putenv('QUEUE_CORE_APPROVED_BACKUP_PATH=' . $backupFixture);
-$assert(is_string($backupHash) && $evidence->verifyBackup($backupFixture, $backupHash)['ok'], 'Structured SQL backup was rejected.');
+$backupVerification=is_string($backupHash)?$evidence->verifyBackup($backupFixture,$backupHash):['ok'=>false];
+$assert(is_string($backupHash) && $backupVerification['ok'],
+    'Structured SQL backup was rejected: '.json_encode($backupVerification));
 $pdo->exec('CREATE TABLE legacy_business_table(id BIGINT PRIMARY KEY)');
 $assert(!$evidence->verifyBackup($backupFixture, (string) $backupHash)['ok'], 'A miniature dump omitted a live legacy table and still certified.');
 $pdo->exec('DROP TABLE legacy_business_table');

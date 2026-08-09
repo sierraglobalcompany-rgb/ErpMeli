@@ -372,7 +372,7 @@ file_put_contents($backupFixture,$backupBytes);
 $restoredBackupVerification=(new QueueCoreReleaseEvidenceService($pdo))->verifyBackup(
     $backupFixture,
     (string)getenv('QUEUE_CORE_APPROVED_BACKUP_SHA256'),
-    false,
+    true,
 );
 $check($restoredBackupVerification['ok'],'restored certified backup failed static re-verification: '.json_encode($restoredBackupVerification));
 $toV4 = $control->compareAndSwap('v4', 1, 'test');

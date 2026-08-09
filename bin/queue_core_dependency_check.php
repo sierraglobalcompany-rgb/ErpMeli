@@ -279,6 +279,9 @@ foreach (is_array($registry['runtime_dependencies'] ?? null) ? $registry['runtim
         continue;
     }
     $dependencyPath = str_replace('\\', '/', $dependency['path']);
+    if (runGit($root, ['show', $target . ':' . $dependencyPath])['exit'] !== 0) {
+        continue;
+    }
     $dependenciesByPath[$dependencyPath] = $dependency;
     if (($dependency['required_in_runtime_manifest'] ?? false) === true && !in_array($dependencyPath, $manifestPaths, true)) {
         $runtimeMissing[] = $dependencyPath;

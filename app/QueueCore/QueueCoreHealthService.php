@@ -130,19 +130,19 @@ final class QueueCoreHealthService
                 ? 'webhook_observation_stalled'
                 : 'webhook_observation_pending';
         }
-        if ($this->latestReadinessFailed()) {
+        $engine = (new QueueEngineControlService($this->pdo))->snapshot();
+        $evidenceGeneration = $engine['active_engine'] === 'v4'
+            ? max(0, (int) $engine['generation'] - 1)
+            : max(0, (int) $engine['generation']);
+        if ($this->latestReadinessFailed($evidenceGeneration)) {
             $reasons[] = 'latest_readiness_failed';
         }
-        if ($this->latestReleaseEvidenceFailed()) {
+        if ($this->latestReleaseEvidenceFailed($evidenceGeneration)) {
             $reasons[] = 'latest_release_evidence_failed';
         }
 
         $safety = (new EmergencyControlService())->status();
-        $engine = (new QueueEngineControlService($this->pdo))->snapshot();
         if ($engine['readiness_mode'] === 'preparing' || $engine['active_engine'] === 'v4') {
-            $evidenceGeneration = $engine['active_engine'] === 'v4'
-                ? max(0, (int) $engine['generation'] - 1)
-                : max(0, (int) $engine['generation']);
             try {
                 $contextHash = (new QueueCoreReadinessReceiptService($this->pdo))
                     ->currentContextHash($evidenceGeneration);
@@ -179,6 +179,7 @@ final class QueueCoreHealthService
         $reasons = array_values(array_unique($reasons));
         $red = array_intersect($reasons, [
             'engine_ownership_inconsistent', 'ml_write_enabled', 'remote_uncertain_present',
+            'oauth_expired',
             'identity_mismatch', 'rotated_credential_unrecoverable', 'schema_inconsistent',
             'cross_account_state', 'blocking_review_present', 'freshness_stale',
             'dependency_query_unknown', 'webhook_query_unknown', 'webhook_observation_stalled',
@@ -329,7 +330,7 @@ final class QueueCoreHealthService
         }
     }
 
-    private function latestReadinessFailed(): bool
+    private function latestReadinessFailed(int $generation): bool
     {
         try {
             return (int) $this->pdo->query(
@@ -338,16 +339,19 @@ final class QueueCoreHealthService
                  JOIN (
                    SELECT receipt_type,company_id,meli_account_id,MAX(id) id
                    FROM queue_core_readiness_receipts
+                   WHERE engine_generation=" . max(0, $generation) . "
                    GROUP BY receipt_type,company_id,meli_account_id
                  ) latest ON latest.id=r.id
-                 WHERE r.status='fail'"
+                 LEFT JOIN meli_accounts a ON a.id=r.meli_account_id AND a.company_id=r.company_id
+                 WHERE r.status='fail'
+                   AND (r.meli_account_id IS NULL OR a.status IN ('conectado','connected'))"
             )->fetchColumn() > 0;
         } catch (Throwable) {
             return true;
         }
     }
 
-    private function latestReleaseEvidenceFailed(): bool
+    private function latestReleaseEvidenceFailed(int $generation): bool
     {
         try {
             return (int) $this->pdo->query(
@@ -356,6 +360,7 @@ final class QueueCoreHealthService
                  JOIN (
                    SELECT evidence_type,company_id,meli_account_id,MAX(id) id
                    FROM queue_core_release_evidence
+                   WHERE engine_generation=" . max(0, $generation) . "
                    GROUP BY evidence_type,company_id,meli_account_id
                  ) latest ON latest.id=e.id
                  WHERE e.status='fail'"

@@ -163,10 +163,20 @@ final class QueueCoreReadinessReceiptService
         $manifestPath = dirname(__DIR__, 2) . '/resources/runtime-manifest.json';
         $manifestHash = is_file($manifestPath) ? hash_file('sha256', $manifestPath) : false;
         $profile = $this->runtimeProfile();
+        $checkpointStatement = $this->pdo->query(
+            "SELECT cp.company_id,cp.meli_account_id,cp.watermark_at,cp.window_from,cp.window_to,
+                    cp.cursor_value,cp.generation,cp.last_error_class
+             FROM queue_core_producer_checkpoints cp
+             JOIN meli_accounts a ON a.id=cp.meli_account_id AND a.company_id=cp.company_id
+             WHERE cp.producer_key='fresh_orders' AND a.status IN ('conectado','connected')
+             ORDER BY cp.company_id,cp.meli_account_id"
+        );
+        $bootstrapAuthorities = $checkpointStatement->fetchAll(PDO::FETCH_ASSOC);
         $context = [
             'engine_generation' => max(0, $engineGeneration),
             'accounts' => $accounts,
             'features' => $flags,
+            'bootstrap_authorities' => $bootstrapAuthorities,
             'runtime' => [
                 'cron_v4' => Env::bool('CRON_V4_ENABLED', false),
                 'cron_v3' => Env::bool('CRON_V3_ENABLED', false),
@@ -175,6 +185,7 @@ final class QueueCoreReadinessReceiptService
                 'profile' => $profile,
             ],
             'release_manifest_hash' => is_string($manifestHash) ? $manifestHash : 'missing',
+            'approved_backup_sha256' => strtolower(trim((string) Env::get('QUEUE_CORE_APPROVED_BACKUP_SHA256', ''))),
             'capability_registry_hash' => (new QueueCapabilityRegistry())->authorityHash(),
             'safety' => [
                 'api' => (string) ($safety['api'] ?? 'unknown'),

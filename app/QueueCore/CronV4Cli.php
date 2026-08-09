@@ -20,9 +20,8 @@ final class CronV4Cli
     /** @param list<string> $argv @return array<string,mixed> */
     public function run(array $argv): array
     {
-        $runtime = $this->option($argv, 'runtime', 45, 5, 55);
-        $max = $this->option($argv, 'max-jobs', 50, 1, 200);
-        $deadline = microtime(true) + $runtime;
+        $requestedRuntime = $this->option($argv, 'runtime', 45, 5, 55);
+        $requestedMax = $this->option($argv, 'max-jobs', 3, 1, 200);
         if ((new EmergencyControlService())->automationStopped()) {
             return ['ok' => true, 'status' => 'SKIPPED_AUTOMATION_STOPPED', 'side_effects' => 0, 'claimed' => 0];
         }
@@ -33,8 +32,6 @@ final class CronV4Cli
             return ['ok' => false, 'status' => 'BLOCKED_ML_WRITE_ENABLED', 'side_effects' => 0, 'claimed' => 0];
         }
 
-        $safeClose = min(10, max(1, $runtime - 1));
-        CronDeadlineContext::start($runtime, $runtime - $safeClose, 8, 3);
         $executionLease = null;
         $engineControl = null;
         $enginePermit = null;
@@ -49,6 +46,12 @@ final class CronV4Cli
             if (!(new QueueCorePreflightService($pdo))->runtimeSchemaReady()) {
                 return ['ok' => false, 'status' => 'BLOCKED_SCHEMA_INCOMPLETE', 'side_effects' => 0, 'claimed' => 0, 'http' => 0];
             }
+            $profile = (new QueueCoreReadinessReceiptService($pdo))->runtimeProfile();
+            $runtime = min($requestedRuntime, $profile['runtime_seconds']);
+            $max = min($requestedMax, $profile['max_remote_jobs']);
+            $safeClose = min($profile['safe_close_seconds'], max(1, $runtime - 1));
+            $deadline = microtime(true) + $runtime;
+            CronDeadlineContext::start($runtime, $runtime - $safeClose, 8, 3);
             $core = QueueCoreFactory::build($pdo);
 
             // Preserve the web-manual exclusion even while the active engine is

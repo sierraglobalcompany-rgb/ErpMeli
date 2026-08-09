@@ -179,6 +179,7 @@ foreach ([
     'MELI_CLIENT_ID' => 'fixture-client',
     'MELI_CLIENT_SECRET' => 'fixture-secret',
     'MELI_REDIRECT_URI' => 'https://example.invalid/oauth/callback',
+    'QUEUE_CORE_APPROVED_BACKUP_SHA256' => 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 ] as $key => $value) {
     putenv($key . '=' . $value);
     $_ENV[$key] = $value;

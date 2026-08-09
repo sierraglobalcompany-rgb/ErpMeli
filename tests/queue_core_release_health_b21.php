@@ -44,8 +44,8 @@ $pdo->exec('CREATE TABLE meli_accounts(id BIGINT PRIMARY KEY,company_id BIGINT N
 $pdo->exec('CREATE TABLE app_settings(setting_key VARCHAR(191) PRIMARY KEY,setting_value TEXT,is_encrypted TINYINT NOT NULL DEFAULT 0,setting_group VARCHAR(80) NULL)');
 $pdo->exec('CREATE TABLE meli_tokens(meli_account_id BIGINT PRIMARY KEY,expires_at DATETIME(3),refresh_version BIGINT NOT NULL DEFAULT 0)');
 $pdo->exec('CREATE TABLE queue_core_producer_checkpoints(producer_key VARCHAR(80),company_id BIGINT,meli_account_id BIGINT,watermark_at DATETIME(3),next_due_at DATETIME(3),last_error_class VARCHAR(100),PRIMARY KEY(producer_key,company_id,meli_account_id))');
-$pdo->exec("CREATE TABLE queue_core_jobs(id BIGINT PRIMARY KEY AUTO_INCREMENT,company_id BIGINT,meli_account_id BIGINT,queue_domain VARCHAR(20),state VARCHAR(30),lane VARCHAR(20),dispatch_state VARCHAR(40),created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3))");
-$pdo->exec("CREATE TABLE queue_core_attempts(id BIGINT PRIMARY KEY AUTO_INCREMENT,run_id BIGINT NULL,job_id BIGINT NOT NULL,physical_http_calls INT NOT NULL DEFAULT 0,response_known_at DATETIME(3) NULL,resources_persisted INT NOT NULL DEFAULT 0,http_status INT NULL,started_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),finished_at DATETIME(3) NULL,source_closed_at DATETIME(3) NULL,outcome VARCHAR(40) NULL)");
+$pdo->exec("CREATE TABLE queue_core_jobs(id BIGINT PRIMARY KEY AUTO_INCREMENT,company_id BIGINT,meli_account_id BIGINT,work_type VARCHAR(80),resource_id VARCHAR(191),queue_domain VARCHAR(20),state VARCHAR(30),lane VARCHAR(20),dispatch_state VARCHAR(40),created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3))");
+$pdo->exec("CREATE TABLE queue_core_attempts(id BIGINT PRIMARY KEY AUTO_INCREMENT,run_id BIGINT NULL,job_id BIGINT NOT NULL,launcher VARCHAR(40),physical_http_calls INT NOT NULL DEFAULT 0,response_known_at DATETIME(3) NULL,resources_persisted INT NOT NULL DEFAULT 0,http_status INT NULL,started_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),finished_at DATETIME(3) NULL,source_closed_at DATETIME(3) NULL,outcome VARCHAR(40) NULL)");
 $pdo->exec("CREATE TABLE queue_core_runs(id BIGINT PRIMARY KEY AUTO_INCREMENT,engine_generation BIGINT,launcher VARCHAR(40),worker_ref CHAR(64),status VARCHAR(30),close_reason VARCHAR(100),phase VARCHAR(60),jobs_claimed INT DEFAULT 0,physical_http_calls INT DEFAULT 0,known_responses INT DEFAULT 0,resources_persisted INT DEFAULT 0,started_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),finished_at DATETIME(3),last_heartbeat_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3))");
 $pdo->exec("CREATE TABLE queue_engine_control(control_key VARCHAR(30) PRIMARY KEY,active_engine VARCHAR(20),readiness_mode ENUM('idle','preparing') NOT NULL DEFAULT 'idle',readiness_context_hash CHAR(64) NULL,generation BIGINT,changed_at DATETIME(3),changed_by VARCHAR(100))");
 $pdo->exec("INSERT INTO queue_engine_control VALUES('primary','disabled','idle',NULL,4,UTC_TIMESTAMP(3),'test')");
@@ -81,11 +81,19 @@ $assert(!$evidence->certifyCapacity(4, $context, $failedCapacity, [
 
 $backupFixture = tempnam(sys_get_temp_dir(), 'b21-backup-') . '.sql.gz';
 $backupSql = "CREATE TABLE `meli_accounts` (`id` BIGINT);\n"
+    . "CREATE TABLE `companies` (`id` BIGINT);\n"
+    . "CREATE TABLE `users` (`id` BIGINT);\n"
+    . "CREATE TABLE `app_settings` (`setting_key` VARCHAR(100));\n"
+    . "CREATE TABLE `meli_tokens` (`meli_account_id` BIGINT);\n"
     . "CREATE TABLE `meli_orders` (`id` BIGINT);\n"
+    . "CREATE TABLE `meli_order_items` (`id` BIGINT);\n"
+    . "CREATE TABLE `meli_payments` (`id` BIGINT);\n"
+    . "CREATE TABLE `meli_shipments` (`id` BIGINT);\n"
     . "CREATE TABLE `schema_migrations` (`version` VARCHAR(100));\n"
     . "INSERT INTO `meli_accounts` VALUES (1);\n";
 file_put_contents($backupFixture, gzencode($backupSql, 6));
 $backupHash = hash_file('sha256', $backupFixture);
+putenv('QUEUE_CORE_APPROVED_BACKUP_SHA256=' . $backupHash);
 $assert(is_string($backupHash) && $evidence->verifyBackup($backupFixture, $backupHash)['ok'], 'Structured SQL backup was rejected.');
 $invalidBackup = tempnam(sys_get_temp_dir(), 'b21-invalid-');
 file_put_contents($invalidBackup, 'not a database backup');
@@ -96,7 +104,7 @@ $assert(is_string($invalidHash) && !$evidence->verifyBackup($invalidBackup, $inv
 $pdo->exec("INSERT INTO meli_accounts VALUES(1,10,'connected',NULL)");
 $pdo->exec("INSERT INTO meli_tokens VALUES(1,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 HOUR),2)");
 $pdo->exec("INSERT INTO queue_core_producer_checkpoints VALUES('fresh_orders',10,1,DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 10 MINUTE),UTC_TIMESTAMP(3),NULL)");
-$pdo->exec("INSERT INTO queue_core_jobs(company_id,meli_account_id,queue_domain,state,lane,dispatch_state) VALUES(10,1,'operational','review','remote','DISPATCHED_RESULT_KNOWN')");
+$pdo->exec("INSERT INTO queue_core_jobs(company_id,meli_account_id,work_type,resource_id,queue_domain,state,lane,dispatch_state) VALUES(10,1,'order_exact','9001','operational','review','remote','DISPATCHED_RESULT_KNOWN')");
 $pdo->exec("INSERT INTO queue_core_webhook_triggers(desired_watermark,completed_watermark,state,last_observed_at) VALUES(2,1,'pending',DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 10 MINUTE))");
 $pdo->exec("INSERT INTO queue_core_readiness_receipts(engine_generation,receipt_type,status,evidence_hash,metrics_json,expires_at) VALUES(4,'preflight','fail',REPEAT('a',64),'{}',DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 HOUR))");
 $health = (new QueueCoreHealthService($pdo))->snapshot();
@@ -111,12 +119,12 @@ $assert(in_array('latest_release_evidence_failed', $reasons, true), 'Latest capa
 
 $ledger = new QueueCoreRunLedger($pdo);
 $runId = $ledger->begin(4, 'test', 'worker-b21');
-$pdo->prepare("INSERT INTO queue_core_attempts(run_id,job_id,physical_http_calls,response_known_at,resources_persisted,outcome) VALUES(?,?,1,UTC_TIMESTAMP(3),1,'completed')")
+$pdo->prepare("INSERT INTO queue_core_attempts(run_id,job_id,launcher,physical_http_calls,response_known_at,resources_persisted,outcome) VALUES(?,?,'canary_v4',1,UTC_TIMESTAMP(3),1,'completed')")
     ->execute([$runId, 1]);
 $ledger->finish($runId, 'completed', 'metrics_renderer_failed', ['claimed' => 0]);
 $claimed = (int) $pdo->query('SELECT jobs_claimed FROM queue_core_runs WHERE id=' . $runId)->fetchColumn();
 $assert($claimed === 1, 'Run ledger lost measured claims when summary rendering failed.');
-$pdo->prepare("INSERT INTO queue_core_attempts(run_id,job_id,physical_http_calls,response_known_at,resources_persisted,outcome) VALUES(?,?,1,UTC_TIMESTAMP(3),1,'completed'),(?,?,1,UTC_TIMESTAMP(3),1,'completed')")
+$pdo->prepare("INSERT INTO queue_core_attempts(run_id,job_id,launcher,physical_http_calls,response_known_at,resources_persisted,outcome) VALUES(?,?,'canary_v4',1,UTC_TIMESTAMP(3),1,'completed'),(?,?,'canary_v4',1,UTC_TIMESTAMP(3),1,'completed')")
     ->execute([$runId, 1, $runId, 1]);
 $measured = $evidence->measuredCapacity(60, [
     'cadence_seconds' => 60, 'runtime_seconds' => 45, 'safe_close_seconds' => 10,

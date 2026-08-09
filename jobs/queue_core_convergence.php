@@ -19,18 +19,22 @@ $option = static function (array $arguments, string $name): ?string {
     return null;
 };
 
+$recordRequested = ($option($argv ?? [], 'record') ?? '0') === '1';
+$companyId = (int) ($option($argv ?? [], 'company') ?? 0);
+$accountId = (int) ($option($argv ?? [], 'account') ?? 0);
+$pdo = null;
 try {
     \App\Core\Database::useProfile('cli');
     $pdo = \App\Core\Database::connectionFresh();
     $service = new \App\QueueCore\QueueCoreConvergenceService($pdo);
     $result = $service->compare(
-        (int) ($option($argv ?? [], 'company') ?? 0),
-        (int) ($option($argv ?? [], 'account') ?? 0),
+        $companyId,
+        $accountId,
         (string) ($option($argv ?? [], 'from') ?? ''),
         (string) ($option($argv ?? [], 'to') ?? ''),
         (int) ($option($argv ?? [], 'limit') ?? 500),
     );
-    if (($option($argv ?? [], 'record') ?? '0') === '1') {
+    if ($recordRequested) {
         $engine = (new \App\QueueCore\QueueEngineControlService($pdo))->snapshot();
         (new \App\QueueCore\QueueCoreReadinessReceiptService($pdo))->record(
             $engine['generation'],
@@ -52,12 +56,24 @@ try {
         $result['technical_receipt_written'] = false;
     }
 } catch (\Throwable) {
+    $receiptWritten = false;
+    if ($recordRequested && $pdo instanceof \PDO && $companyId > 0 && $accountId > 0) {
+        try {
+            $engine = (new \App\QueueCore\QueueEngineControlService($pdo))->snapshot();
+            (new \App\QueueCore\QueueCoreReadinessReceiptService($pdo))->record(
+                $engine['generation'], 'convergence', false,
+                ['reason' => 'convergence_unavailable'], 3600, $companyId, $accountId
+            );
+            $receiptWritten = true;
+        } catch (\Throwable) {
+        }
+    }
     $result = [
         'ok' => false,
         'reason' => 'convergence_unavailable',
         'remote_http_calls' => 0,
         'business_db_writes' => 0,
-        'technical_receipt_written' => false,
+        'technical_receipt_written' => $receiptWritten,
     ];
 }
 

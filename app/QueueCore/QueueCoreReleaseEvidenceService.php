@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\QueueCore;
 
+use App\Core\Env;
 use App\Services\QueueCoreDeploymentGateService;
 use PDO;
 
@@ -101,6 +102,7 @@ final class QueueCoreReleaseEvidenceService
     public function verifyBackup(string $path, string $expectedSha256): array
     {
         $expected = strtolower(trim($expectedSha256));
+        $approved = strtolower(trim((string) Env::get('QUEUE_CORE_APPROVED_BACKUP_SHA256', '')));
         $exists = $path !== '' && is_file($path) && is_readable($path);
         $sha = $exists ? hash_file('sha256', $path) : false;
         $bytes = $exists ? max(0, (int) filesize($path)) : 0;
@@ -110,6 +112,8 @@ final class QueueCoreReleaseEvidenceService
         $ok = is_string($sha)
             && $bytes > 0
             && preg_match('/^[a-f0-9]{64}$/', $expected) === 1
+            && preg_match('/^[a-f0-9]{64}$/', $approved) === 1
+            && hash_equals($approved, $expected)
             && hash_equals($expected, strtolower($sha))
             && $content['format_valid'];
         return [
@@ -219,24 +223,31 @@ final class QueueCoreReleaseEvidenceService
     {
         $window=max(15,min(1440,$windowMinutes));
         $jobs=$this->pdo->prepare(
-            "SELECT COUNT(*) FROM queue_core_jobs
+            "SELECT COUNT(DISTINCT CONCAT(company_id,':',meli_account_id,':',COALESCE(resource_id,'')))
+             FROM queue_core_jobs
              WHERE queue_domain='operational'
+               AND work_type IN ('order_exact','webhook_order_exact')
                AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL ? MINUTE)"
         );
         $jobs->execute([$window]);$arrivals=max(0,(int)$jobs->fetchColumn());
         $attempts=$this->pdo->prepare(
-            "SELECT COALESCE(SUM(physical_http_calls),0) physical_http,
-                    SUM(response_known_at IS NOT NULL) known_responses,
-                    COALESCE(SUM(resources_persisted),0) resources_persisted
-             FROM queue_core_attempts
-             WHERE started_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL ? MINUTE)"
+            "SELECT COALESCE(SUM(a.physical_http_calls),0) physical_http,
+                    SUM(a.response_known_at IS NOT NULL) known_responses,
+                    COALESCE(SUM(a.resources_persisted),0) resources_persisted
+             FROM queue_core_attempts a
+             JOIN queue_core_jobs j ON j.id=a.job_id AND j.queue_domain='operational'
+             WHERE a.started_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL ? MINUTE)
+               AND a.launcher IN ('cron_v4','canary_v4')
+               AND a.physical_http_calls=1"
         );
         $attempts->execute([$window]);$sample=$attempts->fetch(PDO::FETCH_ASSOC)?:[];
         $durations=$this->pdo->prepare(
-            "SELECT TIMESTAMPDIFF(MICROSECOND,started_at,response_known_at)/1000000 duration_seconds
-             FROM queue_core_attempts
-             WHERE started_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL ? MINUTE)
-               AND physical_http_calls=1 AND response_known_at IS NOT NULL
+            "SELECT TIMESTAMPDIFF(MICROSECOND,a.started_at,a.response_known_at)/1000000 duration_seconds
+             FROM queue_core_attempts a
+             JOIN queue_core_jobs j ON j.id=a.job_id AND j.queue_domain='operational'
+             WHERE a.started_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL ? MINUTE)
+               AND a.launcher IN ('cron_v4','canary_v4')
+               AND a.physical_http_calls=1 AND a.response_known_at IS NOT NULL
              ORDER BY duration_seconds LIMIT 2000"
         );
         $durations->execute([$window]);
@@ -252,6 +263,20 @@ final class QueueCoreReleaseEvidenceService
             $profile['cadence_seconds'],$profile['runtime_seconds'],
             $profile['safe_close_seconds'],$profile['max_remote_jobs'],
         );
+        $observedResourcesPerMinute=$persisted/$window;
+        $calculation['sustainable_resources_per_minute']=round(min(
+            (float)$calculation['sustainable_resources_per_minute'],
+            $observedResourcesPerMinute
+        ),4);
+        $calculation['sustainable_http_per_minute']=round(min(
+            (float)$calculation['sustainable_http_per_minute'],
+            $known/$window
+        ),4);
+        $arrival=(float)$calculation['arrival_rate_resources_per_minute'];
+        $sustainable=(float)$calculation['sustainable_resources_per_minute'];
+        $calculation['safety_margin_ratio']=round($arrival>0
+            ?($sustainable-$arrival)/$arrival
+            :($sustainable>0?1.0:0.0),4);
         return $calculation+[
             'measurement_window_minutes'=>$window,
             'measurement_jobs_arrived'=>$arrivals,
@@ -291,7 +316,11 @@ final class QueueCoreReleaseEvidenceService
         $gzip=str_ends_with(strtolower($path),'.gz');
         $handle=$gzip?@gzopen($path,'rb'):@fopen($path,'rb');
         if($handle===false)return ['format_valid'=>false,'table_count'=>0,'data_statements'=>0];
-        $tables=[];$data=0;$required=['meli_accounts'=>false,'meli_orders'=>false,'schema_migrations'=>false];
+        $tables=[];$data=0;
+        $required=array_fill_keys([
+            'companies','users','app_settings','schema_migrations','meli_accounts',
+            'meli_tokens','meli_orders','meli_order_items','meli_payments','meli_shipments',
+        ],false);
         try{
             while(($line=$gzip?gzgets($handle):fgets($handle))!==false){
                 if(preg_match('/^CREATE TABLE (?:IF NOT EXISTS )?[`"]?([a-zA-Z0-9_]+)/i',$line,$match)===1){

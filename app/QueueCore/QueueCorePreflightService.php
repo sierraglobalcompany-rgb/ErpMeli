@@ -166,6 +166,10 @@ final class QueueCorePreflightService
                 if (!$valid) {
                     $issues[] = 'account_identity_or_token_missing';
                 }
+                if (!empty($row['expires_at'])
+                    && strtotime((string) $row['expires_at'] . ' UTC') <= time()) {
+                    $issues[] = 'account_access_token_expired';
+                }
                 $accounts[] = [
                     'company_id' => (int) $row['company_id'],
                     'meli_account_id' => (int) $row['meli_account_id'],

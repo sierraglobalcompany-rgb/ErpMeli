@@ -349,12 +349,20 @@ $scenario('deployment_gate_verifies_schema_and_backup', static function () use (
     if (!is_string($backup)) {
         throw new RuntimeException('temporary backup could not be created');
     }
-    file_put_contents($backup, "CREATE TABLE `meli_accounts` (`id` BIGINT);\n"
-        . "CREATE TABLE `meli_orders` (`id` BIGINT);\n"
+    file_put_contents($backup, "CREATE TABLE `companies` (`id` BIGINT);\n"
+        . "CREATE TABLE `users` (`id` BIGINT);\n"
+        . "CREATE TABLE `app_settings` (`setting_key` VARCHAR(100));\n"
         . "CREATE TABLE `schema_migrations` (`version` VARCHAR(100));\n"
+        . "CREATE TABLE `meli_accounts` (`id` BIGINT);\n"
+        . "CREATE TABLE `meli_tokens` (`meli_account_id` BIGINT);\n"
+        . "CREATE TABLE `meli_orders` (`id` BIGINT);\n"
+        . "CREATE TABLE `meli_order_items` (`id` BIGINT);\n"
+        . "CREATE TABLE `meli_payments` (`id` BIGINT);\n"
+        . "CREATE TABLE `meli_shipments` (`id` BIGINT);\n"
         . "INSERT INTO `meli_accounts` VALUES (1);\n");
     try {
         $sha = hash_file('sha256', $backup);
+        putenv('QUEUE_CORE_APPROVED_BACKUP_SHA256=' . $sha);
         $gate = (new QueueCoreDeploymentGateService($pdo))->inspect($backup, is_string($sha) ? $sha : '');
         $assert($gate['ok'], 'deployment gate rejected complete disabled schema: ' . implode(',', $gate['issues']));
     } finally {

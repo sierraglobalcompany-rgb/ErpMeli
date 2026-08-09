@@ -153,7 +153,7 @@ final class QueueEngineControlService
 
             $this->pdo->beginTransaction();
             $select = $this->pdo->prepare(
-                'SELECT active_engine,readiness_mode,generation FROM queue_engine_control
+                'SELECT active_engine,readiness_mode,readiness_context_hash,generation FROM queue_engine_control
                  WHERE control_key=? FOR UPDATE'
             );
             $select->execute([self::CONTROL_KEY]);
@@ -169,6 +169,14 @@ final class QueueEngineControlService
                     $this->pdo->rollBack();
                     return ['ok' => false, 'reason' => 'readiness_mode_not_current'] + $this->snapshot();
                 }
+                $this->lockReadinessAuthorityRows($expectedGeneration);
+                $contextHash = (new QueueCoreReadinessReceiptService($this->pdo))
+                    ->currentContextHash($expectedGeneration);
+                if (empty($current['readiness_context_hash'])
+                    || !hash_equals((string) $current['readiness_context_hash'], $contextHash)) {
+                    $this->pdo->rollBack();
+                    return ['ok' => false, 'reason' => 'readiness_context_changed'] + $this->snapshot();
+                }
                 // Revalidar evidencia dentro del mismo CAS y despues de tomar
                 // todos los locks de runtime elimina la ventana TOCTOU entre
                 // el chequeo de readiness y el cambio de propietario.
@@ -183,7 +191,8 @@ final class QueueEngineControlService
                 'UPDATE queue_engine_control
                  SET active_engine=?,readiness_mode="idle",readiness_context_hash=NULL,
                      generation=generation+1,changed_by=?,changed_at=UTC_TIMESTAMP(3)
-                 WHERE control_key=? AND generation=? AND active_engine=? AND readiness_mode=?'
+                 WHERE control_key=? AND generation=? AND active_engine=? AND readiness_mode=?
+                   AND readiness_context_hash <=> ?'
             );
             $update->execute([
                 $desiredEngine,
@@ -192,6 +201,7 @@ final class QueueEngineControlService
                 $expectedGeneration,
                 (string) $current['active_engine'],
                 (string) ($current['readiness_mode'] ?? 'idle'),
+                $current['readiness_context_hash'],
             ]);
             if ($update->rowCount() !== 1) {
                 $this->pdo->rollBack();
@@ -308,6 +318,42 @@ final class QueueEngineControlService
         if (!$valid) {
             throw new RuntimeException('Queue Engine runtime identity is invalid.');
         }
+    }
+
+    /**
+     * Lock every mutable authority used by the readiness context before its
+     * final calculation. Range locks also prevent a new scoped receipt or
+     * connected account from appearing between validation and engine CAS.
+     */
+    private function lockReadinessAuthorityRows(int $generation): void
+    {
+        foreach ([
+            "SELECT id FROM meli_accounts WHERE status IN ('conectado','connected') ORDER BY id FOR UPDATE",
+            "SELECT t.meli_account_id FROM meli_tokens t JOIN meli_accounts a ON a.id=t.meli_account_id
+             WHERE a.status IN ('conectado','connected') ORDER BY t.meli_account_id FOR UPDATE",
+            'SELECT feature_key FROM queue_core_feature_flags ORDER BY feature_key FOR UPDATE',
+            "SELECT setting_key FROM app_settings
+             WHERE setting_key LIKE 'queue_core.v4.%'
+                OR setting_key LIKE 'queue_core.fresh_orders.bootstrap_from.%'
+             ORDER BY setting_key FOR UPDATE",
+            "SELECT company_id,meli_account_id FROM queue_core_producer_checkpoints
+             WHERE producer_key='fresh_orders' ORDER BY company_id,meli_account_id FOR UPDATE",
+        ] as $sql) {
+            $this->pdo->query($sql)->fetchAll(PDO::FETCH_COLUMN);
+        }
+        foreach (['queue_core_readiness_receipts', 'queue_core_release_evidence'] as $table) {
+            $statement = $this->pdo->prepare(
+                "SELECT id FROM {$table} WHERE engine_generation=? ORDER BY id FOR UPDATE"
+            );
+            $statement->execute([max(0, $generation)]);
+            $statement->fetchAll(PDO::FETCH_COLUMN);
+        }
+        $this->pdo->query(
+            "SELECT id FROM queue_core_jobs
+             WHERE queue_domain='operational'
+               AND (state IN ('review','dead') OR dispatch_state='DISPATCHED_RESULT_UNCERTAIN')
+             ORDER BY id FOR UPDATE"
+        )->fetchAll(PDO::FETCH_COLUMN);
     }
 
     private function runtimeLockName(string $engine, string $lane): string

@@ -745,5 +745,3 @@ final class ManagedRuntimePublicationPolicy
         return $stdout;
     }
 }
-
-

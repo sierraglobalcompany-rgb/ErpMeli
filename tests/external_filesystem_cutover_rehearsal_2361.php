@@ -144,10 +144,10 @@ $snapshot = static function (array $roots): array {
     return $result;
 };
 
-$fixtureRoot = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'erp-filesystem-cutover-2361-' . bin2hex(random_bytes(6));
+$fixtureRoot = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'erp-filesystem-cutover-2362-' . bin2hex(random_bytes(6));
 $webroot = $fixtureRoot . '/production-like/webroot/erp-meli';
 $operatorRoot = $fixtureRoot . '/operator-private';
-$targetId = 'erp-meli-2.36.1-' . substr((string) trim($run(['git', '-C', $repo, 'rev-parse', 'HEAD'])['stdout']), 0, 12);
+$targetId = 'erp-meli-2.36.2-' . substr((string) trim($run(['git', '-C', $repo, 'rev-parse', 'HEAD'])['stdout']), 0, 12);
 $rollbackId = 'rollback-2.35.1-focal';
 $pointerPath = $webroot . '/shared/current-release.json';
 $guardActive = true;
@@ -176,7 +176,7 @@ try {
 
     // Build the target ZIP exclusively from committed Git blobs, verify every
     // entry against the policy authority, then stage it outside the webroot.
-    $targetArchive = $operatorRoot . '/artifacts/ERP_MELI_2.36.1_GIT_EXACT.zip';
+    $targetArchive = $operatorRoot . '/artifacts/ERP_MELI_2.36.2_GIT_EXACT.zip';
     $targetEntries = ManagedRuntimePublicationPolicy::packageEntries($repo, 'HEAD');
     $targetFiles = [];
     foreach ($targetEntries as $entry) {
@@ -190,7 +190,7 @@ try {
         $assert($buildZip->addFromString($path, $targetFiles[$path]), 'Target Git blob could not enter archive: ' . $path);
     }
     $assert($buildZip->close(), 'Target Git-object archive could not be finalized.');
-    $assert(trim($targetFiles['VERSION'] ?? '') === '2.36.1', 'Target Git authority is not version 2.36.1.');
+    $assert(trim($targetFiles['VERSION'] ?? '') === '2.36.2', 'Target Git authority is not version 2.36.2.');
     $assert(is_file($targetArchive) && filesize($targetArchive) > 0, 'Target archive is empty.');
 
     $targetZip = new ZipArchive();
@@ -237,7 +237,7 @@ try {
     // bytes at those exact paths. Actual production hashes are never replaced
     // by the fixture hashes in the release authority.
     $authority = json_decode(
-        (string) file_get_contents($repo . '/resources/release/production-legacy-quarantine-2.36.1.json'),
+        (string) file_get_contents($repo . '/resources/release/production-legacy-quarantine-2.36.2.json'),
         true,
         64,
         JSON_THROW_ON_ERROR,
@@ -313,7 +313,7 @@ try {
     ];
     $targetPointer = [
         'release_id' => $targetId,
-        'version' => '2.36.1',
+        'version' => '2.36.2',
         'path' => 'releases/' . $targetId,
         'previous_release_id' => $rollbackId,
         'previous_version' => '2.35.1',
@@ -358,13 +358,13 @@ try {
             }
         }
         $observations[] = $version;
-        if (!$guardActive && !in_array($version, ['2.35.1', '2.36.1'], true)) {
+        if (!$guardActive && !in_array($version, ['2.35.1', '2.36.2'], true)) {
             ++$mixedActiveRuntimeObserved;
         }
         return ['id' => $releaseId, 'version' => $version];
     };
 
-    $quarantineRoot = $operatorRoot . '/quarantine/prod-2.36.1';
+    $quarantineRoot = $operatorRoot . '/quarantine/prod-2.36.2';
     /** @param array<string,array{source:string,moved:string,copy:string,sha256:string}> $journal */
     $restoreQuarantine = static function (array $journal) use ($mkdir): void {
         foreach (array_reverse($journal, true) as $record) {
@@ -436,7 +436,7 @@ try {
     $db['schema'] = 293;
     $failureMatrix['after_migrations'] = $guardActive && $observe()['version'] === '2.35.1' && $db['app.version'] === '2.35.1';
     $failureMatrix['before_app_version'] = $db['schema'] === 293 && $observe()['version'] === '2.35.1';
-    $db['app.version'] = '2.36.1';
+    $db['app.version'] = '2.36.2';
     $failureMatrix['after_app_version_before_pointer'] = $guardActive && $observe()['version'] === '2.35.1';
     $db['app.version'] = '2.35.1';
 
@@ -447,16 +447,16 @@ try {
         @unlink($orphanTemp);
     }
 
-    $db['app.version'] = '2.36.1';
+    $db['app.version'] = '2.36.2';
     $atomicJson($pointerPath, $targetPointer);
-    $failureMatrix['after_pointer'] = $guardActive && $observe()['version'] === '2.36.1';
+    $failureMatrix['after_pointer'] = $guardActive && $observe()['version'] === '2.36.2';
     $atomicJson($pointerPath, $oldPointer);
     $db['app.version'] = '2.35.1';
     $failureMatrix['after_pointer_rollback'] = $observe()['version'] === '2.35.1';
 
-    $db['app.version'] = '2.36.1';
+    $db['app.version'] = '2.36.2';
     $atomicJson($pointerPath, $targetPointer);
-    $failureMatrix['fpm_smoke_failure'] = $guardActive && $observe()['version'] === '2.36.1';
+    $failureMatrix['fpm_smoke_failure'] = $guardActive && $observe()['version'] === '2.36.2';
     $atomicJson($pointerPath, $oldPointer);
     $db['app.version'] = '2.35.1';
     $failureMatrix['fpm_smoke_rollback'] = $observe()['version'] === '2.35.1';
@@ -476,7 +476,7 @@ try {
 
     // Failure after three exact moves is recovered under guard, including the
     // pointer and technical version.
-    $db['app.version'] = '2.36.1';
+    $db['app.version'] = '2.36.2';
     $atomicJson($pointerPath, $targetPointer);
     $partialJournal = [];
     try {
@@ -497,7 +497,7 @@ try {
 
     // Exercise the complete external rollback after all six stale files have
     // already left the webroot and the target pointer is active under guard.
-    $db = ['schema' => 293, 'app.version' => '2.36.1'];
+    $db = ['schema' => 293, 'app.version' => '2.36.2'];
     $atomicJson($pointerPath, $targetPointer);
     $rollbackJournal = [];
     $quarantine($fixtureExpected, null, $rollbackJournal);
@@ -517,9 +517,9 @@ try {
     // Successful path: schema/version are coherent under guard, target pointer
     // is complete, all exact stale executables move outside webroot, then the
     // normal guard bytes are restored before exposure.
-    $db = ['schema' => 293, 'app.version' => '2.36.1'];
+    $db = ['schema' => 293, 'app.version' => '2.36.2'];
     $atomicJson($pointerPath, $targetPointer);
-    $assert($observe()['version'] === '2.36.1', 'Target pointer did not activate a complete target release.');
+    $assert($observe()['version'] === '2.36.2', 'Target pointer did not activate a complete target release.');
     $finalJournal = [];
     $quarantine($fixtureExpected, null, $finalJournal);
     $assert(count($finalJournal) === 6, 'Successful quarantine did not move six exact stale paths.');
@@ -530,7 +530,7 @@ try {
         $assert(!str_starts_with(str_replace('\\', '/', $record['moved']), str_replace('\\', '/', $webroot) . '/'),
             'Quarantine destination is inside webroot: ' . $path);
     }
-    $assert($db === ['schema' => 293, 'app.version' => '2.36.1'], 'Final technical DB state is incoherent.');
+    $assert($db === ['schema' => 293, 'app.version' => '2.36.2'], 'Final technical DB state is incoherent.');
     $assert($protectedBefore === $snapshot($protectedRoots), 'Protected external state changed during guarded cutover.');
     $assert($graphifyBefore === $snapshot(['graphify' => $graphifyRoot]), 'Nonruntime graphify cache changed during cutover.');
 
@@ -540,14 +540,14 @@ try {
     @unlink($webroot . '/shared/maintenance.json');
     $guardActive = false;
     $finalObservation = $observe();
-    $assert($finalObservation === ['id' => $targetId, 'version' => '2.36.1'], 'Exposed runtime is not the complete target.');
+    $assert($finalObservation === ['id' => $targetId, 'version' => '2.36.2'], 'Exposed runtime is not the complete target.');
 
     foreach ($failureMatrix as $scenario => $passed) {
         $assert($passed, 'Failure recovery scenario failed: ' . $scenario);
     }
     $assert(count($failureMatrix) === 13, 'Failure matrix is incomplete.');
     $assert($mixedActiveRuntimeObserved === 0, 'A mixed runtime was exposed at the active boundary.');
-    $assert(array_diff($observations, ['2.35.1', '2.36.1']) === [], 'An observation saw a partial/unknown runtime.');
+    $assert(array_diff($observations, ['2.35.1', '2.36.2']) === [], 'An observation saw a partial/unknown runtime.');
     $assert($protectedBefore === $snapshot($protectedRoots), 'Protected state changed after exposure.');
     $assert($graphifyBefore === $snapshot(['graphify' => $graphifyRoot]), 'Graphify cache changed after exposure.');
 } catch (Throwable $exception) {
@@ -564,7 +564,7 @@ if ($failures !== []) {
 }
 
 fwrite(STDOUT, sprintf(
-    "PASS external_filesystem_cutover_rehearsal_2361 checks=%d target_files=%d stale=6 graphify=350 protected=%d failures=13 rollback=1 mixed=0\n",
+    "PASS external_filesystem_cutover_rehearsal_2362 checks=%d target_files=%d stale=6 graphify=350 protected=%d failures=13 rollback=1 mixed=0\n",
     $checks,
     count($targetFiles),
     count($protectedBefore),

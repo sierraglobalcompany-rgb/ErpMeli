@@ -86,11 +86,15 @@ try {
     $head = rpGit($root, ['rev-parse', 'HEAD']);
     $manifest = RuntimePublicationPolicy::buildManifest($root, $head, $base);
     rpAssert(RuntimePublicationPolicy::manifestIssues($root, $manifest, $head, $base) === [], 'valid manifest rejected');
+    rpAssert(RuntimePublicationPolicy::installedManifestIssues($root, $manifest) === [], 'installed completeness rejected');
 
     $missing = $manifest;
     unset($missing['components']['runtime_resources_data_json']);
     rpAssert((bool) array_filter(RuntimePublicationPolicy::manifestIssues($root, $missing, $head, $base),
         static fn (string $issue): bool => str_starts_with($issue, 'manifest_component_missing:')), 'missing not detected');
+    rpAssert((bool) array_filter(RuntimePublicationPolicy::installedManifestIssues($root, $missing),
+        static fn (string $issue): bool => str_starts_with($issue, 'manifest_required_dependency_missing:')),
+        'installed readiness accepted an unmanifested runtime dependency');
 
     $stale = $manifest;
     $stale['components']['runtime_app_test_php']['sha256'] = str_repeat('0', 64);

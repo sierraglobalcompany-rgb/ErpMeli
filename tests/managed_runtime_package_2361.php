@@ -3,9 +3,9 @@
 declare(strict_types=1);
 
 require dirname(__DIR__) . '/app/Services/MeliNotificationTopicRegistry.php';
-require dirname(__DIR__) . '/app/Services/RuntimePublicationPolicy.php';
+require dirname(__DIR__) . '/app/Services/ManagedRuntimePublicationPolicy.php';
 
-use App\Services\RuntimePublicationPolicy;
+use App\Services\ManagedRuntimePublicationPolicy;
 
 $root = dirname(__DIR__);
 $checks = 0;
@@ -16,13 +16,13 @@ $assert = static function (bool $condition, string $message) use (&$checks): voi
     }
 };
 
-$tree = RuntimePublicationPolicy::gitTree($root);
-$entries = RuntimePublicationPolicy::packageEntries($root);
+$tree = ManagedRuntimePublicationPolicy::gitTree($root);
+$entries = ManagedRuntimePublicationPolicy::packageEntries($root);
 $paths = array_column($entries, 'path');
 $pathSet = array_fill_keys($paths, true);
 $classCounts = [];
 foreach (array_keys($tree) as $path) {
-    $classification = RuntimePublicationPolicy::trackedPathClassification($path);
+    $classification = ManagedRuntimePublicationPolicy::trackedPathClassification($path);
     $classCounts[$classification] = ($classCounts[$classification] ?? 0) + 1;
     $assert($classification !== 'UNCLASSIFIED', 'Unclassified tracked path: ' . $path);
     $assert($classification !== 'PROTECTED_EXTERNAL_STATE', 'Tracked protected state: ' . $path);
@@ -49,32 +49,32 @@ foreach ([
     $assert(!isset($pathSet[$excluded]), 'Build/test-only path entered package: ' . $excluded);
 }
 
-$assert(RuntimePublicationPolicy::trackedPathClassification('config.env') === 'PROTECTED_EXTERNAL_STATE',
+$assert(ManagedRuntimePublicationPolicy::trackedPathClassification('config.env') === 'PROTECTED_EXTERNAL_STATE',
     'config.env is not protected external state');
-$assert(RuntimePublicationPolicy::trackedPathClassification('.env') === 'PROTECTED_EXTERNAL_STATE',
+$assert(ManagedRuntimePublicationPolicy::trackedPathClassification('.env') === 'PROTECTED_EXTERNAL_STATE',
     '.env is not protected external state');
-$assert(RuntimePublicationPolicy::trackedPathClassification('storage/logs/app.log') === 'PROTECTED_EXTERNAL_STATE',
+$assert(ManagedRuntimePublicationPolicy::trackedPathClassification('storage/logs/app.log') === 'PROTECTED_EXTERNAL_STATE',
     'mutable storage is not protected external state');
-$assert(RuntimePublicationPolicy::trackedPathClassification('PAUSE_MELI_API') === 'PROTECTED_EXTERNAL_STATE',
+$assert(ManagedRuntimePublicationPolicy::trackedPathClassification('PAUSE_MELI_API') === 'PROTECTED_EXTERNAL_STATE',
     'emergency marker is not protected external state');
-$assert(RuntimePublicationPolicy::trackedPathClassification(
+$assert(ManagedRuntimePublicationPolicy::trackedPathClassification(
     'resources/mercadolibre-api/source/mercadolibre-api-index.json'
 ) === 'NON_RUNTIME', 'Mercado Libre source index entered runtime authority');
-$assert(RuntimePublicationPolicy::trackedPathClassification(
+$assert(ManagedRuntimePublicationPolicy::trackedPathClassification(
     'resources/mercadolibre-api/source/mercadolibre-api-snapshot.json'
 ) === 'NON_RUNTIME', 'Mercado Libre source snapshot entered runtime authority');
 
 $manifest = json_decode(
-    RuntimePublicationPolicy::gitBlob($root, 'HEAD', 'resources/runtime-manifest.json'),
+    ManagedRuntimePublicationPolicy::gitBlob($root, 'HEAD', 'resources/runtime-manifest.json'),
     true,
     512,
     JSON_THROW_ON_ERROR,
 );
 $files = [];
 foreach ($entries as $entry) {
-    $files[$entry['path']] = RuntimePublicationPolicy::gitBlob($root, 'HEAD', $entry['path']);
+    $files[$entry['path']] = ManagedRuntimePublicationPolicy::gitBlob($root, 'HEAD', $entry['path']);
 }
-$assert(RuntimePublicationPolicy::packageIssues($root, $manifest, $files) === [],
+$assert(ManagedRuntimePublicationPolicy::packageIssues($root, $manifest, $files) === [],
     'Current Git-exact managed package fails attestation');
 $assert(($manifest['publication_policy']['authority_model'] ?? null) === 'FULL_MANAGED_RUNTIME',
     'Manifest does not declare full managed runtime authority');

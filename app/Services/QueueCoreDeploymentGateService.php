@@ -211,7 +211,7 @@ final class QueueCoreDeploymentGateService
                 $invalid++;
             }
         }
-        foreach (RuntimePublicationPolicy::installedManifestIssues($root, $manifest) as $_publicationIssue) {
+        foreach (ManagedRuntimePublicationPolicy::installedManifestIssues($root, $manifest) as $_publicationIssue) {
             $invalid++;
         }
         $minimum = (string) ($manifest['minimum_migration'] ?? '');

@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-require dirname(__DIR__) . '/app/Services/RuntimePublicationPolicy.php';
+require dirname(__DIR__) . '/app/Services/ManagedRuntimePublicationPolicy.php';
 
-use App\Services\RuntimePublicationPolicy;
+use App\Services\ManagedRuntimePublicationPolicy;
 
 function rpAssert(bool $condition, string $message): void
 {
@@ -115,15 +115,15 @@ try {
     rpGit($root, ['add', 'app/Test.php']);
     rpGit($root, ['commit', '--quiet', '-m', 'head']);
     $head = rpGit($root, ['rev-parse', 'HEAD']);
-    $manifest = RuntimePublicationPolicy::buildManifest($root, $head, $base);
-    rpAssert(RuntimePublicationPolicy::manifestIssues($root, $manifest, $head, $base) === [], 'valid manifest rejected');
-    rpAssert(RuntimePublicationPolicy::installedManifestIssues($root, $manifest) === [], 'installed completeness rejected');
+    $manifest = ManagedRuntimePublicationPolicy::buildManifest($root, $head, $base);
+    rpAssert(ManagedRuntimePublicationPolicy::manifestIssues($root, $manifest, $head, $base) === [], 'valid manifest rejected');
+    rpAssert(ManagedRuntimePublicationPolicy::installedManifestIssues($root, $manifest) === [], 'installed completeness rejected');
 
     $missing = $manifest;
     unset($missing['components']['runtime_resources_mercadolibre_api_generated_data_json']);
-    rpAssert((bool) array_filter(RuntimePublicationPolicy::manifestIssues($root, $missing, $head, $base),
+    rpAssert((bool) array_filter(ManagedRuntimePublicationPolicy::manifestIssues($root, $missing, $head, $base),
         static fn (string $issue): bool => str_starts_with($issue, 'manifest_component_missing:')), 'missing not detected');
-    rpAssert((bool) array_filter(RuntimePublicationPolicy::installedManifestIssues($root, $missing),
+    rpAssert((bool) array_filter(ManagedRuntimePublicationPolicy::installedManifestIssues($root, $missing),
         static fn (string $issue): bool => str_starts_with($issue, 'manifest_required_dependency_missing:')),
         'installed readiness accepted an unmanifested runtime dependency');
 
@@ -137,13 +137,13 @@ try {
     $partial['publication_policy']['component_count'] = count($partialPaths);
     $partial['publication_policy']['paths_sha256'] = hash('sha256', implode("\n", $partialPaths) . "\n");
     rpAssert(in_array('manifest_installed_inventory_mismatch',
-        RuntimePublicationPolicy::installedManifestIssues($root, $partial), true),
+        ManagedRuntimePublicationPolicy::installedManifestIssues($root, $partial), true),
         'installed readiness accepted a self-consistent partial manifest');
 
     $stale = $manifest;
     $stale['components']['runtime_app_test_php']['sha256'] = str_repeat('0', 64);
     rpAssert(in_array('manifest_raw_hash_mismatch:app/Test.php',
-        RuntimePublicationPolicy::manifestIssues($root, $stale, $head, $base), true), 'stale hash not detected');
+        ManagedRuntimePublicationPolicy::manifestIssues($root, $stale, $head, $base), true), 'stale hash not detected');
 
     $orphan = $manifest;
     $orphan['components']['runtime_config_env_example'] = [
@@ -151,17 +151,17 @@ try {
         'sha256_lf' => hash('sha256', "EXAMPLE=1\n"), 'text' => true,
     ];
     rpAssert(in_array('manifest_component_orphan:config.env.example',
-        RuntimePublicationPolicy::manifestIssues($root, $orphan, $head, $base), true), 'orphan not detected');
+        ManagedRuntimePublicationPolicy::manifestIssues($root, $orphan, $head, $base), true), 'orphan not detected');
 
     $case = $manifest;
     $case['components']['case_collision'] = $case['components']['runtime_app_test_php'];
     $case['components']['case_collision']['path'] = 'APP/Test.php';
-    rpAssert((bool) array_filter(RuntimePublicationPolicy::manifestIssues($root, $case, $head, $base),
+    rpAssert((bool) array_filter(ManagedRuntimePublicationPolicy::manifestIssues($root, $case, $head, $base),
         static fn (string $issue): bool => str_starts_with($issue, 'manifest_path_case_collision:')), 'case collision not detected');
 
     $workingHashBefore = hash_file('sha256', $root . '/app/Test.php');
     rpWrite($root, 'app/Test.php', "<?php // uncommitted mismatch\n");
-    $entry = array_values(array_filter(RuntimePublicationPolicy::packageEntries($root, $head),
+    $entry = array_values(array_filter(ManagedRuntimePublicationPolicy::packageEntries($root, $head),
         static fn (array $row): bool => $row['path'] === 'app/Test.php'))[0] ?? null;
     rpAssert(is_array($entry) && $entry['sha256'] === $manifest['components']['runtime_app_test_php']['sha256'],
         'package did not use exact Git blob');
@@ -174,7 +174,7 @@ try {
     $symlinkHead = rpGit($root, ['rev-parse', 'HEAD']);
     $symlinkRejected = false;
     try {
-        RuntimePublicationPolicy::packageEntries($root, $symlinkHead);
+        ManagedRuntimePublicationPolicy::packageEntries($root, $symlinkHead);
     } catch (RuntimeException $exception) {
         $symlinkRejected = str_contains($exception->getMessage(), 'unsafe Git type/mode');
     }

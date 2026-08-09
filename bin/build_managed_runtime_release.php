@@ -3,9 +3,9 @@
 declare(strict_types=1);
 
 require dirname(__DIR__) . '/app/Services/MeliNotificationTopicRegistry.php';
-require dirname(__DIR__) . '/app/Services/RuntimePublicationPolicy.php';
+require dirname(__DIR__) . '/app/Services/ManagedRuntimePublicationPolicy.php';
 
-use App\Services\RuntimePublicationPolicy;
+use App\Services\ManagedRuntimePublicationPolicy;
 
 if (PHP_SAPI !== 'cli') {
     exit(1);
@@ -58,22 +58,22 @@ if ($resolved['exit'] !== 0 || preg_match('/^[a-f0-9]{40}$/', $commit) !== 1) {
 }
 
 try {
-    $version = trim(RuntimePublicationPolicy::gitBlob($source, $commit, 'VERSION'));
-    if (!hash_equals(RuntimePublicationPolicy::VERSION, $version)) {
+    $version = trim(ManagedRuntimePublicationPolicy::gitBlob($source, $commit, 'VERSION'));
+    if (!hash_equals(ManagedRuntimePublicationPolicy::VERSION, $version)) {
         throw new RuntimeException('Release VERSION does not match publication policy.');
     }
     $manifest = json_decode(
-        RuntimePublicationPolicy::gitBlob($source, $commit, 'resources/runtime-manifest.json'),
+        ManagedRuntimePublicationPolicy::gitBlob($source, $commit, 'resources/runtime-manifest.json'),
         true,
         512,
         JSON_THROW_ON_ERROR,
     );
-    $entries = RuntimePublicationPolicy::packageEntries($source, $commit);
+    $entries = ManagedRuntimePublicationPolicy::packageEntries($source, $commit);
     $files = [];
     foreach ($entries as $entry) {
-        $files[$entry['path']] = RuntimePublicationPolicy::gitBlob($source, $commit, $entry['path']);
+        $files[$entry['path']] = ManagedRuntimePublicationPolicy::gitBlob($source, $commit, $entry['path']);
     }
-    $issues = RuntimePublicationPolicy::packageIssues($source, $manifest, $files, $commit);
+    $issues = ManagedRuntimePublicationPolicy::packageIssues($source, $manifest, $files, $commit);
     if ($issues !== []) {
         throw new RuntimeException('Git-exact package authority failed: ' . implode(',', $issues));
     }
@@ -114,7 +114,7 @@ try {
         throw new RuntimeException('Unable to create the temporary archive.');
     }
     $zipOpen = true;
-    $timestamp = (int) strtotime(RuntimePublicationPolicy::BUILT_AT);
+    $timestamp = (int) strtotime(ManagedRuntimePublicationPolicy::BUILT_AT);
     foreach ($entries as $entry) {
         $path = $entry['path'];
         if (!$zip->addFromString($path, $files[$path])) {

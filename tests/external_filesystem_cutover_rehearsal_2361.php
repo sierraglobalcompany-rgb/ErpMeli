@@ -3,9 +3,9 @@
 declare(strict_types=1);
 
 require dirname(__DIR__) . '/app/Services/MeliNotificationTopicRegistry.php';
-require dirname(__DIR__) . '/app/Services/RuntimePublicationPolicy.php';
+require dirname(__DIR__) . '/app/Services/ManagedRuntimePublicationPolicy.php';
 
-use App\Services\RuntimePublicationPolicy;
+use App\Services\ManagedRuntimePublicationPolicy;
 
 $repo = dirname(__DIR__);
 $oldCommit = 'f91cd534d271b964db1ad9e682260475eca96820';
@@ -177,10 +177,10 @@ try {
     // Build the target ZIP exclusively from committed Git blobs, verify every
     // entry against the policy authority, then stage it outside the webroot.
     $targetArchive = $operatorRoot . '/artifacts/ERP_MELI_2.36.1_GIT_EXACT.zip';
-    $targetEntries = RuntimePublicationPolicy::packageEntries($repo, 'HEAD');
+    $targetEntries = ManagedRuntimePublicationPolicy::packageEntries($repo, 'HEAD');
     $targetFiles = [];
     foreach ($targetEntries as $entry) {
-        $targetFiles[$entry['path']] = RuntimePublicationPolicy::gitBlob($repo, 'HEAD', $entry['path']);
+        $targetFiles[$entry['path']] = ManagedRuntimePublicationPolicy::gitBlob($repo, 'HEAD', $entry['path']);
     }
     $buildZip = new ZipArchive();
     $assert($buildZip->open($targetArchive, ZipArchive::CREATE | ZipArchive::EXCL) === true,

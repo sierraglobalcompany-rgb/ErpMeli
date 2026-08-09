@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-require dirname(__DIR__) . '/app/Services/RuntimePublicationPolicy.php';
+require dirname(__DIR__) . '/app/Services/ManagedRuntimePublicationPolicy.php';
 
-use App\Services\RuntimePublicationPolicy;
+use App\Services\ManagedRuntimePublicationPolicy;
 
 $root = dirname(__DIR__);
 $arguments = is_array($_SERVER['argv'] ?? null) ? $_SERVER['argv'] : [];
@@ -20,9 +20,9 @@ if ($ref === '') {
     exit(2);
 }
 if ($dryRun) {
-    $manifest = json_decode(RuntimePublicationPolicy::gitBlob($root, $ref, 'resources/runtime-manifest.json'), true);
-    $issues = is_array($manifest) ? RuntimePublicationPolicy::manifestIssues($root, $manifest, $ref) : ['manifest_malformed'];
-    $package = RuntimePublicationPolicy::packageEntries($root, $ref);
+    $manifest = json_decode(ManagedRuntimePublicationPolicy::gitBlob($root, $ref, 'resources/runtime-manifest.json'), true);
+    $issues = is_array($manifest) ? ManagedRuntimePublicationPolicy::manifestIssues($root, $manifest, $ref) : ['manifest_malformed'];
+    $package = ManagedRuntimePublicationPolicy::packageEntries($root, $ref);
     fwrite(STDOUT, json_encode([
         'ok' => $issues === [],
         'manifest_components' => is_array($manifest['components'] ?? null) ? count($manifest['components']) : 0,
@@ -32,7 +32,7 @@ if ($dryRun) {
     exit($issues === [] ? 0 : 1);
 }
 
-$manifest = RuntimePublicationPolicy::buildManifest($root, $ref);
+$manifest = ManagedRuntimePublicationPolicy::buildManifest($root, $ref);
 $json = json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n";
 if (file_put_contents($root . '/resources/runtime-manifest.json', $json, LOCK_EX) !== strlen($json)) {
     fwrite(STDERR, "Unable to publish runtime manifest.\n");

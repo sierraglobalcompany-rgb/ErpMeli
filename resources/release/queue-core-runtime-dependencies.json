@@ -89,8 +89,8 @@
       "required_in_runtime_manifest": true,
       "consumers": [
         {
-          "source_path": "app/Services/RuntimePublicationPolicy.php",
-          "symbol": "App\\Services\\RuntimePublicationPolicy::installedManifestIssues",
+          "source_path": "app/Services/ManagedRuntimePublicationPolicy.php",
+          "symbol": "App\\Services\\ManagedRuntimePublicationPolicy::installedManifestIssues",
           "path_literal": "resources/release/queue-core-runtime-dependencies.json"
         }
       ],
@@ -240,7 +240,7 @@
       },
       {
         "id": "runtime-publication-installed-registry",
-        "source_regex": "#^app/Services/RuntimePublicationPolicy\\.php$#D",
+        "source_regex": "#^app/Services/ManagedRuntimePublicationPolicy\\.php$#D",
         "operations": ["file_get_contents"],
         "bounded_by": "Exact resources/release/queue-core-runtime-dependencies.json authority under the installed release root.",
         "data_kind": "release_authority"

@@ -131,6 +131,9 @@ final class NotificationWorkItemService
     /** @return array<string,mixed> */
     public function processDue(?int $limit = null, ?float $deadline = null): array
     {
+        if (\App\QueueCore\QueueCoreOwnershipGuard::v4OwnsWebhook()) {
+            return \App\QueueCore\QueueCoreOwnershipGuard::skippedResult();
+        }
         if (!$this->settings->bool('notifications.webhook_first_enabled', true)) {
             return ['processed' => 0, 'ignored' => 0, 'errors' => 0, 'skipped' => true, 'stop_reason' => 'feature_disabled'];
         }
@@ -524,8 +527,12 @@ final class NotificationWorkItemService
     public function processExact(
         int $workId,
         int $accountId,
-        CampaignExecutionContext $context
+        CampaignExecutionContext $context,
+        bool $allowContinuation=true
     ): array {
+        if (\App\QueueCore\QueueCoreOwnershipGuard::v4OwnsWebhook()) {
+            return \App\QueueCore\QueueCoreOwnershipGuard::skippedResult();
+        }
         if (!$this->canStartResource($context->deadline)) {
             return [
                 'status' => 'deferred',
@@ -552,7 +559,7 @@ final class NotificationWorkItemService
         }
         $started = microtime(true);
         try {
-            $result = $this->processOne($work);
+            $result = $this->processOne($work,$allowContinuation);
             $this->complete($work, $owner, $result, (int) round((microtime(true) - $started) * 1000));
             return [
                 'status' => 'complete',
@@ -660,7 +667,7 @@ final class NotificationWorkItemService
     }
 
     /** @param array<string,mixed> $work @return array{result:string,entity_type:?string,entity_id:?int,action_url:?string,message:string} */
-    private function processOne(array $work): array
+    private function processOne(array $work,bool $allowContinuation=true): array
     {
         $accountId = (int) ($work['meli_account_id'] ?? 0);
         if ($accountId <= 0) {
@@ -676,8 +683,9 @@ final class NotificationWorkItemService
         ];
         if ($type === 'order') {
             $existing = $this->localOrder($accountId, $remoteId);
-            $orderId = (new OrderSyncService($accountId))->syncOrderById($remoteId, $meta);
-            $this->enqueueFinancial($orderId, (int) $work['id']);
+            $sync=new OrderSyncService($accountId);
+            $orderId=$allowContinuation?$sync->syncOrderById($remoteId,$meta):$sync->syncOrderByIdForManual($remoteId,$meta);
+            if($allowContinuation)$this->enqueueFinancial($orderId, (int) $work['id']);
             return [
                 'result' => $existing ? 'order_updated' : 'order_created',
                 'entity_type' => 'meli_order',
@@ -688,7 +696,7 @@ final class NotificationWorkItemService
         }
         if ($type === 'shipment') {
             $shipmentId = (new OrderSyncService($accountId))->syncShipmentById($remoteId, $meta);
-            $this->refreshFinancialForShipment($accountId, $shipmentId, (int) $work['id']);
+            if($allowContinuation)$this->refreshFinancialForShipment($accountId, $shipmentId, (int) $work['id']);
             return [
                 'result' => 'shipment_updated',
                 'entity_type' => 'meli_shipment',

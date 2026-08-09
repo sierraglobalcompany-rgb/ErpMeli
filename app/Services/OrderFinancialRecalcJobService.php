@@ -126,7 +126,13 @@ final class OrderFinancialRecalcJobService
         return $this->processNext($accountId, $limit, $jobId);
     }
 
-    public function processNext(int $accountId = 0, ?int $limit = null, int $jobId = 0): array
+    /** Ejecuta solo la proyección local exacta, sin crear continuación Billing. */
+    public function processManualExact(int $jobId,int $accountId): array
+    {
+        return $this->processNext($accountId,1,$jobId,false);
+    }
+
+    public function processNext(int $accountId = 0, ?int $limit = null, int $jobId = 0, bool $allowContinuation = true): array
     {
         if ($accountId > 0) {
             $this->assertAccountAccess($accountId);
@@ -153,6 +159,9 @@ final class OrderFinancialRecalcJobService
         if (isset($itemColumns['phase'])) {
             $legacyBillingItems = $this->pendingItems($jobId, 'billing_import', $limit);
             if ($legacyBillingItems !== []) {
+                if(!$allowContinuation){
+                    return ['processed'=>0,'jobs'=>1,'errors'=>0,'job_id'=>$jobId,'job'=>$this->find($jobId),'message'=>'La captura Billing queda pendiente; este paso manual no inicia continuaciones.','queue'=>$this->summary($accountId),'stop_reason'=>'manual_single_step_complete'];
+                }
                 return $this->processBillingPhase($jobId, $accountId, $legacyBillingItems);
             }
         }
@@ -186,7 +195,7 @@ final class OrderFinancialRecalcJobService
                     $missingFlags = implode(',', array_slice((array) $rawSummary['missing_flags'], 0, 20));
                 }
                 $requiresBilling = (string) ($projection['official_status'] ?? 'missing') !== 'complete';
-                if ($requiresBilling) {
+                if ($requiresBilling && $allowContinuation) {
                     (new SaleFinancialService())->queueFromOrderId(
                         (int) $item['meli_order_id'],
                         'financial_recalc_local',
@@ -205,7 +214,7 @@ final class OrderFinancialRecalcJobService
                          WHERE id=:id';
                     $params = [
                         'requires_billing' => $requiresBilling ? 1 : 0,
-                        'billing_status' => $requiresBilling ? 'queued_sale' : (string) ($summary['billing_import_status'] ?? 'not_required'),
+                        'billing_status' => $requiresBilling ? ($allowContinuation?'queued_sale':'awaiting_sale') : (string) ($summary['billing_import_status'] ?? 'not_required'),
                         'financial_status' => (string) ($projection['provisional_status'] ?? 'missing'),
                         'missing' => mb_substr($missingFlags, 0, 255),
                         'message' => $requiresBilling

@@ -183,8 +183,13 @@ final class SalesAuditExactRepairService
         return $this->processSelected($limit, $jobId);
     }
 
+    public function processManualExact(int $jobId): array
+    {
+        return $this->processSelected(1,$jobId,false);
+    }
+
     /** @return array<string,mixed> */
-    private function processSelected(int $limit, ?int $jobId): array
+    private function processSelected(int $limit, ?int $jobId, bool $allowContinuation=true): array
     {
         if (!$this->available()) {
             return ['processed' => 0, 'jobs' => 0, 'status' => 'empty'];
@@ -224,13 +229,15 @@ final class SalesAuditExactRepairService
                     $orderIds[] = $existingOrder;
                     $this->finishItem($itemId, 'already_present', null, null);
                 } else {
-                    $orderId = (new OrderSyncService((int) $job['meli_account_id']))->syncOrderById($externalId, [
+                    $sync=new OrderSyncService((int)$job['meli_account_id']);
+                    $meta=[
                         'job_type' => 'sales_repair',
                         'source' => 'cron',
                         'source_queue_key' => 'sales_repair',
                         'source_work_id' => (string) $job['id'],
                         'bulk' => false,
-                    ]);
+                    ];
+                    $orderId=$allowContinuation?$sync->syncOrderById($externalId,$meta):$sync->syncOrderByIdForManual($externalId,$meta);
                     if ($orderId > 0) {
                         $orderIds[] = $orderId;
                     }
@@ -263,7 +270,7 @@ final class SalesAuditExactRepairService
             $this->heartbeat($job, $worker);
         }
 
-        if ($orderIds !== []) {
+        if ($orderIds !== [] && $allowContinuation) {
             try {
                 (new OrderFinancialRecalcJobService())->createForOrderIds(
                     array_values(array_unique($orderIds)),

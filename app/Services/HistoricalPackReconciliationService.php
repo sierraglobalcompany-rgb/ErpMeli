@@ -13,6 +13,9 @@ use Throwable;
  */
 final class HistoricalPackReconciliationService
 {
+    /** @param (callable(int):MeliApiClient)|null $clientFactory */
+    public function __construct(private $clientFactory=null){}
+
     public function enqueueRebuild(?int $accountId, ?int $createdBy): int
     {
         if ($accountId === null || $accountId <= 0) {
@@ -161,10 +164,20 @@ final class HistoricalPackReconciliationService
         return $this->processSelected(1, $jobId);
     }
 
-    /** @return array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} */
-    private function processSelected(int $limit, ?int $jobId): array
+    /** Un solo GET físico y ninguna continuación. */
+    public function processManualExact(int $jobId): array
     {
-        if (PHP_SAPI !== 'cli') {
+        $s=Database::connectionFresh()->prepare('SELECT operation FROM sale_pack_reconciliation_jobs WHERE id=? LIMIT 1');
+        $s->execute([$jobId]);
+        $operation=(string)$s->fetchColumn();
+        if(!in_array($operation,['recover_order','verify_pack'],true))throw new \RuntimeException('Operación de pack no certificada.');
+        return $this->processSelected(1,$jobId,true,false);
+    }
+
+    /** @return array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} */
+    private function processSelected(int $limit, ?int $jobId, bool $manualExact=false, bool $allowContinuation=true): array
+    {
+        if (PHP_SAPI !== 'cli' && !$manualExact) {
             throw new \App\Core\HttpException(404, 'Esta operación pertenece al lanzador CLI.');
         }
         $summary = ['processed' => 0, 'completed' => 0, 'errors' => 0, 'deferred' => 0, 'stop_reason' => 'empty'];
@@ -202,7 +215,7 @@ final class HistoricalPackReconciliationService
             $summary['processed']++;
             try {
                 if ($job['operation'] === 'verify_pack') {
-                    $this->verifyPack($job);
+                    $this->verifyPack($job,$allowContinuation);
                 } else {
                     $this->recoverOrder($job);
                 }
@@ -464,12 +477,12 @@ final class HistoricalPackReconciliationService
     }
 
     /** @param array<string,mixed> $job */
-    private function verifyPack(array $job): void
+    private function verifyPack(array $job,bool $allowContinuation=true): void
     {
         $this->heartbeat($job);
         $accountId = (int) $job['meli_account_id'];
         $packExternalId = (string) $job['external_resource_id'];
-        $pack = (new MeliApiClient($accountId))->get(
+        $pack = $this->client($accountId)->get(
             '/packs/' . rawurlencode($packExternalId),
             [],
             ['job_type' => 'sale_pack_reconciliation', 'source' => 'cron', 'bulk' => false]
@@ -534,7 +547,7 @@ final class HistoricalPackReconciliationService
                 if (isset($mismatched[$orderId])) {
                     continue;
                 }
-                $pdo->prepare(
+                if($allowContinuation)$pdo->prepare(
                     'INSERT INTO sale_pack_reconciliation_jobs
                         (company_id,meli_account_id,meli_pack_id,operation,external_resource_id,status,priority)
                      VALUES (?,?,?,"recover_order",?,"pending",40)
@@ -604,7 +617,7 @@ final class HistoricalPackReconciliationService
         $this->heartbeat($job);
         $accountId = (int) $job['meli_account_id'];
         $externalOrderId = (string) $job['external_resource_id'];
-        (new OrderSyncService($accountId))->syncOrderById(
+        (new OrderSyncService($accountId,$this->client($accountId)))->syncOrderByIdForManual(
             $externalOrderId,
             [
                 'job_type' => 'sale_pack_reconciliation',
@@ -614,6 +627,11 @@ final class HistoricalPackReconciliationService
             fn(PDO $pdo): bool => $this->assertJobLeaseInTransaction($pdo, $job)
         );
         $this->refreshPack($job);
+    }
+
+    private function client(int $accountId): MeliApiClient
+    {
+        return $this->clientFactory!==null?($this->clientFactory)($accountId):new MeliApiClient($accountId);
     }
 
     /** @param array<string,mixed> $job */

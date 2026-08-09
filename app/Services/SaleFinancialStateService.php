@@ -55,6 +55,26 @@ final class SaleFinancialStateService
         return $state;
     }
 
+    /**
+     * Queue Core local projection with an explicit tenant fence.
+     *
+     * Unlike projectOrder(), this path deliberately does not publish Cron V3
+     * work. Official Billing remains a separate, disabled-by-default remote
+     * capability and monthly closes remain immutable.
+     *
+     * @return array<string,mixed>
+     */
+    public function projectOrderForQueueCore(int $companyId, int $accountId, int $orderId): array
+    {
+        $scope = $this->scopeForOrder($orderId);
+        if ((int) $scope['company_id'] !== $companyId
+            || (int) $scope['meli_account_id'] !== $accountId) {
+            throw new RuntimeException('La orden no pertenece al alcance Queue Core indicado.');
+        }
+        (new OrderFinancialService())->recalculateByOrderId($orderId);
+        return $this->projectSale($companyId, $accountId, (string) $scope['sale_key']);
+    }
+
     /** @return array<string,mixed> */
     public function projectSale(int $companyId, int $accountId, string $saleKey): array
     {

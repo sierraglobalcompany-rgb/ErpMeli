@@ -120,13 +120,29 @@ final class RegisteredManualCampaignAdapter implements InteractiveCampaignAdapte
         if (!$sourceState->exists) {
             throw new RuntimeException('El recurso exacto ya no existe dentro del alcance congelado por la campaña.');
         }
+        if($context->expectedSourceAuthorityVersion!==null){
+            $latestState=(new ManualCampaignSourceInspector())->inspect(
+                $this->queueKey(),$sourceId,$accountId,$context->companyId
+            );
+            if(!$latestState->exists||$latestState->terminal||!$latestState->eligible){
+                throw new ManualStaleSourceException();
+            }
+            $latestAuthority=(new \App\QueueCore\ManualSourceAuthorityService())->inspect(
+                $this->queueKey(),$sourceId,$accountId,$context->companyId,$latestState
+            );
+            if($latestAuthority->explicitlyUnsupported
+                || !hash_equals($context->expectedSourceAuthorityVersion,$latestAuthority->durableInputVersion)){
+                throw new ManualStaleSourceException();
+            }
+        }
         $id = (int) explode(':', $sourceId, 2)[0];
         $queueKey = $this->queueKey();
         $result = match ($queueKey) {
             'notification_fallback' => (new NotificationWorkItemService())->processExact(
                 $id,
                 $accountId,
-                $context
+                $context,
+                false
             ),
             // Una campaña representa cada salida remota de forma individual.
             // El cron general conserva sus lotes normales mediante los defaults.
@@ -147,11 +163,11 @@ final class RegisteredManualCampaignAdapter implements InteractiveCampaignAdapte
                 1
             ),
             'sales_audit' => (new SalesAuditRunService())->processExact($id, 1, $context->deadline),
-            'sales_repair' => (new SalesAuditExactRepairService())->processExact($id, 1),
-            'financial_recalc' => (new OrderFinancialRecalcJobService())->processExact($id, $accountId, 1),
-            'order_enrichment' => (new OrderEnrichmentService())->processExact($id, $context->deadline),
-            'sale_pack_reconciliation' => (new HistoricalPackReconciliationService())->processExact($id),
-            'sale_financial_reconciliation' => (new SaleFinancialService())->processExact($id),
+            'sales_repair' => (new SalesAuditExactRepairService())->processManualExact($id),
+            'financial_recalc' => (new OrderFinancialRecalcJobService())->processManualExact($id, $accountId),
+            'order_enrichment' => (new OrderEnrichmentService())->processManualExact($id, $context->deadline),
+            'sale_pack_reconciliation' => (new HistoricalPackReconciliationService())->processManualExact($id),
+            'sale_financial_reconciliation' => (new SaleFinancialService())->processManualExact($id),
             'module_jobs' => (new \App\Core\Modules\ModuleKernel())->processExactJob($id, $context->deadline),
             default => throw new RuntimeException('El adaptador exacto no tiene un ejecutor registrado.'),
         };

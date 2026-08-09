@@ -117,8 +117,13 @@ final class OrderEnrichmentService
         return $this->processSelected(1, $deadline, $jobId);
     }
 
+    public function processManualExact(int $jobId,?float $deadline=null): array
+    {
+        return $this->processSelected(1,$deadline,$jobId,false);
+    }
+
     /** @return array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} */
-    private function processSelected(?int $limit, ?float $deadline, ?int $jobId): array
+    private function processSelected(?int $limit, ?float $deadline, ?int $jobId, bool $allowContinuation=true): array
     {
         if (!$this->isAvailable()) {
             return ['processed' => 0, 'completed' => 0, 'errors' => 0, 'deferred' => 0, 'stop_reason' => 'schema_unavailable'];
@@ -144,7 +149,7 @@ final class OrderEnrichmentService
             $summary['stop_reason'] = 'batch_limit';
             try {
                 $result = (new OrderSyncService((int) $job['meli_account_id']))->processEnrichmentResource($job);
-                if (!empty($result['spawned_shipment_id'])) {
+                if ($allowContinuation && !empty($result['spawned_shipment_id'])) {
                     $shipmentJobId = $this->enqueue(
                         (int) $job['meli_account_id'],
                         (int) $job['meli_order_id'],

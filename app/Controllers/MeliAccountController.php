@@ -15,6 +15,7 @@ use App\Services\EnvironmentFileService;
 use App\Services\AuditService;
 use App\Services\CompanyOptionService;
 use App\Services\MeliAccountOverviewService;
+use App\Services\AuthorizedBusinessScope;
 use PDO;
 
 final class MeliAccountController
@@ -22,20 +23,28 @@ final class MeliAccountController
     public function index(): void
     {
         Auth::requireRole('admin');
-        $accounts = Database::connection()->query(
+        $accountIds = (new AuthorizedBusinessScope())->accountIds();
+        $accounts = [];
+        if ($accountIds !== []) {
+            $placeholders = implode(',', array_fill(0, count($accountIds), '?'));
+            $statement = Database::connection()->prepare(
             "SELECT a.id,a.company_id,a.meli_user_id,a.nickname,a.account_name,a.status,a.last_sync_at,a.created_at,
                     c.name company_name,t.expires_at,t.scope
              FROM meli_accounts a
              JOIN companies c ON c.id=a.company_id
              LEFT JOIN meli_tokens t ON t.meli_account_id=a.id
+             WHERE a.id IN ($placeholders)
              ORDER BY a.created_at DESC"
-        )->fetchAll(PDO::FETCH_ASSOC);
+            );
+            $statement->execute($accountIds);
+            $accounts = $statement->fetchAll(PDO::FETCH_ASSOC);
+        }
         $summaries = (new MeliAccountOverviewService())->summaries();
         foreach ($accounts as &$account) {
             $account += $summaries[(int) $account['id']] ?? [];
         }
         unset($account);
-        $companies = (new CompanyOptionService())->active();
+        $companies = (new CompanyOptionService())->authorizedActive();
         $oauthConfigured = OAuthService::isConfigured();
         $meliClientId = (string) Env::get('MELI_CLIENT_ID', '');
         $redirectUri = (string) Env::get('MELI_REDIRECT_URI', rtrim((string) Env::get('APP_URL', ''), '/') . '/meli_callback.php');

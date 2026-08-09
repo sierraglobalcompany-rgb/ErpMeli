@@ -1,0 +1,765 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\QueueCore;
+
+use App\Core\Env;
+use App\Services\QueueCoreDeploymentGateService;
+use PDO;
+
+/** Evidencia no secreta y ligada a generación/contexto para el CAS de activación. */
+final class QueueCoreReleaseEvidenceService
+{
+    private const MAX_CERTIFIED_CATCHUP_MINUTES = 11520.0;
+
+    public function __construct(private readonly PDO $pdo) {}
+
+    /** @param array<string,scalar|null> $metrics */
+    public function record(
+        int $engineGeneration,
+        string $type,
+        bool $passed,
+        string $contextHash,
+        array $metrics,
+        int $ttlSeconds = 3600,
+        ?int $companyId = null,
+        ?int $accountId = null,
+    ): int {
+        if (!in_array($type, ['backup', 'capacity', 'manifest'], true)) {
+            throw new \InvalidArgumentException('Queue Core release evidence type is invalid.');
+        }
+        if (preg_match('/^[a-f0-9]{64}$/', strtolower($contextHash)) !== 1) {
+            throw new \InvalidArgumentException('Queue Core readiness context hash is invalid.');
+        }
+        ksort($metrics);
+        $json = json_encode($metrics, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        $statement = $this->pdo->prepare(
+            'INSERT INTO queue_core_release_evidence
+             (engine_generation,evidence_type,company_id,meli_account_id,status,
+              readiness_context_hash,evidence_hash,metrics_json,expires_at)
+             VALUES (?,?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND))'
+        );
+        $statement->execute([
+            max(0, $engineGeneration),
+            $type,
+            $companyId,
+            $accountId,
+            $passed ? 'pass' : 'fail',
+            strtolower($contextHash),
+            hash('sha256', $json),
+            $json,
+            max(60, min(86400, $ttlSeconds)),
+        ]);
+        $id = (int) $this->pdo->lastInsertId();
+        if ($id < 1) {
+            throw new \RuntimeException('Queue Core release evidence was not persisted.');
+        }
+        return $id;
+    }
+
+    /** @return array{ok:bool,reason:string,id?:int,metrics?:array<string,mixed>} */
+    public function requireLatest(
+        int $engineGeneration,
+        string $type,
+        string $contextHash,
+        ?int $companyId = null,
+        ?int $accountId = null,
+        bool $enforceExpiry = true,
+    ): array {
+        $statement = $this->pdo->prepare(
+            'SELECT id,status,readiness_context_hash,metrics_json,expires_at
+             FROM queue_core_release_evidence
+             WHERE engine_generation=? AND evidence_type=?
+               AND company_id <=> ? AND meli_account_id <=> ?
+             ORDER BY id DESC LIMIT 1'
+        );
+        $statement->execute([
+            max(0, $engineGeneration), $type, $companyId, $accountId,
+        ]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return ['ok' => false, 'reason' => $type . '_evidence_missing'];
+        }
+        if ((string) $row['status'] !== 'pass') {
+            return ['ok' => false, 'reason' => $type . '_latest_failed'];
+        }
+        if (!hash_equals(strtolower($contextHash), strtolower((string) $row['readiness_context_hash']))) {
+            return ['ok' => false, 'reason' => $type . '_context_changed'];
+        }
+        $expires = strtotime((string) $row['expires_at'] . ' UTC');
+        if ($enforceExpiry && ($expires === false || $expires <= time())) {
+            return ['ok' => false, 'reason' => $type . '_evidence_expired'];
+        }
+        $metrics = json_decode((string) $row['metrics_json'], true);
+        return [
+            'ok' => true,
+            'reason' => 'ready',
+            'id' => (int) $row['id'],
+            'metrics' => is_array($metrics) ? $metrics : [],
+        ];
+    }
+
+    /** @return array{ok:bool,sha256:?string,bytes:int,path_verified:bool,format_valid:bool,pre_b2_snapshot_columns_absent:bool,table_count:int,data_statements:int,current_table_count:int,missing_table_count:int,schema_mismatch_count:int,identity_mismatch_count:int,critical_data_missing_count:int,critical_row_count_mismatch_count:int} */
+    public function verifyBackup(string $path, string $expectedSha256, bool $allowCommercialGrowth = false): array
+    {
+        $expected = strtolower(trim($expectedSha256));
+        $approved = strtolower(trim((string) Env::get('QUEUE_CORE_APPROVED_BACKUP_SHA256', '')));
+        $approvedPath=trim((string)Env::get('QUEUE_CORE_APPROVED_BACKUP_PATH',''));
+        $resolvedPath=$path!==''?realpath($path):false;
+        $resolvedApproved=$approvedPath!==''?realpath($approvedPath):false;
+        $pathVerified=is_string($resolvedPath)&&is_string($resolvedApproved)
+            &&hash_equals(str_replace('\\','/',$resolvedApproved),str_replace('\\','/',$resolvedPath));
+        $exists = $path !== '' && is_file($path) && is_readable($path);
+        $sha = $exists ? hash_file('sha256', $path) : false;
+        $bytes = $exists ? max(0, (int) filesize($path)) : 0;
+        $content = $exists ? $this->inspectSqlBackup($path) : [
+            'format_valid' => false, 'table_count' => 0, 'data_statements' => 0,
+            'tables' => [], 'data_tables' => [], 'row_counts'=>[], 'schema_hashes'=>[],
+            'identity_hashes'=>[], 'pre_b2_snapshot_columns_absent'=>false,
+        ];
+        $inventory = $this->compareBackupWithCurrentDatabase(
+            $content['tables'],
+            $content['data_tables'],
+            $content['row_counts'],
+            $content['schema_hashes'],
+            $content['identity_hashes'],
+            $allowCommercialGrowth,
+        );
+        $ok = is_string($sha)
+            && $bytes > 0
+            && preg_match('/^[a-f0-9]{64}$/', $expected) === 1
+            && preg_match('/^[a-f0-9]{64}$/', $approved) === 1
+            && $pathVerified
+            && hash_equals($approved, $expected)
+            && hash_equals($expected, strtolower($sha))
+            && $content['format_valid']
+            && $content['pre_b2_snapshot_columns_absent']
+            && $inventory['missing_table_count'] === 0
+            && $inventory['schema_mismatch_count'] === 0
+            && $inventory['identity_mismatch_count'] === 0
+            && $inventory['critical_data_missing_count'] === 0
+            && $inventory['critical_row_count_mismatch_count'] === 0;
+        return [
+            'ok' => $ok,
+            'sha256' => is_string($sha) ? strtoupper($sha) : null,
+            'bytes' => $bytes,
+            'path_verified'=>$pathVerified,
+            'format_valid' => $content['format_valid'],
+            'pre_b2_snapshot_columns_absent'=>$content['pre_b2_snapshot_columns_absent'],
+            'table_count' => $content['table_count'],
+            'data_statements' => $content['data_statements'],
+        ] + $inventory;
+    }
+
+    /** @return array{ok:bool,id:int,sha256:?string,bytes:int} */
+    public function certifyBackup(
+        int $engineGeneration,
+        string $contextHash,
+        string $path,
+        string $expectedSha256,
+        int $ttlSeconds = 3600,
+    ): array {
+        $verification = $this->verifyBackup($path, $expectedSha256);
+        $database = (string) $this->pdo->query('SELECT DATABASE()')->fetchColumn();
+        $tables = (int) $this->pdo->query(
+            'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE()'
+        )->fetchColumn();
+        $metrics = [
+            'bytes' => $verification['bytes'],
+            'database_scope_hash' => hash('sha256', $database),
+            'sha256' => $verification['sha256'],
+            'table_count' => max(0, $tables),
+            'dump_table_count' => $verification['table_count'],
+            'dump_data_statements' => $verification['data_statements'],
+            'current_table_count' => $verification['current_table_count'],
+            'missing_table_count' => $verification['missing_table_count'],
+            'schema_mismatch_count' => $verification['schema_mismatch_count'],
+            'identity_mismatch_count' => $verification['identity_mismatch_count'],
+            'critical_data_missing_count' => $verification['critical_data_missing_count'],
+            'critical_row_count_mismatch_count' => $verification['critical_row_count_mismatch_count'],
+            'path_verified'=>$verification['path_verified']?1:0,
+            'format_valid' => $verification['format_valid'] ? 1 : 0,
+            'verified' => $verification['ok'] ? 1 : 0,
+        ];
+        $id = $this->record(
+            $engineGeneration,
+            'backup',
+            $verification['ok'],
+            $contextHash,
+            $metrics,
+            $ttlSeconds,
+        );
+        return $verification + ['id' => $id];
+    }
+
+    /**
+     * @param array<string,float|int|string|null> $calculation
+     * @param array{cadence_seconds:int,runtime_seconds:int,safe_close_seconds:int,max_remote_jobs:int} $profile
+     * @return array{ok:bool,id:int,calculation:array<string,float|int>}
+     */
+    public function certifyCapacity(
+        int $engineGeneration,
+        string $contextHash,
+        array $calculation,
+        array $profile,
+        int $ttlSeconds = 3600,
+    ): array {
+        $arrival = (float) ($calculation['arrival_rate_resources_per_minute'] ?? 0.0);
+        $sustainable = (float) ($calculation['sustainable_resources_per_minute'] ?? 0.0);
+        $margin = (float) ($calculation['safety_margin_ratio'] ?? 0.0);
+        $safeJobs = (int) ($calculation['safe_jobs_per_run'] ?? 0);
+        $knownSample = (int) ($calculation['measurement_known_responses'] ?? 0);
+        $persistedSample = (int) ($calculation['measurement_resources_persisted'] ?? 0);
+        $backlogResources = max(0, (int) ($calculation['measurement_backlog_resources'] ?? 0));
+        $catchupMinutes = isset($calculation['catchup_minutes'])
+            && is_numeric($calculation['catchup_minutes'])
+            ? (float) $calculation['catchup_minutes']
+            : null;
+        $profileValid = $profile['cadence_seconds'] > 0
+            && $profile['runtime_seconds'] > $profile['safe_close_seconds']
+            && $profile['max_remote_jobs'] > 0;
+        $passed = $arrival >= 0.0
+            && $sustainable > $arrival
+            && $margin > 0.0
+            && $safeJobs > 0
+            && $knownSample >= 3
+            && $persistedSample > 0
+            && $catchupMinutes !== null
+            && is_finite($catchupMinutes)
+            && $catchupMinutes >= 0.0
+            && $catchupMinutes <= self::MAX_CERTIFIED_CATCHUP_MINUTES
+            && $profileValid;
+        $metrics = [
+            'arrival_rate' => round($arrival, 4),
+            'catchup_minutes' => $catchupMinutes,
+            'margin_ratio' => round($margin, 4),
+            'safe_jobs_per_run' => $safeJobs,
+            'sustainable_rate' => round($sustainable, 4),
+            'cadence_seconds' => $profile['cadence_seconds'],
+            'runtime_seconds' => $profile['runtime_seconds'],
+            'safe_close_seconds' => $profile['safe_close_seconds'],
+            'max_remote_jobs' => $profile['max_remote_jobs'],
+            'measurement_known_responses' => $knownSample,
+            'measurement_resources_persisted' => $persistedSample,
+            'measurement_backlog_resources' => $backlogResources,
+            'measurement_window_minutes' => (int) ($calculation['measurement_window_minutes'] ?? 0),
+        ];
+        $id = $this->record(
+            $engineGeneration,
+            'capacity',
+            $passed,
+            $contextHash,
+            $metrics,
+            $ttlSeconds,
+        );
+        return ['ok' => $passed, 'id' => $id, 'calculation' => $calculation];
+    }
+
+    /**
+     * Capacity authority derived exclusively from the bounded Queue Core run
+     * ledger and attempts. No operator-provided rate or latency can become a
+     * release receipt.
+     *
+     * @param array{cadence_seconds:int,runtime_seconds:int,safe_close_seconds:int,max_remote_jobs:int,safe_http_per_minute:float} $profile
+     * @return array<string,float|int>
+     */
+    public function measuredCapacity(int $windowMinutes, array $profile): array
+    {
+        $window=max(15,min(1440,$windowMinutes));
+        $jobs=$this->pdo->prepare(
+            "SELECT COUNT(DISTINCT CONCAT(company_id,':',meli_account_id,':',COALESCE(resource_id,'')))
+             FROM queue_core_jobs
+             WHERE queue_domain='operational'
+               AND work_type IN ('order_exact','webhook_order_exact')
+               AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL ? MINUTE)"
+        );
+        $jobs->execute([$window]);$arrivals=max(0,(int)$jobs->fetchColumn());
+        $attempts=$this->pdo->prepare(
+            "SELECT COALESCE(SUM(a.physical_http_calls),0) physical_http,
+                    SUM(a.response_known_at IS NOT NULL) known_responses,
+                    COALESCE(SUM(CASE WHEN j.work_type IN ('order_exact','webhook_order_exact')
+                                      THEN a.resources_persisted ELSE 0 END),0) resources_persisted
+             FROM queue_core_attempts a
+             JOIN queue_core_jobs j ON j.id=a.job_id AND j.queue_domain='operational'
+             WHERE a.started_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL ? MINUTE)
+               AND a.launcher IN ('cron_v4','canary_v4')
+               AND a.physical_http_calls=1"
+        );
+        $attempts->execute([$window]);$sample=$attempts->fetch(PDO::FETCH_ASSOC)?:[];
+        $durations=$this->pdo->prepare(
+            "SELECT TIMESTAMPDIFF(MICROSECOND,a.started_at,a.response_known_at)/1000000 duration_seconds
+             FROM queue_core_attempts a
+             JOIN queue_core_jobs j ON j.id=a.job_id AND j.queue_domain='operational'
+             WHERE a.started_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL ? MINUTE)
+               AND a.launcher IN ('cron_v4','canary_v4')
+               AND a.physical_http_calls=1 AND a.response_known_at IS NOT NULL
+             ORDER BY duration_seconds LIMIT 2000"
+        );
+        $durations->execute([$window]);
+        $values=array_map('floatval',$durations->fetchAll(PDO::FETCH_COLUMN));sort($values,SORT_NUMERIC);
+        $known=max(0,(int)($sample['known_responses']??0));
+        $persisted=max(0,(int)($sample['resources_persisted']??0));
+        $physical=max(0,(int)($sample['physical_http']??0));
+        $p50=$this->percentile($values,0.50);$p95=$this->percentile($values,0.95);
+        // Primer go-live: una venta puede requerir order + pack + shipment.
+        // El numerador incluye todo HTTP operacional (incluido discovery/OAuth)
+        // y el denominador solo ventas exactas persistidas; nunca mezclar
+        // resultados locales o hijos logísticos como si fueran ventas nuevas.
+        $httpPerResource=$persisted>0?max(3.0,$physical/$persisted):PHP_FLOAT_MAX;
+        $calculation=(new QueueCoreCapacityService())->calculate(
+            $arrivals/$window,$httpPerResource,$p50,$p95,
+            max(0.0,(float)$profile['safe_http_per_minute']),
+            $profile['cadence_seconds'],$profile['runtime_seconds'],
+            $profile['safe_close_seconds'],$profile['max_remote_jobs'],
+        );
+        $observedResourcesPerMinute=$persisted/$window;
+        $calculation['sustainable_resources_per_minute']=round(min(
+            (float)$calculation['sustainable_resources_per_minute'],
+            $observedResourcesPerMinute
+        ),4);
+        $calculation['sustainable_http_per_minute']=round(min(
+            (float)$calculation['sustainable_http_per_minute'],
+            $known/$window
+        ),4);
+        $arrival=(float)$calculation['arrival_rate_resources_per_minute'];
+        $sustainable=(float)$calculation['sustainable_resources_per_minute'];
+        $calculation['safety_margin_ratio']=round($arrival>0
+            ?($sustainable-$arrival)/$arrival
+            :($sustainable>0?1.0:0.0),4);
+        $backlogStatement=$this->pdo->query(
+            "SELECT
+               (SELECT COUNT(*) FROM queue_core_jobs
+                WHERE queue_domain='operational'
+                  AND state IN ('pending','claimed','running','retry_wait','waiting_oauth'))
+               +
+               (SELECT COUNT(*) FROM queue_core_pending_capabilities
+                WHERE state IN ('pending_b2','waiting_dependency','materialized'))"
+        );
+        $backlog=max(0,(int)$backlogStatement->fetchColumn());
+        $catchup=$backlog===0
+            ?0.0
+            :(new QueueCoreCapacityService())->catchupMinutes($backlog,$sustainable,$arrival);
+        return $calculation+[
+            'measurement_window_minutes'=>$window,
+            'measurement_jobs_arrived'=>$arrivals,
+            'measurement_physical_http'=>$physical,
+            'measurement_known_responses'=>$known,
+            'measurement_resources_persisted'=>$persisted,
+            'measurement_backlog_resources'=>$backlog,
+            'catchup_minutes'=>$catchup,
+        ];
+    }
+
+    /** @return array{ok:bool,id:int,manifest:array<string,mixed>} */
+    public function certifyManifest(
+        int $engineGeneration,
+        string $contextHash,
+        int $ttlSeconds = 3600,
+    ): array {
+        $manifest = (new QueueCoreDeploymentGateService($this->pdo))->runtimeManifestCheck();
+        $passed = $manifest['ok'];
+        $metrics = [
+            'invalid_components' => max(0, $manifest['invalid_components']),
+            'minimum_migration' => (string) ($manifest['minimum_migration'] ?? ''),
+            'version' => (string) ($manifest['version'] ?? ''),
+        ];
+        $id = $this->record(
+            $engineGeneration,
+            'manifest',
+            $passed,
+            $contextHash,
+            $metrics,
+            $ttlSeconds,
+        );
+        return ['ok' => $passed, 'id' => $id, 'manifest' => $manifest];
+    }
+
+    /** @return array{format_valid:bool,pre_b2_snapshot_columns_absent:bool,table_count:int,data_statements:int,tables:array<string,true>,data_tables:array<string,true>,row_counts:array<string,int>,schema_hashes:array<string,string>,identity_hashes:array<string,string>} */
+    private function inspectSqlBackup(string $path): array
+    {
+        $gzip=str_ends_with(strtolower($path),'.gz');
+        $handle=$gzip?@gzopen($path,'rb'):@fopen($path,'rb');
+        if($handle===false)return [
+            'format_valid'=>false,'table_count'=>0,'data_statements'=>0,
+            'tables'=>[],'data_tables'=>[],'row_counts'=>[],'schema_hashes'=>[],'identity_hashes'=>[],
+            'pre_b2_snapshot_columns_absent'=>false,
+        ];
+        $tables=[];$dataTables=[];$rowCounts=[];$schemaHashes=[];$data=0;$activeDataTable=null;
+        $activeCreateTable=null;$activeCreateSql='';
+        $identityTables=array_fill_keys(['companies','users','meli_accounts','meli_tokens'],true);
+        $identityRows=[];$activeIdentityTable=null;$activeIdentitySql='';
+        $preB2SnapshotColumnsAbsent=true;
+        $required=array_fill_keys([
+            'companies','users','app_settings','schema_migrations','meli_accounts',
+            'meli_tokens','meli_orders','meli_order_items','meli_payments','meli_shipments',
+        ],false);
+        try{
+            while(($line=$gzip?gzgets($handle):fgets($handle))!==false){
+                $preB2SnapshotColumnsAbsent=$preB2SnapshotColumnsAbsent
+                    && $this->preB2SnapshotColumnsAbsent($line);
+                if($activeCreateTable!==null){
+                    $activeCreateSql.=$line;
+                    if(str_ends_with(rtrim($line),';')){
+                        if($activeCreateTable==='meli_orders'){
+                            $preB2SnapshotColumnsAbsent=$preB2SnapshotColumnsAbsent
+                                && $this->preB2SnapshotColumnsAbsent($activeCreateSql);
+                        }
+                        $schemaHashes[$activeCreateTable]=hash(
+                            'sha256',$this->canonicalCreateSql($activeCreateSql,$activeCreateTable)
+                        );
+                        $activeCreateTable=null;$activeCreateSql='';
+                    }
+                    continue;
+                }
+                if(preg_match('/^CREATE TABLE (?:IF NOT EXISTS )?[`"]?([a-zA-Z0-9_]+)/i',$line,$match)===1){
+                    $name=strtolower($match[1]);$tables[$name]=true;if(array_key_exists($name,$required))$required[$name]=true;
+                    $activeCreateTable=$name;$activeCreateSql=$line;
+                    if(str_ends_with(rtrim($line),';')){
+                        if($name==='meli_orders'){
+                            $preB2SnapshotColumnsAbsent=$preB2SnapshotColumnsAbsent
+                                && $this->preB2SnapshotColumnsAbsent($activeCreateSql);
+                        }
+                        $schemaHashes[$name]=hash('sha256',$this->canonicalCreateSql($activeCreateSql,$name));
+                        $activeCreateTable=null;$activeCreateSql='';
+                    }
+                    continue;
+                }
+                if(preg_match('/^(?:INSERT INTO|REPLACE INTO)\s+[`"]?([a-zA-Z0-9_]+)/i',$line,$match)===1){
+                    $data++;$activeDataTable=strtolower($match[1]);$dataTables[$activeDataTable]=true;
+                    $rowCounts[$activeDataTable]=$rowCounts[$activeDataTable]??0;
+                    $valuesPosition=stripos($line,'VALUES');
+                    if($valuesPosition!==false){
+                        $rowCounts[$activeDataTable]+=$this->countSqlValueTuples(substr($line,$valuesPosition+6));
+                    }
+                    if(isset($identityTables[$activeDataTable])){
+                        $activeIdentityTable=$activeDataTable;$activeIdentitySql=$line;
+                    }
+                    if(str_ends_with(rtrim($line),';'))$activeDataTable=null;
+                }elseif(preg_match('/^COPY\s+[`"]?([a-zA-Z0-9_]+)/i',$line,$match)===1){
+                    $data++;$dataTables[strtolower($match[1])]=true;
+                }elseif($activeDataTable!==null){
+                    $rowCounts[$activeDataTable]+=$this->countSqlValueTuples($line);
+                    if(str_ends_with(rtrim($line),';'))$activeDataTable=null;
+                }
+                if($activeIdentityTable!==null){
+                    if($activeIdentitySql!==$line)$activeIdentitySql.=$line;
+                    if(str_ends_with(rtrim($line),';')){
+                        foreach($this->canonicalInsertRows($activeIdentitySql) as $identityRow){
+                            $identityRows[$activeIdentityTable][]=$identityRow;
+                        }
+                        $activeIdentityTable=null;$activeIdentitySql='';
+                    }
+                }
+            }
+        }finally{$gzip?gzclose($handle):fclose($handle);}
+        $identityHashes=[];
+        foreach(array_keys($identityTables) as $identityTable){
+            $rows=$identityRows[$identityTable]??[];sort($rows,SORT_STRING);
+            $identityHashes[$identityTable]=hash('sha256',implode("\n",$rows));
+        }
+        return [
+            'format_valid'=>$tables!==[]&&$data>0&&!in_array(false,$required,true),
+            'pre_b2_snapshot_columns_absent'=>$preB2SnapshotColumnsAbsent,
+            'table_count'=>count($tables),'data_statements'=>$data,
+            'tables'=>$tables,'data_tables'=>$dataTables,'row_counts'=>$rowCounts,'schema_hashes'=>$schemaHashes,
+            'identity_hashes'=>$identityHashes,
+        ];
+    }
+
+    private function canonicalCreateSql(string $sql,string $table=''): string
+    {
+        // La migración 284 añade únicamente estas columnas técnicas y aditivas
+        // después del backup HF1.2. Se eliminan de ambos lados del contrato para
+        // comparar el esquema restaurable pre-B2 sin aceptar otras diferencias.
+        if(strtolower($table)==='meli_orders'){
+            $sql=(string)preg_replace(
+                '/,?\s*`queue_snapshot_(?:version|at)`\s+[^,\r\n]+/i','',$sql
+            );
+        }
+        $sql=(string)preg_replace('/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS/i','CREATE TABLE',$sql);
+        $sql=(string)preg_replace('/\s+AUTO_INCREMENT=\d+/i','',$sql);
+        $sql=(string)preg_replace('/\s+/',' ',trim($sql));
+        return strtolower(rtrim($sql," ;\t\r\n"));
+    }
+
+    private function preB2SnapshotColumnsAbsent(string $createSql): bool
+    {
+        return preg_match('/\bqueue_snapshot_(?:version|at)\b/i',$createSql)!==1;
+    }
+
+    private function isNullColumnDefault(mixed $value): bool
+    {
+        if($value===null)return true;
+        // MariaDB representa DEFAULT NULL como el texto no citado NULL en
+        // information_schema; un literal DEFAULT 'NULL' conserva las comillas.
+        return strtoupper(trim((string)$value))==='NULL'
+            && str_contains(strtolower((string)$this->pdo->getAttribute(PDO::ATTR_SERVER_VERSION)),'mariadb');
+    }
+
+    private function queueSnapshotColumnsMatchMigration284(): bool
+    {
+        $statement=$this->pdo->query(
+            "SELECT LOWER(c.column_name),LOWER(c.data_type),c.character_maximum_length,
+                    c.datetime_precision,UPPER(c.is_nullable),c.ordinal_position,c.column_default,
+                    c.extra,c.generation_expression,LOWER(c.character_set_name),LOWER(c.collation_name),
+                    LOWER(t.table_collation),LOWER(cca.character_set_name),LOWER(previous.column_name)
+             FROM information_schema.columns c
+             JOIN information_schema.tables t
+               ON t.table_schema=c.table_schema AND t.table_name=c.table_name
+             JOIN information_schema.collation_character_set_applicability cca
+               ON cca.collation_name=t.table_collation
+             LEFT JOIN information_schema.columns previous
+               ON previous.table_schema=c.table_schema AND previous.table_name=c.table_name
+              AND previous.ordinal_position=c.ordinal_position-1
+             WHERE c.table_schema=DATABASE()
+               AND c.table_name='meli_orders'
+               AND c.column_name IN ('queue_snapshot_version','queue_snapshot_at')"
+        );
+        $columns=[];
+        foreach($statement->fetchAll(PDO::FETCH_NUM) as $column){
+            $columns[(string)($column[0]??'')]=[
+                'data_type'=>(string)($column[1]??''),
+                'character_maximum_length'=>$column[2]??null,
+                'datetime_precision'=>$column[3]??null,
+                'is_nullable'=>(string)($column[4]??''),
+                'ordinal_position'=>(int)($column[5]??0),
+                'column_default'=>$column[6]??null,
+                'extra'=>(string)($column[7]??''),
+                'generation_expression'=>$column[8]??null,
+                'character_set_name'=>$column[9]??null,
+                'collation_name'=>$column[10]??null,
+                'table_collation'=>$column[11]??null,
+                'table_character_set'=>$column[12]??null,
+                'previous_column'=>$column[13]??null,
+            ];
+        }
+        $version=$columns['queue_snapshot_version']??null;
+        $timestamp=$columns['queue_snapshot_at']??null;
+        return is_array($version)
+            && $version['data_type']==='char'
+            && (int)($version['character_maximum_length']??0)===64
+            && $version['is_nullable']==='YES'
+            && $this->isNullColumnDefault($version['column_default'])
+            && trim($version['extra'])===''
+            && ($version['generation_expression']===null||trim((string)$version['generation_expression'])==='')
+            && $version['previous_column']==='synced_at'
+            && $version['character_set_name']===$version['table_character_set']
+            && $version['collation_name']===$version['table_collation']
+            && is_array($timestamp)
+            && $timestamp['data_type']==='datetime'
+            && (int)($timestamp['datetime_precision']??-1)===3
+            && $timestamp['is_nullable']==='YES'
+            && $this->isNullColumnDefault($timestamp['column_default'])
+            && trim($timestamp['extra'])===''
+            && ($timestamp['generation_expression']===null||trim((string)$timestamp['generation_expression'])==='')
+            && $timestamp['previous_column']==='queue_snapshot_version'
+            && $timestamp['character_set_name']===null
+            && $timestamp['collation_name']===null;
+    }
+
+    private function countSqlValueTuples(string $sql): int
+    {
+        $count=0;$depth=0;$quote=null;$escaped=false;$length=strlen($sql);
+        for($index=0;$index<$length;$index++){
+            $char=$sql[$index];
+            if($quote!==null){
+                if($escaped){$escaped=false;continue;}
+                if($char==='\\'){$escaped=true;continue;}
+                if($char===$quote){
+                    if($index+1<$length&&$sql[$index+1]===$quote){$index++;continue;}
+                    $quote=null;
+                }
+                continue;
+            }
+            if($char==="'"||$char==='"'){$quote=$char;continue;}
+            if($char==='('){if($depth===0)$count++;$depth++;continue;}
+            if($char===')'&&$depth>0)$depth--;
+        }
+        return $count;
+    }
+
+    /** @return list<string> */
+    private function canonicalInsertRows(string $sql): array
+    {
+        $valuesPosition=stripos($sql,'VALUES');
+        if($valuesPosition===false)return [];
+        $values=substr($sql,$valuesPosition+6);$rows=[];$row='';$depth=0;
+        $quote=null;$escaped=false;$length=strlen($values);
+        for($index=0;$index<$length;$index++){
+            $char=$values[$index];
+            if($quote!==null){
+                if($depth>0)$row.=$char;
+                if($escaped){$escaped=false;continue;}
+                if($char==='\\'){$escaped=true;continue;}
+                if($char===$quote){
+                    if($index+1<$length&&$values[$index+1]===$quote){$row.=$values[++$index];continue;}
+                    $quote=null;
+                }
+                continue;
+            }
+            if($char==="'"||$char==='"'){$quote=$char;if($depth>0)$row.=$char;continue;}
+            if($char==='('){if($depth++>0)$row.=$char;continue;}
+            if($char===')'&&$depth>0){
+                if(--$depth===0){
+                    $fields=$this->splitSqlFields($row);
+                    $rows[]=(string)json_encode(array_map($this->normalizeSqlLiteral(...),$fields),JSON_UNESCAPED_SLASHES);
+                    $row='';
+                }else{$row.=$char;}
+                continue;
+            }
+            if($depth>0)$row.=$char;
+        }
+        return $rows;
+    }
+
+    /** @return list<string> */
+    private function splitSqlFields(string $row): array
+    {
+        $fields=[];$field='';$depth=0;$quote=null;$escaped=false;$length=strlen($row);
+        for($index=0;$index<$length;$index++){
+            $char=$row[$index];
+            if($quote!==null){
+                $field.=$char;
+                if($escaped){$escaped=false;continue;}
+                if($char==='\\'){$escaped=true;continue;}
+                if($char===$quote){
+                    if($index+1<$length&&$row[$index+1]===$quote){$field.=$row[++$index];continue;}
+                    $quote=null;
+                }
+                continue;
+            }
+            if($char==="'"||$char==='"'){$quote=$char;$field.=$char;continue;}
+            if($char==='('){$depth++;$field.=$char;continue;}
+            if($char===')'&&$depth>0){$depth--;$field.=$char;continue;}
+            if($char===','&&$depth===0){$fields[]=trim($field);$field='';continue;}
+            $field.=$char;
+        }
+        $fields[]=trim($field);return $fields;
+    }
+
+    private function normalizeSqlLiteral(string $literal): ?string
+    {
+        $literal=trim($literal);
+        if(strcasecmp($literal,'NULL')===0)return null;
+        $length=strlen($literal);
+        if($length>=2&&(($literal[0]==="'"&&$literal[$length-1]==="'")
+            ||($literal[0]==='"'&&$literal[$length-1]==='"'))){
+            $value=substr($literal,1,-1);
+            $value=str_replace([$literal[0].$literal[0]],[$literal[0]],$value);
+            return stripcslashes($value);
+        }
+        return $literal;
+    }
+
+    /**
+     * Bind the approved artifact to the database that is about to be upgraded.
+     * Queue Core tables are intentionally absent from a pre-B2 backup; every
+     * pre-existing runtime table must be represented in the dump. Critical
+     * commercial tables that currently contain rows must also contain a data
+     * statement, so a schema-only or synthetic miniature cannot certify.
+     *
+     * @param array<string,true> $dumpTables
+     * @param array<string,true> $dumpDataTables
+     * @param array<string,int> $dumpRowCounts
+     * @param array<string,string> $dumpSchemaHashes
+     * @param array<string,string> $dumpIdentityHashes
+     * @return array{current_table_count:int,missing_table_count:int,schema_mismatch_count:int,identity_mismatch_count:int,critical_data_missing_count:int,critical_row_count_mismatch_count:int}
+     */
+    private function compareBackupWithCurrentDatabase(
+        array $dumpTables,
+        array $dumpDataTables,
+        array $dumpRowCounts,
+        array $dumpSchemaHashes,
+        array $dumpIdentityHashes,
+        bool $allowCommercialGrowth,
+    ): array
+    {
+        $statement=$this->pdo->query(
+            "SELECT LOWER(table_name)
+             FROM information_schema.tables
+             WHERE table_schema=DATABASE()
+               AND table_type='BASE TABLE'
+               AND table_name NOT LIKE 'queue\\_core\\_%'
+               AND table_name<>'queue_engine_control'"
+        );
+        $current=array_map('strval',$statement->fetchAll(PDO::FETCH_COLUMN));
+        $missing=0;$schemaMismatch=0;$schemaMismatchTables=[];
+        $queueSnapshotContractValid=$this->queueSnapshotColumnsMatchMigration284();
+        if(!$queueSnapshotContractValid){
+            $schemaMismatch++;$schemaMismatchTables[]='meli_orders';
+        }
+        foreach($current as $table){
+            if(!isset($dumpTables[strtolower($table)]))$missing++;
+            if($table==='meli_orders'&&!$queueSnapshotContractValid)continue;
+            $show=$this->pdo->query('SHOW CREATE TABLE `'.$table.'`')->fetch(PDO::FETCH_NUM);
+            $liveCreate=is_array($show)?(string)($show[1]??''):'';
+            $liveHash=$liveCreate!==''?hash('sha256',$this->canonicalCreateSql($liveCreate,$table)):'';
+            if($liveHash===''||!isset($dumpSchemaHashes[$table])||!hash_equals($liveHash,$dumpSchemaHashes[$table])){
+                $schemaMismatch++;$schemaMismatchTables[]=$table;
+            }
+        }
+
+        $criticalMissing=0;$rowCountMismatch=0;$identityMismatch=0;
+        $criticalMissingTables=[];$rowCountMismatchTables=[];$identityMismatchTables=[];
+        $dataCritical=['companies','users','app_settings','schema_migrations','meli_accounts','meli_tokens',
+            'meli_orders','meli_order_items','meli_payments','meli_shipments'];
+        $identityCounts=['companies','users','meli_accounts','meli_tokens'];
+        $commercialCounts=['meli_orders','meli_order_items','meli_payments','meli_shipments'];
+        foreach($dataCritical as $table){
+            if(!in_array($table,$current,true))continue;
+            $count=(int)$this->pdo->query('SELECT COUNT(*) FROM `'.$table.'`')->fetchColumn();
+            $dumpCount=max(0,(int)($dumpRowCounts[$table]??0));
+            $commercial=in_array($table,$commercialCounts,true);
+            if($count>0 && !isset($dumpDataTables[$table])
+                && (!$allowCommercialGrowth || !$commercial || $dumpCount>0)) {
+                $criticalMissing++;
+                $criticalMissingTables[]=$table;
+            }
+            if(in_array($table,$identityCounts,true) && $count!==$dumpCount) {
+                $rowCountMismatch++;
+                $rowCountMismatchTables[]=$table;
+            }elseif($commercial
+                && ((!$allowCommercialGrowth && $count!==$dumpCount)
+                    || ($allowCommercialGrowth && $count<$dumpCount))) {
+                $rowCountMismatch++;
+                $rowCountMismatchTables[]=$table;
+            }
+        }
+        foreach($identityCounts as $table){
+            if(!in_array($table,$current,true))continue;
+            $rows=$this->pdo->query('SELECT * FROM `'.$table.'`')->fetchAll(PDO::FETCH_NUM);
+            $canonical=[];
+            foreach($rows as $row){
+                $canonical[]=(string)json_encode(
+                    array_map(static fn(mixed $value): ?string=>$value===null?null:(string)$value,$row),
+                    JSON_UNESCAPED_SLASHES,
+                );
+            }
+            sort($canonical,SORT_STRING);$liveIdentityHash=hash('sha256',implode("\n",$canonical));
+            if(!isset($dumpIdentityHashes[$table])||!hash_equals($liveIdentityHash,$dumpIdentityHashes[$table])){
+                $identityMismatch++;$identityMismatchTables[]=$table;
+            }
+        }
+        return [
+            'current_table_count'=>count($current),
+            'missing_table_count'=>$missing,
+            'schema_mismatch_count'=>$schemaMismatch,
+            'schema_mismatch_tables'=>$schemaMismatchTables,
+            'identity_mismatch_count'=>$identityMismatch,
+            'identity_mismatch_tables'=>$identityMismatchTables,
+            'critical_data_missing_count'=>$criticalMissing,
+            'critical_data_missing_tables'=>$criticalMissingTables,
+            'critical_row_count_mismatch_count'=>$rowCountMismatch,
+            'critical_row_count_mismatch_tables'=>$rowCountMismatchTables,
+        ];
+    }
+
+    /** @param list<float> $values */
+    private function percentile(array $values,float $quantile): float
+    {
+        if($values===[])return 0.0;
+        $index=(int)ceil(max(0.0,min(1.0,$quantile))*count($values))-1;
+        return max(0.001,(float)$values[max(0,min(count($values)-1,$index))]);
+    }
+}

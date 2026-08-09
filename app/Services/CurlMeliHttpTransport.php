@@ -20,7 +20,20 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         // Mercado Libre mientras exista la parada local de emergencia.
         $emergency = new MeliEmergencyStopService();
         $method = strtoupper($method);
-        $emergency->assertTransportAllowed($method, $url);
+        $executionSource=(string)(ApiExecutionMetadataContext::current()['source']??'');
+        if($executionSource==='queue_core'){
+            // Read the physical stop without consuming a canary yet. The
+            // authoritative check/claim is repeated immediately before cURL.
+            $emergency->assertAllowed();
+            // This is the Queue Core physical boundary. No DB lease may be
+            // consumed after cURL is initialized or by a stale worker.
+            \App\QueueCore\QueueCoreDispatchFence::beforeTransport(
+                $method,
+                parse_url($url,PHP_URL_PATH)?:'/'
+            );
+        }else{
+            $emergency->assertTransportAllowed($method, $url);
+        }
         $ch = curl_init();
         if ($ch === false) {
             throw new RuntimeException('No se pudo inicializar cURL para consultar Mercado Libre.');
@@ -47,7 +60,7 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             },
         ];
         $emergencySource = (string) (ApiExecutionMetadataContext::current()['source'] ?? '');
-        if (in_array($emergencySource, ['manual_emergency_canary', 'manual_emergency_oauth_refresh'], true)) {
+        if (in_array($emergencySource, ['queue_core', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'], true)) {
             // Un redirect también sería otra solicitud física. El canario no
             // puede seguirlo, ni siquiera cuando el servidor responda 301/302.
             $options[CURLOPT_FOLLOWLOCATION] = false;
@@ -58,6 +71,27 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
         }
 
+        if($executionSource==='queue_core'){
+            $lastHeartbeat=0.0;
+            curl_setopt($ch,CURLOPT_NOPROGRESS,false);
+            curl_setopt($ch,CURLOPT_XFERINFOFUNCTION,static function()use(&$lastHeartbeat):int{
+                $now=microtime(true);
+                if($now-$lastHeartbeat<1.0)return 0;
+                $lastHeartbeat=$now;
+                return \App\QueueCore\QueueCoreDispatchFence::heartbeat()?0:1;
+            });
+            // Persist the physical boundary only after cURL is fully prepared
+            // and immediately before curl_exec.
+            $emergency->assertTransportAllowed($method, $url);
+            \App\QueueCore\QueueCoreDispatchFence::transportStarted(
+                $method,
+                parse_url($url,PHP_URL_PATH)?:'/'
+            );
+            \App\QueueCore\QueueCoreDispatchFence::immediatelyBeforeCurl(
+                $method,
+                parse_url($url,PHP_URL_PATH)?:'/'
+            );
+        }
         $started = microtime(true);
         $raw = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);

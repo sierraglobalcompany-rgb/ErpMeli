@@ -223,12 +223,27 @@ final class EmergencyControlService
 
     public function startAutomation(string $actor, string $reason): void
     {
-        if ($this->canaryRequiresAutomationStop() || $this->oauthRefreshRequiresAutomationStop()) {
-            throw new RuntimeException('No puede activar la automatización mientras exista una operación de emergencia pendiente.');
-        }
-        $this->removeMarker(self::AUTOMATION_MARKER);
-        $this->recordChange('automation_started', $actor, $reason ?: 'Automatización habilitada.');
-        $this->audit('automation_started', $actor, $reason ?: 'Automatización habilitada.');
+        $this->withAutomationAuthorityLock(function () use ($actor, $reason): void {
+            if ($this->canaryRequiresAutomationStop() || $this->oauthRefreshRequiresAutomationStop()) {
+                throw new RuntimeException('No puede activar la automatización mientras exista una operación de emergencia pendiente.');
+            }
+            $this->removeMarker(self::AUTOMATION_MARKER);
+            $this->recordChange('automation_started', $actor, $reason ?: 'Automatización habilitada.');
+            $this->audit('automation_started', $actor, $reason ?: 'Automatización habilitada.');
+        });
+    }
+
+    /**
+     * Serializa la retirada de Automation Stop con el CAS de propiedad V4.
+     * La autoridad sigue siendo filesystem y no depende de MariaDB.
+     *
+     * @template T
+     * @param callable():T $callback
+     * @return T
+     */
+    public function withAutomationAuthorityLock(callable $callback): mixed
+    {
+        return $this->withEmergencyRemoteAuthorizationLock($callback);
     }
 
     public function startApiWithoutCanary(string $actor, string $reason): void

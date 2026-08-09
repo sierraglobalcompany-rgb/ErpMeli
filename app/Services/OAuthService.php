@@ -17,13 +17,15 @@ final class OAuthService
     public function authorizationUrl(int $companyId, string $accountName): string
     {
         self::assertConfigured();
+        $userId = (int) (Auth::id() ?? 0);
+        $this->assertAuthorizedCompany($companyId, $userId, Database::connectionFresh());
         $plainState = bin2hex(random_bytes(32));
         $stmt = Database::connection()->prepare('INSERT INTO meli_oauth_states (state_hash, company_id, account_name, created_by, expires_at) VALUES (:state,:company,:name,:user,DATE_ADD(UTC_TIMESTAMP(), INTERVAL 10 MINUTE))');
         $stmt->execute([
             'state' => hash('sha256', $plainState),
             'company' => $companyId,
             'name' => trim($accountName),
-            'user' => Auth::id(),
+            'user' => $userId,
         ]);
         return Env::get('MELI_AUTH_URL', 'https://auth.mercadolibre.com.co/authorization') . '?' . http_build_query([
             'response_type' => 'code',
@@ -41,15 +43,20 @@ final class OAuthService
         (new MeliEmergencyStopService())->assertAllowed();
         $pdo = Database::connectionFresh();
         $stateHash = hash('sha256', $plainState);
+        $userId = (int) (Auth::id() ?? 0);
+        if ($userId < 1) {
+            throw new RuntimeException('La sesión administrativa no está disponible.');
+        }
         $processingToken = bin2hex(random_bytes(24));
         $processingHash = hash('sha256', $processingToken);
         $claim = $pdo->prepare(
             'UPDATE meli_oauth_states
              SET processing_token_hash=?,processing_at=UTC_TIMESTAMP(),last_error_message=NULL
              WHERE state_hash=? AND consumed_at IS NULL AND expires_at>UTC_TIMESTAMP()
+               AND created_by=?
                AND (processing_at IS NULL OR processing_at<DATE_SUB(UTC_TIMESTAMP(),INTERVAL 5 MINUTE))'
         );
-        $claim->execute([$processingHash, $stateHash]);
+        $claim->execute([$processingHash, $stateHash, $userId]);
         if ($claim->rowCount() !== 1) {
             throw new RuntimeException('Estado OAuth inválido, usado, vencido o actualmente en procesamiento.');
         }
@@ -57,9 +64,9 @@ final class OAuthService
         try {
             $stmt = $pdo->prepare(
                 'SELECT * FROM meli_oauth_states
-                 WHERE state_hash=? AND processing_token_hash=? AND consumed_at IS NULL LIMIT 1'
+                 WHERE state_hash=? AND processing_token_hash=? AND created_by=? AND consumed_at IS NULL LIMIT 1'
             );
-            $stmt->execute([$stateHash, $processingHash]);
+            $stmt->execute([$stateHash, $processingHash, $userId]);
             $state = $stmt->fetch(PDO::FETCH_ASSOC);
             if (!$state) {
                 throw new RuntimeException('No fue posible reclamar el estado OAuth.');
@@ -87,6 +94,7 @@ final class OAuthService
             $pdo = Database::connectionFresh();
             $pdo->beginTransaction();
             $companyId = (int) $state['company_id'];
+            $this->assertAuthorizedCompany($companyId, $userId, $pdo, true);
             $meliUserId = (string) $tokenResponse['user_id'];
             $existing = $pdo->prepare(
                 'SELECT id,company_id FROM meli_accounts WHERE meli_user_id=:user LIMIT 1 FOR UPDATE'
@@ -135,9 +143,9 @@ final class OAuthService
             $consume = $pdo->prepare(
                 'UPDATE meli_oauth_states
                  SET consumed_at=UTC_TIMESTAMP(),processing_token_hash=NULL,processing_at=NULL,last_error_message=NULL
-                 WHERE id=? AND processing_token_hash=?'
+                 WHERE id=? AND processing_token_hash=? AND created_by=?'
             );
-            $consume->execute([$state['id'], $processingHash]);
+            $consume->execute([$state['id'], $processingHash, $userId]);
             if ($consume->rowCount() !== 1) {
                 throw new RuntimeException('El estado OAuth perdió su propiedad antes de guardar la cuenta.');
             }
@@ -201,5 +209,23 @@ final class OAuthService
             'job_type' => 'oauth_authorization',
             'source' => 'web',
         ]));
+    }
+
+    private function assertAuthorizedCompany(int $companyId, int $userId, PDO $pdo, bool $forUpdate = false): void
+    {
+        if ($companyId < 1 || $userId < 1) {
+            throw new RuntimeException('La empresa solicitada no está autorizada.');
+        }
+        $statement = $pdo->prepare(
+            'SELECT c.id
+             FROM companies c
+             JOIN user_company_access uca ON uca.company_id=c.id AND uca.user_id=?
+             WHERE c.id=? AND c.status=1 AND c.deleted_at IS NULL
+             LIMIT 1' . ($forUpdate ? ' FOR UPDATE' : '')
+        );
+        $statement->execute([$userId, $companyId]);
+        if ((int) $statement->fetchColumn() !== $companyId) {
+            throw new RuntimeException('La empresa solicitada no está autorizada.');
+        }
     }
 }

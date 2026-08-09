@@ -21,8 +21,8 @@ $startBody = is_int($startAt) && is_int($sessionItemsAt)
 $check(!str_contains($startBody, 'ManualCampaignService())->start'), 'Procesar ahora no debe crear una campana persistente.');
 $check(str_contains($startBody, 'ManualSingleStepService())->execute'), 'Procesar ahora debe ejecutar un paso exacto.');
 $check(str_contains($service, "SELECT GET_LOCK(?,3)"), 'El paso manual debe serializar doble click y replay.');
-$check(str_contains($service, "'source' => 'manual_campaign'"), 'El limite de un HTTP debe permanecer activo durante el paso.');
-$check(str_contains($service, "microtime(true) + 25"), 'La peticion web debe tener un deadline corto y sin continuacion.');
+$check(str_contains($service, 'ManualQueueLauncher'), 'El paso manual debe entrar por Queue Core.');
+$check(!str_contains($service, 'processExact($sourceId'), 'El launcher web no debe invocar handlers directamente.');
 $check(str_contains($view, 'Procesar un trabajo'), 'La interfaz debe describir la accion unitaria.');
 
 if ($failures !== []) {

@@ -12,11 +12,12 @@ use DateTimeZone;
 use PDO;
 use RuntimeException;
 use Throwable;
+use App\QueueCore\QueueCorePreRemoteBlockedException;
 
 final class MeliApiClient implements MeliReadClientInterface
 {
     private MeliHttpTransportInterface $transport;
-    /** @var array{status:int,headers:array<string,string>,request_id:string}|null */
+    /** @var array{status:int,headers:array<string,string>,request_id:string,response_item_count:int,response_count_state:string}|null */
     private ?array $lastResponseMetadata = null;
 
     public function __construct(
@@ -61,7 +62,7 @@ final class MeliApiClient implements MeliReadClientInterface
      * Metadatos no sensibles de la respuesta anterior. Se exponen para que
      * procesos forenses puedan distinguir 200, 206 y campos omitidos.
      *
-     * @return array{status:int,headers:array<string,string>,request_id:string}|null
+     * @return array{status:int,headers:array<string,string>,request_id:string,response_item_count:int,response_count_state:string}|null
      */
     public function lastResponseMetadata(): ?array
     {
@@ -74,7 +75,9 @@ final class MeliApiClient implements MeliReadClientInterface
         $mutation = $mutation || strtoupper($method) !== 'GET';
         WriteGuard::assertAllowed($mutation);
         $meta = array_replace($meta, ApiExecutionMetadataContext::current());
-        (new ApiGuardService())->assertAllowed($this->accountId, $method, $path);
+        $requestGuard = new ApiGuardService();
+        $requestGuard->assertMetadataScope($this->accountId, $meta);
+        $requestGuard->assertAllowed($this->accountId, $method, $path);
         $token = $this->validToken();
         $url = rtrim(Env::get('MELI_API_BASE', 'https://api.mercadolibre.com'), '/') . '/' . ltrim($path, '/');
         return $this->send($method, $url, $data, ['Authorization: Bearer ' . $token], $mutation, false, $meta);
@@ -145,6 +148,12 @@ final class MeliApiClient implements MeliReadClientInterface
         $meta['load_class'] = $profile['load_class'];
         $meta['workload_units'] = $profile['workload_units'];
         try {
+            \App\QueueCore\QueueCoreOwnershipGuard::assertLegacyTransportAllowed(
+                $method,
+                $path,
+                $meta
+            );
+            $guard->assertMetadataScope($this->accountId, $meta);
             $guard->assertAllowed($this->accountId, $method, $path, $meta);
         } catch (\Throwable $blocked) {
             ApiExecutionMetadataContext::markRemoteAttempted();
@@ -156,12 +165,13 @@ final class MeliApiClient implements MeliReadClientInterface
         }
         $singleDispatchAttempt = in_array(
             (string) ($meta['source'] ?? ''),
-            ['cron_v3_remote', 'manual_campaign', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'],
+            ['queue_core', 'cron_v3_remote', 'manual_campaign', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'],
             true
         );
         $manualEmergencyCanary = (string) ($meta['source'] ?? '') === 'manual_emergency_canary';
         $manualEmergencyOAuthRefresh = (string) ($meta['source'] ?? '') === 'manual_emergency_oauth_refresh';
         $cronV3RemoteContext = (string) ($meta['source'] ?? '') === 'cron_v3_remote';
+        $queueCoreContext = (string) ($meta['source'] ?? '') === 'queue_core';
         $attempts = $singleDispatchAttempt ? 1 : $guard->maxAttempts($mutation, $method);
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
             ApiExecutionMetadataContext::markRemoteAttempted();
@@ -174,6 +184,13 @@ final class MeliApiClient implements MeliReadClientInterface
                 $rhythmPermit = $cronV3RemoteContext
                     ? ['enabled' => true, 'source' => 'cron_v3_rate_gate']
                     : $rhythm->reserve($this->accountId, $method, $path, $meta);
+                if ($queueCoreContext && empty($rhythmPermit['enabled'])) {
+                    throw new ApiRhythmDeferredException(
+                        'Queue Core no iniciará HTTP sin su autoridad persistente de ritmo.',
+                        gmdate('Y-m-d H:i:s', time() + 60),
+                        'rhythm_authority_unavailable'
+                    );
+                }
                 // Compatibilidad durante la ventana entre subir archivos y
                 // aplicar la migración que crea la autoridad persistente.
                 if (!$cronV3RemoteContext && empty($rhythmPermit['enabled'])) {
@@ -244,10 +261,14 @@ final class MeliApiClient implements MeliReadClientInterface
                 // Segunda barrera para la carrera entre el guard del launcher y
                 // el transporte. Solo aplica al worker V3: las lecturas canarias
                 // manuales deben seguir siendo posibles con automatización parada.
-                if ($cronV3RemoteContext && (new EmergencyControlService())->automationStopped()) {
-                    throw new RuntimeException(
-                        'La automatización se detuvo antes del transporte remoto.'
-                    );
+                if (($cronV3RemoteContext || ($queueCoreContext && (string)($meta['queue_core_launcher']??'')==='cron_v4'))
+                    && (new EmergencyControlService())->automationStopped()) {
+                    if ($queueCoreContext) {
+                        throw new QueueCorePreRemoteBlockedException(
+                            'Automation Stop denied Queue Core before physical transport.'
+                        );
+                    }
+                    throw new RuntimeException('La automatización se detuvo antes del transporte remoto.');
                 }
                 // La ventana puede agotarse después de reservar ritmo y
                 // presupuesto. Se calcula dentro de la misma barrera que el
@@ -278,12 +299,17 @@ final class MeliApiClient implements MeliReadClientInterface
                         'rhythm_fence_stale'
                     );
                 }
-                // Desde este punto el transporte puede haber salido aunque el
-                // proceso termine antes de que cURL devuelva una respuesta.
-                // La marca persistente anterior evita un segundo envío ciego.
+                // Legacy callers have no Queue Core attempt journal. Queue
+                // Core decides this boundary exclusively from the persisted
+                // physical marker written next to curl_exec by its transport.
                 $dispatchBoundaryCrossed = true;
                 $transportResult = ApiExecutionMetadataContext::withTransportMetadata(
-                    ['transport_meli_account_id' => $this->accountId],
+                    [
+                        'transport_meli_account_id' => $this->accountId,
+                        'transport_operation_key' => (string) $profile['key'],
+                        'transport_method' => $method,
+                        'transport_endpoint' => $path,
+                    ],
                     fn (): array => $this->transport->request(
                         $method,
                         $url,
@@ -298,6 +324,44 @@ final class MeliApiClient implements MeliReadClientInterface
                     )
                 );
             } catch (Throwable $transportBlocked) {
+                if ($queueCoreContext) {
+                    // Do not infer physical dispatch merely because control
+                    // was handed to the transport object. curl_init, option
+                    // validation, API Stop and Automation Stop can still fail
+                    // before curl_exec. The attempt journal is the authority.
+                    try {
+                        $queueCorePhysicalStarted = \App\QueueCore\QueueCoreDispatchFence::physicalTransportRecorded();
+                    } catch (Throwable) {
+                        // If the authority itself is unavailable, fail closed:
+                        // a retry cannot be proven safe.
+                        $queueCorePhysicalStarted = true;
+                    }
+                    if (!$queueCorePhysicalStarted) {
+                        $compensationFailure = null;
+                        try {
+                            $budget->releaseReservation($budgetReservation,true);
+                        } catch (Throwable $failure) {
+                            $compensationFailure = $failure;
+                        }
+                        try {
+                            $rhythm->cancelBeforeTransport($rhythmPermit,true);
+                        } catch (Throwable $failure) {
+                            $compensationFailure ??= $failure;
+                        }
+                        if ($executionAttemptId > 0) {
+                            try {
+                                $executionJournal->dispatchCancelledBeforeRemote($executionAttemptId,$executionLeaseGeneration);
+                            } catch (Throwable $failure) {
+                                $compensationFailure ??= $failure;
+                            }
+                        }
+                        ApiExecutionMetadataContext::markRemoteBlocked();
+                        if ($compensationFailure !== null) {
+                            throw $compensationFailure;
+                        }
+                        throw $transportBlocked;
+                    }
+                }
                 // La barrera del transporte OAuth se ejecuta dentro del
                 // adaptador pero todavía antes de curl_init/curl_exec. Una
                 // denegación de emergencia en ese punto certifica cero HTTP,
@@ -366,13 +430,20 @@ final class MeliApiClient implements MeliReadClientInterface
             ApiExecutionMetadataContext::markRemoteDispatched();
             $status = (int) $transportResult['status'];
             $curlError = (string) $transportResult['curl_error'];
+            if ($queueCoreContext && $status > 0 && $curlError === '') {
+                \App\QueueCore\QueueCoreDispatchFence::responseKnown($status);
+            }
             $durationMs = (int) $transportResult['duration_ms'];
             $decoded = $transportResult['body'];
             $responseHeaders = $transportResult['headers'];
             $wireBytes = max(0, $transportResult['wire_bytes']);
             $decodedBytes = max(0, $transportResult['decoded_bytes']);
             $retryAfter = HttpRetryAfterParser::seconds($responseHeaders['retry-after'] ?? null);
-            if ($curlError === '' && $status >= 200 && $status < 300) {
+            // Queue Core treats 206 as an incomplete page, never as a
+            // successful terminal receipt. The known response remains
+            // retryable in a new fenced attempt without advancing cursors.
+            if ($curlError === '' && $status >= 200 && $status < 300
+                && !($queueCoreContext && $status === 206)) {
                 $telemetryMeta = $meta;
                 $responseCount = $this->responseItemCount($decoded, $meta, $status);
                 $telemetryMeta['response_item_count'] = $responseCount['count'];
@@ -388,6 +459,8 @@ final class MeliApiClient implements MeliReadClientInterface
                     'status' => $status,
                     'headers' => $safeHeaders,
                     'request_id' => $requestId,
+                    'response_item_count' => (int) $responseCount['count'],
+                    'response_count_state' => (string) $responseCount['state'],
                 ];
                 $guard->recordRequest($this->accountId, $requestId, $method, $path, $status, $durationMs, $retryAfter, $attempt, false, null, null, null, $meta);
                 (new MeliOperationTelemetryService())->record($this->accountId, $requestId, $profile, $durationMs, $wireBytes, $decodedBytes, $status, true, $telemetryMeta);
@@ -470,6 +543,15 @@ final class MeliApiClient implements MeliReadClientInterface
                 ($manualEmergencyCanary || $manualEmergencyOAuthRefresh) ? $errorCode : null,
                 $manualEmergencyCanary || $manualEmergencyOAuthRefresh
             );
+            if ($queueCoreContext && ($status === 429 || $retryAfter !== null)) {
+                $delay = $guard->retryDelaySeconds($attempt, $status, $retryAfter);
+                throw new ApiRhythmDeferredException(
+                    'Queue Core respetará la próxima oportunidad indicada por la protección remota.',
+                    gmdate('Y-m-d H:i:s', time() + max(1, $delay)),
+                    $status === 429 ? 'retry_after' : 'remote_backoff',
+                    true
+                );
+            }
             throw new MeliApiException($safeMessage, $status ?: null, $requestId, $safeDecoded);
         }
         throw new MeliApiException('Error de API no recuperable.', null, $requestId);

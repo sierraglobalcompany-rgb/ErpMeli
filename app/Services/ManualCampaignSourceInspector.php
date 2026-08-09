@@ -48,8 +48,8 @@ final class ManualCampaignSourceInspector
                         GREATEST(j.total_items-j.processed_items,1) pending_count
                 FROM order_financial_recalc_jobs j JOIN meli_accounts a ON a.id=j.meli_account_id
                  WHERE j.id=? LIMIT 1',
-                (int) $sourceId, $accountId, $companyId, 'billing_orders', 'Recalcular finanzas',
-                ['complete', 'cancelled'], ['pending']
+                (int) $sourceId, $accountId, $companyId, 'local_financial', 'Recalcular finanzas',
+                ['complete', 'cancelled'], ['pending'], false
             ),
             'order_enrichment' => $this->directJob(
                 'SELECT j.status,j.next_run_at,
@@ -202,7 +202,8 @@ final class ManualCampaignSourceInspector
         string $operation,
         string $label,
         array $terminal,
-        array $ready
+        array $ready,
+        bool $usesApi = true
     ): CampaignItemState {
         $stmt = Database::connectionFresh()->prepare($sql);
         $stmt->execute([$sourceId]);
@@ -216,7 +217,8 @@ final class ManualCampaignSourceInspector
             $terminal,
             $ready,
             (int) ($row['pending_count'] ?? 1),
-            (string) ($row['next_run_at'] ?? '')
+            (string) ($row['next_run_at'] ?? ''),
+            $usesApi
         );
     }
 
@@ -234,10 +236,11 @@ final class ManualCampaignSourceInspector
         array $terminal,
         array $ready,
         int $items,
-        string $nextAt
+        string $nextAt,
+        bool $usesApi = true
     ): CampaignItemState {
         if (!is_array($row)) {
-            return new CampaignItemState(false, true, false, true, $operation, $label, 'El trabajo ya no existe.', 0, 0, 'missing');
+            return new CampaignItemState(false, true, false, $usesApi, $operation, $label, 'El trabajo ya no existe.', 0, 0, 'missing');
         }
         if ($accountId > 0 && (int) ($row['meli_account_id'] ?? 0) !== $accountId) {
             throw new RuntimeException('El trabajo no pertenece a la cuenta congelada por la campaña.');
@@ -247,7 +250,7 @@ final class ManualCampaignSourceInspector
         }
         $status = strtolower((string) ($row['status'] ?? ''));
         if (in_array($status, $terminal, true)) {
-            return new CampaignItemState(true, true, false, true, $operation, $label, 'Automatización ya completó este trabajo.', 0, $items, 'completed_elsewhere');
+            return new CampaignItemState(true, true, false, $usesApi, $operation, $label, 'Automatización ya completó este trabajo.', 0, $items, 'completed_elsewhere');
         }
         if (!in_array($status, $ready, true)) {
             $recoverable = in_array($status, ['error', 'failed'], true);
@@ -255,7 +258,7 @@ final class ManualCampaignSourceInspector
                 true,
                 false,
                 false,
-                true,
+                $usesApi,
                 $operation,
                 $label,
                 $recoverable ? 'El trabajo tiene un error que debe revisarse.' : 'El trabajo está pausado.',
@@ -271,7 +274,7 @@ final class ManualCampaignSourceInspector
                 true,
                 false,
                 false,
-                true,
+                $usesApi,
                 $operation,
                 $label,
                 'Disponible el ' . $displayAt . ' hora Bogotá.',
@@ -286,7 +289,7 @@ final class ManualCampaignSourceInspector
                 true,
                 false,
                 false,
-                true,
+                $usesApi,
                 $operation,
                 $label,
                 'Otro proceso está terminando este trabajo.',
@@ -296,6 +299,6 @@ final class ManualCampaignSourceInspector
                 (string) $row['lock_expires_at']
             );
         }
-        return new CampaignItemState(true, false, true, true, $operation, $label, 'Listo para procesar.', 1, max(1, $items), 'ready');
+        return new CampaignItemState(true, false, true, $usesApi, $operation, $label, 'Listo para procesar.', 1, max(1, $items), 'ready');
     }
 }

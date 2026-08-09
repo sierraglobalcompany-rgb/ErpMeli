@@ -46,7 +46,16 @@ final class WebhookService
         $resource = $validation['resource'];
         $userId = (int) $validation['user_id'];
         $applicationId = $validation['application_id'];
-        $accountValidation = $spool->validateLinkedAccount($userId);
+        $accountSyntax = $spool->validateLinkedAccount($userId);
+        if (empty($accountSyntax['valid'])) {
+            return [
+                'accepted' => false, 'http_status' => (int) $accountSyntax['http_status'],
+                'event_id' => null, 'duplicate' => false, 'spooled' => false,
+                'terminal' => true, 'quarantined' => false,
+                'message' => (string) $accountSyntax['message'],
+            ];
+        }
+        $accountValidation = $spool->resolveLinkedAccount($userId);
         if (empty($accountValidation['valid'])) {
             $terminal = !empty($accountValidation['terminal']);
             $quarantined = $terminal
@@ -234,6 +243,9 @@ final class WebhookService
 
     public function processPending(int $limit = 100): array
     {
+        if (\App\QueueCore\QueueCoreOwnershipGuard::v4OwnsWebhook()) {
+            return \App\QueueCore\QueueCoreOwnershipGuard::skippedResult();
+        }
         if ((new NotificationWorkItemService())->available()) {
             return (new NotificationWorkItemService())->processDue($limit);
         }

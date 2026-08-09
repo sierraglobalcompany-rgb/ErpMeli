@@ -18,9 +18,9 @@ final class OrderSyncService
     /** @var array<string,array<string,mixed>> */
     private array $resourceCache = [];
 
-    public function __construct(private readonly int $accountId)
+    public function __construct(private readonly int $accountId, ?MeliApiClient $api = null)
     {
-        $this->api = new MeliApiClient($accountId);
+        $this->api = $api ?? new MeliApiClient($accountId);
         $this->dateNormalizer = new MeliDateTimeNormalizer();
     }
 
@@ -116,6 +116,44 @@ final class OrderSyncService
         return $this->persistOrder($order, true, $beforePersist);
     }
 
+    /**
+     * Persiste exactamente el snapshot remoto reclamado por Queue Core.
+     *
+     * Esta entrada no conserva compatibilidad con los productores legacy:
+     * nunca crea trabajo V2/V3, reconciliaciones financieras ni
+     * enriquecimientos, y tampoco ejecuta fallbacks remotos inline. Las
+     * capacidades que aún pertenecen a B2 quedan registradas localmente como
+     * obligaciones pendientes de Queue Core.
+     *
+     * @param array<string,mixed> $meta
+     */
+    public function syncOrderByIdForQueueCore(
+        int|string $externalOrderId,
+        array $meta = [],
+        ?callable $beforePersist = null
+    ): int {
+        $meta = array_replace([
+            'job_type' => 'order_exact',
+            'source' => 'queue_core',
+            'bulk' => false,
+        ], $meta);
+        $order = $this->api->get(
+            '/orders/' . rawurlencode((string) $externalOrderId),
+            [],
+            $meta
+        );
+        return $this->persistOrder($order, false, $beforePersist, false);
+    }
+
+    /** Un paso web exacto: persiste la orden y no crea trabajo posterior. */
+    public function syncOrderByIdForManual(
+        int|string $externalOrderId,array $meta=[],?callable $beforePersist=null
+    ): int {
+        $meta=array_replace(['job_type'=>'order_exact','source'=>'manual_exact','bulk'=>false],$meta);
+        $order=$this->api->get('/orders/'.rawurlencode((string)$externalOrderId),[],$meta);
+        return $this->persistOrder($order,false,$beforePersist,false,false);
+    }
+
     /** @param array<string,mixed> $meta */
     public function syncShipmentById(int|string $externalShipmentId, array $meta = []): int
     {
@@ -168,6 +206,87 @@ final class OrderSyncService
             }
         }
         return $this->persistShipment($orderId, $packId, $shipment);
+    }
+
+    /**
+     * Snapshot exacto de Queue Core: un GET y solo relaciones locales.
+     *
+     * @param array<string,mixed> $meta
+     */
+    public function syncShipmentByIdForQueueCore(int|string $externalShipmentId, array $meta = []): int
+    {
+        $externalShipmentId = trim((string) $externalShipmentId);
+        if ($externalShipmentId === '' || !ctype_digit($externalShipmentId)) {
+            throw new \InvalidArgumentException('Envío Mercado Libre inválido.');
+        }
+        $shipment = $this->api->get(
+            '/shipments/' . rawurlencode($externalShipmentId),
+            [],
+            array_replace(['job_type' => 'webhook_shipment_exact', 'source' => 'queue_core_webhook'], $meta)
+        );
+        if ((string) ($shipment['id'] ?? '') !== $externalShipmentId) {
+            throw new \RuntimeException('La respuesta del envío no coincide con el recurso solicitado.');
+        }
+        $externalOrderId = $shipment['order_id']
+            ?? ($shipment['order']['id'] ?? null)
+            ?? ($shipment['orders'][0]['id'] ?? null);
+        $orderId = null;
+        if ($externalOrderId !== null && ctype_digit((string) $externalOrderId)) {
+            $order = Database::connection()->prepare(
+                'SELECT id FROM meli_orders WHERE meli_account_id=? AND external_order_id=? LIMIT 1'
+            );
+            $order->execute([$this->accountId, (string) $externalOrderId]);
+            $value = $order->fetchColumn();
+            $orderId = $value !== false ? (int) $value : null;
+        }
+        $packId = null;
+        $externalPackId = trim((string) ($shipment['pack_id'] ?? ''));
+        if ($externalPackId !== '') {
+            $pack = Database::connection()->prepare(
+                'SELECT id FROM meli_packs WHERE meli_account_id=? AND external_pack_id=? LIMIT 1'
+            );
+            $pack->execute([$this->accountId, $externalPackId]);
+            $value = $pack->fetchColumn();
+            $packId = $value !== false ? (int) $value : null;
+        }
+        return $this->persistShipment($orderId, $packId, $shipment);
+    }
+
+    /**
+     * Snapshot exacto de Queue Core: un GET y enlaces únicamente a órdenes locales.
+     *
+     * @param array<string,mixed> $meta
+     */
+    public function syncPackByIdForQueueCore(int|string $externalPackId, array $meta = []): int
+    {
+        $externalPackId = trim((string) $externalPackId);
+        if ($externalPackId === '' || !ctype_digit($externalPackId)) {
+            throw new \InvalidArgumentException('Paquete Mercado Libre inválido.');
+        }
+        $pack = $this->api->get(
+            '/packs/' . rawurlencode($externalPackId),
+            [],
+            array_replace(['job_type' => 'webhook_pack_exact', 'source' => 'queue_core_webhook'], $meta)
+        );
+        if ((string) ($pack['id'] ?? '') !== $externalPackId) {
+            throw new \RuntimeException('La respuesta del paquete no coincide con el recurso solicitado.');
+        }
+        $orderId = 0;
+        foreach ((array) ($pack['orders'] ?? []) as $remoteOrder) {
+            $externalOrderId = trim((string) ($remoteOrder['id'] ?? ''));
+            if ($externalOrderId === '' || !ctype_digit($externalOrderId)) {
+                continue;
+            }
+            $order = Database::connection()->prepare(
+                'SELECT id FROM meli_orders WHERE meli_account_id=? AND external_order_id=? LIMIT 1'
+            );
+            $order->execute([$this->accountId, $externalOrderId]);
+            $orderId = (int) ($order->fetchColumn() ?: 0);
+            if ($orderId > 0) {
+                break;
+            }
+        }
+        return $this->persistPack($orderId, $pack);
     }
 
     public function syncRangeChunk(
@@ -244,35 +363,48 @@ final class OrderSyncService
     private function persistOrder(
         array $order,
         bool $allowInlineEnrichment = true,
-        ?callable $beforePersist = null
+        ?callable $beforePersist = null,
+        bool $allowFollowUpFanout = true,
+        bool $recordPendingCapabilities = true
     ): int
     {
         $pdo = Database::connection();
         $externalId = (string) $order['id'];
         $incomingUpdated = $this->dateNormalizer->normalize($order['last_updated'] ?? null, 'orders.last_updated');
-        if (!empty($incomingUpdated['utc']) && (new SchemaInspectorService())->hasColumn('meli_orders', 'last_updated_utc')) {
-            $current = $pdo->prepare(
-                'SELECT id,last_updated_utc FROM meli_orders WHERE meli_account_id=? AND external_order_id=? LIMIT 1'
-            );
-            $current->execute([$this->accountId, $externalId]);
-            $local = $current->fetch(PDO::FETCH_ASSOC);
-            if (is_array($local) && !empty($local['last_updated_utc'])
-                && strcmp((string) $local['last_updated_utc'], (string) $incomingUpdated['utc']) > 0) {
-                Logger::write('info', 'Snapshot de orden antiguo ignorado.', [
-                    'account_id' => $this->accountId,
-                    'external_order_id' => $externalId,
-                ]);
-                return (int) $local['id'];
-            }
-        }
         $rawPayload = json_encode(
             $order,
             JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
         );
+        $schema = new SchemaInspectorService();
+        $hasLastUpdatedUtc = $schema->hasColumn('meli_orders', 'last_updated_utc');
+        $hasQueueSnapshot = $schema->hasColumn('meli_orders', 'queue_snapshot_version');
+        $queueSnapshotVersion = hash('sha256', $rawPayload);
         $pdo->beginTransaction();
         try {
             if ($beforePersist !== null) {
                 $beforePersist($pdo);
+            }
+            // The monotonic check and the write share the same row lock. Two
+            // distinct input versions can no longer let an older API snapshot
+            // overwrite a newer order after a concurrent worker commits.
+            if ($hasLastUpdatedUtc || $hasQueueSnapshot) {
+                $snapshotTimestampColumn = $hasLastUpdatedUtc ? 'last_updated_utc' : 'queue_snapshot_at';
+                $current = $pdo->prepare(
+                    'SELECT id,`' . $snapshotTimestampColumn . '` AS current_snapshot_at FROM meli_orders
+                     WHERE meli_account_id=? AND external_order_id=? LIMIT 1 FOR UPDATE'
+                );
+                $current->execute([$this->accountId, $externalId]);
+                $local = $current->fetch(PDO::FETCH_ASSOC);
+                if (is_array($local) && !empty($local['current_snapshot_at'])
+                    && !empty($incomingUpdated['utc'])
+                    && strcmp((string) $local['current_snapshot_at'], (string) $incomingUpdated['utc']) > 0) {
+                    $pdo->commit();
+                    Logger::write('info', 'Snapshot de orden antiguo ignorado.', [
+                        'account_id' => $this->accountId,
+                        'external_order_id' => $externalId,
+                    ]);
+                    return (int) $local['id'];
+                }
             }
             $created = $this->dateNormalizer->normalize($order['date_created'] ?? null, 'orders.date_created');
             $closed = $this->dateNormalizer->normalize($order['date_closed'] ?? null, 'orders.date_closed');
@@ -332,6 +464,14 @@ final class OrderSyncService
                 'synced_at=NOW()',
                 'id=LAST_INSERT_ID(id)',
             ];
+            if ($hasQueueSnapshot) {
+                $columns['queue_snapshot_version'] = ':queue_snapshot_version';
+                $columns['queue_snapshot_at'] = ':queue_snapshot_at';
+                $params['queue_snapshot_version'] = $queueSnapshotVersion;
+                $params['queue_snapshot_at'] = $incomingUpdated['utc'] ?? null;
+                $updates[] = 'queue_snapshot_version=VALUES(queue_snapshot_version)';
+                $updates[] = 'queue_snapshot_at=VALUES(queue_snapshot_at)';
+            }
             $this->addNormalizedColumns($columns, $params, $updates, 'meli_orders', 'date_created', $created);
             $this->addNormalizedColumns($columns, $params, $updates, 'meli_orders', 'date_closed', $closed);
             $this->addNormalizedColumns($columns, $params, $updates, 'meli_orders', 'last_updated', $updated);
@@ -356,8 +496,29 @@ final class OrderSyncService
         foreach ($order['payments'] ?? [] as $payment) {
             if (!empty($payment['id'])) {
                 try { $this->persistPayment($orderId, $payment); }
-                catch (Throwable $e) { Logger::write('warning', 'Pago pendiente de reintento.', ['account_id'=>$this->accountId,'payment_id'=>$payment['id'],'error'=>$e->getMessage()]); }
+                catch (Throwable $e) {
+                    if (!$allowFollowUpFanout) {
+                        // Queue Core has a known GET response and can retry the
+                        // idempotent local persistence safely. Never declare an
+                        // order terminal while one of its payments is missing.
+                        throw new \RuntimeException('Queue Core payment persistence is incomplete.', 0, $e);
+                    }
+                    Logger::write('warning', 'Pago pendiente de reintento.', [
+                        'account_id'=>$this->accountId,
+                        'payment_id'=>$payment['id'],
+                        'error'=>$e->getMessage(),
+                    ]);
+                }
             }
+        }
+        if (!$allowFollowUpFanout) {
+            if($recordPendingCapabilities){
+                $this->recordQueueCorePendingCapability($orderId, 'financial_projection');
+                if (!empty($order['pack_id']) || !empty($order['shipping']['id'])) {
+                    $this->recordQueueCorePendingCapability($orderId, 'order_enrichment');
+                }
+            }
+            return $orderId;
         }
         try {
             $projection = (new SaleFinancialStateService())->projectOrder($orderId);
@@ -384,6 +545,58 @@ final class OrderSyncService
             $this->enrichInlineFallback($orderId, $packId, $shipmentId);
         }
         return $orderId;
+    }
+
+    private function recordQueueCorePendingCapability(int $orderId, string $capability): void
+    {
+        if ($orderId < 1 || !in_array($capability, ['financial_projection', 'order_enrichment'], true)) {
+            return;
+        }
+        $pdo = Database::connection();
+        $company = $pdo->prepare(
+            'SELECT company_id FROM meli_accounts WHERE id=? LIMIT 1'
+        );
+        $company->execute([$this->accountId]);
+        $companyId = (int) $company->fetchColumn();
+        if ($companyId < 1) {
+            throw new \RuntimeException('Queue Core could not confirm the order company scope.');
+        }
+        $schema = new SchemaInspectorService();
+        if ($schema->hasColumn('queue_core_pending_capabilities', 'lifecycle_generation')
+            && $schema->hasColumn('meli_orders', 'queue_snapshot_version')) {
+            $snapshot = $pdo->prepare(
+                'SELECT queue_snapshot_version FROM meli_orders
+                 WHERE id=? AND meli_account_id=? LIMIT 1'
+            );
+            $snapshot->execute([$orderId, $this->accountId]);
+            $version = trim((string) ($snapshot->fetchColumn() ?: ''));
+            if ($version === '') {
+                throw new \RuntimeException('Queue Core order snapshot version is unavailable.');
+            }
+            // A repeated observation of the same snapshot does not reopen a
+            // resolved graph. A genuinely new snapshot advances the lifecycle
+            // generation while retaining all previous dependency evidence.
+            $pdo->prepare(
+                'INSERT INTO queue_core_pending_capabilities
+                    (company_id,meli_account_id,resource_type,resource_id,capability_key,state,input_version)
+                 VALUES (?, ?, "order", ?, ?, "pending_b2", ?)
+                 ON DUPLICATE KEY UPDATE
+                    state=IF(input_version<=>VALUES(input_version),state,"pending_b2"),
+                    lifecycle_generation=IF(input_version<=>VALUES(input_version),lifecycle_generation,lifecycle_generation+1),
+                    required_dependencies=IF(input_version<=>VALUES(input_version),required_dependencies,0),
+                    completed_dependencies=IF(input_version<=>VALUES(input_version),completed_dependencies,0),
+                    last_error_class=IF(input_version<=>VALUES(input_version),last_error_class,NULL),
+                    resolved_at=IF(input_version<=>VALUES(input_version),resolved_at,NULL),
+                    input_version=VALUES(input_version),updated_at=UTC_TIMESTAMP(3)'
+            )->execute([$companyId, $this->accountId, (string) $orderId, $capability, $version]);
+            return;
+        }
+        $pdo->prepare(
+            'INSERT INTO queue_core_pending_capabilities
+                (company_id,meli_account_id,resource_type,resource_id,capability_key,state)
+             VALUES (?, ?, "order", ?, ?, "pending_b2")
+             ON DUPLICATE KEY UPDATE state="pending_b2",updated_at=UTC_TIMESTAMP(3)'
+        )->execute([$companyId, $this->accountId, (string) $orderId, $capability]);
     }
 
     private function persistItems(int $orderId, array $items): void

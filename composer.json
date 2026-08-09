@@ -151,6 +151,7 @@
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_historical_b2.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_webhook_ownership_b2.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_webhook_lifecycle_b21.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/notification_topic_registry_fail_closed_b21.php"
     ],
     "test:sales-control": "@php -d error_reporting=-1 -d display_errors=1 tests/sales_control_2211_mysql_integration.php",
     "test:hf12-db": "@php -d error_reporting=-1 -d display_errors=1 tests/emergency_oauth_refresh_real_integration_hf12.php",
@@ -158,6 +159,7 @@
     "test:queue-core-historical": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_historical_b2.php",
     "test:queue-core-webhook-b21": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_webhook_ownership_b2.php",
     "test:queue-core-webhook-lifecycle-b21": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_webhook_lifecycle_b21.php",
+    "test:notification-topics-b21": "@php -d error_reporting=-1 -d display_errors=1 tests/notification_topic_registry_fail_closed_b21.php",
     "test:queue-core-webhook-b21-db": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_webhook_ownership_b2_mysql.php",
     "test:release-db": "@php -d error_reporting=-1 -d display_errors=1 tests/release_gate.php",
     "lint": "php bin/lint.php",

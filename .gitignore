@@ -59,3 +59,9 @@ lint-output.txt
 test-output.txt
 tests/_last_run_*.txt
 tests/_runtime_revalidation_*.txt
+
+# Managed routed views; the generic runtime directories above must not hide them.
+!app/Views/exports/
+!app/Views/exports/index.php
+!app/Views/logs/
+!app/Views/logs/index.php

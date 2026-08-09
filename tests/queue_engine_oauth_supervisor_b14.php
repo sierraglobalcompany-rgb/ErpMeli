@@ -15,8 +15,10 @@ use App\Core\AppPaths;
 use App\QueueCore\QueueCapabilityRegistry;
 use App\QueueCore\QueueCoreOAuthRefreshHandler;
 use App\QueueCore\QueueCoreOAuthSupervisor;
+use App\QueueCore\QueueCoreConvergenceService;
 use App\QueueCore\QueueCoreRepository;
 use App\QueueCore\QueueCoreReadinessReceiptService;
+use App\QueueCore\QueueCoreReleaseEvidenceService;
 use App\QueueCore\QueueEngineControlService;
 use App\QueueCore\QueueEngineRuntimePermit;
 use App\QueueCore\QueueExecutionContext;
@@ -56,7 +58,7 @@ $_ENV['ERP_PRIVATE_PATH'] = $private;
 $_SERVER['ERP_PRIVATE_PATH'] = $private;
 
 $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
-foreach (['queue_core_health_snapshots', 'queue_core_readiness_receipts', 'queue_core_runs',
+foreach (['queue_core_release_evidence', 'queue_core_health_snapshots', 'queue_core_readiness_receipts', 'queue_core_runs',
     'queue_core_historical_reviews', 'queue_core_historical_receipts', 'queue_core_historical_checkpoints',
     'queue_core_webhook_triggers', 'queue_core_capability_dependencies', 'queue_core_feature_flags',
     'queue_core_pending_capabilities', 'queue_core_dispatch_journal', 'queue_core_attempts',
@@ -125,7 +127,10 @@ $migrations = [
     '285_queue_core_webhook_ownership_b2.sql',
     '286_queue_core_historical_deploy_b2.sql',
     '287_queue_core_readiness_observability_b2.sql',
+    '288_queue_core_readiness_authority_b2_1.sql',
     '289_queue_core_webhook_lifecycle_b2_1.sql',
+    '290_queue_core_sales_dependency_graph_b2_1.sql',
+    '291_queue_core_release_health_capacity_b2_1.sql',
 ];
 foreach ([1, 2] as $passNumber) {
     foreach ($migrations as $migration) {
@@ -183,18 +188,56 @@ $recordReadiness = static function (int $generation, array $accountIds) use ($pd
         $receipts->record($generation, 'canary', true, ['fixture' => 'b14'], 3600, 1, $accountId);
         $receipts->record($generation, 'convergence', true, ['fixture' => 'b14'], 3600, 1, $accountId);
     }
+    $contextHash=$receipts->currentContextHash($generation);
+    $release=new QueueCoreReleaseEvidenceService($pdo);
+    foreach(['backup','capacity','manifest'] as $type){
+        $release->record($generation,$type,true,$contextHash,['fixture'=>'b14'],3600);
+    }
 };
-$recordReadiness(0, [1, 2]);
-
 $control = new QueueEngineControlService($pdo);
 $initial = $control->snapshot();
 $check($initial['active_engine'] === 'disabled' && $initial['generation'] === 0, 'engine default is not disabled');
-$toV4 = $control->compareAndSwap('v4', 0, 'test');
-$check($toV4['ok'] && $toV4['generation'] === 1, 'v4 CAS failed: ' . json_encode($toV4));
+$preparing=$control->compareAndSwapReadiness('preparing',0,'test');
+$check($preparing['ok']&&$preparing['generation']===1&&$preparing['readiness_mode']==='preparing','readiness preparation failed');
+$recordReadiness(1, [1, 2]);
+$readinessReceipts=new QueueCoreReadinessReceiptService($pdo);
+$readinessReceipts->record(1,'canary',false,['fixture'=>'newer-fail'],3600,1,1);
+$latestFail=$readinessReceipts->canActivateV4(1);
+$check(!$latestFail['ok']&&$latestFail['reason']==='canary_account_receipts_missing','newer failed canary did not invalidate an older PASS');
+$readinessReceipts->record(1,'canary',true,['fixture'=>'recovered-pass'],3600,1,1);
+$contextHash=$readinessReceipts->currentContextHash(1);
+$releaseEvidence=new QueueCoreReleaseEvidenceService($pdo);
+$releaseEvidence->record(1,'manifest',false,$contextHash,['fixture'=>'newer-fail'],3600);
+$latestReleaseFail=$readinessReceipts->canActivateV4(1);
+$check(!$latestReleaseFail['ok']&&$latestReleaseFail['reason']==='manifest_latest_failed','newer failed release evidence did not invalidate older PASS');
+$releaseEvidence->record(1,'manifest',true,$contextHash,['fixture'=>'recovered-pass'],3600);
+$pdo->exec("UPDATE queue_core_feature_flags SET generation=generation+1 WHERE feature_key='fresh_producer'");
+$changedContext=$readinessReceipts->canActivateV4(1);
+$check(!$changedContext['ok']&&$changedContext['reason']==='readiness_context_changed','changed readiness context reused stale receipts');
+$pdo->exec("UPDATE queue_core_feature_flags SET generation=generation-1 WHERE feature_key='fresh_producer'");
+$pdo->exec('ALTER TABLE meli_orders ADD COLUMN date_created DATETIME NULL');
+$windowFrom=gmdate('Y-m-d H:i:s',time()-600);$windowTo=gmdate('Y-m-d H:i:s',time()-300);
+$evidenceRepository=new QueueCoreRepository($pdo);
+$emptyDiscoveryId=$evidenceRepository->enqueue(new QueueJob(
+    1,1,'fresh_orders_discovery','orders_window',null,'fresh_orders',100,
+    'readiness-empty-window','v1','fresh_orders_producer','checkpoint:fresh_orders:1',
+    ['from'=>$windowFrom,'to'=>$windowTo,'cursor'=>null,'generation'=>0,'limit'=>20],[],5
+));
+$pdo->prepare("UPDATE queue_core_jobs SET state='completed',dispatch_state='DISPATCHED_RESULT_KNOWN',last_http_status=200,completed_at=UTC_TIMESTAMP(3) WHERE id=?")
+    ->execute([$emptyDiscoveryId]);
+$pdo->prepare("INSERT INTO queue_core_attempts(job_id,company_id,meli_account_id,lease_owner,lease_generation,launcher,outcome,dispatch_state,physical_http_calls,resources_discovered,resources_persisted,http_status,response_known_at,source_closed_at,finished_at) VALUES (?,?,?,'readiness-fixture',1,'canary_v4','completed','DISPATCHED_RESULT_KNOWN',1,0,0,200,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),UTC_TIMESTAMP(3))")
+    ->execute([$emptyDiscoveryId,1,1]);
+$emptyConvergence=(new QueueCoreConvergenceService($pdo))->compare(1,1,$windowFrom,$windowTo,20);
+$check($emptyConvergence['ok']&&!empty($emptyConvergence['authoritative_empty_window']),'known complete empty window did not converge');
+$crossCompanyBlocked=false;
+try{(new QueueCoreConvergenceService($pdo))->compare(99,1,$windowFrom,$windowTo,20);}catch(RuntimeException){$crossCompanyBlocked=true;}
+$check($crossCompanyBlocked,'cross-company convergence scope was accepted');
+$toV4 = $control->compareAndSwap('v4', 1, 'test');
+$check($toV4['ok'] && $toV4['generation'] === 2, 'v4 CAS failed: ' . json_encode($toV4));
 $permitResult = $control->acquireRuntime('v4', 'operational');
 $permit = $permitResult['permit'] ?? null;
 $check($permitResult['ok'] && $permit instanceof QueueEngineRuntimePermit, 'v4 runtime permit failed');
-$sameConnectionCutover = $control->compareAndSwap('v3', 1, 'same-process');
+$sameConnectionCutover = $control->compareAndSwap('v3', 2, 'same-process');
 $check(
     !$sameConnectionCutover['ok'] && $sameConnectionCutover['reason'] === 'engine_runtime_busy',
     'cutover crossed a runtime lock re-entered by the same DB connection'
@@ -202,13 +245,12 @@ $check(
 
 $second = new PDO($dsn, $user, $pass, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
 $second->exec("SET time_zone='+00:00'");
-$busyCutover = (new QueueEngineControlService($second))->compareAndSwap('v3', 1, 'other-process');
+$busyCutover = (new QueueEngineControlService($second))->compareAndSwap('v3', 2, 'other-process');
 $check(!$busyCutover['ok'] && $busyCutover['reason'] === 'engine_runtime_busy', 'cutover crossed an active runtime');
 $control->releaseRuntime($permit);
-$toV3 = (new QueueEngineControlService($second))->compareAndSwap('v3', 1, 'other-process');
-$check($toV3['ok'] && $toV3['generation'] === 2, 'v3 CAS after release failed');
-$recordReadiness(1, [1, 2]);
-$stale = $control->compareAndSwap('v4', 1, 'stale');
+$toV3 = (new QueueEngineControlService($second))->compareAndSwap('v3', 2, 'other-process');
+$check($toV3['ok'] && $toV3['generation'] === 3, 'v3 CAS after release failed');
+$stale = $control->compareAndSwap('v4', 2, 'stale');
 $check(!$stale['ok'] && $stale['reason'] === 'stale_generation', 'stale generation changed engine');
 
 // Cron V4 must have exactly one operational QueueRunner. OAuth is produced

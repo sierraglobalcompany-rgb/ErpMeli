@@ -5,6 +5,7 @@ namespace App\QueueCore;
 
 use App\Core\Database;
 use App\Services\ApiExecutionMetadataContext;
+use App\Services\CronDeadlineContext;
 use App\Services\EmergencyControlService;
 use App\Services\MeliEmergencyStopService;
 use RuntimeException;
@@ -71,6 +72,10 @@ final class QueueCoreDispatchFence
         if(($m['source']??'')!=='queue_core')return;
         $claim=self::claim($m);$attempt=max(0,(int)($m['queue_core_attempt_id']??0));
         try{
+            // Last deadline authority: DB/rhythm setup after the first timeout
+            // calculation must not consume the safe-close window and still
+            // start a physical request.
+            CronDeadlineContext::assertCanStartRemote(1.0);
             self::assertCapability($m,$method,$endpoint);
             if($attempt<1 || !self::renewFences($m,$claim)){
                 throw new QueueCorePreRemoteBlockedException('Queue Core fencing changed immediately before cURL.');
@@ -87,6 +92,12 @@ final class QueueCoreDispatchFence
                 ->cancelPhysicalTransportBeforeCurl($claim,$attempt);
             if(!$cancelled){
                 throw new RuntimeException('Queue Core could not cancel a pre-cURL physical marker.',0,$blocked);
+            }
+            if($blocked instanceof \App\Services\CronDeadlineDeferredException){
+                throw $blocked;
+            }
+            if($blocked instanceof \App\Services\ApiManualPauseException){
+                throw $blocked;
             }
             throw new QueueCorePreRemoteBlockedException('Queue Core stopped before cURL; no HTTP was sent.',0,$blocked);
         }

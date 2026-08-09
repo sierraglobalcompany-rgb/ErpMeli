@@ -17,17 +17,20 @@ final class QueueEngineControlCli
             Database::useProfile('cli');
             $service = new QueueEngineControlService(Database::connectionFresh());
             $desired = $this->option($argv, 'set');
-            if ($desired === null) {
+            $readiness = $this->option($argv, 'readiness');
+            if ($desired === null && $readiness === null) {
                 return ['ok' => true, 'status' => 'read_only'] + $service->snapshot();
             }
             $expected = $this->integerOption($argv, 'expected-generation');
             if ($expected === null) {
                 return ['ok' => false, 'status' => 'expected_generation_required'] + $service->snapshot();
             }
-            if ($desired !== 'disabled' && Env::bool('ML_WRITE_ENABLED', false)) {
+            if (($desired !== null && $desired !== 'disabled') && Env::bool('ML_WRITE_ENABLED', false)) {
                 return ['ok' => false, 'status' => 'blocked_ml_write_enabled'] + $service->snapshot();
             }
-            $result = $service->compareAndSwap($desired, $expected, 'queue_engine_control_cli');
+            $result = $readiness !== null
+                ? $service->compareAndSwapReadiness($readiness, $expected, 'queue_engine_control_cli')
+                : $service->compareAndSwap((string) $desired, $expected, 'queue_engine_control_cli');
             return ['status' => $result['ok'] ? 'changed' : 'not_changed'] + $result;
         } catch (Throwable) {
             return ['ok' => false, 'status' => 'control_unavailable'];

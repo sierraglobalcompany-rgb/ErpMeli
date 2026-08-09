@@ -40,6 +40,7 @@ use App\Services\MeliApiClient;
 use App\Services\MeliHttpTransportInterface;
 use App\Services\ManualCampaignAdapterRegistry;
 use App\Services\MeliOperationProfileRegistry;
+use App\Services\CronDeadlineContext;
 
 $dsn=getenv('QUEUE_CORE_TEST_DSN')?:'';$user=getenv('QUEUE_CORE_TEST_USER')?:'';$pass=getenv('QUEUE_CORE_TEST_PASS')?:'';
 if($dsn===''){fwrite(STDERR,"QUEUE_CORE_TEST_DSN is required\n");exit(2);} $pdo=new PDO($dsn,$user,$pass,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,PDO::ATTR_EMULATE_PREPARES=>false]);$pdo->exec("SET time_zone='+00:00'");Database::setConnection($pdo);
@@ -65,7 +66,7 @@ $pdo->exec("CREATE TABLE api_rhythm_states (scope_key VARCHAR(64) NOT NULL PRIMA
 $pdo->exec("CREATE TABLE api_remote_permits (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,permit_token CHAR(40) NOT NULL,owner_token CHAR(32) NOT NULL,generation BIGINT UNSIGNED NOT NULL,run_token VARCHAR(100) NULL,work_key VARCHAR(120) NULL,company_id BIGINT UNSIGNED NULL,meli_account_id BIGINT UNSIGNED NULL,endpoint_key VARCHAR(120) NOT NULL,job_type VARCHAR(80) NOT NULL,method VARCHAR(10) NOT NULL,status ENUM('reserved','dispatched','completed','released','expired') NOT NULL DEFAULT 'reserved',requested_interval_ms INT UNSIGNED NOT NULL,effective_interval_ms INT UNSIGNED NOT NULL,blocking_scope VARCHAR(80) NULL,http_status SMALLINT UNSIGNED NULL,created_at DATETIME(3) NOT NULL,dispatched_at DATETIME(3) NULL,completed_at DATETIME(3) NULL,released_at DATETIME(3) NULL,expires_at DATETIME(3) NOT NULL,updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),UNIQUE KEY uq_api_remote_permit_token(permit_token),KEY idx_api_remote_permit_active(status,expires_at)) ENGINE=InnoDB");
 $pdo->exec("CREATE TABLE api_rhythm_penalties (scope_key VARCHAR(180) NOT NULL PRIMARY KEY,reduced_limit_per_minute SMALLINT UNSIGNED NOT NULL,blocked_until DATETIME(3) NULL,reduced_until DATETIME(3) NOT NULL,reason VARCHAR(80) NOT NULL,updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)) ENGINE=InnoDB");
 $pdo->exec("INSERT INTO app_settings(setting_key,setting_value,is_encrypted,setting_group) VALUES ('api.budget.enabled','1',0,'api'),('api.rhythm.profile','maximum',0,'api_rhythm'),('api.rhythm.target_http_per_minute','40',0,'api_rhythm'),('api.rhythm.current_adaptive_limit','40',0,'api_rhythm'),('api.rhythm.minimum_interval_ms','1',0,'api_rhythm'),('api.rhythm.short_wait_ceiling_ms','0',0,'api_rhythm')");
-$migrationFiles=['280_queue_core_cron_v4_phase_b1.sql','281_queue_core_reaudit1_fifo_fencing.sql','282_queue_core_architecture_closeout_b1_2.sql','283_queue_engine_control_oauth_supervisor_b1_4.sql','284_queue_core_sales_pipeline_b2.sql','285_queue_core_webhook_ownership_b2.sql','286_queue_core_historical_deploy_b2.sql','287_queue_core_readiness_observability_b2.sql','289_queue_core_webhook_lifecycle_b2_1.sql'];foreach($migrationFiles as $migrationFile){$sql=file_get_contents($root.'/database/migrations/'.$migrationFile);if(!is_string($sql))throw new RuntimeException('migration missing');foreach(preg_split('/;\s*(?:\r?\n|$)/',$sql)?:[] as $statement){$statement=trim($statement);$statement=preg_replace('/^--[^\n]*\n(?:--[^\n]*\n)*/','',$statement)??$statement;if($statement!=='')$pdo->exec($statement);}$record=$pdo->prepare('INSERT IGNORE INTO schema_migrations(version) VALUES (?)');$record->execute([$migrationFile]);}
+$migrationFiles=['280_queue_core_cron_v4_phase_b1.sql','281_queue_core_reaudit1_fifo_fencing.sql','282_queue_core_architecture_closeout_b1_2.sql','283_queue_engine_control_oauth_supervisor_b1_4.sql','284_queue_core_sales_pipeline_b2.sql','285_queue_core_webhook_ownership_b2.sql','286_queue_core_historical_deploy_b2.sql','287_queue_core_readiness_observability_b2.sql','288_queue_core_readiness_authority_b2_1.sql','289_queue_core_webhook_lifecycle_b2_1.sql','290_queue_core_sales_dependency_graph_b2_1.sql','291_queue_core_release_health_capacity_b2_1.sql'];foreach($migrationFiles as $migrationFile){$sql=file_get_contents($root.'/database/migrations/'.$migrationFile);if(!is_string($sql))throw new RuntimeException('migration missing');foreach(preg_split('/;\s*(?:\r?\n|$)/',$sql)?:[] as $statement){$statement=trim($statement);$statement=preg_replace('/^--[^\n]*\n(?:--[^\n]*\n)*/','',$statement)??$statement;if($statement!=='')$pdo->exec($statement);}$record=$pdo->prepare('INSERT IGNORE INTO schema_migrations(version) VALUES (?)');$record->execute([$migrationFile]);}
 // Idempotency of the schema itself.
 foreach($migrationFiles as $migrationFile){$sql=file_get_contents($root.'/database/migrations/'.$migrationFile);foreach(preg_split('/;\s*(?:\r?\n|$)/',(string)$sql)?:[] as $statement){$statement=trim($statement);$statement=preg_replace('/^--[^\n]*\n(?:--[^\n]*\n)*/','',$statement)??$statement;if($statement!=='')$pdo->exec($statement);}}
 
@@ -208,5 +209,53 @@ $scenario('manual_enrichment_pack',function()use($pdo,$reset,$assert){$reset();$
 
 $scenario('manual_all_exact_adapters_have_contract_or_unsupported',function()use($reset,$assert){$reset();$adapters=(new ManualCampaignAdapterRegistry())->all();$registry=new ManualRemoteCapabilityRegistry();$certified=0;$unsupported=0;foreach($adapters as $adapter){if(!$adapter->supportsExact()){if($adapter->queueKey()==='module_jobs')$unsupported++;continue;}$operation=match($adapter->queueKey()){'notification_fallback','sales_repair'=>'order_exact','orders_sync'=>'orders_search','items_sync'=>'item_detail','catalog_descriptions'=>'item_description','financial_recalc'=>'local_financial','sales_audit'=>'sales_audit','order_enrichment'=>'shipment_exact','sale_pack_reconciliation'=>'pack_exact','sale_financial_reconciliation'=>'billing_orders',default=>''};if($operation==='local_financial'){$certified++;continue;}$contract=$registry->forOperation($operation);$assert($contract!==null&&($contract['max_remote_calls']??0)===1,'missing exact adapter contract: '.$adapter->queueKey());$certified++;}$assert($certified===10&&$unsupported===1,'manual capability matrix drifted certified='.$certified.' unsupported='.$unsupported);});
 $scenario('manual_registry_reports_full_capability_universe',function()use($reset,$assert){$reset();$health=(new ManualCampaignAdapterRegistry())->health();$certified=$health['exact_certified']??[];$unsupported=$health['explicitly_unsupported']??[];$gaps=$health['eligible_without_source_bound_capability']??[];$assert(count($certified)===10&&count($unsupported)===5&&$gaps===[],'manual registry did not classify its real universe');foreach($health['adapters']??[] as $queue=>$row)$assert(in_array($row['status']??'', ['exact_certified','explicitly_unsupported','eligible_without_source_bound_capability'],true),'adapter missing explicit category: '.$queue);});
+
+$scenario('known_http_policy_is_bounded',function()use($pdo,$reset,$assert,$enableFakeApi){
+    $expected=[401=>'review',403=>'review',404=>'completed',429=>'retry_wait',500=>'retry_wait',206=>'retry_wait'];
+    foreach($expected as $status=>$state){
+        $reset();$enableFakeApi();
+        $transport=new class($status) implements MeliHttpTransportInterface{public int $calls=0;public function __construct(private int $status){}public function request(string $method,string $url,array $data,array $headers,bool $form,array $timeouts):array{$path=(string)(parse_url($url,PHP_URL_PATH)?:'/');App\QueueCore\QueueCoreDispatchFence::beforeTransport($method,$path);App\QueueCore\QueueCoreDispatchFence::transportStarted($method,$path);App\QueueCore\QueueCoreDispatchFence::immediatelyBeforeCurl($method,$path);$this->calls++;return ['status'=>$this->status,'body'=>[],'headers'=>[],'curl_error'=>'','duration_ms'=>1,'wire_bytes'=>2,'decoded_bytes'=>2];}};
+        $repository=new QueueCoreRepository($pdo);$id=$repository->enqueue(new QueueJob(1,1,'order_exact','order','1','fresh_orders',0,'policy-'.$status,'v1','test',null,['order_id'=>'1'],[],3,null,'operational'));
+        $handlers=new QueueHandlerRegistry();$handlers->register('order_exact',new class($transport) implements QueueHandler{public function __construct(private MeliHttpTransportInterface $transport){}public function handle(QueueClaim $job,QueueExecutionContext $context):QueueResult{(new MeliApiClient($job->meliAccountId,$this->transport))->get('/orders/1',[],['job_type'=>'order_exact']);return QueueResult::completed(1,1);}});
+        (new QueueRunner($repository,$handlers))->run(new QueueRunRequest('test','policy-'.$status,1,microtime(true)+10,30,[],['order_exact'],1,null,'operational',$id));
+        $row=$repository->job($id);$assert($transport->calls===1&&($row['state']??'')===$state,'HTTP '.$status.' policy state='.($row['state']??'missing'));
+    }
+});
+
+$scenario('final_deadline_fence_refunds_without_http',function()use($pdo,$reset,$assert,$enableFakeApi){
+    $reset();$enableFakeApi();
+    $transport=new class implements MeliHttpTransportInterface{
+        public int $calls=0;
+        public function request(string $method,string $url,array $data,array $headers,bool $form,array $timeouts):array{
+            $path=(string)(parse_url($url,PHP_URL_PATH)?:'/');
+            App\QueueCore\QueueCoreDispatchFence::beforeTransport($method,$path);
+            App\QueueCore\QueueCoreDispatchFence::transportStarted($method,$path);
+            usleep(2200000);
+            App\QueueCore\QueueCoreDispatchFence::immediatelyBeforeCurl($method,$path);
+            $this->calls++;
+            return ['status'=>200,'body'=>[],'headers'=>[],'curl_error'=>'','duration_ms'=>1,'wire_bytes'=>2,'decoded_bytes'=>2];
+        }
+    };
+    $repository=new QueueCoreRepository($pdo);
+    $id=$repository->enqueue(new QueueJob(1,1,'fresh_orders_discovery','orders_window',null,'fresh_orders',0,'deadline-final','v1','test',null,[],[],3,null,'operational'));
+    $handlers=new QueueHandlerRegistry();
+    $handlers->register('fresh_orders_discovery',new class($transport) implements QueueHandler{
+        public function __construct(private MeliHttpTransportInterface $transport){}
+        public function handle(QueueClaim $job,QueueExecutionContext $context):QueueResult{
+            (new MeliApiClient($job->meliAccountId,$this->transport))->get('/orders/search',[],['job_type'=>'fresh_orders_discovery']);
+            return QueueResult::completed();
+        }
+    });
+    CronDeadlineContext::start(5,3,2,1);
+    try{
+        (new QueueRunner($repository,$handlers))->run(new QueueRunRequest('test','deadline-final',1,microtime(true)+5,30,[],['fresh_orders_discovery'],1,null,'operational',$id));
+    }finally{CronDeadlineContext::clear();}
+    $row=$repository->job($id);
+    $physical=(int)$pdo->query("SELECT COALESCE(SUM(physical_http_calls),0) FROM queue_core_attempts WHERE job_id=$id")->fetchColumn();
+    $budget=(int)$pdo->query('SELECT COALESCE(SUM(request_count),0) FROM api_budget_windows')->fetchColumn();
+    $rhythm=(int)$pdo->query('SELECT COALESCE(SUM(calls_in_block),0) FROM api_rhythm_states')->fetchColumn();
+    $active=(int)$pdo->query("SELECT COUNT(*) FROM api_remote_permits WHERE status<>'released'")->fetchColumn();
+    $assert($transport->calls===0&&$physical===0&&($row['dispatch_state']??'')==='NOT_DISPATCHED'&&($row['state']??'')==='retry_wait'&&(int)($row['attempt_count']??-1)===0&&($row['last_error_class']??'')==='deadline'&&$budget===0&&$rhythm===0&&$active===0,'final deadline crossed cURL or leaked permits '.json_encode(['calls'=>$transport->calls,'physical'=>$physical,'dispatch'=>$row['dispatch_state']??null,'state'=>$row['state']??null,'attempts'=>$row['attempt_count']??null,'error'=>$row['last_error_class']??null,'budget'=>$budget,'rhythm'=>$rhythm,'active'=>$active]));
+});
 
 $passed=count(array_filter($results));$total=count($results);echo "QUEUE_CORE_TESTS=$passed/$total\n";exit($passed===$total?0:1);

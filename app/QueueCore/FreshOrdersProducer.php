@@ -30,8 +30,51 @@ final class FreshOrdersProducer
               AND (cp.meli_account_id IS NULL OR cp.next_due_at<=UTC_TIMESTAMP(3))
             ORDER BY COALESCE(cp.next_due_at,'1970-01-01') ASC,a.company_id ASC,a.id ASC
             LIMIT ".max(1,min(100,$limit)));
+        return $this->scheduleRows($q->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    /**
+     * Preparation-mode producer for a single certified account. An explicit
+     * bootstrap instant is accepted only when it is bounded to the past; it
+     * becomes the durable checkpoint authority and is never inferred from an
+     * empty local database.
+     *
+     * @return array{accounts:int,enqueued:int,bootstrap_required:int}
+     */
+    public function scheduleAccount(int $companyId,int $accountId,?string $bootstrapFrom=null): array
+    {
+        if($companyId<1||$accountId<1)return ['accounts'=>0,'enqueued'=>0,'bootstrap_required'=>1];
+        $scope=$this->pdo->prepare("SELECT id,company_id FROM meli_accounts WHERE id=? AND company_id=? AND status IN ('conectado','connected') LIMIT 1");
+        $scope->execute([$accountId,$companyId]);$account=$scope->fetch(PDO::FETCH_ASSOC);
+        if(!is_array($account))return ['accounts'=>0,'enqueued'=>0,'bootstrap_required'=>1];
+        if($bootstrapFrom!==null){
+            $at=strtotime($bootstrapFrom.' UTC');
+            if($at===false||$at>time()||$at<time()-86400*30){
+                throw new RuntimeException('Fresh Orders explicit bootstrap is outside the bounded preparation window.');
+            }
+            $this->pdo->beginTransaction();
+            try{
+                $insert=$this->pdo->prepare("INSERT IGNORE INTO queue_core_producer_checkpoints (producer_key,company_id,meli_account_id,watermark_at,next_due_at,generation) VALUES ('fresh_orders',?,?,?,UTC_TIMESTAMP(3),0)");
+                $insert->execute([$companyId,$accountId,gmdate('Y-m-d H:i:s',$at)]);
+                $locked=$this->pdo->prepare("SELECT watermark_at,window_from,window_to,generation FROM queue_core_producer_checkpoints WHERE producer_key='fresh_orders' AND company_id=? AND meli_account_id=? FOR UPDATE");
+                $locked->execute([$companyId,$accountId]);$checkpoint=$locked->fetch(PDO::FETCH_ASSOC);
+                if(!is_array($checkpoint))throw new RuntimeException('Fresh Orders explicit bootstrap authority is unavailable.');
+                if(empty($checkpoint['watermark_at']) && empty($checkpoint['window_from']) && empty($checkpoint['window_to'])){
+                    $update=$this->pdo->prepare("UPDATE queue_core_producer_checkpoints SET watermark_at=?,next_due_at=UTC_TIMESTAMP(3),last_error_class=NULL WHERE producer_key='fresh_orders' AND company_id=? AND meli_account_id=? AND generation=?");
+                    $update->execute([gmdate('Y-m-d H:i:s',$at),$companyId,$accountId,(int)$checkpoint['generation']]);
+                    if($update->rowCount()!==1)throw new RuntimeException('Fresh Orders explicit bootstrap fence changed.');
+                }
+                $this->pdo->commit();
+            }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
+        }
+        return $this->scheduleRows([$account]);
+    }
+
+    /** @param list<array<string,mixed>> $rows @return array{accounts:int,enqueued:int,bootstrap_required:int} */
+    private function scheduleRows(array $rows): array
+    {
         $accounts=0;$enqueued=0;$bootstrap_required=0;
-        foreach($q->fetchAll(PDO::FETCH_ASSOC) as $account){
+        foreach($rows as $account){
             $company=(int)$account['company_id'];$accountId=(int)$account['id'];if($company<1||$accountId<1)continue;
             $this->pdo->beginTransaction();
             try{

@@ -439,7 +439,11 @@ final class MeliApiClient implements MeliReadClientInterface
             $wireBytes = max(0, $transportResult['wire_bytes']);
             $decodedBytes = max(0, $transportResult['decoded_bytes']);
             $retryAfter = HttpRetryAfterParser::seconds($responseHeaders['retry-after'] ?? null);
-            if ($curlError === '' && $status >= 200 && $status < 300) {
+            // Queue Core treats 206 as an incomplete page, never as a
+            // successful terminal receipt. The known response remains
+            // retryable in a new fenced attempt without advancing cursors.
+            if ($curlError === '' && $status >= 200 && $status < 300
+                && !($queueCoreContext && $status === 206)) {
                 $telemetryMeta = $meta;
                 $responseCount = $this->responseItemCount($decoded, $meta, $status);
                 $telemetryMeta['response_item_count'] = $responseCount['count'];

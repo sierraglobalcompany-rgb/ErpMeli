@@ -17,7 +17,7 @@ final class QueueCoreCanaryService
     ) {}
 
     /** @return array<string,mixed> */
-    public function run(int $accountId, int $maxJobs, int $maxPhysicalHttp, int $deadlineSeconds): array
+    public function run(int $accountId, int $maxJobs, int $maxPhysicalHttp, int $deadlineSeconds,?string $bootstrapFrom=null): array
     {
         $maxJobs=max(1,min(20,$maxJobs));
         $maxPhysicalHttp=max(0,min(10,$maxPhysicalHttp));
@@ -30,8 +30,15 @@ final class QueueCoreCanaryService
         if(empty($preflight['ok']))return $this->blocked('preflight_failed',['issues'=>$preflight['issues']??[]]);
         $engine=(new QueueEngineControlService($this->pdo))->snapshot();
         if($engine['active_engine']!=='disabled')return $this->blocked('engine_must_be_disabled');
+        if($engine['readiness_mode']!=='preparing')return $this->blocked('readiness_mode_required');
+
+        $scope=$this->pdo->prepare("SELECT company_id FROM meli_accounts WHERE id=? AND status IN ('conectado','connected') LIMIT 1");
+        $scope->execute([$accountId]);$companyId=max(0,(int)($scope->fetchColumn()?:0));
+        if($companyId<1)return $this->blocked('account_scope_unavailable');
 
         $core=QueueCoreFactory::build($this->pdo,$this->freshOrdersGateway);
+        $prepared=$core['producer']->scheduleAccount($companyId,$accountId,$bootstrapFrom);
+        if($prepared['bootstrap_required']>0)return $this->blocked('bootstrap_required');
         $worker='canary-v4-'.bin2hex(random_bytes(8));
         $lease=$core['execution_leases']->acquire('canary_v4',$worker,$deadlineSeconds+10);
         if($lease===null)return $this->blocked('launcher_busy');
@@ -44,7 +51,7 @@ final class QueueCoreCanaryService
             while($totals['claimed']<$maxJobs && microtime(true)<$deadline-1){
                 if((new EmergencyControlService())->status()['automation']!=='stopped'){$reason='automation_resumed';break;}
                 $http=$this->httpCalls($runId);
-                if($http>=$maxPhysicalHttp && $maxPhysicalHttp>=0){$reason='max_http';break;}
+                if($http>=$maxPhysicalHttp){$reason='max_http';break;}
                 $types=$core['capabilities']->certifiedTypes($core['registry']);
                 $head=$core['repository']->peekOldestEligible($types,'operational');
                 if($head===null){$reason='drained';break;}
@@ -63,24 +70,27 @@ final class QueueCoreCanaryService
             $http=$this->httpCalls($runId);
             $known=$this->knownResponses($runId);
             $persisted=$this->persisted($runId);
+            $emptyWindow=$this->authoritativeEmptyWindow($runId,$companyId,$accountId);
             // A local/no-op cycle cannot certify the remote read path.  A
             // passing canary proves one or more physical requests with known
             // responses and at least one locally persisted resource.
-            $passed=$totals['claimed']>0 && $http>0 && $known===$http && $persisted>0
+            $passed=$totals['claimed']>0 && $http>0 && $known===$http && ($persisted>0||$emptyWindow)
                 && $totals['review']===0 && $totals['dead']===0
                 && $totals['lease_lost']===0 && $http<=$maxPhysicalHttp;
             $summary=['run'=>$totals,'physical_http_calls'=>$http,'known_responses'=>$known,
-                'resources_persisted'=>$persisted,'reason'=>$reason];
+                'resources_persisted'=>$persisted,'authoritative_empty_window'=>$emptyWindow,'reason'=>$reason];
             $ledger->finish($runId,$passed?'completed':'stopped',$reason,$summary);
             (new QueueCoreReadinessReceiptService($this->pdo))->record(
                 $engine['generation'],'canary',$passed,
                 ['account_id'=>$accountId,'claimed'=>$totals['claimed'],'http'=>$http,
-                    'known'=>$known,'persisted'=>$persisted,'review'=>$totals['review'],'dead'=>$totals['dead']],
-                3600,null,$accountId
+                    'known'=>$known,'persisted'=>$persisted,'empty_window'=>$emptyWindow?1:0,
+                    'review'=>$totals['review'],'dead'=>$totals['dead']],
+                3600,$companyId,$accountId
             );
             return ['ok'=>$passed,'status'=>$passed?'PASS':'NOT_PASSED','account_id'=>$accountId,
                 'jobs_claimed'=>$totals['claimed'],'physical_http_calls'=>$http,'known_responses'=>$known,
-                'resources_persisted'=>$persisted,'final_states'=>$totals,'reason'=>$reason,'fifo_preserved'=>true];
+                'resources_persisted'=>$persisted,'authoritative_empty_window'=>$emptyWindow,
+                'final_states'=>$totals,'reason'=>$reason,'fifo_preserved'=>true];
         }catch(Throwable){
             try{$ledger->finish($runId,'failed','local_failure',['claimed'=>$totals['claimed']]);}catch(Throwable){}
             return $this->blocked('local_failure',['jobs_claimed'=>$totals['claimed'],'physical_http_calls'=>$this->httpCalls($runId)]);
@@ -90,6 +100,20 @@ final class QueueCoreCanaryService
     private function httpCalls(int $runId): int{return $this->sum($runId,'physical_http_calls');}
     private function knownResponses(int $runId): int{return $this->sum($runId,'response_known_at IS NOT NULL');}
     private function persisted(int $runId): int{return $this->sum($runId,'resources_persisted');}
+    private function authoritativeEmptyWindow(int $runId,int $companyId,int $accountId): bool
+    {
+        $statement=$this->pdo->prepare(
+            "SELECT COUNT(*) FROM queue_core_attempts a
+             JOIN queue_core_jobs j ON j.id=a.job_id AND j.company_id=a.company_id AND j.meli_account_id=a.meli_account_id
+             WHERE a.run_id=? AND a.company_id=? AND a.meli_account_id=?
+               AND j.work_type='fresh_orders_discovery' AND a.physical_http_calls=1
+               AND a.response_known_at IS NOT NULL AND a.http_status BETWEEN 200 AND 299
+               AND a.resources_discovered=0 AND a.source_closed_at IS NOT NULL
+               AND a.outcome='completed'"
+        );
+        $statement->execute([$runId,$companyId,$accountId]);
+        return (int)$statement->fetchColumn()>0;
+    }
     private function sum(int $runId,string $expression): int
     {$s=$this->pdo->prepare("SELECT COALESCE(SUM($expression),0) FROM queue_core_attempts WHERE run_id=?");$s->execute([$runId]);return max(0,(int)$s->fetchColumn());}
     /** @param array<string,mixed> $extra @return array<string,mixed> */

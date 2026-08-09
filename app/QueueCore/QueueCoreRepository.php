@@ -423,10 +423,10 @@ final class QueueCoreRepository
                     && $this->knownResponseRetryAllowed($this->claimFromRow($row),(int)($row['last_http_status']??0));
                 $state=($dispatch==='NOT_DISPATCHED'||$safeKnownRead)?(((int)$row['attempt_count']>=(int)$row['max_attempts'])?'dead':'retry_wait'):'review';
                 $next=$state==='retry_wait'?QueueRetryPolicy::nextAttemptAt((int)$row['attempt_count']):null;
-                $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state=?,next_attempt_at=?,available_at=COALESCE(?,available_at),last_error_class=?,completed_at=CASE WHEN ? IN ('review','dead') THEN UTC_TIMESTAMP(3) ELSE NULL END,lease_owner=NULL,lease_expires_at=NULL,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND lease_generation=? AND state IN ('claimed','running')");
+                $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state=?,next_attempt_at=?,available_at=COALESCE(?,available_at),last_error_class=?,completed_at=CASE WHEN ? IN ('review','dead') THEN UTC_TIMESTAMP(3) ELSE NULL END,lease_owner=NULL,lease_expires_at=NULL,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND state=? AND lease_expires_at<UTC_TIMESTAMP(3)");
                 $errorClass=$dispatch==='NOT_DISPATCHED'?'lease_expired_before_dispatch':($safeKnownRead?'lease_expired_after_known_read':'lease_expired_after_dispatch');
-                $u->execute([$state,$next,$next,$errorClass,$state,(int)$row['id'],(int)$row['lease_generation']]);
-                if($u->rowCount()===1){$a=$this->pdo->prepare("UPDATE queue_core_attempts SET outcome=?,error_class=?,finished_at=UTC_TIMESTAMP(3) WHERE job_id=? AND lease_generation=? AND outcome='started'");$a->execute([$state,$errorClass,(int)$row['id'],(int)$row['lease_generation']]);if((string)$row['state']==='running'&&$a->rowCount()!==1)throw new RuntimeException('Queue Core stale recovery lost its exact attempt fence.');$counts[$state]++;$this->event((int)$row['id'],(int)$row['company_id'],(int)$row['meli_account_id'],(string)$row['lane'],'recovered');}
+                $u->execute([$state,$next,$next,$errorClass,$state,(int)$row['id'],(int)$row['company_id'],(int)$row['meli_account_id'],(string)$row['lease_owner'],(int)$row['lease_generation'],(string)$row['state']]);
+                if($u->rowCount()===1){$a=$this->pdo->prepare("UPDATE queue_core_attempts SET outcome=?,error_class=?,finished_at=UTC_TIMESTAMP(3) WHERE job_id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND outcome='started'");$a->execute([$state,$errorClass,(int)$row['id'],(int)$row['company_id'],(int)$row['meli_account_id'],(string)$row['lease_owner'],(int)$row['lease_generation']]);if((string)$row['state']==='running'&&$a->rowCount()!==1)throw new RuntimeException('Queue Core stale recovery lost its exact attempt fence.');$counts[$state]++;$this->event((int)$row['id'],(int)$row['company_id'],(int)$row['meli_account_id'],(string)$row['lane'],'recovered');}
             }
             $this->pdo->commit();return $counts;
         }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
@@ -486,7 +486,7 @@ final class QueueCoreRepository
         if(in_array($claim->workType,[
             'fresh_orders_discovery','order_exact','webhook_order_exact',
             'webhook_pack_exact','webhook_shipment_exact',
-        ],true))return true;
+        ],true))return ($httpStatus>=200&&$httpStatus<300)||$httpStatus===429||$httpStatus>=500;
         if($claim->workType==='oauth_refresh'){
             if($httpStatus===429 || $httpStatus>=500)return true;
             if($httpStatus<200 || $httpStatus>=300)return false;

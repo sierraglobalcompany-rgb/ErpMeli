@@ -65,6 +65,7 @@ foreach (['queue_core_readiness_capture_items', 'queue_core_readiness_captures',
     'queue_core_pending_capabilities', 'queue_core_dispatch_journal', 'queue_core_attempts',
     'queue_core_events', 'queue_core_jobs', 'queue_core_producer_checkpoints',
     'queue_core_scheduler_state', 'queue_core_execution_leases', 'queue_engine_control',
+    'api_remote_permits', 'api_rhythm_states',
     'schema_migrations', 'app_settings', 'meli_tokens', 'meli_orders', 'meli_accounts'] as $table) {
     $pdo->exec("DROP TABLE IF EXISTS `$table`");
 }
@@ -103,6 +104,25 @@ $pdo->exec("CREATE TABLE meli_orders (
     meli_account_id BIGINT UNSIGNED NOT NULL,
     external_order_id BIGINT UNSIGNED NOT NULL,
     synced_at DATETIME NULL
+) ENGINE=InnoDB");
+$pdo->exec("CREATE TABLE api_rhythm_states (
+    scope_key VARCHAR(64) NOT NULL PRIMARY KEY,generation BIGINT UNSIGNED NOT NULL DEFAULT 1,
+    calls_in_block INT UNSIGNED NOT NULL DEFAULT 0,block_started_at DATETIME(3) NULL,
+    next_allowed_at DATETIME(3) NULL,block_pause_until DATETIME(3) NULL,
+    last_dispatched_at DATETIME(3) NULL,
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB");
+$pdo->exec("CREATE TABLE api_remote_permits (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,permit_token CHAR(40) NOT NULL,
+    owner_token CHAR(32) NOT NULL,generation BIGINT UNSIGNED NOT NULL,run_token VARCHAR(100) NULL,
+    work_key VARCHAR(120) NULL,company_id BIGINT UNSIGNED NULL,meli_account_id BIGINT UNSIGNED NULL,
+    endpoint_key VARCHAR(120) NOT NULL,job_type VARCHAR(80) NOT NULL,method VARCHAR(10) NOT NULL,
+    status ENUM('reserved','dispatched','completed','released','expired') NOT NULL DEFAULT 'reserved',
+    requested_interval_ms INT UNSIGNED NOT NULL,effective_interval_ms INT UNSIGNED NOT NULL,
+    blocking_scope VARCHAR(80) NULL,http_status SMALLINT UNSIGNED NULL,created_at DATETIME(3) NOT NULL,
+    dispatched_at DATETIME(3) NULL,completed_at DATETIME(3) NULL,released_at DATETIME(3) NULL,
+    expires_at DATETIME(3) NOT NULL,updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    UNIQUE KEY uq_api_remote_permit_token(permit_token),KEY idx_api_remote_permit_active(status,expires_at)
 ) ENGINE=InnoDB");
 $pdo->exec("INSERT INTO app_settings(setting_key,setting_value,setting_group)
     VALUES ('oauth.token_expiry_skew_seconds','120','oauth'),('oauth.refresh_lock_wait_seconds','0','oauth')");

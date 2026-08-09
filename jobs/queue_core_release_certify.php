@@ -70,25 +70,19 @@ try {
     } elseif ($type === 'capacity') {
         $profile=$readiness->runtimeProfile();
         $window=max(15,min(1440,(int)$option('window-minutes','60')));
-        $backlog = max(0, (int) $option('backlog-resources', '0'));
         $calculation=$evidence->measuredCapacity($window,$profile);
-        $catchup = (new \App\QueueCore\QueueCoreCapacityService())->catchupMinutes(
-            $backlog,
-            (float) $calculation['sustainable_resources_per_minute'],
-            (float) $calculation['arrival_rate_resources_per_minute'],
-        );
         $result = $evidence->certifyCapacity($generation, $context, $calculation, [
             'cadence_seconds' => $profile['cadence_seconds'],
             'runtime_seconds' => $profile['runtime_seconds'],
             'safe_close_seconds' => $profile['safe_close_seconds'],
             'max_remote_jobs' => $profile['max_remote_jobs'],
-        ], $catchup, $ttl);
+        ], $ttl);
         $safe = [
             'ok' => $result['ok'],
             'type' => 'capacity',
             'id' => $result['id'],
             'calculation' => $result['calculation'],
-            'catchup_minutes' => $catchup,
+            'catchup_minutes' => $calculation['catchup_minutes'] ?? null,
         ];
     } else {
         throw new InvalidArgumentException('Use --type=backup, --type=manifest or --type=capacity.');

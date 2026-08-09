@@ -178,7 +178,8 @@ final class QueueCoreHealthService
         }
         $reasons = array_values(array_unique($reasons));
         $red = array_intersect($reasons, [
-            'engine_ownership_inconsistent', 'ml_write_enabled', 'remote_uncertain_present',
+            'engine_enabled_launcher_disabled', 'engine_ownership_inconsistent', 'ml_write_enabled',
+            'remote_uncertain_present',
             'oauth_expired',
             'identity_mismatch', 'rotated_credential_unrecoverable', 'schema_inconsistent',
             'cross_account_state', 'blocking_review_present', 'freshness_stale',

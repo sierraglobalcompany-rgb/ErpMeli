@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\QueueCore;
 
+use App\Services\EmergencyControlService;
 use PDO;
 use RuntimeException;
 use Throwable;
@@ -126,6 +127,19 @@ final class QueueEngineControlService
      * @return array{ok:bool,reason:string,active_engine:string,generation:int}
      */
     public function compareAndSwap(string $desiredEngine, int $expectedGeneration, string $actor): array
+    {
+        if ($desiredEngine === 'v4') {
+            return (new EmergencyControlService())->withAutomationAuthorityLock(
+                fn (): array => $this->compareAndSwapLocked($desiredEngine, $expectedGeneration, $actor),
+            );
+        }
+        return $this->compareAndSwapLocked($desiredEngine, $expectedGeneration, $actor);
+    }
+
+    /**
+     * @return array{ok:bool,reason:string,active_engine:string,generation:int}
+     */
+    private function compareAndSwapLocked(string $desiredEngine, int $expectedGeneration, string $actor): array
     {
         if (!in_array($desiredEngine, self::ENGINES, true) || $expectedGeneration < 0) {
             throw new RuntimeException('Queue Engine cutover request is invalid.');

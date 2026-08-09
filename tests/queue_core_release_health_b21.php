@@ -31,15 +31,20 @@ $assert = static function (bool $condition, string $message) use (&$checks): voi
 };
 
 $tables = [
+    'queue_core_capability_dependencies', 'queue_core_historical_receipts',
+    'queue_core_historical_reviews', 'queue_core_historical_checkpoints',
+    'queue_core_dispatch_journal', 'queue_core_events',
     'queue_core_release_evidence', 'queue_core_health_snapshots', 'queue_core_readiness_receipts',
     'queue_core_webhook_triggers', 'queue_core_attempts', 'queue_core_runs',
     'queue_core_producer_checkpoints', 'queue_core_jobs', 'queue_engine_control',
     'meli_tokens', 'meli_accounts',
     'app_settings',
 ];
+$pdo->exec('SET FOREIGN_KEY_CHECKS=0');
 foreach ($tables as $table) {
     $pdo->exec('DROP TABLE IF EXISTS ' . $table);
 }
+$pdo->exec('SET FOREIGN_KEY_CHECKS=1');
 $pdo->exec('CREATE TABLE meli_accounts(id BIGINT PRIMARY KEY,company_id BIGINT NOT NULL,status VARCHAR(30),last_error VARCHAR(255) NULL)');
 $pdo->exec('CREATE TABLE app_settings(setting_key VARCHAR(191) PRIMARY KEY,setting_value TEXT,is_encrypted TINYINT NOT NULL DEFAULT 0,setting_group VARCHAR(80) NULL)');
 $pdo->exec('CREATE TABLE meli_tokens(meli_account_id BIGINT PRIMARY KEY,expires_at DATETIME(3),refresh_version BIGINT NOT NULL DEFAULT 0)');
@@ -66,18 +71,28 @@ $assert(!$evidence->requireLatest(4, 'capacity', hash('sha256', 'changed'))['ok'
 $capacity = (new QueueCoreCapacityService())->calculate(0.1, 3.0, 1.0, 5.0, 3.0, 60, 45, 10, 3);
 $capacity['measurement_known_responses'] = 3;
 $capacity['measurement_resources_persisted'] = 1;
+$capacity['measurement_backlog_resources'] = 1;
+$capacity['catchup_minutes'] = 120.0;
 $capacity['measurement_window_minutes'] = 60;
 $certified = $evidence->certifyCapacity(4, $context, $capacity, [
     'cadence_seconds' => 60, 'runtime_seconds' => 45, 'safe_close_seconds' => 10, 'max_remote_jobs' => 3,
-], 120.0);
+]);
 $assert($certified['ok'], 'Positive capacity margin did not certify.');
 $failedCapacity = (new QueueCoreCapacityService())->calculate(2.0, 3.0, 1.0, 5.0, 3.0, 60, 45, 10, 3);
 $failedCapacity['measurement_known_responses'] = 3;
 $failedCapacity['measurement_resources_persisted'] = 1;
+$failedCapacity['measurement_backlog_resources'] = 1;
+$failedCapacity['catchup_minutes'] = null;
 $failedCapacity['measurement_window_minutes'] = 60;
 $assert(!$evidence->certifyCapacity(4, $context, $failedCapacity, [
     'cadence_seconds' => 60, 'runtime_seconds' => 45, 'safe_close_seconds' => 10, 'max_remote_jobs' => 3,
-], null)['ok'], 'Insufficient sustainable capacity certified.');
+])['ok'], 'Insufficient sustainable capacity certified.');
+$excessiveBacklog = $capacity;
+$excessiveBacklog['measurement_backlog_resources'] = 50000;
+$excessiveBacklog['catchup_minutes'] = 11521.0;
+$assert(!$evidence->certifyCapacity(4, $context, $excessiveBacklog, [
+    'cadence_seconds' => 60, 'runtime_seconds' => 45, 'safe_close_seconds' => 10, 'max_remote_jobs' => 3,
+])['ok'], 'An unbounded catch-up horizon certified as deployable capacity.');
 
 $backupFixture = tempnam(sys_get_temp_dir(), 'b21-backup-') . '.sql.gz';
 $backupSql = "CREATE TABLE `meli_accounts` (`id` BIGINT);\n"
@@ -116,6 +131,12 @@ $assert(in_array('webhook_observation_stalled', $reasons, true), 'Webhook lag wa
 $assert(in_array('dependency_query_unknown', $reasons, true), 'Dependency query failure failed open.');
 $assert(in_array('latest_readiness_failed', $reasons, true), 'Latest readiness failure was invisible.');
 $assert(in_array('latest_release_evidence_failed', $reasons, true), 'Latest capacity failure was invisible.');
+$pdo->exec("UPDATE queue_engine_control SET active_engine='v4'");
+$launcherHealth = (new QueueCoreHealthService($pdo))->snapshot();
+$assert($launcherHealth['health'] === 'RED'
+    && in_array('engine_enabled_launcher_disabled', (array) $launcherHealth['reasons'], true),
+    'V4 ownership without a live launcher was not RED.');
+$pdo->exec("UPDATE queue_engine_control SET active_engine='disabled'");
 
 $ledger = new QueueCoreRunLedger($pdo);
 $runId = $ledger->begin(4, 'test', 'worker-b21');
@@ -134,7 +155,7 @@ $assert((int) $measured['measurement_known_responses'] >= 3, 'Capacity did not u
 $assert($evidence->certifyCapacity(4, $context, $measured, [
     'cadence_seconds' => 60, 'runtime_seconds' => 45, 'safe_close_seconds' => 10,
     'max_remote_jobs' => 3,
-], null)['ok'], 'Measured positive capacity did not certify.');
+])['ok'], 'Measured positive capacity did not certify.');
 
 $deploy = (new QueueCoreDeploymentGateService($pdo))->inspect();
 $assert(in_array('backup_evidence_required', $deploy['issues'], true), 'Deployment gate accepted missing backup evidence.');

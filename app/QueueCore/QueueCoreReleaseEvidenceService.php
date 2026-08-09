@@ -11,6 +11,8 @@ use PDO;
 /** Evidencia no secreta y ligada a generación/contexto para el CAS de activación. */
 final class QueueCoreReleaseEvidenceService
 {
+    private const MAX_CERTIFIED_CATCHUP_MINUTES = 11520.0;
+
     public function __construct(private readonly PDO $pdo) {}
 
     /** @param array<string,scalar|null> $metrics */
@@ -167,7 +169,6 @@ final class QueueCoreReleaseEvidenceService
         string $contextHash,
         array $calculation,
         array $profile,
-        ?float $catchupMinutes,
         int $ttlSeconds = 3600,
     ): array {
         $arrival = (float) ($calculation['arrival_rate_resources_per_minute'] ?? 0.0);
@@ -176,6 +177,11 @@ final class QueueCoreReleaseEvidenceService
         $safeJobs = (int) ($calculation['safe_jobs_per_run'] ?? 0);
         $knownSample = (int) ($calculation['measurement_known_responses'] ?? 0);
         $persistedSample = (int) ($calculation['measurement_resources_persisted'] ?? 0);
+        $backlogResources = max(0, (int) ($calculation['measurement_backlog_resources'] ?? 0));
+        $catchupMinutes = isset($calculation['catchup_minutes'])
+            && is_numeric($calculation['catchup_minutes'])
+            ? (float) $calculation['catchup_minutes']
+            : null;
         $profileValid = $profile['cadence_seconds'] > 0
             && $profile['runtime_seconds'] > $profile['safe_close_seconds']
             && $profile['max_remote_jobs'] > 0;
@@ -185,6 +191,10 @@ final class QueueCoreReleaseEvidenceService
             && $safeJobs > 0
             && $knownSample >= 3
             && $persistedSample > 0
+            && $catchupMinutes !== null
+            && is_finite($catchupMinutes)
+            && $catchupMinutes >= 0.0
+            && $catchupMinutes <= self::MAX_CERTIFIED_CATCHUP_MINUTES
             && $profileValid;
         $metrics = [
             'arrival_rate' => round($arrival, 4),
@@ -198,6 +208,7 @@ final class QueueCoreReleaseEvidenceService
             'max_remote_jobs' => $profile['max_remote_jobs'],
             'measurement_known_responses' => $knownSample,
             'measurement_resources_persisted' => $persistedSample,
+            'measurement_backlog_resources' => $backlogResources,
             'measurement_window_minutes' => (int) ($calculation['measurement_window_minutes'] ?? 0),
         ];
         $id = $this->record(
@@ -277,12 +288,23 @@ final class QueueCoreReleaseEvidenceService
         $calculation['safety_margin_ratio']=round($arrival>0
             ?($sustainable-$arrival)/$arrival
             :($sustainable>0?1.0:0.0),4);
+        $backlogStatement=$this->pdo->query(
+            "SELECT COUNT(*) FROM queue_core_jobs
+             WHERE queue_domain='operational'
+               AND state IN ('pending','claimed','running','retry_wait')"
+        );
+        $backlog=max(0,(int)$backlogStatement->fetchColumn());
+        $catchup=$backlog===0
+            ?0.0
+            :(new QueueCoreCapacityService())->catchupMinutes($backlog,$sustainable,$arrival);
         return $calculation+[
             'measurement_window_minutes'=>$window,
             'measurement_jobs_arrived'=>$arrivals,
             'measurement_physical_http'=>$physical,
             'measurement_known_responses'=>$known,
             'measurement_resources_persisted'=>$persisted,
+            'measurement_backlog_resources'=>$backlog,
+            'catchup_minutes'=>$catchup,
         ];
     }
 

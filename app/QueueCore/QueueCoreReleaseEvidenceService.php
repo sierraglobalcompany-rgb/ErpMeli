@@ -396,11 +396,14 @@ final class QueueCoreReleaseEvidenceService
         ],false);
         try{
             while(($line=$gzip?gzgets($handle):fgets($handle))!==false){
+                $preB2SnapshotColumnsAbsent=$preB2SnapshotColumnsAbsent
+                    && $this->preB2SnapshotColumnsAbsent($line);
                 if($activeCreateTable!==null){
                     $activeCreateSql.=$line;
                     if(str_ends_with(rtrim($line),';')){
                         if($activeCreateTable==='meli_orders'){
-                            $preB2SnapshotColumnsAbsent=$this->preB2SnapshotColumnsAbsent($activeCreateSql);
+                            $preB2SnapshotColumnsAbsent=$preB2SnapshotColumnsAbsent
+                                && $this->preB2SnapshotColumnsAbsent($activeCreateSql);
                         }
                         $schemaHashes[$activeCreateTable]=hash(
                             'sha256',$this->canonicalCreateSql($activeCreateSql,$activeCreateTable)
@@ -414,7 +417,8 @@ final class QueueCoreReleaseEvidenceService
                     $activeCreateTable=$name;$activeCreateSql=$line;
                     if(str_ends_with(rtrim($line),';')){
                         if($name==='meli_orders'){
-                            $preB2SnapshotColumnsAbsent=$this->preB2SnapshotColumnsAbsent($activeCreateSql);
+                            $preB2SnapshotColumnsAbsent=$preB2SnapshotColumnsAbsent
+                                && $this->preB2SnapshotColumnsAbsent($activeCreateSql);
                         }
                         $schemaHashes[$name]=hash('sha256',$this->canonicalCreateSql($activeCreateSql,$name));
                         $activeCreateTable=null;$activeCreateSql='';
@@ -481,12 +485,16 @@ final class QueueCoreReleaseEvidenceService
 
     private function preB2SnapshotColumnsAbsent(string $createSql): bool
     {
-        return preg_match('/[`"]queue_snapshot_(?:version|at)[`"]?/i',$createSql)!==1;
+        return preg_match('/\bqueue_snapshot_(?:version|at)\b/i',$createSql)!==1;
     }
 
     private function isNullColumnDefault(mixed $value): bool
     {
-        return $value===null||strtoupper(trim((string)$value))==='NULL';
+        if($value===null)return true;
+        // MariaDB representa DEFAULT NULL como el texto no citado NULL en
+        // information_schema; un literal DEFAULT 'NULL' conserva las comillas.
+        return strtoupper(trim((string)$value))==='NULL'
+            && str_contains(strtolower((string)$this->pdo->getAttribute(PDO::ATTR_SERVER_VERSION)),'mariadb');
     }
 
     private function queueSnapshotColumnsMatchMigration284(): bool

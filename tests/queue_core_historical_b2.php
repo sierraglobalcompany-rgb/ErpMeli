@@ -423,6 +423,16 @@ $scenario('deployment_gate_verifies_schema_and_backup', static function () use (
         putenv('QUEUE_CORE_APPROVED_BACKUP_PATH='.$invalidBackup);
         $assert(!$evidence->verifyBackup($invalidBackup,$invalidSha)['ok'],
             'backup verification accepted snapshot columns inside the pre-B2 dump');
+
+        $alteredBackupSql=$backupSql
+            . "ALTER TABLE `meli_orders` ADD COLUMN `queue_snapshot_version` LONGTEXT NOT NULL;\n"
+            . "ALTER TABLE `meli_orders` ADD COLUMN `queue_snapshot_at` DATETIME(6) NULL;\n";
+        file_put_contents($invalidBackup,$alteredBackupSql);
+        $alteredSha=(string)hash_file('sha256',$invalidBackup);
+        putenv('QUEUE_CORE_APPROVED_BACKUP_SHA256='.$alteredSha);
+        putenv('QUEUE_CORE_APPROVED_BACKUP_PATH='.$invalidBackup);
+        $assert(!$evidence->verifyBackup($invalidBackup,$alteredSha)['ok'],
+            'backup verification accepted post-CREATE snapshot ALTER statements');
         putenv('QUEUE_CORE_APPROVED_BACKUP_SHA256=' . $sha);
         putenv('QUEUE_CORE_APPROVED_BACKUP_PATH=' . $backup);
 
@@ -453,6 +463,11 @@ $scenario('deployment_gate_verifies_schema_and_backup', static function () use (
         $pdo->exec("ALTER TABLE meli_orders MODIFY queue_snapshot_version CHAR(64) NULL DEFAULT ''");
         $assert(!$evidence->verifyBackup($backup,(string)$sha)['ok'],
             'backup verification accepted a non-NULL queue snapshot default');
+        $pdo->exec('ALTER TABLE meli_orders MODIFY queue_snapshot_version CHAR(64) NULL DEFAULT NULL');
+
+        $pdo->exec("ALTER TABLE meli_orders MODIFY queue_snapshot_version CHAR(64) NULL DEFAULT 'NULL'");
+        $assert(!$evidence->verifyBackup($backup,(string)$sha)['ok'],
+            'backup verification accepted the string literal NULL as a NULL default');
         $pdo->exec('ALTER TABLE meli_orders MODIFY queue_snapshot_version CHAR(64) NULL DEFAULT NULL');
 
         $pdo->exec('ALTER TABLE meli_orders DROP COLUMN queue_snapshot_at, DROP COLUMN queue_snapshot_version');

@@ -14,13 +14,17 @@ final class HistoricalIngestionService
     {
         if(!$explicit)throw new RuntimeException('Historical Queue Core ingestion requires an explicit bounded invocation.');
         $maximum = max(1, min(self::MAX_PER_CYCLE, $limit));
-        $count = 0;
+        $created = 0;
+        $scanned = 0;
         foreach ($jobs as $job) {
-            if ($count >= $maximum) break;
+            if ($created >= $maximum || $scanned >= self::MAX_PER_CYCLE * 4) break;
+            $scanned++;
             if ($job->lane !== 'historical_backfill' || $job->domain() !== 'operational') continue;
             $repository->enqueue($job);
-            $count++;
+            if ($repository->lastEnqueueCreated()) {
+                $created++;
+            }
         }
-        return $count;
+        return $created;
     }
 }

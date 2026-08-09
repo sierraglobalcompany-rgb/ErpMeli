@@ -148,10 +148,12 @@
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/release_integrity_text_hash_2344.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/emergency_manual_canary_hf11.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/emergency_manual_oauth_refresh_hf12.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_historical_b2.php"
     ],
     "test:sales-control": "@php -d error_reporting=-1 -d display_errors=1 tests/sales_control_2211_mysql_integration.php",
     "test:hf12-db": "@php -d error_reporting=-1 -d display_errors=1 tests/emergency_oauth_refresh_real_integration_hf12.php",
     "test:queue-core": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_phase_b1.php",
+    "test:queue-core-historical": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_historical_b2.php",
     "test:release-db": "@php -d error_reporting=-1 -d display_errors=1 tests/release_gate.php",
     "lint": "php bin/lint.php",
     "compat": "php bin/php_compat.php",

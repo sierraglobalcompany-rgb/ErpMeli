@@ -139,7 +139,7 @@ final class QueueCoreReadinessReceiptService
         // La certificación ya ligó el dump a los conteos vivos previos. En el CAS se
         // vuelve a abrir y verificar el mismo artefacto/hash sin rechazar crecimiento
         // legítimo producido por el canario de solo lectura.
-        if(!(new QueueCoreReleaseEvidenceService($this->pdo))->verifyBackup($backupPath,$backupSha,false)['ok']){
+        if(!(new QueueCoreReleaseEvidenceService($this->pdo))->verifyBackup($backupPath,$backupSha,true)['ok']){
             return ['ok'=>false,'reason'=>'backup_artifact_unavailable'];
         }
         $manifest = (new \App\Services\QueueCoreDeploymentGateService($this->pdo))->runtimeManifestCheck();

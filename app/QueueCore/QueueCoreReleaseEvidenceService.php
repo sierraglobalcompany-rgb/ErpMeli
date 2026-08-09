@@ -485,18 +485,18 @@ final class QueueCoreReleaseEvidenceService
                AND table_name<>'queue_engine_control'"
         );
         $current=array_map('strval',$statement->fetchAll(PDO::FETCH_COLUMN));
-        $missing=0;$schemaMismatch=0;
+        $missing=0;$schemaMismatch=0;$schemaMismatchTables=[];
         foreach($current as $table){
             if(!isset($dumpTables[strtolower($table)]))$missing++;
             $show=$this->pdo->query('SHOW CREATE TABLE `'.$table.'`')->fetch(PDO::FETCH_NUM);
             $liveCreate=is_array($show)?(string)($show[1]??''):'';
             $liveHash=$liveCreate!==''?hash('sha256',$this->canonicalCreateSql($liveCreate)):'';
             if($liveHash===''||!isset($dumpSchemaHashes[$table])||!hash_equals($liveHash,$dumpSchemaHashes[$table])){
-                $schemaMismatch++;
+                $schemaMismatch++;$schemaMismatchTables[]=$table;
             }
         }
 
-        $criticalMissing=0;$rowCountMismatch=0;
+        $criticalMissing=0;$rowCountMismatch=0;$criticalMissingTables=[];$rowCountMismatchTables=[];
         $dataCritical=['companies','users','app_settings','schema_migrations','meli_accounts','meli_tokens',
             'meli_orders','meli_order_items','meli_payments','meli_shipments'];
         $identityCounts=['companies','users','meli_accounts','meli_tokens'];
@@ -509,21 +509,27 @@ final class QueueCoreReleaseEvidenceService
             if($count>0 && !isset($dumpDataTables[$table])
                 && (!$allowCommercialGrowth || !$commercial || $dumpCount>0)) {
                 $criticalMissing++;
+                $criticalMissingTables[]=$table;
             }
             if(in_array($table,$identityCounts,true) && $count!==$dumpCount) {
                 $rowCountMismatch++;
+                $rowCountMismatchTables[]=$table;
             }elseif($commercial
                 && ((!$allowCommercialGrowth && $count!==$dumpCount)
                     || ($allowCommercialGrowth && $count<$dumpCount))) {
                 $rowCountMismatch++;
+                $rowCountMismatchTables[]=$table;
             }
         }
         return [
             'current_table_count'=>count($current),
             'missing_table_count'=>$missing,
             'schema_mismatch_count'=>$schemaMismatch,
+            'schema_mismatch_tables'=>$schemaMismatchTables,
             'critical_data_missing_count'=>$criticalMissing,
+            'critical_data_missing_tables'=>$criticalMissingTables,
             'critical_row_count_mismatch_count'=>$rowCountMismatch,
+            'critical_row_count_mismatch_tables'=>$rowCountMismatchTables,
         ];
     }
 

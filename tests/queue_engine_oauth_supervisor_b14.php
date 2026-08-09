@@ -174,6 +174,9 @@ $check = static function (bool $condition, string $message) use (&$passed, &$tot
     $passed++;
 };
 $check(AppPaths::privateRoot() === $private, 'test private root was not isolated: ' . AppPaths::privateRoot());
+$preflightSource=(string)file_get_contents($root.'/app/QueueCore/QueueCorePreflightService.php');
+$check(str_contains($preflightSource,"max(30,min(600,(new AppSettingsService())->int('oauth.token_expiry_skew_seconds',120)))"),
+    'Preflight OAuth skew diverged from the bounded runtime authority.');
 
 // B2 cutover is intentionally fail-closed. The fixture must establish the
 // same explicit safety state, feature authorities and scoped receipts that a

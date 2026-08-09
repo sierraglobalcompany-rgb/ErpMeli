@@ -181,7 +181,7 @@
         },
         "runtime_app_queuecore_queuecorecapacityservice_php": {
             "path": "app/QueueCore/QueueCoreCapacityService.php",
-            "sha256": "5fa113f3734e592fa531346e36d402071a47e933dc477d25254b69b36138c121",
+            "sha256": "294c812be96eca92a711b2d7aa9127a3731bb4bb3db6f26feb436e8a887450e1",
             "sha256_lf": "5fa113f3734e592fa531346e36d402071a47e933dc477d25254b69b36138c121",
             "text": true
         },
@@ -241,8 +241,8 @@
         },
         "runtime_app_queuecore_queuecorepreflightservice_php": {
             "path": "app/QueueCore/QueueCorePreflightService.php",
-            "sha256": "f25846f3042126d5e7860e3ece9c4670d3b10a95b94f53c7b2ca629e96fc83a7",
-            "sha256_lf": "d6eba11c357f7ff7b6b933f0ab231158156505e37a055574726c1e6eb2dea691",
+            "sha256": "f44731651dacd0ab9da3c8763306d5d4b423823a50a6650ee424288a4f320d47",
+            "sha256_lf": "5b0d23b15d186f0a96d32b8de7e90a321d48b774c7283eec0d62e52cc0995de7",
             "text": true
         },
         "runtime_app_queuecore_queuecorereadinessreceiptservice_php": {

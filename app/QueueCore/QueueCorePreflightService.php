@@ -159,7 +159,7 @@ final class QueueCorePreflightService
                  WHERE a.status IN ("conectado","connected")
                  ORDER BY a.company_id,a.id'
             );
-            $expirySkew=max(60,(new AppSettingsService())->int('oauth.token_expiry_skew_seconds',120));
+            $expirySkew=max(30,min(600,(new AppSettingsService())->int('oauth.token_expiry_skew_seconds',120)));
             foreach ($query->fetchAll(PDO::FETCH_ASSOC) as $row) {
                 $credentialsDecryptable=false;
                 try {

@@ -50,7 +50,7 @@ $assert($has($issues, 'package_required_missing:' . $topicsPath), 'Missing topic
 $stale = $files;
 $stale[$topicsPath] = RuntimePublicationPolicy::gitBlob(
     $root,
-    RuntimePublicationPolicy::BASE_COMMIT,
+    RuntimePublicationPolicy::INSTALLED_BASE_COMMIT,
     $topicsPath,
 );
 $issues = RuntimePublicationPolicy::packageIssues($root, $manifest, $stale);
@@ -162,7 +162,7 @@ try {
         'Dirty working-tree VERSION bypassed mandatory Git-exact publication.');
     $export = $clone . DIRECTORY_SEPARATOR . 'non-git-export';
     mkdir($export);
-    file_put_contents($export . DIRECTORY_SEPARATOR . 'VERSION', "2.36.0\n");
+    file_put_contents($export . DIRECTORY_SEPARATOR . 'VERSION', "2.36.1\n");
     [$exportExit, , $exportError] = $run([
         PHP_BINARY,
         $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',
@@ -171,7 +171,7 @@ try {
         '--release-id=b21a-export-bypass-test',
     ], $clone);
     $assert($exportExit !== 0 && str_contains($exportError, 'exige --git-exact=1'),
-        'A non-Git 2.36.0 export bypassed mandatory Git-exact publication.');
+        'A non-Git 2.36.1 export bypassed mandatory Git-exact publication.');
     [$subdirExit, , $subdirError] = $run([
         PHP_BINARY,
         $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',

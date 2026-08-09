@@ -51,29 +51,42 @@ try {
     rpGit($root, ['config', 'user.name', 'Runtime Policy Test']);
     foreach ([
         'VERSION', 'asset.php', 'bootstrap.php', 'index.php', 'login.php', 'actualizar.php',
-        'stop.php', 'mantenimiento.php', 'recuperar.php', 'launcher/entrypoint.php',
+        'stop.php', 'mantenimiento.php', 'recuperar.php', 'cron-status.php', 'launcher/entrypoint.php',
         'public/index.php', 'resources/runtime-manifest.json', 'app/Test.php',
     ] as $path) {
-        rpWrite($root, $path, $path === 'VERSION' ? "2.36.0\n" : "<?php // {$path}\n");
+        rpWrite($root, $path, $path === 'VERSION' ? "2.36.1\n" : "<?php // {$path}\n");
     }
-    rpWrite($root, 'resources/data.json', "{}\n");
+    rpWrite($root, 'config.env.example', "EXAMPLE=1\n");
+    rpWrite($root, 'resources/mercadolibre-api/generated/data.json', "{}\n");
     $registry = [
         'schema_version' => 1,
         'runtime_manifest_paths_sha256' => hash('sha256', implode("\n", [
+            'VERSION',
+            'actualizar.php',
             'app/Test.php',
-            'resources/data.json',
+            'asset.php',
+            'bootstrap.php',
+            'cron-status.php',
+            'index.php',
+            'launcher/entrypoint.php',
+            'login.php',
+            'mantenimiento.php',
+            'public/index.php',
+            'recuperar.php',
+            'resources/mercadolibre-api/generated/data.json',
             'resources/release/queue-core-runtime-dependencies.json',
+            'stop.php',
         ]) . "\n"),
         'classification_rules' => [
             ['id' => 'runtime-files', 'classification' => 'RUNTIME_REQUIRED', 'kind' => 'regex',
-                'value' => '#^(?:app/.*\\.php|resources/(?:data\\.json|release/queue-core-runtime-dependencies\\.json))$#D'],
+                'value' => '#^(?:app/.*\\.php|resources/(?:mercadolibre-api/generated/data\\.json|release/queue-core-runtime-dependencies\\.json))$#D'],
         ],
         'runtime_dependencies' => [
             ['id' => 'registry', 'path' => 'resources/release/queue-core-runtime-dependencies.json',
                 'classification' => 'RUNTIME_REQUIRED', 'required_in_runtime_manifest' => true,
                 'consumers' => [['source_path' => 'app/Test.php', 'symbol' => 'test', 'path_literal' => 'registry']],
                 'provenance' => ['kind' => 'generated']],
-            ['id' => 'data', 'path' => 'resources/data.json', 'classification' => 'RUNTIME_REQUIRED',
+            ['id' => 'data', 'path' => 'resources/mercadolibre-api/generated/data.json', 'classification' => 'RUNTIME_REQUIRED',
                 'required_in_runtime_manifest' => true,
                 'consumers' => [['source_path' => 'app/Test.php', 'symbol' => 'test', 'path_literal' => 'data']],
                 'provenance' => ['kind' => 'source']],
@@ -94,7 +107,7 @@ try {
     rpAssert(RuntimePublicationPolicy::installedManifestIssues($root, $manifest) === [], 'installed completeness rejected');
 
     $missing = $manifest;
-    unset($missing['components']['runtime_resources_data_json']);
+    unset($missing['components']['runtime_resources_mercadolibre_api_generated_data_json']);
     rpAssert((bool) array_filter(RuntimePublicationPolicy::manifestIssues($root, $missing, $head, $base),
         static fn (string $issue): bool => str_starts_with($issue, 'manifest_component_missing:')), 'missing not detected');
     rpAssert((bool) array_filter(RuntimePublicationPolicy::installedManifestIssues($root, $missing),
@@ -120,11 +133,11 @@ try {
         RuntimePublicationPolicy::manifestIssues($root, $stale, $head, $base), true), 'stale hash not detected');
 
     $orphan = $manifest;
-    $orphan['components']['runtime_version'] = [
-        'path' => 'VERSION', 'sha256' => hash('sha256', "2.36.0\n"),
-        'sha256_lf' => hash('sha256', "2.36.0\n"), 'text' => true,
+    $orphan['components']['runtime_config_env_example'] = [
+        'path' => 'config.env.example', 'sha256' => hash('sha256', "EXAMPLE=1\n"),
+        'sha256_lf' => hash('sha256', "EXAMPLE=1\n"), 'text' => true,
     ];
-    rpAssert(in_array('manifest_component_orphan:VERSION',
+    rpAssert(in_array('manifest_component_orphan:config.env.example',
         RuntimePublicationPolicy::manifestIssues($root, $orphan, $head, $base), true), 'orphan not detected');
 
     $case = $manifest;

@@ -110,7 +110,7 @@ function targetSources(string $root, string $target, array $classified, array $r
  * @param array<string,string> $sources
  * @return list<array{path:string,source_paths:list<string>}>
  */
-function discoverStaticRuntimeDependencies(array $sources, array $operations): array
+function discoverStaticRuntimeDependencies(array $sources, array $operations, array $registeredPaths = []): array
 {
     $found = [];
     $operationPattern = implode('|', array_map(static fn (string $value): string => preg_quote($value, '#'), $operations));
@@ -142,7 +142,7 @@ function discoverStaticRuntimeDependencies(array $sources, array $operations): a
         ) {
             foreach ($sourceMatches[0] as $path) {
                 $path = rtrim((string) $path, './');
-                if ($path === '' || strpbrk($path, '*?') !== false) {
+                if ($path === '' || strpbrk($path, '*?') !== false || !isset($registeredPaths[$path])) {
                     continue;
                 }
                 $found[$path] ??= [];
@@ -281,8 +281,12 @@ foreach ($classified as $path => $classification) {
     }
 }
 $runtimeManifestOrphanedDelta = [];
+$fullManagedRuntime = ($manifest['publication_policy']['authority_model'] ?? null) === 'FULL_MANAGED_RUNTIME';
 foreach ($manifestPaths as $path) {
-    if (isset($classified[$path]) && !in_array($classified[$path], $manifestRequiredClasses, true)) {
+    if (!$fullManagedRuntime
+        && isset($classified[$path])
+        && !in_array($classified[$path], $manifestRequiredClasses, true)
+    ) {
         $runtimeManifestOrphanedDelta[] = $path;
     }
 }
@@ -331,7 +335,11 @@ foreach ($consumerIssues as $consumerIssue) {
 $sources = targetSources($root, $target, $classified, $registry, $issues);
 $scan = is_array($registry['static_scan'] ?? null) ? $registry['static_scan'] : [];
 $operations = is_array($scan['loader_operations'] ?? null) ? array_values($scan['loader_operations']) : [];
-$staticDiscovered = discoverStaticRuntimeDependencies($sources, $operations);
+$staticDiscovered = discoverStaticRuntimeDependencies(
+    $sources,
+    $operations,
+    array_fill_keys(array_keys($dependenciesByPath), true),
+);
 $staticUnregistered = [];
 foreach ($staticDiscovered as $discovered) {
     if (!isset($dependenciesByPath[$discovered['path']])) {

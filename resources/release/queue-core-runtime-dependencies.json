@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "queue-core-b2.1-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "ca29d9de4736f35880286e84583509c38f7e72972c92009c6d686c114176b564",
+  "runtime_manifest_paths_sha256": "966c7ae31d77f976967ed1887ec8ae2555cbfa155ef688fda5390aaee80d2dac",
   "coverage_base_commit": "f91cd534d271b964db1ad9e682260475eca96820",
   "blocked_rc_snapshot": {
     "commit": "4ecd154f0a219a07d6ce0dc152be59037e9ef98b",
@@ -55,6 +55,7 @@
         ".gitattributes",
         "VERSION",
         "bin/build_runtime_manifest_b21.php",
+        "bin/build_managed_runtime_release.php",
         "bin/build_update_package.php",
         "bin/queue_core_dependency_check.php",
         "composer.json",

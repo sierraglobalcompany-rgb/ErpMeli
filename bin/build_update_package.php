@@ -74,7 +74,7 @@ if ($gitExact && !$sameRoot) {
 }
 $headVersion = $sameRoot ? trim(RuntimePublicationPolicy::gitBlob($source, 'HEAD', 'VERSION')) : null;
 if ($headVersion === RuntimePublicationPolicy::VERSION && !$gitExact) {
-    fwrite(STDERR, "La release 2.36.0 exige --git-exact=1.\n");
+    fwrite(STDERR, 'La release ' . RuntimePublicationPolicy::VERSION . " exige --git-exact=1.\n");
     exit(3);
 }
 $version = $gitExact
@@ -85,7 +85,7 @@ if (preg_match('/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?$/', $version) !== 1) {
     exit(2);
 }
 if ($version === RuntimePublicationPolicy::VERSION && !$gitExact) {
-    fwrite(STDERR, "La release 2.36.0 exige --git-exact=1.\n");
+    fwrite(STDERR, 'La release ' . RuntimePublicationPolicy::VERSION . " exige --git-exact=1.\n");
     exit(3);
 }
 $releaseId = strtolower((string) ($arguments['release-id'] ?? ($version . '-' . gmdate('YmdHis'))));
@@ -192,6 +192,7 @@ foreach ([
     'stop.php',
     'mantenimiento.php',
     'recuperar.php',
+    'cron-status.php',
     'launcher/entrypoint.php',
     'public/index.php',
     'resources/runtime-manifest.json',

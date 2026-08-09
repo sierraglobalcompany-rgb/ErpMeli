@@ -28,38 +28,24 @@ final class RuntimePublicationPolicy
     ];
     private const MANIFEST_CLASSIFICATIONS = ['RUNTIME_REQUIRED', 'MIGRATION_DEPLOY_REQUIRED'];
     private const DEPENDENCY_REGISTRY = 'resources/release/queue-core-runtime-dependencies.json';
-    public const BASE_COMMIT = 'f91cd534d271b964db1ad9e682260475eca96820';
-    public const VERSION = '2.36.0';
-    public const BUILD_ID = 'erp-meli-2.36.0-cron-v4-readonly-rc1-20260809';
+    public const BASE_COMMIT = '0cb5ddab368d033e15bdb040b53bb8592248246c';
+    public const INSTALLED_BASE_COMMIT = 'f91cd534d271b964db1ad9e682260475eca96820';
+    public const VERSION = '2.36.1';
+    public const BUILD_ID = 'erp-meli-2.36.1-managed-runtime-cutover-rc1-20260809';
     public const BUILT_AT = '2026-08-09T00:00:00Z';
     public const MINIMUM_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
 
     /** @return list<string> */
     public static function manifestPaths(string $root, string $head = 'HEAD', string $base = self::BASE_COMMIT): array
     {
-        $tree = self::gitTree($root, $head);
-        $registry = self::dependencyRegistry($root, $head);
         $paths = [];
-        $changed = self::changedPaths($root, $base, $head);
-        foreach ($changed as $path) {
-            $classification = self::classifyPath($path, $registry['classification_rules']);
-            if (in_array($classification, self::MANIFEST_CLASSIFICATIONS, true)) {
-                $paths[] = $path;
-            } elseif ($classification === 'FRONTEND_STATIC') {
-                if (!self::frontendArtifactAttested($path, $registry)) {
-                    throw new RuntimeException('Changed frontend artifact is not attested: ' . $path);
-                }
-                $paths[] = $path;
+        foreach (self::packageEntries($root, $head) as $entry) {
+            // The manifest is a Git-exact package member, but cannot hash itself.
+            if ($entry['path'] !== 'resources/runtime-manifest.json') {
+                $paths[] = $entry['path'];
             }
         }
-        foreach ($registry['runtime_dependencies'] as $dependency) {
-            if (($dependency['required_in_runtime_manifest'] ?? null) === true) {
-                $paths[] = (string) $dependency['path'];
-            }
-        }
-        $paths = array_values(array_unique($paths));
         sort($paths, SORT_STRING);
-        self::assertTreePaths($paths, $tree, 'manifest');
         return $paths;
     }
 
@@ -98,10 +84,14 @@ final class RuntimePublicationPolicy
             'minimum_migration' => self::MINIMUM_MIGRATION,
             'publication_policy' => [
                 'base_commit' => $base,
+                'authority_model' => 'FULL_MANAGED_RUNTIME',
+                'package_file_count' => count(self::packageEntries($root, $headCommit)),
                 'component_count' => count($paths),
                 'paths_sha256' => self::pathInventoryHash(array_values($paths)),
                 'dependency_registry_sha256' => hash('sha256', $registryBytes),
                 'raw_git_blobs' => true,
+                'protected_external_state_excluded' => true,
+                'build_only_excluded' => true,
             ],
             'components' => $components,
         ];
@@ -183,10 +173,14 @@ final class RuntimePublicationPolicy
         $policy = $manifest['publication_policy'] ?? null;
         if (!is_array($policy)
             || !hash_equals($base, (string) ($policy['base_commit'] ?? ''))
+            || !hash_equals('FULL_MANAGED_RUNTIME', (string) ($policy['authority_model'] ?? ''))
+            || (int) ($policy['package_file_count'] ?? -1) !== count(self::packageEntries($root, $headCommit))
             || (int) ($policy['component_count'] ?? -1) !== count($expected)
             || !hash_equals(self::pathInventoryHash($expected), (string) ($policy['paths_sha256'] ?? ''))
             || !hash_equals($registryHash, (string) ($policy['dependency_registry_sha256'] ?? ''))
             || ($policy['raw_git_blobs'] ?? null) !== true
+            || ($policy['protected_external_state_excluded'] ?? null) !== true
+            || ($policy['build_only_excluded'] ?? null) !== true
         ) {
             $issues[] = 'manifest_publication_policy_mismatch';
         }
@@ -246,10 +240,14 @@ final class RuntimePublicationPolicy
         }
         $policy = $manifest['publication_policy'] ?? null;
         if (!is_array($policy)
+            || !hash_equals('FULL_MANAGED_RUNTIME', (string) ($policy['authority_model'] ?? ''))
+            || (int) ($policy['package_file_count'] ?? -1) !== count($paths) + 1
             || (int) ($policy['component_count'] ?? -1) !== count($paths)
             || !hash_equals(self::pathInventoryHash($paths), (string) ($policy['paths_sha256'] ?? ''))
             || !hash_equals(hash('sha256', $registryBytes), (string) ($policy['dependency_registry_sha256'] ?? ''))
             || ($policy['raw_git_blobs'] ?? null) !== true
+            || ($policy['protected_external_state_excluded'] ?? null) !== true
+            || ($policy['build_only_excluded'] ?? null) !== true
         ) {
             $issues[] = 'manifest_publication_policy_mismatch';
         }
@@ -334,7 +332,14 @@ final class RuntimePublicationPolicy
         $tree = self::gitTree($root, $headCommit);
         $paths = [];
         foreach ($tree as $path => $entry) {
-            if (self::isPackagePath($path)) {
+            $classification = self::trackedPathClassification($path);
+            if ($classification === 'UNCLASSIFIED') {
+                throw new RuntimeException('Tracked path has no release classification: ' . $path);
+            }
+            if ($classification === 'PROTECTED_EXTERNAL_STATE') {
+                throw new RuntimeException('Protected external state must not be Git-tracked: ' . $path);
+            }
+            if (in_array($classification, ['MANAGED_RUNTIME', 'MIGRATION'], true)) {
                 $paths[] = $path;
             }
         }
@@ -342,7 +347,7 @@ final class RuntimePublicationPolicy
         self::assertTreePaths($paths, $tree, 'package');
         $required = [
             'VERSION', 'asset.php', 'bootstrap.php', 'index.php', 'login.php', 'actualizar.php',
-            'stop.php', 'mantenimiento.php', 'recuperar.php', 'launcher/entrypoint.php',
+            'stop.php', 'mantenimiento.php', 'recuperar.php', 'cron-status.php', 'launcher/entrypoint.php',
             'public/index.php', 'resources/runtime-manifest.json',
         ];
         foreach ($required as $path) {
@@ -350,13 +355,20 @@ final class RuntimePublicationPolicy
                 throw new RuntimeException('Required package path is missing: ' . $path);
             }
         }
+        $objects = [];
+        foreach ($paths as $path) {
+            $objects[] = $tree[$path]['object'];
+        }
+        $blobs = self::gitBlobsByObject($root, $objects);
         $entries = [];
         foreach ($paths as $path) {
-            $bytes = self::gitBlob($root, $headCommit, $path);
+            $object = $tree[$path]['object'];
+            $bytes = $blobs[$object] ?? throw new RuntimeException('Git blob batch is incomplete: ' . $path);
+            self::$gitBlobCache[str_replace('\\', '/', $root) . '|' . $headCommit . '|' . $path] = $bytes;
             $entries[] = [
                 'path' => $path,
                 'mode' => $tree[$path]['mode'],
-                'object' => $tree[$path]['object'],
+                'object' => $object,
                 'size' => strlen($bytes),
                 'sha256' => hash('sha256', $bytes),
             ];
@@ -364,6 +376,65 @@ final class RuntimePublicationPolicy
         self::$packageEntryCache[$cacheKey] = $entries;
 
         return $entries;
+    }
+
+    /** @param list<string> $objects @return array<string,string> */
+    private static function gitBlobsByObject(string $root, array $objects): array
+    {
+        $objects = array_values(array_unique($objects));
+        $input = tmpfile();
+        if (!is_resource($input)) {
+            throw new RuntimeException('Unable to create Git blob batch input.');
+        }
+        foreach ($objects as $object) {
+            fwrite($input, $object . "\n");
+        }
+        rewind($input);
+        $pipes = [];
+        $process = proc_open(['git', '-C', $root, 'cat-file', '--batch'], [
+            0 => $input, 1 => ['pipe', 'w'], 2 => ['pipe', 'w'],
+        ], $pipes, null, null, ['bypass_shell' => true]);
+        if (!is_resource($process)) {
+            fclose($input);
+            throw new RuntimeException('Unable to start Git blob batch.');
+        }
+        $blobs = [];
+        foreach ($objects as $expectedObject) {
+            $header = fgets($pipes[1]);
+            if (!is_string($header)
+                || preg_match('/^([a-f0-9]{40}) blob ([0-9]+)\n$/', $header, $match) !== 1
+                || !hash_equals($expectedObject, $match[1])
+            ) {
+                fclose($pipes[1]);
+                $stderr = stream_get_contents($pipes[2]);
+                fclose($pipes[2]);
+                fclose($input);
+                proc_close($process);
+                throw new RuntimeException('Malformed Git blob batch: ' . trim((string) $stderr));
+            }
+            $remaining = (int) $match[2];
+            $bytes = '';
+            while ($remaining > 0) {
+                $chunk = fread($pipes[1], $remaining);
+                if (!is_string($chunk) || $chunk === '') {
+                    throw new RuntimeException('Truncated Git blob batch.');
+                }
+                $bytes .= $chunk;
+                $remaining -= strlen($chunk);
+            }
+            if (fread($pipes[1], 1) !== "\n") {
+                throw new RuntimeException('Malformed Git blob batch delimiter.');
+            }
+            $blobs[$expectedObject] = $bytes;
+        }
+        fclose($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[2]);
+        fclose($input);
+        if (proc_close($process) !== 0) {
+            throw new RuntimeException('Git blob batch failed: ' . trim((string) $stderr));
+        }
+        return $blobs;
     }
 
     public static function gitBlob(string $root, string $head, string $path): string
@@ -440,29 +511,76 @@ final class RuntimePublicationPolicy
         }
     }
 
-    private static function isPackagePath(string $path): bool
+    /**
+     * Classify every tracked path independently of release deltas. Unknown
+     * paths fail publication instead of silently falling outside authority.
+     */
+    public static function trackedPathClassification(string $path): string
     {
-        $allowedRootFiles = [
-            '.htaccess', 'asset.php', 'actualizar.php', 'bootstrap.php', 'composer.json', 'composer.lock',
-            'config.env.example', 'index.php', 'login.php', 'mantenimiento.php', 'recuperar.php', 'stop.php', 'VERSION',
-        ];
+        if (!self::safePath($path)) {
+            return 'UNCLASSIFIED';
+        }
         $segments = explode('/', $path);
+        $lowerSegments = array_map('strtolower', $segments);
+        $basename = strtolower((string) end($lowerSegments));
+        if (in_array($basename, ['.env', 'config.env', 'pause_meli_api', 'pause_erp_automation'], true)
+            || in_array(strtolower($segments[0]), [
+                'storage', 'shared', 'uploads', 'backups', 'production-backups',
+                'releases', 'oauth-recovery', 'emergency-control',
+            ], true)
+        ) {
+            return 'PROTECTED_EXTERNAL_STATE';
+        }
+
         if (count($segments) === 1) {
-            return in_array($path, $allowedRootFiles, true);
-        }
-        if (!in_array($segments[0], ['app', 'database', 'jobs', 'launcher', 'public', 'resources', 'stop'], true)) {
-            return false;
-        }
-        foreach ($segments as $segment) {
-            if (in_array(strtolower($segment), [
-                '.git', '.github', '.idea', '.vscode', 'audits', 'docs', 'graphify-out',
-                'node_modules', 'tests', 'tmp', 'tools', 'vendor',
+            if (in_array($path, [
+                '.htaccess', 'VERSION', 'actualizar.php', 'asset.php', 'bootstrap.php',
+                'composer.json', 'composer.lock', 'cron-status.php', 'index.php', 'login.php',
+                'mantenimiento.php', 'recuperar.php', 'stop.php',
             ], true)) {
-                return false;
+                return 'MANAGED_RUNTIME';
             }
+            if (in_array($path, ['.gitattributes', '.gitignore', 'config.env.example', 'phpstan.neon'], true)) {
+                return 'BUILD_ONLY';
+            }
+            return 'UNCLASSIFIED';
         }
-        return preg_match('#(^|/)(?:PAUSE_MELI_API|PAUSE_ERP_AUTOMATION|config\.env|\.env)$#i', $path) !== 1
-            && preg_match('#\.(?:sql\.gz|erpbackup|log|bak|dump)$#i', $path) !== 1;
+
+        $top = strtolower($segments[0]);
+        if ($top === 'tests') {
+            return 'TEST_ONLY';
+        }
+        if (in_array($top, ['bin', '.github', 'tools'], true)) {
+            return 'BUILD_ONLY';
+        }
+        if (in_array($top, ['docs', 'audits', 'graphify-out'], true)) {
+            return 'NON_RUNTIME';
+        }
+        if ($top === 'database') {
+            return preg_match('#^database/migrations/[A-Za-z0-9._-]+\.sql$#D', $path) === 1
+                ? 'MIGRATION'
+                : 'NON_RUNTIME';
+        }
+        if ($top === 'app' || $top === 'jobs' || $top === 'launcher' || $top === 'stop') {
+            return str_ends_with(strtolower($path), '.php') ? 'MANAGED_RUNTIME' : 'UNCLASSIFIED';
+        }
+        if ($top === 'public') {
+            return 'MANAGED_RUNTIME';
+        }
+        if ($top === 'resources') {
+            if (str_starts_with(strtolower($path), 'resources/mercadolibre-api/source/')) {
+                return 'NON_RUNTIME';
+            }
+            if (preg_match('#^resources/mercadolibre-api/generated/[A-Za-z0-9._-]+\.json$#D', $path) === 1
+                || preg_match('#^resources/modules/[A-Za-z0-9._-]+/module\.json$#D', $path) === 1
+                || preg_match('#^resources/release/[A-Za-z0-9._-]+\.json$#D', $path) === 1
+                || in_array($path, ['resources/migration-replacements.json', 'resources/runtime-manifest.json'], true)
+            ) {
+                return 'MANAGED_RUNTIME';
+            }
+            return 'UNCLASSIFIED';
+        }
+        return 'UNCLASSIFIED';
     }
 
     private static function componentKey(string $path): string

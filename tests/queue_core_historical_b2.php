@@ -394,6 +394,10 @@ $scenario('deployment_gate_verifies_schema_and_backup', static function () use (
     }
     $backupSql .= "INSERT INTO `app_settings` VALUES ('fixture');\nINSERT INTO `schema_migrations` VALUES ('fixture');\n";
     file_put_contents($backup, $backupSql);
+    $invalidBackup = tempnam(sys_get_temp_dir(), 'qc-b2-invalid-backup-');
+    if (!is_string($invalidBackup)) {
+        throw new RuntimeException('invalid temporary backup could not be created');
+    }
     try {
         $sha = hash_file('sha256', $backup);
         putenv('QUEUE_CORE_APPROVED_BACKUP_SHA256=' . $sha);
@@ -405,6 +409,22 @@ $scenario('deployment_gate_verifies_schema_and_backup', static function () use (
             .(string)json_encode($verification,JSON_UNESCAPED_SLASHES));
         $gate = (new QueueCoreDeploymentGateService($pdo))->inspect($backup, is_string($sha) ? $sha : '');
         $assert($gate['ok'], 'deployment gate rejected complete disabled schema: ' . implode(',', $gate['issues']));
+
+        $invalidBackupSql=(string)preg_replace(
+            '/(CREATE TABLE `meli_orders`.*?)(\n\) ENGINE=)/s',
+            '$1,' . "\n  `queue_snapshot_version` LONGTEXT NOT NULL,"
+                . "\n  `queue_snapshot_at` DATETIME(6) NULL" . '$2',
+            $backupSql,
+            1,
+        );
+        file_put_contents($invalidBackup,$invalidBackupSql);
+        $invalidSha=(string)hash_file('sha256',$invalidBackup);
+        putenv('QUEUE_CORE_APPROVED_BACKUP_SHA256='.$invalidSha);
+        putenv('QUEUE_CORE_APPROVED_BACKUP_PATH='.$invalidBackup);
+        $assert(!$evidence->verifyBackup($invalidBackup,$invalidSha)['ok'],
+            'backup verification accepted snapshot columns inside the pre-B2 dump');
+        putenv('QUEUE_CORE_APPROVED_BACKUP_SHA256=' . $sha);
+        putenv('QUEUE_CORE_APPROVED_BACKUP_PATH=' . $backup);
 
         $pdo->exec('ALTER TABLE meli_orders DROP COLUMN queue_snapshot_at, DROP COLUMN queue_snapshot_version');
         $assert(!$evidence->verifyBackup($backup,(string)$sha)['ok'],
@@ -422,20 +442,42 @@ $scenario('deployment_gate_verifies_schema_and_backup', static function () use (
         $assert(!$evidence->verifyBackup($backup,(string)$sha)['ok'],
             'backup verification accepted the wrong queue snapshot nullability');
         $pdo->exec('ALTER TABLE meli_orders MODIFY queue_snapshot_at DATETIME(3) NULL');
+
+        $pdo->exec('ALTER TABLE meli_orders MODIFY queue_snapshot_at DATETIME(3) NULL AFTER synced_at');
+        $assert(!$evidence->verifyBackup($backup,(string)$sha)['ok'],
+            'backup verification accepted reordered migration 284 columns');
+        $pdo->exec('ALTER TABLE meli_orders
+            MODIFY queue_snapshot_version CHAR(64) NULL AFTER synced_at,
+            MODIFY queue_snapshot_at DATETIME(3) NULL AFTER queue_snapshot_version');
+
+        $pdo->exec("ALTER TABLE meli_orders MODIFY queue_snapshot_version CHAR(64) NULL DEFAULT ''");
+        $assert(!$evidence->verifyBackup($backup,(string)$sha)['ok'],
+            'backup verification accepted a non-NULL queue snapshot default');
+        $pdo->exec('ALTER TABLE meli_orders MODIFY queue_snapshot_version CHAR(64) NULL DEFAULT NULL');
+
+        $pdo->exec('ALTER TABLE meli_orders DROP COLUMN queue_snapshot_at, DROP COLUMN queue_snapshot_version');
+        $pdo->exec("ALTER TABLE meli_orders
+            ADD COLUMN queue_snapshot_version CHAR(64)
+                GENERATED ALWAYS AS (REPEAT('x',64)) VIRTUAL AFTER synced_at,
+            ADD COLUMN queue_snapshot_at DATETIME(3) NULL AFTER queue_snapshot_version");
+        $assert(!$evidence->verifyBackup($backup,(string)$sha)['ok'],
+            'backup verification accepted a generated queue snapshot column');
     } finally {
-        $columns=(int)$pdo->query(
-            "SELECT COUNT(*) FROM information_schema.columns
+        $snapshotColumns=$pdo->query(
+            "SELECT LOWER(column_name) FROM information_schema.columns
              WHERE table_schema=DATABASE() AND table_name='meli_orders'
                AND column_name IN ('queue_snapshot_version','queue_snapshot_at')"
-        )->fetchColumn();
-        if($columns!==2){
-            $pdo->exec('ALTER TABLE meli_orders
-                ADD COLUMN queue_snapshot_version CHAR(64) NULL AFTER synced_at,
-                ADD COLUMN queue_snapshot_at DATETIME(3) NULL AFTER queue_snapshot_version');
-        }else{
-            $pdo->exec('ALTER TABLE meli_orders MODIFY queue_snapshot_version CHAR(64) NULL');
-            $pdo->exec('ALTER TABLE meli_orders MODIFY queue_snapshot_at DATETIME(3) NULL');
+        )->fetchAll(PDO::FETCH_COLUMN);
+        if(in_array('queue_snapshot_at',$snapshotColumns,true)){
+            $pdo->exec('ALTER TABLE meli_orders DROP COLUMN queue_snapshot_at');
         }
+        if(in_array('queue_snapshot_version',$snapshotColumns,true)){
+            $pdo->exec('ALTER TABLE meli_orders DROP COLUMN queue_snapshot_version');
+        }
+        $pdo->exec('ALTER TABLE meli_orders
+            ADD COLUMN queue_snapshot_version CHAR(64) NULL AFTER synced_at,
+            ADD COLUMN queue_snapshot_at DATETIME(3) NULL AFTER queue_snapshot_version');
+        @unlink($invalidBackup);
         @unlink($backup);
     }
 });

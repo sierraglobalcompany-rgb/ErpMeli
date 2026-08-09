@@ -41,7 +41,7 @@ $tables = [
     'queue_core_release_evidence', 'queue_core_health_snapshots', 'queue_core_readiness_receipts',
     'queue_core_webhook_triggers', 'queue_core_attempts', 'queue_core_runs',
     'queue_core_pending_capabilities', 'queue_core_producer_checkpoints', 'queue_core_jobs', 'queue_engine_control',
-    'meli_tokens', 'meli_accounts',
+    'meli_tokens', 'meli_accounts', 'meli_orders',
     'app_settings',
 ];
 $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
@@ -52,6 +52,12 @@ $pdo->exec('SET FOREIGN_KEY_CHECKS=1');
 $pdo->exec('CREATE TABLE meli_accounts(id BIGINT PRIMARY KEY,company_id BIGINT NOT NULL,status VARCHAR(30),last_error VARCHAR(255) NULL)');
 $pdo->exec('CREATE TABLE app_settings(setting_key VARCHAR(191) PRIMARY KEY,setting_value TEXT,is_encrypted TINYINT NOT NULL DEFAULT 0,setting_group VARCHAR(80) NULL)');
 $pdo->exec('CREATE TABLE meli_tokens(meli_account_id BIGINT PRIMARY KEY,expires_at DATETIME(3),refresh_version BIGINT NOT NULL DEFAULT 0)');
+$pdo->exec('CREATE TABLE meli_orders(
+    id BIGINT PRIMARY KEY,
+    synced_at DATETIME NULL,
+    queue_snapshot_version CHAR(64) NULL,
+    queue_snapshot_at DATETIME(3) NULL
+)');
 $pdo->exec('CREATE TABLE queue_core_producer_checkpoints(producer_key VARCHAR(80),company_id BIGINT,meli_account_id BIGINT,watermark_at DATETIME(3),next_due_at DATETIME(3),last_error_class VARCHAR(100),PRIMARY KEY(producer_key,company_id,meli_account_id))');
 $pdo->exec("CREATE TABLE queue_core_jobs(id BIGINT PRIMARY KEY AUTO_INCREMENT,company_id BIGINT,meli_account_id BIGINT,work_type VARCHAR(80),resource_id VARCHAR(191),queue_domain VARCHAR(20),state VARCHAR(30),lane VARCHAR(20),dispatch_state VARCHAR(40),created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3))");
 $pdo->exec("CREATE TABLE queue_core_pending_capabilities(id BIGINT PRIMARY KEY AUTO_INCREMENT,state VARCHAR(30) NOT NULL)");
@@ -98,17 +104,26 @@ $excessiveBacklog['catchup_minutes'] = 11521.0;
 $assert(!$evidence->certifyCapacity(4, $context, $excessiveBacklog, [
     'cadence_seconds' => 60, 'runtime_seconds' => 45, 'safe_close_seconds' => 10, 'max_remote_jobs' => 3,
 ])['ok'], 'An unbounded catch-up horizon certified as deployable capacity.');
+$nonNumericCatchup = $capacity;
+$nonNumericCatchup['catchup_minutes'] = 'not-measured';
+$assert(!$evidence->certifyCapacity(4, $context, $nonNumericCatchup, [
+    'cadence_seconds' => 60, 'runtime_seconds' => 45, 'safe_close_seconds' => 10, 'max_remote_jobs' => 3,
+])['ok'], 'A non-numeric catch-up horizon certified as deployable capacity.');
 
 $backupFixture = tempnam(sys_get_temp_dir(), 'b21-backup-') . '.sql.gz';
 $accountCreate=$pdo->query('SHOW CREATE TABLE `meli_accounts`')->fetch(PDO::FETCH_NUM);
 $tokenCreate=$pdo->query('SHOW CREATE TABLE `meli_tokens`')->fetch(PDO::FETCH_NUM);
 $settingsCreate=$pdo->query('SHOW CREATE TABLE `app_settings`')->fetch(PDO::FETCH_NUM);
+$orderCreate=$pdo->query('SHOW CREATE TABLE `meli_orders`')->fetch(PDO::FETCH_NUM);
+$preB2OrderCreate=(string)preg_replace(
+    '/,?\s*`queue_snapshot_(?:version|at)`\s+[^,\r\n]+/i','',(string)($orderCreate[1]??'')
+);
 $backupSql = (string)($accountCreate[1]??'').";\n"
     . "CREATE TABLE `companies` (`id` BIGINT);\n"
     . "CREATE TABLE `users` (`id` BIGINT);\n"
     . (string)($settingsCreate[1]??'').";\n"
     . (string)($tokenCreate[1]??'').";\n"
-    . "CREATE TABLE `meli_orders` (`id` BIGINT);\n"
+    . $preB2OrderCreate.";\n"
     . "CREATE TABLE `meli_order_items` (`id` BIGINT);\n"
     . "CREATE TABLE `meli_payments` (`id` BIGINT);\n"
     . "CREATE TABLE `meli_shipments` (`id` BIGINT);\n"

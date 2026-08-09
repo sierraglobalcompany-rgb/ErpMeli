@@ -100,7 +100,7 @@ final class QueueCoreReleaseEvidenceService
         ];
     }
 
-    /** @return array{ok:bool,sha256:?string,bytes:int,path_verified:bool,format_valid:bool,table_count:int,data_statements:int,current_table_count:int,missing_table_count:int,schema_mismatch_count:int,identity_mismatch_count:int,critical_data_missing_count:int,critical_row_count_mismatch_count:int} */
+    /** @return array{ok:bool,sha256:?string,bytes:int,path_verified:bool,format_valid:bool,pre_b2_snapshot_columns_absent:bool,table_count:int,data_statements:int,current_table_count:int,missing_table_count:int,schema_mismatch_count:int,identity_mismatch_count:int,critical_data_missing_count:int,critical_row_count_mismatch_count:int} */
     public function verifyBackup(string $path, string $expectedSha256, bool $allowCommercialGrowth = false): array
     {
         $expected = strtolower(trim($expectedSha256));
@@ -116,7 +116,7 @@ final class QueueCoreReleaseEvidenceService
         $content = $exists ? $this->inspectSqlBackup($path) : [
             'format_valid' => false, 'table_count' => 0, 'data_statements' => 0,
             'tables' => [], 'data_tables' => [], 'row_counts'=>[], 'schema_hashes'=>[],
-            'identity_hashes'=>[],
+            'identity_hashes'=>[], 'pre_b2_snapshot_columns_absent'=>false,
         ];
         $inventory = $this->compareBackupWithCurrentDatabase(
             $content['tables'],
@@ -134,6 +134,7 @@ final class QueueCoreReleaseEvidenceService
             && hash_equals($approved, $expected)
             && hash_equals($expected, strtolower($sha))
             && $content['format_valid']
+            && $content['pre_b2_snapshot_columns_absent']
             && $inventory['missing_table_count'] === 0
             && $inventory['schema_mismatch_count'] === 0
             && $inventory['identity_mismatch_count'] === 0
@@ -145,6 +146,7 @@ final class QueueCoreReleaseEvidenceService
             'bytes' => $bytes,
             'path_verified'=>$pathVerified,
             'format_valid' => $content['format_valid'],
+            'pre_b2_snapshot_columns_absent'=>$content['pre_b2_snapshot_columns_absent'],
             'table_count' => $content['table_count'],
             'data_statements' => $content['data_statements'],
         ] + $inventory;
@@ -192,7 +194,7 @@ final class QueueCoreReleaseEvidenceService
     }
 
     /**
-     * @param array<string,float|int> $calculation
+     * @param array<string,float|int|string|null> $calculation
      * @param array{cadence_seconds:int,runtime_seconds:int,safe_close_seconds:int,max_remote_jobs:int} $profile
      * @return array{ok:bool,id:int,calculation:array<string,float|int>}
      */
@@ -211,6 +213,7 @@ final class QueueCoreReleaseEvidenceService
         $persistedSample = (int) ($calculation['measurement_resources_persisted'] ?? 0);
         $backlogResources = max(0, (int) ($calculation['measurement_backlog_resources'] ?? 0));
         $catchupMinutes = isset($calculation['catchup_minutes'])
+            && is_numeric($calculation['catchup_minutes'])
             ? (float) $calculation['catchup_minutes']
             : null;
         $profileValid = $profile['cadence_seconds'] > 0
@@ -372,7 +375,7 @@ final class QueueCoreReleaseEvidenceService
         return ['ok' => $passed, 'id' => $id, 'manifest' => $manifest];
     }
 
-    /** @return array{format_valid:bool,table_count:int,data_statements:int,tables:array<string,true>,data_tables:array<string,true>,row_counts:array<string,int>,schema_hashes:array<string,string>,identity_hashes:array<string,string>} */
+    /** @return array{format_valid:bool,pre_b2_snapshot_columns_absent:bool,table_count:int,data_statements:int,tables:array<string,true>,data_tables:array<string,true>,row_counts:array<string,int>,schema_hashes:array<string,string>,identity_hashes:array<string,string>} */
     private function inspectSqlBackup(string $path): array
     {
         $gzip=str_ends_with(strtolower($path),'.gz');
@@ -380,11 +383,13 @@ final class QueueCoreReleaseEvidenceService
         if($handle===false)return [
             'format_valid'=>false,'table_count'=>0,'data_statements'=>0,
             'tables'=>[],'data_tables'=>[],'row_counts'=>[],'schema_hashes'=>[],'identity_hashes'=>[],
+            'pre_b2_snapshot_columns_absent'=>false,
         ];
         $tables=[];$dataTables=[];$rowCounts=[];$schemaHashes=[];$data=0;$activeDataTable=null;
         $activeCreateTable=null;$activeCreateSql='';
         $identityTables=array_fill_keys(['companies','users','meli_accounts','meli_tokens'],true);
         $identityRows=[];$activeIdentityTable=null;$activeIdentitySql='';
+        $preB2SnapshotColumnsAbsent=true;
         $required=array_fill_keys([
             'companies','users','app_settings','schema_migrations','meli_accounts',
             'meli_tokens','meli_orders','meli_order_items','meli_payments','meli_shipments',
@@ -394,6 +399,9 @@ final class QueueCoreReleaseEvidenceService
                 if($activeCreateTable!==null){
                     $activeCreateSql.=$line;
                     if(str_ends_with(rtrim($line),';')){
+                        if($activeCreateTable==='meli_orders'){
+                            $preB2SnapshotColumnsAbsent=$this->preB2SnapshotColumnsAbsent($activeCreateSql);
+                        }
                         $schemaHashes[$activeCreateTable]=hash(
                             'sha256',$this->canonicalCreateSql($activeCreateSql,$activeCreateTable)
                         );
@@ -405,6 +413,9 @@ final class QueueCoreReleaseEvidenceService
                     $name=strtolower($match[1]);$tables[$name]=true;if(array_key_exists($name,$required))$required[$name]=true;
                     $activeCreateTable=$name;$activeCreateSql=$line;
                     if(str_ends_with(rtrim($line),';')){
+                        if($name==='meli_orders'){
+                            $preB2SnapshotColumnsAbsent=$this->preB2SnapshotColumnsAbsent($activeCreateSql);
+                        }
                         $schemaHashes[$name]=hash('sha256',$this->canonicalCreateSql($activeCreateSql,$name));
                         $activeCreateTable=null;$activeCreateSql='';
                     }
@@ -445,6 +456,7 @@ final class QueueCoreReleaseEvidenceService
         }
         return [
             'format_valid'=>$tables!==[]&&$data>0&&!in_array(false,$required,true),
+            'pre_b2_snapshot_columns_absent'=>$preB2SnapshotColumnsAbsent,
             'table_count'=>count($tables),'data_statements'=>$data,
             'tables'=>$tables,'data_tables'=>$dataTables,'row_counts'=>$rowCounts,'schema_hashes'=>$schemaHashes,
             'identity_hashes'=>$identityHashes,
@@ -467,15 +479,34 @@ final class QueueCoreReleaseEvidenceService
         return strtolower(rtrim($sql," ;\t\r\n"));
     }
 
+    private function preB2SnapshotColumnsAbsent(string $createSql): bool
+    {
+        return preg_match('/[`"]queue_snapshot_(?:version|at)[`"]?/i',$createSql)!==1;
+    }
+
+    private function isNullColumnDefault(mixed $value): bool
+    {
+        return $value===null||strtoupper(trim((string)$value))==='NULL';
+    }
+
     private function queueSnapshotColumnsMatchMigration284(): bool
     {
         $statement=$this->pdo->query(
-            "SELECT LOWER(column_name) column_name,LOWER(data_type) data_type,
-                    character_maximum_length,datetime_precision,UPPER(is_nullable) is_nullable
-             FROM information_schema.columns
-             WHERE table_schema=DATABASE()
-               AND table_name='meli_orders'
-               AND column_name IN ('queue_snapshot_version','queue_snapshot_at')"
+            "SELECT LOWER(c.column_name),LOWER(c.data_type),c.character_maximum_length,
+                    c.datetime_precision,UPPER(c.is_nullable),c.ordinal_position,c.column_default,
+                    c.extra,c.generation_expression,LOWER(c.character_set_name),LOWER(c.collation_name),
+                    LOWER(t.table_collation),LOWER(cca.character_set_name),LOWER(previous.column_name)
+             FROM information_schema.columns c
+             JOIN information_schema.tables t
+               ON t.table_schema=c.table_schema AND t.table_name=c.table_name
+             JOIN information_schema.collation_character_set_applicability cca
+               ON cca.collation_name=t.table_collation
+             LEFT JOIN information_schema.columns previous
+               ON previous.table_schema=c.table_schema AND previous.table_name=c.table_name
+              AND previous.ordinal_position=c.ordinal_position-1
+             WHERE c.table_schema=DATABASE()
+               AND c.table_name='meli_orders'
+               AND c.column_name IN ('queue_snapshot_version','queue_snapshot_at')"
         );
         $columns=[];
         foreach($statement->fetchAll(PDO::FETCH_NUM) as $column){
@@ -484,6 +515,15 @@ final class QueueCoreReleaseEvidenceService
                 'character_maximum_length'=>$column[2]??null,
                 'datetime_precision'=>$column[3]??null,
                 'is_nullable'=>(string)($column[4]??''),
+                'ordinal_position'=>(int)($column[5]??0),
+                'column_default'=>$column[6]??null,
+                'extra'=>(string)($column[7]??''),
+                'generation_expression'=>$column[8]??null,
+                'character_set_name'=>$column[9]??null,
+                'collation_name'=>$column[10]??null,
+                'table_collation'=>$column[11]??null,
+                'table_character_set'=>$column[12]??null,
+                'previous_column'=>$column[13]??null,
             ];
         }
         $version=$columns['queue_snapshot_version']??null;
@@ -492,10 +532,22 @@ final class QueueCoreReleaseEvidenceService
             && $version['data_type']==='char'
             && (int)($version['character_maximum_length']??0)===64
             && $version['is_nullable']==='YES'
+            && $this->isNullColumnDefault($version['column_default'])
+            && trim($version['extra'])===''
+            && ($version['generation_expression']===null||trim((string)$version['generation_expression'])==='')
+            && $version['previous_column']==='synced_at'
+            && $version['character_set_name']===$version['table_character_set']
+            && $version['collation_name']===$version['table_collation']
             && is_array($timestamp)
             && $timestamp['data_type']==='datetime'
             && (int)($timestamp['datetime_precision']??-1)===3
-            && $timestamp['is_nullable']==='YES';
+            && $timestamp['is_nullable']==='YES'
+            && $this->isNullColumnDefault($timestamp['column_default'])
+            && trim($timestamp['extra'])===''
+            && ($timestamp['generation_expression']===null||trim((string)$timestamp['generation_expression'])==='')
+            && $timestamp['previous_column']==='queue_snapshot_version'
+            && $timestamp['character_set_name']===null
+            && $timestamp['collation_name']===null;
     }
 
     private function countSqlValueTuples(string $sql): int

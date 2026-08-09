@@ -231,7 +231,13 @@ $backupTables=array_values(array_unique(array_merge(array_map('strval',$backupTa
 foreach($backupTables as $backupTable){
     if(in_array($backupTable,$actualBackupTables,true)){
         $showCreate=$pdo->query('SHOW CREATE TABLE `'.$backupTable.'`')->fetch(PDO::FETCH_NUM);
-        $backupSql.=(string)($showCreate[1]??'').";\n";
+        $createSql=(string)($showCreate[1]??'');
+        if($backupTable==='meli_orders'){
+            $createSql=(string)preg_replace(
+                '/,?\s*`queue_snapshot_(?:version|at)`\s+[^,\r\n]+/i','',$createSql
+            );
+        }
+        $backupSql.=$createSql.";\n";
     }else{$backupSql.='CREATE TABLE `'.$backupTable."` (`id` BIGINT);\n";}
 }
 foreach(['companies','users','meli_accounts','meli_tokens'] as $backupTable){

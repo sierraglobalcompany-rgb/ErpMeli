@@ -44,6 +44,34 @@ final class MeliWebhookExactGateway implements WebhookExactGateway
         if ($resourceType === 'order' && $this->salePipeline !== null) {
             $this->salePipeline->materializePending(4, $persisted);
         }
+        if ($resourceType === 'pack') {
+            $pack = Database::connectionFresh()->prepare(
+                "SELECT external_shipment_id,
+                        COALESCE(SHA2(raw_json,256),
+                          SHA2(CONCAT(external_pack_id,'|',COALESCE(synced_at,'')),256)) input_version
+                 FROM meli_packs
+                 WHERE id=? AND meli_account_id=? AND external_pack_id=? LIMIT 1"
+            );
+            $pack->execute([$persisted, $meliAccountId, $resourceId]);
+            $snapshot = $pack->fetch(\PDO::FETCH_ASSOC);
+            $shipmentId = trim((string) ($snapshot['external_shipment_id'] ?? ''));
+            $inputVersion = trim((string) ($snapshot['input_version'] ?? ''));
+            if (preg_match('/^\d+$/', $shipmentId) !== 1 || $inputVersion === '') {
+                throw new RuntimeException('Pack webhook did not expose a shipment identity.');
+            }
+            $pdo = Database::connectionFresh();
+            $pipeline = $this->salePipeline ?? new SalePipelineCapabilityRepository(
+                $pdo,
+                new QueueCoreRepository($pdo)
+            );
+            $pipeline->materializeWebhookPackShipment(
+                $companyId,
+                $meliAccountId,
+                $resourceId,
+                $shipmentId,
+                $inputVersion
+            );
+        }
         return $persisted;
     }
 }

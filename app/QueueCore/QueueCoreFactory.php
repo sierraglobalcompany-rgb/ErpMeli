@@ -23,9 +23,10 @@ final class QueueCoreFactory
         $registry->register('financial_projection',new FinancialProjectionHandler($salePipeline));
         $registry->register('pack_exact',new PackExactHandler($salePipeline,null,$webhookTriggers));
         $registry->register('shipment_exact',new ShipmentExactHandler($salePipeline,null,$webhookTriggers));
-        $webhookGateway=new MeliWebhookExactGateway(
-            $flags->enabled('pack_shipment_followups') ? $salePipeline : null
-        );
+        // A pack webhook must always publish its exact shipment follow-up.
+        // The dependency graph remains disabled as a runtime until Queue Core
+        // preflight enables the engine; this wiring only prevents lost work.
+        $webhookGateway=new MeliWebhookExactGateway($salePipeline);
         $registry->register('webhook_order_exact',new WebhookOrderExactHandler($webhookTriggers,$webhookGateway));
         $registry->register('webhook_pack_exact',new WebhookPackExactHandler($webhookTriggers,$webhookGateway));
         $registry->register('webhook_shipment_exact',new WebhookShipmentExactHandler($webhookTriggers,$webhookGateway));

@@ -22,10 +22,15 @@ final class SalePipelineCapabilityRepository
         private readonly QueueCoreRepository $queue,
     ) {}
 
-    /** @return array{materialized:int,review:int,already_terminal:int} */
+    /** @return array{materialized:int,waiting_dependency:int,review:int,already_terminal:int} */
     public function materializePending(int $limit = 50, ?int $orderId = null): array
     {
-        $result = ['materialized' => 0, 'review' => 0, 'already_terminal' => 0];
+        $result = [
+            'materialized' => 0,
+            'waiting_dependency' => 0,
+            'review' => 0,
+            'already_terminal' => 0,
+        ];
         $limit = max(1, min(100, $limit));
         for ($i = 0; $i < $limit; $i++) {
             $this->pdo->beginTransaction();
@@ -187,6 +192,7 @@ final class SalePipelineCapabilityRepository
                     $this->pdo->rollBack();
                     return false;
                 }
+                $this->releaseDependentsLocked($capability);
             } else {
                 $count = $this->pdo->prepare(
                     "UPDATE queue_core_pending_capabilities
@@ -279,6 +285,149 @@ final class SalePipelineCapabilityRepository
         }
     }
 
+    /**
+     * A pack webhook has already persisted the pack snapshot. Its shipment is
+     * published as exact FIFO work in the same transaction that records the
+     * logistics -> financial obligation. Repeated webhook observations reuse
+     * the same input version and therefore cannot duplicate revenue work.
+     */
+    public function materializeWebhookPackShipment(
+        int $companyId,
+        int $accountId,
+        string $packId,
+        string $shipmentId,
+        string $packInputVersion
+    ): int {
+        if ($companyId < 1 || $accountId < 1
+            || preg_match('/^\d+$/', $packId) !== 1
+            || preg_match('/^\d+$/', $shipmentId) !== 1
+            || trim($packInputVersion) === '') {
+            throw new RuntimeException('Queue Core webhook logistics identity is invalid.');
+        }
+        $this->pdo->beginTransaction();
+        try {
+            $scope = $this->pdo->prepare(
+                "SELECT 1 FROM meli_accounts
+                 WHERE id=? AND company_id=? AND status IN ('conectado','connected') LIMIT 1 FOR UPDATE"
+            );
+            $scope->execute([$accountId, $companyId]);
+            if ($scope->fetchColumn() === false) {
+                throw new RuntimeException('Queue Core webhook logistics scope is unavailable.');
+            }
+            $packScope = $this->pdo->prepare(
+                'SELECT id FROM meli_packs
+                 WHERE meli_account_id=? AND external_pack_id=? LIMIT 1 FOR UPDATE'
+            );
+            $packScope->execute([$accountId, $packId]);
+            if ($packScope->fetchColumn() === false) {
+                throw new RuntimeException('Queue Core webhook pack scope is unavailable.');
+            }
+            $orders = $this->pdo->prepare(
+                "SELECT o.id,o.queue_snapshot_version
+                 FROM meli_packs p
+                 INNER JOIN meli_pack_orders po ON po.meli_pack_id=p.id
+                 INNER JOIN meli_orders o ON o.id=po.meli_order_id
+                    AND o.meli_account_id=p.meli_account_id
+                 WHERE p.meli_account_id=? AND p.external_pack_id=?
+                 ORDER BY o.id FOR UPDATE"
+            );
+            $orders->execute([$accountId, $packId]);
+            $rows = $orders->fetchAll(PDO::FETCH_ASSOC);
+            if ($rows === []) {
+                $job = $this->standaloneWebhookShipmentJob(
+                    $companyId, $accountId, $packId, $shipmentId, $packInputVersion
+                );
+                $jobId = $this->queue->enqueueCoalescedExact(
+                    $job,
+                    ['shipment_exact', 'webhook_shipment_exact']
+                );
+                $this->pdo->commit();
+                return $jobId;
+            }
+
+            $firstJobId = 0;
+            foreach ($rows as $order) {
+                $orderId = (int) $order['id'];
+                $orderVersion = trim((string) ($order['queue_snapshot_version'] ?? ''));
+                if ($orderId < 1 || $orderVersion === '') {
+                    throw new RuntimeException('Queue Core webhook order snapshot is unavailable.');
+                }
+                $logisticsVersion = hash(
+                    'sha256',
+                    implode('|', [$orderVersion, 'pack', $packId, 'shipment', $shipmentId, $packInputVersion])
+                );
+                $enrichment = $this->upsertCapabilityLocked(
+                    $companyId,
+                    $accountId,
+                    $orderId,
+                    'order_enrichment',
+                    $logisticsVersion,
+                    'materialized'
+                );
+                $financial = $this->upsertCapabilityLocked(
+                    $companyId,
+                    $accountId,
+                    $orderId,
+                    'financial_projection',
+                    $logisticsVersion,
+                    'waiting_dependency'
+                );
+                $financialVersion = $this->financialInputVersion(
+                    $orderVersion,
+                    $enrichment,
+                    $packId . ':' . $shipmentId
+                );
+                if (!$this->linkCapabilityEdgeLocked($enrichment, $financial, $financialVersion)) {
+                    $this->reviewCapabilityLocked($financial, 'dependency_cycle');
+                }
+                $shipment = $this->shipmentJob(
+                    $companyId,
+                    $accountId,
+                    $orderId,
+                    $shipmentId,
+                    (int) $enrichment['id'],
+                    $logisticsVersion,
+                    (int) $enrichment['lifecycle_generation']
+                );
+                $jobId = $this->queue->enqueueCoalescedExact(
+                    $shipment,
+                    ['shipment_exact', 'webhook_shipment_exact']
+                );
+                $created = $this->linkDependency(
+                    (int) $enrichment['id'],
+                    (int) $enrichment['lifecycle_generation'],
+                    $companyId,
+                    $accountId,
+                    'shipment:' . $shipmentId,
+                    $jobId
+                );
+                if ($created) {
+                    $increment = $this->pdo->prepare(
+                        "UPDATE queue_core_pending_capabilities
+                         SET required_dependencies=required_dependencies+1,updated_at=UTC_TIMESTAMP(3)
+                         WHERE id=? AND company_id=? AND meli_account_id=?
+                           AND lifecycle_generation=? AND state='materialized'"
+                    );
+                    $increment->execute([
+                        (int) $enrichment['id'], $companyId, $accountId,
+                        (int) $enrichment['lifecycle_generation'],
+                    ]);
+                    if ($increment->rowCount() !== 1) {
+                        throw new RuntimeException('Queue Core webhook dependency count fence changed.');
+                    }
+                }
+                $firstJobId = $firstJobId > 0 ? $firstJobId : $jobId;
+            }
+            $this->pdo->commit();
+            return $firstJobId;
+        } catch (Throwable $error) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
     public function reviewDependency(QueueClaim $job, int $capabilityId, string $errorClass): bool
     {
         $safe = self::safeClass($errorClass);
@@ -351,13 +500,53 @@ final class SalePipelineCapabilityRepository
         if (!is_array($row)) {
             return $this->markReview($id, $companyId, $accountId, $generation, 'order_scope_or_identity_missing');
         }
-        $version = trim((string) $row['input_version']);
-        if ($version === '') {
+        $orderVersion = trim((string) $row['input_version']);
+        if ($orderVersion === '') {
             return $this->markReview($id, $companyId, $accountId, $generation, 'order_input_version_missing');
         }
+        $version = trim((string) ($capability['input_version'] ?? '')) ?: $orderVersion;
         $jobs = [];
         $capabilityKey = (string) $capability['capability_key'];
         if ($capabilityKey === 'financial_projection') {
+            $prerequisite = $this->requiredLogisticsCapabilityLocked(
+                $companyId,
+                $accountId,
+                $orderId,
+                $orderVersion,
+                trim((string) ($row['external_pack_id'] ?? '')),
+                trim((string) ($row['external_shipping_id'] ?? ''))
+            );
+            if (is_array($prerequisite)) {
+                if ((string) $prerequisite['state'] === 'review') {
+                    return $this->markReview(
+                        $id, $companyId, $accountId, $generation, 'required_logistics_review'
+                    );
+                }
+                $financialVersion = $this->financialInputVersion(
+                    $orderVersion,
+                    $prerequisite,
+                    trim((string) ($row['external_pack_id'] ?? '')) . ':'
+                        . trim((string) ($row['external_shipping_id'] ?? ''))
+                );
+                if (!$this->linkCapabilityEdgeLocked($prerequisite, $capability, $financialVersion)) {
+                    return $this->markReview($id, $companyId, $accountId, $generation, 'dependency_cycle');
+                }
+                if ((string) $prerequisite['state'] !== 'resolved') {
+                    $wait = $this->pdo->prepare(
+                        "UPDATE queue_core_pending_capabilities
+                         SET state='waiting_dependency',input_version=?,last_error_class=NULL,
+                             updated_at=UTC_TIMESTAMP(3)
+                         WHERE id=? AND company_id=? AND meli_account_id=?
+                           AND lifecycle_generation=? AND state='pending_b2'"
+                    );
+                    $wait->execute([$financialVersion, $id, $companyId, $accountId, $generation]);
+                    if ($wait->rowCount() !== 1) {
+                        throw new RuntimeException('Queue Core financial dependency wait fence changed.');
+                    }
+                    return 'waiting_dependency';
+                }
+                $version = $financialVersion;
+            }
             $jobs['financial_projection:' . $orderId] = new QueueJob(
                 $companyId, $accountId, 'financial_projection', 'order', (string) $orderId,
                 'local', 0, 'financial_projection:order:' . $orderId, $version,
@@ -421,6 +610,250 @@ final class SalePipelineCapabilityRepository
     }
 
     /** @return array<string,mixed>|null */
+    private function requiredLogisticsCapabilityLocked(
+        int $companyId,
+        int $accountId,
+        int $orderId,
+        string $orderVersion,
+        string $packId,
+        string $shipmentId
+    ): ?array {
+        if (($packId === '' || !ctype_digit($packId))
+            && ($shipmentId === '' || !ctype_digit($shipmentId))) {
+            return null;
+        }
+        $existing = $this->pdo->prepare(
+            "SELECT * FROM queue_core_pending_capabilities
+             WHERE company_id=? AND meli_account_id=? AND resource_type='order'
+               AND resource_id=? AND capability_key='order_enrichment' FOR UPDATE"
+        );
+        $existing->execute([$companyId, $accountId, (string) $orderId]);
+        $row = $existing->fetch(PDO::FETCH_ASSOC);
+        if (is_array($row)) {
+            // The producer owns lifecycle versions. In particular a pack
+            // webhook may hold a newer logistics fingerprint than the order
+            // snapshot, which financial materialization must never overwrite.
+            return $row;
+        }
+        return $this->upsertCapabilityLocked(
+            $companyId,
+            $accountId,
+            $orderId,
+            'order_enrichment',
+            $orderVersion,
+            'pending_b2'
+        );
+    }
+
+    /** @return array<string,mixed> */
+    private function upsertCapabilityLocked(
+        int $companyId,
+        int $accountId,
+        int $orderId,
+        string $key,
+        string $version,
+        string $newState
+    ): array {
+        if (!in_array($key, ['financial_projection', 'order_enrichment'], true)
+            || !in_array($newState, ['pending_b2', 'waiting_dependency', 'materialized'], true)) {
+            throw new RuntimeException('Queue Core sale capability upsert is invalid.');
+        }
+        $insert = $this->pdo->prepare(
+            "INSERT INTO queue_core_pending_capabilities
+                (company_id,meli_account_id,resource_type,resource_id,capability_key,state,input_version)
+             VALUES (?,?,'order',?,?,?,?)
+             ON DUPLICATE KEY UPDATE
+                state=IF(input_version<=>VALUES(input_version),state,VALUES(state)),
+                lifecycle_generation=IF(input_version<=>VALUES(input_version),lifecycle_generation,lifecycle_generation+1),
+                required_dependencies=IF(input_version<=>VALUES(input_version),required_dependencies,0),
+                completed_dependencies=IF(input_version<=>VALUES(input_version),completed_dependencies,0),
+                last_error_class=IF(input_version<=>VALUES(input_version),last_error_class,NULL),
+                resolved_at=IF(input_version<=>VALUES(input_version),resolved_at,NULL),
+                input_version=VALUES(input_version),updated_at=UTC_TIMESTAMP(3)"
+        );
+        $insert->execute([$companyId, $accountId, (string) $orderId, $key, $newState, $version]);
+        $select = $this->pdo->prepare(
+            "SELECT * FROM queue_core_pending_capabilities
+             WHERE company_id=? AND meli_account_id=? AND resource_type='order'
+               AND resource_id=? AND capability_key=? FOR UPDATE"
+        );
+        $select->execute([$companyId, $accountId, (string) $orderId, $key]);
+        $row = $select->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            throw new RuntimeException('Queue Core sale capability upsert disappeared.');
+        }
+        return $row;
+    }
+
+    /** @param array<string,mixed> $prerequisite @param array<string,mixed> $dependent */
+    private function linkCapabilityEdgeLocked(array $prerequisite, array $dependent, string $inputVersion): bool
+    {
+        $prerequisiteId = (int) $prerequisite['id'];
+        $dependentId = (int) $dependent['id'];
+        if ($prerequisiteId < 1 || $dependentId < 1
+            || (int) $prerequisite['company_id'] !== (int) $dependent['company_id']
+            || (int) $prerequisite['meli_account_id'] !== (int) $dependent['meli_account_id']) {
+            return false;
+        }
+        if ($this->pathExistsLocked($dependentId, $prerequisiteId)) {
+            return false;
+        }
+        $insert = $this->pdo->prepare(
+            "INSERT INTO queue_core_capability_edges
+                (company_id,meli_account_id,prerequisite_capability_id,prerequisite_generation,
+                 dependent_capability_id,dependent_generation,edge_key,input_version,state)
+             VALUES (?,?,?,?,?,?,?,?,?)
+             ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)"
+        );
+        $state = (string) $prerequisite['state'] === 'resolved' ? 'completed' : 'pending';
+        $insert->execute([
+            (int) $prerequisite['company_id'],
+            (int) $prerequisite['meli_account_id'],
+            $prerequisiteId,
+            (int) $prerequisite['lifecycle_generation'],
+            $dependentId,
+            (int) $dependent['lifecycle_generation'],
+            'logistics:' . $prerequisiteId,
+            $inputVersion,
+            $state,
+        ]);
+        return true;
+    }
+
+    private function pathExistsLocked(int $fromCapabilityId, int $targetCapabilityId): bool
+    {
+        if ($fromCapabilityId === $targetCapabilityId) {
+            return true;
+        }
+        $frontier = [$fromCapabilityId];
+        $seen = [];
+        for ($depth = 0; $depth < 32 && $frontier !== []; $depth++) {
+            $next = [];
+            foreach ($frontier as $capabilityId) {
+                if (isset($seen[$capabilityId])) {
+                    continue;
+                }
+                $seen[$capabilityId] = true;
+                $statement = $this->pdo->prepare(
+                    'SELECT dependent_capability_id FROM queue_core_capability_edges
+                     WHERE prerequisite_capability_id=? ORDER BY id FOR UPDATE'
+                );
+                $statement->execute([$capabilityId]);
+                foreach ($statement->fetchAll(PDO::FETCH_COLUMN) as $candidate) {
+                    $candidateId = (int) $candidate;
+                    if ($candidateId === $targetCapabilityId) {
+                        return true;
+                    }
+                    if (!isset($seen[$candidateId])) {
+                        $next[] = $candidateId;
+                    }
+                }
+            }
+            $frontier = array_values(array_unique($next));
+        }
+        return false;
+    }
+
+    /** @param array<string,mixed> $prerequisite */
+    private function releaseDependentsLocked(array $prerequisite): void
+    {
+        $edges = $this->pdo->prepare(
+            "SELECT * FROM queue_core_capability_edges
+             WHERE prerequisite_capability_id=? AND prerequisite_generation=?
+               AND company_id=? AND meli_account_id=? AND state='pending'
+             ORDER BY id FOR UPDATE"
+        );
+        $edges->execute([
+            (int) $prerequisite['id'],
+            (int) $prerequisite['lifecycle_generation'],
+            (int) $prerequisite['company_id'],
+            (int) $prerequisite['meli_account_id'],
+        ]);
+        foreach ($edges->fetchAll(PDO::FETCH_ASSOC) as $edge) {
+            $dependent = $this->lockCapability(
+                (int) $edge['dependent_capability_id'],
+                (int) $edge['company_id'],
+                (int) $edge['meli_account_id']
+            );
+            if (!is_array($dependent)
+                || (int) $dependent['lifecycle_generation'] !== (int) $edge['dependent_generation']) {
+                continue;
+            }
+            if ($this->pathExistsLocked((int) $dependent['id'], (int) $prerequisite['id'])) {
+                $this->reviewCapabilityLocked($dependent, 'dependency_cycle');
+                $this->pdo->prepare(
+                    "UPDATE queue_core_capability_edges SET state='review',error_class='dependency_cycle',
+                         updated_at=UTC_TIMESTAMP(3) WHERE id=? AND state='pending'"
+                )->execute([(int) $edge['id']]);
+                continue;
+            }
+            $complete = $this->pdo->prepare(
+                "UPDATE queue_core_capability_edges
+                 SET state='completed',completed_at=UTC_TIMESTAMP(3),updated_at=UTC_TIMESTAMP(3)
+                 WHERE id=? AND state='pending'"
+            );
+            $complete->execute([(int) $edge['id']]);
+            if ($complete->rowCount() !== 1) {
+                continue;
+            }
+            $remaining = $this->pdo->prepare(
+                "SELECT COUNT(*) FROM queue_core_capability_edges
+                 WHERE dependent_capability_id=? AND dependent_generation=? AND state='pending'"
+            );
+            $remaining->execute([(int) $dependent['id'], (int) $dependent['lifecycle_generation']]);
+            if ((int) $remaining->fetchColumn() === 0 && (string) $dependent['state'] === 'waiting_dependency') {
+                $wake = $this->pdo->prepare(
+                    "UPDATE queue_core_pending_capabilities
+                     SET state='pending_b2',input_version=?,last_error_class=NULL,updated_at=UTC_TIMESTAMP(3)
+                     WHERE id=? AND company_id=? AND meli_account_id=?
+                       AND lifecycle_generation=? AND state='waiting_dependency'"
+                );
+                $wake->execute([
+                    (string) $edge['input_version'],
+                    (int) $dependent['id'],
+                    (int) $dependent['company_id'],
+                    (int) $dependent['meli_account_id'],
+                    (int) $dependent['lifecycle_generation'],
+                ]);
+                if ($wake->rowCount() !== 1) {
+                    throw new RuntimeException('Queue Core financial dependency wake fence changed.');
+                }
+            }
+        }
+    }
+
+    /** @param array<string,mixed> $capability */
+    private function reviewCapabilityLocked(array $capability, string $reason): void
+    {
+        $statement = $this->pdo->prepare(
+            "UPDATE queue_core_pending_capabilities
+             SET state='review',last_error_class=?,updated_at=UTC_TIMESTAMP(3)
+             WHERE id=? AND company_id=? AND meli_account_id=?
+               AND lifecycle_generation=? AND state IN ('pending_b2','waiting_dependency','materialized')"
+        );
+        $statement->execute([
+            self::safeClass($reason),
+            (int) $capability['id'],
+            (int) $capability['company_id'],
+            (int) $capability['meli_account_id'],
+            (int) $capability['lifecycle_generation'],
+        ]);
+    }
+
+    /** @param array<string,mixed> $logistics */
+    private function financialInputVersion(string $orderVersion, array $logistics, string $identity): string
+    {
+        return hash('sha256', implode('|', [
+            $orderVersion,
+            'logistics',
+            (string) $logistics['id'],
+            (string) $logistics['lifecycle_generation'],
+            (string) ($logistics['input_version'] ?? ''),
+            $identity,
+        ]));
+    }
+
+    /** @return array<string,mixed>|null */
     private function lockCapability(int $id, int $companyId, int $accountId): ?array
     {
         $stmt = $this->pdo->prepare(
@@ -480,6 +913,38 @@ final class SalePipelineCapabilityRepository
             ['order_id' => $orderId, 'shipment_id' => $shipmentId, 'capability_id' => $capabilityId,
              'input_version' => $version, 'capability_generation' => $generation],
             ['parent_capability' => 'order_enrichment'], 5, null, 'operational'
+        );
+    }
+
+    private function standaloneWebhookShipmentJob(
+        int $companyId,
+        int $accountId,
+        string $packId,
+        string $shipmentId,
+        string $version
+    ): QueueJob {
+        return new QueueJob(
+            $companyId,
+            $accountId,
+            'shipment_exact',
+            'shipment',
+            $shipmentId,
+            'normal',
+            0,
+            'shipment:' . $shipmentId,
+            $version,
+            'queue_core_pack_webhook',
+            'pack:' . $packId,
+            [
+                'order_id' => 0,
+                'shipment_id' => $shipmentId,
+                'input_version' => $version,
+                'source_pack_id' => $packId,
+            ],
+            ['parent_capability' => 'pack_webhook'],
+            5,
+            null,
+            'operational'
         );
     }
 

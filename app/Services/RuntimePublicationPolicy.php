@@ -179,6 +179,12 @@ final class RuntimePublicationPolicy
         ) {
             $issues[] = 'manifest_publication_policy_mismatch';
         }
+        if (!hash_equals(self::VERSION, (string) ($manifest['version'] ?? ''))
+            || !hash_equals(self::MINIMUM_MIGRATION, (string) ($manifest['minimum_migration'] ?? ''))
+            || !hash_equals(self::BUILD_ID, (string) ($manifest['build_id'] ?? ''))
+        ) {
+            $issues[] = 'manifest_release_identity_mismatch';
+        }
         return array_values(array_unique($issues));
     }
 
@@ -233,6 +239,73 @@ final class RuntimePublicationPolicy
         ) {
             $issues[] = 'manifest_publication_policy_mismatch';
         }
+        if (!hash_equals(self::VERSION, (string) ($manifest['version'] ?? ''))
+            || !hash_equals(self::MINIMUM_MIGRATION, (string) ($manifest['minimum_migration'] ?? ''))
+            || !hash_equals(self::BUILD_ID, (string) ($manifest['build_id'] ?? ''))
+        ) {
+            $issues[] = 'manifest_release_identity_mismatch';
+        }
+        return array_values(array_unique($issues));
+    }
+
+    /**
+     * Validate an extracted package against the exact Git tree. The values are
+     * raw bytes keyed by canonical POSIX archive path.
+     *
+     * @param array<string,mixed> $manifest
+     * @param array<string,string> $files
+     * @return list<string>
+     */
+    public static function packageIssues(
+        string $root,
+        array $manifest,
+        array $files,
+        string $head = 'HEAD',
+        string $base = self::BASE_COMMIT
+    ): array {
+        $issues = self::manifestIssues($root, $manifest, $head, $base);
+        $headCommit = trim(self::git($root, ['rev-parse', $head]));
+        $expectedRows = self::packageEntries($root, $headCommit);
+        $expected = [];
+        foreach ($expectedRows as $row) {
+            $expected[$row['path']] = $row;
+        }
+
+        $case = [];
+        foreach ($files as $path => $bytes) {
+            if (!is_string($path) || !is_string($bytes) || !self::safePath($path)) {
+                $issues[] = 'package_path_unsafe';
+                continue;
+            }
+            $folded = strtolower($path);
+            if (isset($case[$folded]) && $case[$folded] !== $path) {
+                $issues[] = 'package_path_case_collision:' . $path;
+            }
+            $case[$folded] = $path;
+            if (!isset($expected[$path])) {
+                $issues[] = 'package_unsafe_extra:' . $path;
+                continue;
+            }
+            if (!hash_equals($expected[$path]['sha256'], hash('sha256', $bytes))) {
+                $issues[] = 'package_git_blob_mismatch:' . $path;
+            }
+        }
+        foreach (array_diff(array_keys($expected), array_keys($files)) as $path) {
+            $issues[] = 'package_required_missing:' . $path;
+        }
+
+        $manifestBytes = $files['resources/runtime-manifest.json'] ?? null;
+        if (!is_string($manifestBytes)
+            || !hash_equals(hash('sha256', self::gitBlob($root, $headCommit, 'resources/runtime-manifest.json')), hash('sha256', $manifestBytes))
+        ) {
+            $issues[] = 'package_manifest_git_mismatch';
+        }
+        $topicsPath = 'resources/mercadolibre-api/generated/notification-topics.json';
+        $topics = $files[$topicsPath] ?? null;
+        if (!is_string($topics) || !MeliNotificationTopicRegistry::catalogBytesValid($topics)) {
+            $issues[] = 'package_notification_topics_semantic_invalid';
+        }
+
         return array_values(array_unique($issues));
     }
 

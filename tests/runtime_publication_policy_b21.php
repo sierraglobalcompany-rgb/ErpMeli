@@ -119,6 +119,19 @@ try {
         'package did not use exact Git blob');
     rpAssert(hash_file('sha256', $root . '/app/Test.php') !== $workingHashBefore, 'working mismatch fixture failed');
 
+    rpWrite($root, 'link-target.txt', "../../escape\n");
+    $linkBlob = rpGit($root, ['hash-object', '-w', 'link-target.txt']);
+    rpGit($root, ['update-index', '--add', '--cacheinfo', '120000,' . $linkBlob . ',app/Escape.php']);
+    rpGit($root, ['commit', '--quiet', '-m', 'unsafe symlink fixture']);
+    $symlinkHead = rpGit($root, ['rev-parse', 'HEAD']);
+    $symlinkRejected = false;
+    try {
+        RuntimePublicationPolicy::packageEntries($root, $symlinkHead);
+    } catch (RuntimeException $exception) {
+        $symlinkRejected = str_contains($exception->getMessage(), 'unsafe Git type/mode');
+    }
+    rpAssert($symlinkRejected, 'A runtime symlink escaped package policy.');
+
     fwrite(STDOUT, "runtime_publication_policy_b21: PASS\n");
 } finally {
     $iterator = new RecursiveIteratorIterator(

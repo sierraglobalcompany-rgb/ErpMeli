@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require dirname(__DIR__) . '/app/Services/RuntimePublicationPolicy.php';
+require dirname(__DIR__) . '/app/Services/MeliNotificationTopicRegistry.php';
 
 use App\Services\RuntimePublicationPolicy;
 
@@ -126,6 +127,7 @@ if ($gitExact) {
 }
 usort($files, static fn(array $a, array $b): int => strcmp($a['path'], $b['path']));
 $packagedPaths = array_column($files, 'path');
+$gitExactFiles = [];
 $forbiddenPackagePatterns = [
     '#(^|/)(?:PAUSE_MELI_API|PAUSE_ERP_AUTOMATION)$#',
     '#(^|/)(?:config\.env|\.env)$#',
@@ -156,6 +158,16 @@ foreach ([
 ] as $requiredRuntime) {
     if (!in_array($requiredRuntime, $packagedPaths, true)) {
         fwrite(STDERR, "La fuente no contiene un runtime obligatorio: {$requiredRuntime}\n");
+        exit(3);
+    }
+}
+if ($gitExact) {
+    foreach ($files as $file) {
+        $gitExactFiles[$file['path']] = RuntimePublicationPolicy::gitBlob($source, 'HEAD', $file['path']);
+    }
+    $packageIssues = RuntimePublicationPolicy::packageIssues($source, $runtimeManifest, $gitExactFiles);
+    if ($packageIssues !== []) {
+        fwrite(STDERR, 'El paquete Git-exact no supera la política: ' . implode(',', $packageIssues) . "\n");
         exit(3);
     }
 }
@@ -224,7 +236,7 @@ if ($zip->open($output, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
 $zip->addFromString('update-manifest.json', json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
 foreach ($files as $file) {
     if ($gitExact) {
-        $zip->addFromString($file['path'], RuntimePublicationPolicy::gitBlob($source, 'HEAD', $file['path']));
+        $zip->addFromString($file['path'], $gitExactFiles[$file['path']]);
     } else {
         $zip->addFile($source . '/' . $file['path'], $file['path']);
     }

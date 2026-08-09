@@ -60,11 +60,22 @@ final class MeliNotificationTopicRegistry
     private bool $loaded = false;
     private ?string $loadFailure = null;
     private readonly string $catalogPath;
+    private readonly ?string $catalogBytes;
 
-    public function __construct(?string $catalogPath = null)
+    public function __construct(?string $catalogPath = null, ?string $catalogBytes = null)
     {
-        $this->catalogPath = $catalogPath
-            ?? AppPaths::releaseRoot() . self::CATALOG_PATH;
+        $this->catalogBytes = $catalogBytes;
+        $this->catalogPath = $catalogBytes !== null
+            ? 'inline://' . hash('sha256', $catalogBytes)
+            : ($catalogPath ?? AppPaths::releaseRoot() . self::CATALOG_PATH);
+    }
+
+    public static function catalogBytesValid(string $catalogBytes): bool
+    {
+        $registry = new self(null, $catalogBytes);
+        $registry->rules();
+
+        return $registry->failureReason() === null;
     }
 
     /**
@@ -136,14 +147,17 @@ final class MeliNotificationTopicRegistry
             $this->loadFailure = self::$cache[$this->catalogPath]['failure'];
             return;
         }
-        if (!is_file($this->catalogPath) || !is_readable($this->catalogPath)) {
-            $this->fail('catalog_missing');
-            return;
-        }
-        $json = file_get_contents($this->catalogPath, false, null, 0, self::MAX_CATALOG_BYTES + 1);
-        if (!is_string($json)) {
-            $this->fail('catalog_unreadable');
-            return;
+        $json = $this->catalogBytes;
+        if ($json === null) {
+            if (!is_file($this->catalogPath) || !is_readable($this->catalogPath)) {
+                $this->fail('catalog_missing');
+                return;
+            }
+            $json = file_get_contents($this->catalogPath, false, null, 0, self::MAX_CATALOG_BYTES + 1);
+            if (!is_string($json)) {
+                $this->fail('catalog_unreadable');
+                return;
+            }
         }
         if (strlen($json) > self::MAX_CATALOG_BYTES) {
             $this->fail('catalog_too_large');

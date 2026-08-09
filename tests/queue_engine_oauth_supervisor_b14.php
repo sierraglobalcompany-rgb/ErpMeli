@@ -208,12 +208,12 @@ foreach ([
 $pdo->exec("INSERT INTO meli_accounts VALUES
     (1,1,'101','A','conectado',NULL),(2,1,'102','B','conectado',NULL),
     (3,1,'103','C','conectado',NULL)");
-$pdo->exec("INSERT INTO meli_tokens
+$tokenFixture=$pdo->prepare("INSERT INTO meli_tokens
     (meli_account_id,access_token_encrypted,refresh_token_encrypted,expires_at,scope,token_type,refresh_version)
-    VALUES
-    (1,'fixture-access','fixture-refresh',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR),'read','Bearer',0),
-    (2,'fixture-access','fixture-refresh',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR),'read','Bearer',0),
-    (3,'fixture-access','fixture-refresh',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR),'read','Bearer',0)");
+    VALUES(?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR),'read','Bearer',0)");
+foreach([1,2,3] as $accountFixture){
+    $tokenFixture->execute([$accountFixture,Crypto::encrypt('fixture-access'),Crypto::encrypt('fixture-refresh')]);
+}
 $pdo->exec("UPDATE queue_core_feature_flags SET enabled=1,generation=generation+1
             WHERE feature_key IN ('fresh_producer','webhook_producer','pack_shipment_followups')");
 $recordReadiness = static function (int $generation, array $accountIds) use ($pdo): void {
@@ -253,6 +253,14 @@ $pdo->exec("UPDATE queue_core_feature_flags SET generation=generation+1 WHERE fe
 $changedContext=$readinessReceipts->canActivateV4(1);
 $check(!$changedContext['ok']&&$changedContext['reason']==='readiness_context_changed','changed readiness context reused stale receipts');
 $pdo->exec("UPDATE queue_core_feature_flags SET generation=generation-1 WHERE feature_key='fresh_producer'");
+$contextBeforeCanaryProgress=$readinessReceipts->currentContextHash(1);
+$pdo->exec("INSERT INTO queue_core_producer_checkpoints
+    (producer_key,company_id,meli_account_id,watermark_at,window_from,window_to,cursor_value,generation,next_due_at)
+    VALUES('fresh_orders',1,1,UTC_TIMESTAMP(3),DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 10 MINUTE),
+           UTC_TIMESTAMP(3),'20',1,UTC_TIMESTAMP(3))
+    ON DUPLICATE KEY UPDATE watermark_at=VALUES(watermark_at),cursor_value='20',generation=generation+1");
+$check(hash_equals($contextBeforeCanaryProgress,$readinessReceipts->currentContextHash(1)),
+    'Normal canary checkpoint progress invalidated its own readiness context.');
 $pdo->exec('ALTER TABLE meli_orders ADD COLUMN date_created DATETIME NULL');
 $windowFrom=gmdate('Y-m-d H:i:s',time()-600);$windowTo=gmdate('Y-m-d H:i:s',time()-300);
 $evidenceRepository=new QueueCoreRepository($pdo);

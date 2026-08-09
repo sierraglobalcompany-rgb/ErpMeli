@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\QueueCore;
 
+use App\Core\Crypto;
 use App\Core\Env;
+use App\Services\AppSettingsService;
 use App\Services\EmergencyControlService;
 use App\Services\OAuthService;
 use App\Services\QueueOAuthDurableRecoveryStore;
@@ -151,24 +153,34 @@ final class QueueCorePreflightService
                         (t.meli_account_id IS NOT NULL) token_row_present,
                         (t.access_token_encrypted IS NOT NULL AND t.access_token_encrypted<>"") access_present,
                         (t.refresh_token_encrypted IS NOT NULL AND t.refresh_token_encrypted<>"") refresh_present,
-                        t.expires_at,t.refresh_version
+                        t.access_token_encrypted,t.refresh_token_encrypted,t.expires_at,t.refresh_version
                  FROM meli_accounts a
                  LEFT JOIN meli_tokens t ON t.meli_account_id=a.id
                  WHERE a.status IN ("conectado","connected")
                  ORDER BY a.company_id,a.id'
             );
+            $expirySkew=max(60,(new AppSettingsService())->int('oauth.token_expiry_skew_seconds',120));
             foreach ($query->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $credentialsDecryptable=false;
+                try {
+                    $credentialsDecryptable=trim(Crypto::decrypt((string)($row['access_token_encrypted']??'')))!==''
+                        &&trim(Crypto::decrypt((string)($row['refresh_token_encrypted']??'')))!=='';
+                } catch (Throwable) {
+                    $issues[]='account_oauth_cipher_invalid';
+                }
                 $valid = (int) $row['identity_present'] === 1
                     && (int) $row['token_row_present'] === 1
                     && (int) $row['access_present'] === 1
                     && (int) $row['refresh_present'] === 1
+                    && $credentialsDecryptable
                     && !empty($row['expires_at']);
                 if (!$valid) {
                     $issues[] = 'account_identity_or_token_missing';
                 }
-                if (!empty($row['expires_at'])
-                    && strtotime((string) $row['expires_at'] . ' UTC') <= time()) {
-                    $issues[] = 'account_access_token_expired';
+                if (!empty($row['expires_at'])) {
+                    $expiresAt=strtotime((string)$row['expires_at'].' UTC')?:0;
+                    if($expiresAt<=time()){$issues[]='account_access_token_expired';}
+                    elseif($expiresAt<=time()+$expirySkew){$issues[]='account_access_token_near_expiry';}
                 }
                 $accounts[] = [
                     'company_id' => (int) $row['company_id'],
@@ -177,6 +189,7 @@ final class QueueCorePreflightService
                     'token_row_present' => (bool) $row['token_row_present'],
                     'access_present' => (bool) $row['access_present'],
                     'refresh_present' => (bool) $row['refresh_present'],
+                    'credentials_decryptable' => $credentialsDecryptable,
                     'token_expired' => !empty($row['expires_at'])
                         && strtotime((string) $row['expires_at'] . ' UTC') <= time(),
                     'refresh_version' => max(0, (int) ($row['refresh_version'] ?? 0)),

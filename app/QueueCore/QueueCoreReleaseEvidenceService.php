@@ -100,7 +100,7 @@ final class QueueCoreReleaseEvidenceService
         ];
     }
 
-    /** @return array{ok:bool,sha256:?string,bytes:int,format_valid:bool,table_count:int,data_statements:int} */
+    /** @return array{ok:bool,sha256:?string,bytes:int,format_valid:bool,table_count:int,data_statements:int,current_table_count:int,missing_table_count:int,critical_data_missing_count:int} */
     public function verifyBackup(string $path, string $expectedSha256): array
     {
         $expected = strtolower(trim($expectedSha256));
@@ -110,19 +110,29 @@ final class QueueCoreReleaseEvidenceService
         $bytes = $exists ? max(0, (int) filesize($path)) : 0;
         $content = $exists ? $this->inspectSqlBackup($path) : [
             'format_valid' => false, 'table_count' => 0, 'data_statements' => 0,
+            'tables' => [], 'data_tables' => [],
         ];
+        $inventory = $this->compareBackupWithCurrentDatabase(
+            $content['tables'],
+            $content['data_tables'],
+        );
         $ok = is_string($sha)
             && $bytes > 0
             && preg_match('/^[a-f0-9]{64}$/', $expected) === 1
             && preg_match('/^[a-f0-9]{64}$/', $approved) === 1
             && hash_equals($approved, $expected)
             && hash_equals($expected, strtolower($sha))
-            && $content['format_valid'];
+            && $content['format_valid']
+            && $inventory['missing_table_count'] === 0
+            && $inventory['critical_data_missing_count'] === 0;
         return [
             'ok' => $ok,
             'sha256' => is_string($sha) ? strtoupper($sha) : null,
             'bytes' => $bytes,
-        ] + $content;
+            'format_valid' => $content['format_valid'],
+            'table_count' => $content['table_count'],
+            'data_statements' => $content['data_statements'],
+        ] + $inventory;
     }
 
     /** @return array{ok:bool,id:int,sha256:?string,bytes:int} */
@@ -145,6 +155,9 @@ final class QueueCoreReleaseEvidenceService
             'table_count' => max(0, $tables),
             'dump_table_count' => $verification['table_count'],
             'dump_data_statements' => $verification['data_statements'],
+            'current_table_count' => $verification['current_table_count'],
+            'missing_table_count' => $verification['missing_table_count'],
+            'critical_data_missing_count' => $verification['critical_data_missing_count'],
             'format_valid' => $verification['format_valid'] ? 1 : 0,
             'verified' => $verification['ok'] ? 1 : 0,
         ];
@@ -244,7 +257,8 @@ final class QueueCoreReleaseEvidenceService
         $attempts=$this->pdo->prepare(
             "SELECT COALESCE(SUM(a.physical_http_calls),0) physical_http,
                     SUM(a.response_known_at IS NOT NULL) known_responses,
-                    COALESCE(SUM(a.resources_persisted),0) resources_persisted
+                    COALESCE(SUM(CASE WHEN j.work_type IN ('order_exact','webhook_order_exact')
+                                      THEN a.resources_persisted ELSE 0 END),0) resources_persisted
              FROM queue_core_attempts a
              JOIN queue_core_jobs j ON j.id=a.job_id AND j.queue_domain='operational'
              WHERE a.started_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL ? MINUTE)
@@ -267,7 +281,11 @@ final class QueueCoreReleaseEvidenceService
         $persisted=max(0,(int)($sample['resources_persisted']??0));
         $physical=max(0,(int)($sample['physical_http']??0));
         $p50=$this->percentile($values,0.50);$p95=$this->percentile($values,0.95);
-        $httpPerResource=$persisted>0?max(0.01,$physical/$persisted):PHP_FLOAT_MAX;
+        // Primer go-live: una venta puede requerir order + pack + shipment.
+        // El numerador incluye todo HTTP operacional (incluido discovery/OAuth)
+        // y el denominador solo ventas exactas persistidas; nunca mezclar
+        // resultados locales o hijos logísticos como si fueran ventas nuevas.
+        $httpPerResource=$persisted>0?max(3.0,$physical/$persisted):PHP_FLOAT_MAX;
         $calculation=(new QueueCoreCapacityService())->calculate(
             $arrivals/$window,$httpPerResource,$p50,$p95,
             max(0.0,(float)$profile['safe_http_per_minute']),
@@ -289,9 +307,13 @@ final class QueueCoreReleaseEvidenceService
             ?($sustainable-$arrival)/$arrival
             :($sustainable>0?1.0:0.0),4);
         $backlogStatement=$this->pdo->query(
-            "SELECT COUNT(*) FROM queue_core_jobs
-             WHERE queue_domain='operational'
-               AND state IN ('pending','claimed','running','retry_wait')"
+            "SELECT
+               (SELECT COUNT(*) FROM queue_core_jobs
+                WHERE queue_domain='operational'
+                  AND state IN ('pending','claimed','running','retry_wait','waiting_oauth'))
+               +
+               (SELECT COUNT(*) FROM queue_core_pending_capabilities
+                WHERE state IN ('pending_b2','waiting_dependency','materialized'))"
         );
         $backlog=max(0,(int)$backlogStatement->fetchColumn());
         $catchup=$backlog===0
@@ -332,13 +354,16 @@ final class QueueCoreReleaseEvidenceService
         return ['ok' => $passed, 'id' => $id, 'manifest' => $manifest];
     }
 
-    /** @return array{format_valid:bool,table_count:int,data_statements:int} */
+    /** @return array{format_valid:bool,table_count:int,data_statements:int,tables:array<string,true>,data_tables:array<string,true>} */
     private function inspectSqlBackup(string $path): array
     {
         $gzip=str_ends_with(strtolower($path),'.gz');
         $handle=$gzip?@gzopen($path,'rb'):@fopen($path,'rb');
-        if($handle===false)return ['format_valid'=>false,'table_count'=>0,'data_statements'=>0];
-        $tables=[];$data=0;
+        if($handle===false)return [
+            'format_valid'=>false,'table_count'=>0,'data_statements'=>0,
+            'tables'=>[],'data_tables'=>[],
+        ];
+        $tables=[];$dataTables=[];$data=0;
         $required=array_fill_keys([
             'companies','users','app_settings','schema_migrations','meli_accounts',
             'meli_tokens','meli_orders','meli_order_items','meli_payments','meli_shipments',
@@ -348,12 +373,57 @@ final class QueueCoreReleaseEvidenceService
                 if(preg_match('/^CREATE TABLE (?:IF NOT EXISTS )?[`"]?([a-zA-Z0-9_]+)/i',$line,$match)===1){
                     $name=strtolower($match[1]);$tables[$name]=true;if(array_key_exists($name,$required))$required[$name]=true;
                 }
-                if(preg_match('/^(?:INSERT INTO|REPLACE INTO|COPY )/i',$line)===1)$data++;
+                if(preg_match('/^(?:INSERT INTO|REPLACE INTO)\s+[`"]?([a-zA-Z0-9_]+)/i',$line,$match)===1){
+                    $data++;$dataTables[strtolower($match[1])]=true;
+                }elseif(preg_match('/^COPY\s+[`"]?([a-zA-Z0-9_]+)/i',$line,$match)===1){
+                    $data++;$dataTables[strtolower($match[1])]=true;
+                }
             }
         }finally{$gzip?gzclose($handle):fclose($handle);}
         return [
             'format_valid'=>$tables!==[]&&$data>0&&!in_array(false,$required,true),
             'table_count'=>count($tables),'data_statements'=>$data,
+            'tables'=>$tables,'data_tables'=>$dataTables,
+        ];
+    }
+
+    /**
+     * Bind the approved artifact to the database that is about to be upgraded.
+     * Queue Core tables are intentionally absent from a pre-B2 backup; every
+     * pre-existing runtime table must be represented in the dump. Critical
+     * commercial tables that currently contain rows must also contain a data
+     * statement, so a schema-only or synthetic miniature cannot certify.
+     *
+     * @param array<string,true> $dumpTables
+     * @param array<string,true> $dumpDataTables
+     * @return array{current_table_count:int,missing_table_count:int,critical_data_missing_count:int}
+     */
+    private function compareBackupWithCurrentDatabase(array $dumpTables,array $dumpDataTables): array
+    {
+        $statement=$this->pdo->query(
+            "SELECT LOWER(table_name)
+             FROM information_schema.tables
+             WHERE table_schema=DATABASE()
+               AND table_type='BASE TABLE'
+               AND table_name NOT LIKE 'queue\\_core\\_%'
+               AND table_name<>'queue_engine_control'"
+        );
+        $current=array_map('strval',$statement->fetchAll(PDO::FETCH_COLUMN));
+        $missing=0;
+        foreach($current as $table){
+            if(!isset($dumpTables[strtolower($table)]))$missing++;
+        }
+
+        $criticalMissing=0;
+        foreach(['meli_accounts','meli_orders','meli_order_items','meli_payments','meli_shipments'] as $table){
+            if(!in_array($table,$current,true))continue;
+            $count=(int)$this->pdo->query('SELECT COUNT(*) FROM `'.$table.'`')->fetchColumn();
+            if($count>0&&!isset($dumpDataTables[$table]))$criticalMissing++;
+        }
+        return [
+            'current_table_count'=>count($current),
+            'missing_table_count'=>$missing,
+            'critical_data_missing_count'=>$criticalMissing,
         ];
     }
 

@@ -241,20 +241,20 @@
         },
         "runtime_app_queuecore_queuecorepreflightservice_php": {
             "path": "app/QueueCore/QueueCorePreflightService.php",
-            "sha256": "269b632a42aa20ee1f172eaaf2a0e49fc9f0c488ab2ddc6805adfa15ca00e964",
-            "sha256_lf": "41424bcd4d2095314f913b1e645a7b216ff458aab0bc042a2fa0fa4d30cb7323",
+            "sha256": "f25846f3042126d5e7860e3ece9c4670d3b10a95b94f53c7b2ca629e96fc83a7",
+            "sha256_lf": "d6eba11c357f7ff7b6b933f0ab231158156505e37a055574726c1e6eb2dea691",
             "text": true
         },
         "runtime_app_queuecore_queuecorereadinessreceiptservice_php": {
             "path": "app/QueueCore/QueueCoreReadinessReceiptService.php",
-            "sha256": "a6ddddeecf257a9f6b8662441d5c521ed7927423b143de0dd215b78e081287bf",
-            "sha256_lf": "f091b0a39886314779f751cab7fb9ad1ebef5280a857e67e3e4f9f458261d7c5",
+            "sha256": "a54494a0e270de5e11903c2a6dc66d1a0283aff36c3760f2375acfa8aaced1d1",
+            "sha256_lf": "0a3739ac4dbae59b83192ad07093cac2936793e5c9350ce5fa8a2d6fa5230fd2",
             "text": true
         },
         "runtime_app_queuecore_queuecorereleaseevidenceservice_php": {
             "path": "app/QueueCore/QueueCoreReleaseEvidenceService.php",
-            "sha256": "c6c09d6028119cfbd504a6e438f02a818d2e105538b79755b244b6a375d56160",
-            "sha256_lf": "c6c09d6028119cfbd504a6e438f02a818d2e105538b79755b244b6a375d56160",
+            "sha256": "7348eb29b97f0ca639b46fa280e031648bac5cd6f623902d45098fc37cc1c5eb",
+            "sha256_lf": "7348eb29b97f0ca639b46fa280e031648bac5cd6f623902d45098fc37cc1c5eb",
             "text": true
         },
         "runtime_app_queuecore_queuecorerepository_php": {
@@ -459,6 +459,12 @@
             "path": "app/Services/CurlMeliHttpTransport.php",
             "sha256": "8f4de0ef577a235fe3a16eba3b41e89458896cf6668e85cf909e34ab2e900683",
             "sha256_lf": "0251acb0e9486ab5c3279549f39d6d9d80dbca705453d8e05a54345d851ea170",
+            "text": true
+        },
+        "runtime_app_services_emergencycontrolservice_php": {
+            "path": "app/Services/EmergencyControlService.php",
+            "sha256": "39cd1ec0d041e8310e1b5d2d8f4fea4a7b475631d8c79cc34640bfbbd0c4fdbf",
+            "sha256_lf": "b8b4fb10a601e97192c63b6f94b2e512bb914bde4400848eb3ea1e3adf747dbd",
             "text": true
         },
         "runtime_app_services_historicalpackreconciliationservice_php": {

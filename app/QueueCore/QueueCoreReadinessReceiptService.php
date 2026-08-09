@@ -163,15 +163,20 @@ final class QueueCoreReadinessReceiptService
         $manifestPath = dirname(__DIR__, 2) . '/resources/runtime-manifest.json';
         $manifestHash = is_file($manifestPath) ? hash_file('sha256', $manifestPath) : false;
         $profile = $this->runtimeProfile();
-        $checkpointStatement = $this->pdo->query(
-            "SELECT cp.company_id,cp.meli_account_id,cp.watermark_at,cp.window_from,cp.window_to,
-                    cp.cursor_value,cp.generation,cp.last_error_class
-             FROM queue_core_producer_checkpoints cp
-             JOIN meli_accounts a ON a.id=cp.meli_account_id AND a.company_id=cp.company_id
-             WHERE cp.producer_key='fresh_orders' AND a.status IN ('conectado','connected')
-             ORDER BY cp.company_id,cp.meli_account_id"
+        // El checkpoint es salida mutable del propio canario y no puede formar
+        // parte de la identidad de readiness: avanzarlo invalidaría el recibo
+        // que está intentando producir. Se liga el contrato de selección y
+        // sus overrides operatorios; la ventana/captura exacta queda ligada en
+        // los recibos canary/convergence.
+        $bootstrapStatement = $this->pdo->query(
+            "SELECT setting_key,setting_value FROM app_settings
+             WHERE setting_key LIKE 'queue_core.fresh_orders.bootstrap_from.%'
+             ORDER BY setting_key"
         );
-        $bootstrapAuthorities = $checkpointStatement->fetchAll(PDO::FETCH_ASSOC);
+        $bootstrapAuthorities = [
+            'contract' => 'checkpoint_then_local_overlap_then_certified_legacy_then_explicit:v1',
+            'operator_overrides' => $bootstrapStatement->fetchAll(PDO::FETCH_ASSOC),
+        ];
         $context = [
             'engine_generation' => max(0, $engineGeneration),
             'accounts' => $accounts,

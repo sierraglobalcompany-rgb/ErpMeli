@@ -31,12 +31,12 @@ $assert = static function (bool $condition, string $message) use (&$checks): voi
 };
 
 $tables = [
-    'queue_core_capability_dependencies', 'queue_core_historical_receipts',
+    'queue_core_capability_edges', 'queue_core_capability_dependencies', 'queue_core_historical_receipts',
     'queue_core_historical_reviews', 'queue_core_historical_checkpoints',
     'queue_core_dispatch_journal', 'queue_core_events',
     'queue_core_release_evidence', 'queue_core_health_snapshots', 'queue_core_readiness_receipts',
     'queue_core_webhook_triggers', 'queue_core_attempts', 'queue_core_runs',
-    'queue_core_producer_checkpoints', 'queue_core_jobs', 'queue_engine_control',
+    'queue_core_pending_capabilities', 'queue_core_producer_checkpoints', 'queue_core_jobs', 'queue_engine_control',
     'meli_tokens', 'meli_accounts',
     'app_settings',
 ];
@@ -50,6 +50,7 @@ $pdo->exec('CREATE TABLE app_settings(setting_key VARCHAR(191) PRIMARY KEY,setti
 $pdo->exec('CREATE TABLE meli_tokens(meli_account_id BIGINT PRIMARY KEY,expires_at DATETIME(3),refresh_version BIGINT NOT NULL DEFAULT 0)');
 $pdo->exec('CREATE TABLE queue_core_producer_checkpoints(producer_key VARCHAR(80),company_id BIGINT,meli_account_id BIGINT,watermark_at DATETIME(3),next_due_at DATETIME(3),last_error_class VARCHAR(100),PRIMARY KEY(producer_key,company_id,meli_account_id))');
 $pdo->exec("CREATE TABLE queue_core_jobs(id BIGINT PRIMARY KEY AUTO_INCREMENT,company_id BIGINT,meli_account_id BIGINT,work_type VARCHAR(80),resource_id VARCHAR(191),queue_domain VARCHAR(20),state VARCHAR(30),lane VARCHAR(20),dispatch_state VARCHAR(40),created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3))");
+$pdo->exec("CREATE TABLE queue_core_pending_capabilities(id BIGINT PRIMARY KEY AUTO_INCREMENT,state VARCHAR(30) NOT NULL)");
 $pdo->exec("CREATE TABLE queue_core_attempts(id BIGINT PRIMARY KEY AUTO_INCREMENT,run_id BIGINT NULL,job_id BIGINT NOT NULL,launcher VARCHAR(40),physical_http_calls INT NOT NULL DEFAULT 0,response_known_at DATETIME(3) NULL,resources_persisted INT NOT NULL DEFAULT 0,http_status INT NULL,started_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),finished_at DATETIME(3) NULL,source_closed_at DATETIME(3) NULL,outcome VARCHAR(40) NULL)");
 $pdo->exec("CREATE TABLE queue_core_runs(id BIGINT PRIMARY KEY AUTO_INCREMENT,engine_generation BIGINT,launcher VARCHAR(40),worker_ref CHAR(64),status VARCHAR(30),close_reason VARCHAR(100),phase VARCHAR(60),jobs_claimed INT DEFAULT 0,physical_http_calls INT DEFAULT 0,known_responses INT DEFAULT 0,resources_persisted INT DEFAULT 0,started_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),finished_at DATETIME(3),last_heartbeat_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3))");
 $pdo->exec("CREATE TABLE queue_engine_control(control_key VARCHAR(30) PRIMARY KEY,active_engine VARCHAR(20),readiness_mode ENUM('idle','preparing') NOT NULL DEFAULT 'idle',readiness_context_hash CHAR(64) NULL,generation BIGINT,changed_at DATETIME(3),changed_by VARCHAR(100))");
@@ -110,6 +111,9 @@ file_put_contents($backupFixture, gzencode($backupSql, 6));
 $backupHash = hash_file('sha256', $backupFixture);
 putenv('QUEUE_CORE_APPROVED_BACKUP_SHA256=' . $backupHash);
 $assert(is_string($backupHash) && $evidence->verifyBackup($backupFixture, $backupHash)['ok'], 'Structured SQL backup was rejected.');
+$pdo->exec('CREATE TABLE legacy_business_table(id BIGINT PRIMARY KEY)');
+$assert(!$evidence->verifyBackup($backupFixture, (string) $backupHash)['ok'], 'A miniature dump omitted a live legacy table and still certified.');
+$pdo->exec('DROP TABLE legacy_business_table');
 $invalidBackup = tempnam(sys_get_temp_dir(), 'b21-invalid-');
 file_put_contents($invalidBackup, 'not a database backup');
 $invalidHash = hash_file('sha256', $invalidBackup);

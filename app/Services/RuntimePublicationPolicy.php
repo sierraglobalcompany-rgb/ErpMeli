@@ -118,7 +118,9 @@ final class RuntimePublicationPolicy
         $issues = [];
         $headCommit = trim(self::git($root, ['rev-parse', $head]));
         $expected = self::manifestPaths($root, $headCommit, $base);
-        $registryHash = hash('sha256', self::gitBlob($root, $headCommit, self::DEPENDENCY_REGISTRY));
+        $registryBytes = self::gitBlob($root, $headCommit, self::DEPENDENCY_REGISTRY);
+        $registry = self::parseDependencyRegistry($registryBytes);
+        $registryHash = hash('sha256', $registryBytes);
         $components = $manifest['components'] ?? null;
         if (!is_array($components)) {
             return ['manifest_components_malformed'];

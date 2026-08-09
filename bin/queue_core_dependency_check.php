@@ -79,6 +79,10 @@ function targetSources(string $root, string $target, array $classified, array $r
         if (!is_array($dependency)) {
             continue;
         }
+        $dependencyPath = (string) ($dependency['path'] ?? '');
+        if ($dependencyPath === '' || runGit($root, ['show', $target . ':' . $dependencyPath])['exit'] !== 0) {
+            continue;
+        }
         foreach (is_array($dependency['consumers'] ?? null) ? $dependency['consumers'] : [] as $consumer) {
             if (is_array($consumer) && is_string($consumer['source_path'] ?? null)) {
                 $paths[] = $consumer['source_path'];

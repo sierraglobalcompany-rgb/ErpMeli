@@ -16,6 +16,7 @@ final class ShipmentExactHandler implements QueueHandler
     public function __construct(
         private readonly SalePipelineCapabilityRepository $capabilities,
         ?callable $syncFactory = null,
+        private readonly ?WebhookTriggerService $webhookTriggers = null,
     ) {
         $this->syncFactory = $syncFactory !== null
             ? \Closure::fromCallable($syncFactory)
@@ -27,24 +28,40 @@ final class ShipmentExactHandler implements QueueHandler
         if (!$context->hasTime(1.0)) {
             return QueueResult::automaticWait('deadline', gmdate('Y-m-d H:i:s', time() + 5));
         }
-        $orderId = (int) ($job->payload['order_id'] ?? 0);
+        $dependencies = $this->capabilities->pendingDependenciesForJob($job);
+        $orderId = (int) ($job->payload['order_id'] ?? ($dependencies[0]['order_id'] ?? 0));
         $shipmentId = trim((string) ($job->payload['shipment_id'] ?? $job->resourceId ?? ''));
         $capabilityId = (int) ($job->payload['capability_id'] ?? 0);
-        if ($orderId < 1 || $capabilityId < 1 || preg_match('/^\d+$/', $shipmentId) !== 1) {
+        if (preg_match('/^\d+$/', $shipmentId) !== 1) {
             return QueueResult::dead('invalid_shipment_identity');
         }
-        if ($this->capabilities->dependencyCompleted($job, $capabilityId)) {
+        if ($capabilityId > 0 && $this->capabilities->dependencyCompleted($job, $capabilityId)) {
+            $trigger=(int)($job->payload['trigger_id']??0);$watermark=(int)($job->payload['scheduled_watermark']??0);
+            if($this->webhookTriggers!==null&&$trigger>0&&$watermark>0){
+                $this->webhookTriggers->complete($trigger,$job->companyId,$job->meliAccountId,$job->id,$watermark);
+            }
             return QueueResult::completed(1, 0);
         }
-        ($this->syncFactory)($job->meliAccountId)->processEnrichmentResource([
-            'id' => $job->id,
-            'meli_account_id' => $job->meliAccountId,
-            'meli_order_id' => $orderId,
-            'resource_type' => 'shipment',
-            'external_resource_id' => $shipmentId,
-        ]);
-        if (!$this->capabilities->completeDependency($job, $capabilityId)) {
+        $sync = ($this->syncFactory)($job->meliAccountId);
+        if ($orderId > 0) {
+            $sync->processEnrichmentResource([
+                'id' => $job->id,
+                'meli_account_id' => $job->meliAccountId,
+                'meli_order_id' => $orderId,
+                'resource_type' => 'shipment',
+                'external_resource_id' => $shipmentId,
+            ]);
+        } else {
+            $sync->syncShipmentByIdForQueueCore($shipmentId, [
+                'job_type' => 'shipment_exact', 'source' => 'queue_core', 'queue_core_job_id' => $job->id,
+            ]);
+        }
+        if (!$this->capabilities->completeAllDependencies($job)) {
             throw new RuntimeException('Queue Core shipment completion fence changed.');
+        }
+        $trigger=(int)($job->payload['trigger_id']??0);$watermark=(int)($job->payload['scheduled_watermark']??0);
+        if($this->webhookTriggers!==null&&$trigger>0&&$watermark>0){
+            $this->webhookTriggers->complete($trigger,$job->companyId,$job->meliAccountId,$job->id,$watermark);
         }
         return QueueResult::completed(1, 1);
     }

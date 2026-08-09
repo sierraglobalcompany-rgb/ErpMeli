@@ -16,7 +16,7 @@ final class QueueCoreOAuthSupervisor
     ) {
     }
 
-    /** @return array{inspected:int,due:int,enqueued:int} */
+    /** @return array{inspected:int,due:int,enqueued:int,parked:int} */
     public function scheduleDueAccounts(int $limit = 20): array
     {
         $limit = max(1, min(100, $limit));
@@ -37,9 +37,15 @@ final class QueueCoreOAuthSupervisor
         $statement->execute([$skew]);
         $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
         $enqueued = 0;
+        $parked = 0;
         foreach ($rows as $row) {
             $accountId = (int) $row['meli_account_id'];
             $version = max(0, (int) $row['refresh_version']);
+            $parked += $this->repository->parkRemoteWorkForOAuth(
+                (int) $row['company_id'],
+                $accountId,
+                $version,
+            );
             $jobId = $this->repository->enqueue(new QueueJob(
                 (int) $row['company_id'],
                 $accountId,
@@ -76,6 +82,11 @@ final class QueueCoreOAuthSupervisor
                 if($created||$revived)$enqueued++;
             }
         }
-        return ['inspected' => count($rows), 'due' => count($rows), 'enqueued' => $enqueued];
+        return [
+            'inspected' => count($rows),
+            'due' => count($rows),
+            'enqueued' => $enqueued,
+            'parked' => $parked,
+        ];
     }
 }

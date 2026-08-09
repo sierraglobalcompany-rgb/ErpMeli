@@ -50,7 +50,10 @@ final class FreshOrdersDiscoveryHandler implements QueueHandler
                 $id=trim((string)$order['id']);if($id===''||!ctype_digit($id))continue;
                 $version=(string)($order['input_version']??hash('sha256',$id.'|'.(string)$order['date_created']));
                 $child=new QueueJob($job->companyId,$job->meliAccountId,'order_exact','order',$id,'fresh_orders',90,'order:'.$id,$version,'fresh_orders_discovery','order:'.$id,['order_id'=>$id,'date_created'=>(string)$order['date_created']],['window_from'=>$from,'window_to'=>$to],5);
-                $childId=$this->repository->enqueue($child);
+                $childId=$this->repository->enqueueCoalescedExact(
+                    $child,
+                    ['order_exact','webhook_order_exact']
+                );
                 $revivalCandidates[]=[$childId,$child->workType,$child->inputVersion];
                 $discovered++;
             }

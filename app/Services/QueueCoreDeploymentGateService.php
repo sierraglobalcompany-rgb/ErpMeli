@@ -14,7 +14,10 @@ final class QueueCoreDeploymentGateService
         '281_queue_core_reaudit1_fifo_fencing.sql',
         '282_queue_core_architecture_closeout_b1_2.sql',
         '283_queue_engine_control_oauth_supervisor_b1_4.sql',
+        '284_queue_core_sales_pipeline_b2.sql',
+        '285_queue_core_webhook_ownership_b2.sql',
         '286_queue_core_historical_deploy_b2.sql',
+        '287_queue_core_readiness_observability_b2.sql',
     ];
     private const REQUIRED_TABLES = [
         'queue_core_jobs',
@@ -23,6 +26,13 @@ final class QueueCoreDeploymentGateService
         'queue_core_historical_checkpoints',
         'queue_core_historical_receipts',
         'queue_core_historical_reviews',
+        'queue_core_pending_capabilities',
+        'queue_core_capability_dependencies',
+        'queue_core_webhook_triggers',
+        'queue_core_runs',
+        'queue_core_readiness_receipts',
+        'queue_core_health_snapshots',
+        'queue_core_feature_flags',
         'queue_engine_control',
     ];
 
@@ -95,6 +105,15 @@ final class QueueCoreDeploymentGateService
             )->fetchColumn();
             if ($checks['historical_enabled'] > 0) {
                 $issues[] = 'historical_import_already_enabled';
+            }
+        }
+        if ($this->tableExists('queue_core_feature_flags')) {
+            $feature = (int) $this->pdo->query(
+                "SELECT enabled FROM queue_core_feature_flags
+                 WHERE feature_key='historical_importer' LIMIT 1"
+            )->fetchColumn();
+            if ($feature !== 0) {
+                $issues[] = 'historical_feature_enabled';
             }
         }
         if ($backupPath !== null || $expectedSha256 !== null) {

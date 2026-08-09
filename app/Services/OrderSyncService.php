@@ -496,7 +496,19 @@ final class OrderSyncService
         foreach ($order['payments'] ?? [] as $payment) {
             if (!empty($payment['id'])) {
                 try { $this->persistPayment($orderId, $payment); }
-                catch (Throwable $e) { Logger::write('warning', 'Pago pendiente de reintento.', ['account_id'=>$this->accountId,'payment_id'=>$payment['id'],'error'=>$e->getMessage()]); }
+                catch (Throwable $e) {
+                    if (!$allowFollowUpFanout) {
+                        // Queue Core has a known GET response and can retry the
+                        // idempotent local persistence safely. Never declare an
+                        // order terminal while one of its payments is missing.
+                        throw new \RuntimeException('Queue Core payment persistence is incomplete.', 0, $e);
+                    }
+                    Logger::write('warning', 'Pago pendiente de reintento.', [
+                        'account_id'=>$this->accountId,
+                        'payment_id'=>$payment['id'],
+                        'error'=>$e->getMessage(),
+                    ]);
+                }
             }
         }
         if (!$allowFollowUpFanout) {

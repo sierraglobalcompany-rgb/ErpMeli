@@ -16,6 +16,7 @@ final class PackExactHandler implements QueueHandler
     public function __construct(
         private readonly SalePipelineCapabilityRepository $capabilities,
         ?callable $syncFactory = null,
+        private readonly ?WebhookTriggerService $webhookTriggers = null,
     ) {
         $this->syncFactory = $syncFactory !== null
             ? \Closure::fromCallable($syncFactory)
@@ -27,39 +28,67 @@ final class PackExactHandler implements QueueHandler
         if (!$context->hasTime(1.0)) {
             return QueueResult::automaticWait('deadline', gmdate('Y-m-d H:i:s', time() + 5));
         }
-        $orderId = (int) ($job->payload['order_id'] ?? 0);
+        $dependencies = $this->capabilities->pendingDependenciesForJob($job);
+        $orderId = (int) ($job->payload['order_id'] ?? ($dependencies[0]['order_id'] ?? 0));
         $packId = trim((string) ($job->payload['pack_id'] ?? $job->resourceId ?? ''));
         $capabilityId = (int) ($job->payload['capability_id'] ?? 0);
-        if ($orderId < 1 || $capabilityId < 1 || preg_match('/^\d+$/', $packId) !== 1) {
+        if (preg_match('/^\d+$/', $packId) !== 1) {
             return QueueResult::dead('invalid_pack_identity');
         }
-        if ($this->capabilities->dependencyCompleted($job, $capabilityId)) {
+        if ($capabilityId > 0 && $this->capabilities->dependencyCompleted($job, $capabilityId)) {
+            $this->completeWebhookTrigger($job);
             return QueueResult::completed(1, 0);
         }
-        $result = ($this->syncFactory)($job->meliAccountId)->processEnrichmentResource([
-            'id' => $job->id,
-            'meli_account_id' => $job->meliAccountId,
-            'meli_order_id' => $orderId,
-            'resource_type' => 'pack',
-            'external_resource_id' => $packId,
-        ]);
+        $sync = ($this->syncFactory)($job->meliAccountId);
+        $result = $orderId > 0
+            ? $sync->processEnrichmentResource([
+                'id' => $job->id,
+                'meli_account_id' => $job->meliAccountId,
+                'meli_order_id' => $orderId,
+                'resource_type' => 'pack',
+                'external_resource_id' => $packId,
+            ])
+            : ['spawned_shipment_id' => null, 'persisted_id' => $sync->syncPackByIdForQueueCore($packId, [
+                'job_type' => 'pack_exact', 'source' => 'queue_core', 'queue_core_job_id' => $job->id,
+            ])];
         $shipmentId = trim((string) ($result['spawned_shipment_id'] ?? ''));
         if ($shipmentId !== '') {
             $version = trim((string) ($job->payload['input_version'] ?? ''));
             if ($version === '') {
                 $version = hash('sha256', $job->id . '|pack|' . $packId . '|shipment|' . $shipmentId);
             }
-            $this->capabilities->appendShipmentDependency(
-                $job,
-                $capabilityId,
-                $orderId,
-                $shipmentId,
-                $version
-            );
+            foreach ($dependencies as $dependency) {
+                $this->capabilities->appendShipmentDependency(
+                    $this->withGeneration($job, $dependency['lifecycle_generation']),
+                    $dependency['capability_id'],
+                    $dependency['order_id'],
+                    $shipmentId,
+                    $version
+                );
+            }
         }
-        if (!$this->capabilities->completeDependency($job, $capabilityId)) {
+        if (!$this->capabilities->completeAllDependencies($job)) {
             throw new RuntimeException('Queue Core pack completion fence changed.');
         }
+        $this->completeWebhookTrigger($job);
         return QueueResult::completed(1, 1);
+    }
+
+    private function withGeneration(QueueClaim $job, int $generation): QueueClaim
+    {
+        return new QueueClaim(
+            $job->id,$job->companyId,$job->meliAccountId,$job->workType,$job->resourceType,
+            $job->resourceId,$job->lane,$job->priority,$job->state,$job->attemptCount,
+            $job->maxAttempts,$job->leaseOwner,$job->leaseGeneration,$job->dispatchState,
+            array_replace($job->payload,['capability_generation'=>$generation]),$job->source,$job->sourceRef
+        );
+    }
+
+    private function completeWebhookTrigger(QueueClaim $job): void
+    {
+        $trigger=(int)($job->payload['trigger_id']??0);$watermark=(int)($job->payload['scheduled_watermark']??0);
+        if($this->webhookTriggers!==null&&$trigger>0&&$watermark>0){
+            $this->webhookTriggers->complete($trigger,$job->companyId,$job->meliAccountId,$job->id,$watermark);
+        }
     }
 }

@@ -63,6 +63,20 @@ try {
         $write(['ok' => true, 'status' => 'enabled', 'checkpoint' => $importer->enable($source, $company, $account, 'historical_cli')]);
         exit(0);
     }
+    if ($action === 'enable-global') {
+        if (!$has('confirm-enable')) {
+            $write(['ok' => false, 'status' => 'explicit_confirmation_required']);
+            exit(2);
+        }
+        $update = $pdo->prepare(
+            "UPDATE queue_core_feature_flags
+             SET enabled=1,generation=generation+1,updated_at=UTC_TIMESTAMP(3)
+             WHERE feature_key='historical_importer' AND enabled=0"
+        );
+        $update->execute();
+        $write(['ok' => true, 'status' => 'historical_importer_enabled', 'changed' => $update->rowCount()]);
+        exit(0);
+    }
     if ($action === 'import') {
         $write(['ok' => true, 'result' => $importer->run($source, $company, $account, (int) $option('limit', '50'))]);
         exit(0);

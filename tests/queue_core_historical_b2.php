@@ -52,10 +52,12 @@ $apply = static function (PDO $pdo, string $file) use ($split): void {
 $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
 foreach ([
     'queue_core_historical_reviews', 'queue_core_historical_receipts', 'queue_core_historical_checkpoints',
+    'queue_core_health_snapshots', 'queue_core_readiness_receipts', 'queue_core_runs',
+    'queue_core_feature_flags', 'queue_core_webhook_triggers', 'queue_core_capability_dependencies',
     'queue_core_pending_capabilities', 'queue_core_dispatch_journal', 'queue_core_attempts',
     'queue_core_events', 'queue_core_jobs', 'queue_core_producer_checkpoints',
     'queue_core_scheduler_state', 'queue_core_execution_leases', 'queue_engine_control',
-    'meli_notification_work_items', 'meli_accounts', 'schema_migrations',
+    'meli_notification_work_items', 'meli_orders', 'meli_accounts', 'schema_migrations',
 ] as $table) {
     $pdo->exec("DROP TABLE IF EXISTS `$table`");
 }
@@ -66,6 +68,13 @@ $pdo->exec('CREATE TABLE meli_accounts (
     status VARCHAR(40) NOT NULL
 ) ENGINE=InnoDB');
 $pdo->exec("INSERT INTO meli_accounts VALUES (1,1,'connected'),(2,2,'connected')");
+$pdo->exec('CREATE TABLE meli_orders (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    meli_account_id BIGINT UNSIGNED NOT NULL,
+    external_order_id VARCHAR(80) NOT NULL,
+    synced_at DATETIME NULL,
+    UNIQUE KEY uq_historical_order (meli_account_id,external_order_id)
+) ENGINE=InnoDB');
 $pdo->exec('CREATE TABLE meli_notification_work_items (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     meli_account_id BIGINT UNSIGNED NOT NULL,
@@ -90,6 +99,8 @@ foreach ([
     '281_queue_core_reaudit1_fifo_fencing.sql',
     '282_queue_core_architecture_closeout_b1_2.sql',
     '283_queue_engine_control_oauth_supervisor_b1_4.sql',
+    '284_queue_core_sales_pipeline_b2.sql',
+    '285_queue_core_webhook_ownership_b2.sql',
 ] as $migration) {
     $apply($pdo, $root . '/database/migrations/' . $migration);
     $pdo->prepare('INSERT INTO schema_migrations(version) VALUES (?)')->execute([$migration]);
@@ -103,6 +114,9 @@ $pdo->exec($statements286[0]);
 $apply($pdo, $migration286);
 $apply($pdo, $migration286);
 $pdo->prepare('INSERT INTO schema_migrations(version) VALUES (?)')->execute(['286_queue_core_historical_deploy_b2.sql']);
+$apply($pdo, $root . '/database/migrations/287_queue_core_readiness_observability_b2.sql');
+$apply($pdo, $root . '/database/migrations/287_queue_core_readiness_observability_b2.sql');
+$pdo->prepare('INSERT INTO schema_migrations(version) VALUES (?)')->execute(['287_queue_core_readiness_observability_b2.sql']);
 
 $results = [];
 $scenario = static function (string $name, callable $test) use (&$results): void {
@@ -124,13 +138,19 @@ $reset = static function () use ($pdo): void {
     $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
     foreach (['queue_core_historical_reviews', 'queue_core_historical_receipts', 'queue_core_historical_checkpoints',
         'queue_core_dispatch_journal', 'queue_core_attempts', 'queue_core_events', 'queue_core_jobs',
+        'queue_core_producer_checkpoints',
         'meli_notification_work_items'] as $table) {
         $pdo->exec("TRUNCATE TABLE `$table`");
     }
     $pdo->exec('SET FOREIGN_KEY_CHECKS=1');
     $pdo->exec("UPDATE queue_core_scheduler_state SET cycle_position=0,generation=0 WHERE scheduler_key='default'");
-    $pdo->exec("UPDATE queue_engine_control SET active_engine='disabled',generation=0,changed_by='test'");
+    $pdo->exec("UPDATE queue_engine_control SET active_engine='v4',generation=0,changed_by='test'");
     $pdo->exec("UPDATE queue_core_execution_leases SET launcher=NULL,owner_token=NULL,expires_at=NULL,generation=0");
+    $pdo->exec("UPDATE queue_core_feature_flags SET enabled=1,hard_cap=10 WHERE feature_key='historical_importer'");
+    $pdo->exec("INSERT INTO queue_core_producer_checkpoints
+        (producer_key,company_id,meli_account_id,watermark_at,next_due_at,generation)
+        VALUES ('fresh_orders',1,1,UTC_TIMESTAMP(3),DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 MINUTE),0),
+               ('fresh_orders',2,2,UTC_TIMESTAMP(3),DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 MINUTE),0)");
 };
 $importer = static function (int $cap = 10) use ($pdo): HistoricalBacklogImporter {
     return new HistoricalBacklogImporter(
@@ -302,6 +322,8 @@ $scenario('rollback_blocks_uncertain_and_running', static function () use ($rese
 
 $scenario('deployment_gate_verifies_schema_and_backup', static function () use ($reset, $assert, $pdo): void {
     $reset();
+    $pdo->exec("UPDATE queue_engine_control SET active_engine='disabled',generation=0");
+    $pdo->exec("UPDATE queue_core_feature_flags SET enabled=0 WHERE feature_key='historical_importer'");
     putenv('ML_WRITE_ENABLED=false');
     $backup = tempnam(sys_get_temp_dir(), 'qc-b2-backup-');
     if (!is_string($backup)) {

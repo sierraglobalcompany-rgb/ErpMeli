@@ -16,6 +16,7 @@ use App\QueueCore\QueueCapabilityRegistry;
 use App\QueueCore\QueueCoreOAuthRefreshHandler;
 use App\QueueCore\QueueCoreOAuthSupervisor;
 use App\QueueCore\QueueCoreRepository;
+use App\QueueCore\QueueCoreReadinessReceiptService;
 use App\QueueCore\QueueEngineControlService;
 use App\QueueCore\QueueEngineRuntimePermit;
 use App\QueueCore\QueueExecutionContext;
@@ -55,10 +56,13 @@ $_ENV['ERP_PRIVATE_PATH'] = $private;
 $_SERVER['ERP_PRIVATE_PATH'] = $private;
 
 $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
-foreach (['queue_core_pending_capabilities', 'queue_core_dispatch_journal', 'queue_core_attempts',
+foreach (['queue_core_health_snapshots', 'queue_core_readiness_receipts', 'queue_core_runs',
+    'queue_core_historical_reviews', 'queue_core_historical_receipts', 'queue_core_historical_checkpoints',
+    'queue_core_webhook_triggers', 'queue_core_capability_dependencies', 'queue_core_feature_flags',
+    'queue_core_pending_capabilities', 'queue_core_dispatch_journal', 'queue_core_attempts',
     'queue_core_events', 'queue_core_jobs', 'queue_core_producer_checkpoints',
     'queue_core_scheduler_state', 'queue_core_execution_leases', 'queue_engine_control',
-    'app_settings', 'meli_tokens', 'meli_accounts'] as $table) {
+    'schema_migrations', 'app_settings', 'meli_tokens', 'meli_orders', 'meli_accounts'] as $table) {
     $pdo->exec("DROP TABLE IF EXISTS `$table`");
 }
 $pdo->exec('SET FOREIGN_KEY_CHECKS=1');
@@ -87,6 +91,15 @@ $pdo->exec("CREATE TABLE app_settings (
     setting_group VARCHAR(80) NOT NULL DEFAULT 'general',
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB");
+$pdo->exec("CREATE TABLE schema_migrations (
+    version VARCHAR(191) NOT NULL PRIMARY KEY,
+    applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB");
+$pdo->exec("CREATE TABLE meli_orders (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    meli_account_id BIGINT UNSIGNED NOT NULL,
+    synced_at DATETIME NULL
+) ENGINE=InnoDB");
 $pdo->exec("INSERT INTO app_settings(setting_key,setting_value,setting_group)
     VALUES ('oauth.token_expiry_skew_seconds','120','oauth'),('oauth.refresh_lock_wait_seconds','0','oauth')");
 
@@ -108,10 +121,16 @@ $migrations = [
     '281_queue_core_reaudit1_fifo_fencing.sql',
     '282_queue_core_architecture_closeout_b1_2.sql',
     '283_queue_engine_control_oauth_supervisor_b1_4.sql',
+    '284_queue_core_sales_pipeline_b2.sql',
+    '285_queue_core_webhook_ownership_b2.sql',
+    '286_queue_core_historical_deploy_b2.sql',
+    '287_queue_core_readiness_observability_b2.sql',
 ];
 foreach ([1, 2] as $passNumber) {
     foreach ($migrations as $migration) {
         $apply($pdo, $root . '/database/migrations/' . $migration);
+        $record = $pdo->prepare('INSERT IGNORE INTO schema_migrations(version) VALUES (?)');
+        $record->execute([$migration]);
     }
 }
 
@@ -126,11 +145,51 @@ $check = static function (bool $condition, string $message) use (&$passed, &$tot
 };
 $check(AppPaths::privateRoot() === $private, 'test private root was not isolated: ' . AppPaths::privateRoot());
 
+// B2 cutover is intentionally fail-closed. The fixture must establish the
+// same explicit safety state, feature authorities and scoped receipts that a
+// real preflight/canary would produce; the runtime gate itself is not bypassed.
+if (!is_dir($private) && !mkdir($private, 0700, true) && !is_dir($private)) {
+    throw new RuntimeException('test private root could not be created');
+}
+$automationMarker = $root . '/PAUSE_ERP_AUTOMATION';
+$savedAutomationMarker = is_file($automationMarker) ? file_get_contents($automationMarker) : null;
+file_put_contents($automationMarker, 'test');
+register_shutdown_function(static function () use ($automationMarker, $savedAutomationMarker): void {
+    if (is_string($savedAutomationMarker)) {
+        file_put_contents($automationMarker, $savedAutomationMarker);
+    } else {
+        @unlink($automationMarker);
+    }
+});
+foreach ([
+    'CRON_V4_ENABLED' => 'true',
+    'CRON_V3_ENABLED' => 'false',
+    'CRON_V3_SHADOW_ENABLED' => 'false',
+    'ML_WRITE_ENABLED' => 'false',
+] as $key => $value) {
+    putenv($key . '=' . $value);
+    $_ENV[$key] = $value;
+    $_SERVER[$key] = $value;
+}
+$pdo->exec("INSERT INTO meli_accounts VALUES
+    (1,1,'101','A','conectado',NULL),(2,1,'102','B','conectado',NULL)");
+$pdo->exec("UPDATE queue_core_feature_flags SET enabled=1,generation=generation+1
+            WHERE feature_key IN ('fresh_producer','webhook_producer','pack_shipment_followups')");
+$recordReadiness = static function (int $generation, array $accountIds) use ($pdo): void {
+    $receipts = new QueueCoreReadinessReceiptService($pdo);
+    $receipts->record($generation, 'preflight', true, ['fixture' => 'b14'], 3600);
+    foreach ($accountIds as $accountId) {
+        $receipts->record($generation, 'canary', true, ['fixture' => 'b14'], 3600, 1, $accountId);
+        $receipts->record($generation, 'convergence', true, ['fixture' => 'b14'], 3600, 1, $accountId);
+    }
+};
+$recordReadiness(0, [1, 2]);
+
 $control = new QueueEngineControlService($pdo);
 $initial = $control->snapshot();
 $check($initial['active_engine'] === 'disabled' && $initial['generation'] === 0, 'engine default is not disabled');
 $toV4 = $control->compareAndSwap('v4', 0, 'test');
-$check($toV4['ok'] && $toV4['generation'] === 1, 'v4 CAS failed');
+$check($toV4['ok'] && $toV4['generation'] === 1, 'v4 CAS failed: ' . json_encode($toV4));
 $permitResult = $control->acquireRuntime('v4', 'operational');
 $permit = $permitResult['permit'] ?? null;
 $check($permitResult['ok'] && $permit instanceof QueueEngineRuntimePermit, 'v4 runtime permit failed');
@@ -147,6 +206,7 @@ $check(!$busyCutover['ok'] && $busyCutover['reason'] === 'engine_runtime_busy', 
 $control->releaseRuntime($permit);
 $toV3 = (new QueueEngineControlService($second))->compareAndSwap('v3', 1, 'other-process');
 $check($toV3['ok'] && $toV3['generation'] === 2, 'v3 CAS after release failed');
+$recordReadiness(1, [1, 2]);
 $stale = $control->compareAndSwap('v4', 1, 'stale');
 $check(!$stale['ok'] && $stale['reason'] === 'stale_generation', 'stale generation changed engine');
 
@@ -166,8 +226,6 @@ $check(
 
 $encryptedAccess = Crypto::encrypt('access-old');
 $encryptedRefresh = Crypto::encrypt('refresh-old');
-$pdo->exec("INSERT INTO meli_accounts VALUES
-    (1,1,'101','A','conectado',NULL),(2,1,'102','B','conectado',NULL)");
 $insertToken = $pdo->prepare(
     "INSERT INTO meli_tokens
      (meli_account_id,access_token_encrypted,refresh_token_encrypted,expires_at,scope,token_type,refresh_version)

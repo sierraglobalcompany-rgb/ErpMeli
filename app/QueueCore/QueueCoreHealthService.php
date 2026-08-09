@@ -152,4 +152,90 @@ final class QueueCoreHealthService
             'read_only' => true,
         ];
     }
+
+    /** @return array<string,mixed> */
+    public function persistSnapshot(): array
+    {
+        $snapshot = $this->snapshot();
+        $depth = is_array($snapshot['depth'] ?? null) ? $snapshot['depth'] : [];
+        $eligible = (int) ($depth['pending']['total'] ?? 0)
+            + (int) ($depth['retry_wait']['total'] ?? 0);
+        $oldest = [];
+        foreach (['pending', 'retry_wait'] as $state) {
+            $value = $depth[$state]['oldest_seconds'] ?? null;
+            if ($value !== null) {
+                $oldest[] = max(0, (int) $value);
+            }
+        }
+        $lags = [];
+        foreach ((array) ($snapshot['accounts'] ?? []) as $account) {
+            if (is_array($account) && ($account['freshness_lag_seconds'] ?? null) !== null) {
+                $lags[] = max(0, (int) $account['freshness_lag_seconds']);
+            }
+        }
+        $engine = is_array($snapshot['engine'] ?? null) ? $snapshot['engine'] : [];
+        $reasons = json_encode(
+            array_values(array_map('strval', (array) ($snapshot['reasons'] ?? []))),
+            JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+        );
+        $insert = $this->pdo->prepare(
+            'INSERT INTO queue_core_health_snapshots
+             (engine_generation,health_state,account_count,eligible_depth,waiting_oauth,
+              waiting_dependency,review_depth,dead_depth,oldest_eligible_seconds,
+              freshness_lag_seconds,reasons_json)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+        );
+        $insert->execute([
+            max(0, (int) ($engine['generation'] ?? 0)),
+            (string) ($snapshot['health'] ?? 'RED'),
+            count((array) ($snapshot['accounts'] ?? [])),
+            $eligible,
+            (int) ($depth['waiting_oauth']['total'] ?? 0),
+            $this->pendingDependencyCount(),
+            (int) ($depth['review']['total'] ?? 0),
+            (int) ($depth['dead']['total'] ?? 0),
+            $oldest === [] ? null : max($oldest),
+            $lags === [] ? null : max($lags),
+            $reasons,
+        ]);
+        if ($insert->rowCount() !== 1) {
+            throw new \RuntimeException('Queue Core health snapshot was not persisted.');
+        }
+        return [
+            'id' => (int) $this->pdo->lastInsertId(),
+            'health' => (string) ($snapshot['health'] ?? 'RED'),
+            'eligible_depth' => $eligible,
+            'generated_at' => (string) ($snapshot['generated_at'] ?? gmdate(DATE_ATOM)),
+        ];
+    }
+
+    /** @return array<string,mixed>|null */
+    public function latestPersisted(): ?array
+    {
+        $row = $this->pdo->query(
+            'SELECT id,engine_generation,health_state,account_count,eligible_depth,
+                    waiting_oauth,waiting_dependency,review_depth,dead_depth,
+                    oldest_eligible_seconds,freshness_lag_seconds,reasons_json,generated_at
+             FROM queue_core_health_snapshots ORDER BY id DESC LIMIT 1'
+        )->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return null;
+        }
+        $row['reasons'] = json_decode((string) $row['reasons_json'], true) ?: [];
+        unset($row['reasons_json']);
+        $row['read_only'] = true;
+        return $row;
+    }
+
+    private function pendingDependencyCount(): int
+    {
+        try {
+            return max(0, (int) $this->pdo->query(
+                "SELECT COUNT(*) FROM queue_core_capability_dependencies
+                 WHERE state IN ('pending','waiting_dependency')"
+            )->fetchColumn());
+        } catch (Throwable) {
+            return 0;
+        }
+    }
 }

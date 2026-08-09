@@ -76,6 +76,47 @@ final class SalePipelineCapabilityRepository
         return (string) ($stmt->fetchColumn() ?: '') === 'completed';
     }
 
+    /** @return list<array{capability_id:int,order_id:int,lifecycle_generation:int}> */
+    public function pendingDependenciesForJob(QueueClaim $job): array
+    {
+        $statement = $this->pdo->prepare(
+            "SELECT d.capability_id,d.lifecycle_generation,c.resource_id order_id
+             FROM queue_core_capability_dependencies d
+             INNER JOIN queue_core_pending_capabilities c
+               ON c.id=d.capability_id AND c.company_id=d.company_id
+              AND c.meli_account_id=d.meli_account_id
+              AND c.lifecycle_generation=d.lifecycle_generation
+             WHERE d.queue_job_id=? AND d.company_id=? AND d.meli_account_id=?
+               AND d.state='pending' AND c.state='materialized'
+             ORDER BY d.capability_id"
+        );
+        $statement->execute([$job->id, $job->companyId, $job->meliAccountId]);
+        $result = [];
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $result[] = [
+                'capability_id' => (int) $row['capability_id'],
+                'order_id' => (int) $row['order_id'],
+                'lifecycle_generation' => (int) $row['lifecycle_generation'],
+            ];
+        }
+        return $result;
+    }
+
+    public function completeAllDependencies(QueueClaim $job): bool
+    {
+        $dependencies = $this->pendingDependenciesForJob($job);
+        foreach ($dependencies as $dependency) {
+            $claim = $this->claimWithCapabilityGeneration(
+                $job,
+                $dependency['lifecycle_generation']
+            );
+            if (!$this->completeDependency($claim, $dependency['capability_id'])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public function completeDependency(QueueClaim $job, int $capabilityId): bool
     {
         if ($capabilityId < 1) {
@@ -341,7 +382,12 @@ final class SalePipelineCapabilityRepository
             return $this->markReview($id, $companyId, $accountId, $generation, 'unsupported_sale_capability');
         }
         foreach ($jobs as $dependencyKey => $job) {
-            $jobId = $this->queue->enqueue($job);
+            $jobId = in_array($job->workType, ['pack_exact','shipment_exact'], true)
+                ? $this->queue->enqueueCoalescedExact(
+                    $job,
+                    [$job->workType, 'webhook_' . $job->workType]
+                )
+                : $this->queue->enqueue($job);
             $this->linkDependency($id, $generation, $companyId, $accountId, $dependencyKey, $jobId);
         }
         $update = $this->pdo->prepare(
@@ -441,5 +487,28 @@ final class SalePipelineCapabilityRepository
     {
         $safe = strtolower((string) preg_replace('/[^a-z0-9_]+/i', '_', $value));
         return substr(trim($safe, '_'), 0, 100) ?: 'unknown_failure';
+    }
+
+    private function claimWithCapabilityGeneration(QueueClaim $job, int $generation): QueueClaim
+    {
+        return new QueueClaim(
+            $job->id,
+            $job->companyId,
+            $job->meliAccountId,
+            $job->workType,
+            $job->resourceType,
+            $job->resourceId,
+            $job->lane,
+            $job->priority,
+            $job->state,
+            $job->attemptCount,
+            $job->maxAttempts,
+            $job->leaseOwner,
+            $job->leaseGeneration,
+            $job->dispatchState,
+            array_replace($job->payload, ['capability_generation' => $generation]),
+            $job->source,
+            $job->sourceRef,
+        );
     }
 }

@@ -42,8 +42,10 @@ $check(str_contains($spool, "'stop_reason' => 'SKIPPED_V4_OWNER'") && str_contai
 foreach (['order', 'pack', 'shipment'] as $type) {
     $check(is_file($root . '/app/QueueCore/Webhook' . ucfirst($type) . 'ExactHandler.php'), "Falta handler exacto {$type}.");
 }
-$check(str_contains($producer, "'webhook_' . \$type . '_exact'"), 'El productor no genera trabajo exacto tipado.');
-$check(str_contains($producer, "FIELD(resource_type,'order','pack','shipment')"), 'El orden exacto order/pack/shipment no es determinista.');
+$check(str_contains($producer, "\$type . '_exact'"), 'El productor no genera trabajo exacto canónico.');
+$check(str_contains($producer, 'ORDER BY last_observed_at ASC,id ASC')
+    && !str_contains($producer, 'FIELD(resource_type'),
+    'El productor webhook no conserva el FIFO estable por llegada.');
 $check(str_contains($trigger, 'desired_watermark=desired_watermark+1') && str_contains($trigger, "IF(state='inflight','inflight','pending')"), 'Coalescing/inflight rerun no usa desired watermark.');
 $check(str_contains($migration, 'UNIQUE KEY uq_queue_core_webhook_resource'), 'Cien duplicados podrían crecer sin límite.');
 $check(str_contains($trigger, 'LIMIT 2') && str_contains($trigger, 'a.company_id') && str_contains($trigger, 'c.status=1'), 'La identidad seller/company no falla cerrada.');

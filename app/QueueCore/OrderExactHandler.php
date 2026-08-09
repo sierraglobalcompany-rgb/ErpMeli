@@ -11,6 +11,7 @@ final class OrderExactHandler implements QueueHandler
     public function __construct(
         ?callable $syncFactory=null,
         private readonly ?SalePipelineCapabilityRepository $salePipeline=null,
+        private readonly ?WebhookTriggerService $webhookTriggers=null,
     )
     {
         $this->syncFactory=$syncFactory!==null?\Closure::fromCallable($syncFactory):static fn(int $accountId):OrderSyncService=>new OrderSyncService($accountId);
@@ -31,6 +32,18 @@ final class OrderExactHandler implements QueueHandler
         if($this->salePipeline!==null){
             $this->salePipeline->materializePending(4,$localOrderId);
         }
+        $this->completeWebhookTrigger($job);
         return QueueResult::completed(1,1);
+    }
+
+    private function completeWebhookTrigger(QueueClaim $job): void
+    {
+        $triggerId=(int)($job->payload['trigger_id']??0);
+        $watermark=(int)($job->payload['scheduled_watermark']??0);
+        if($this->webhookTriggers!==null && $triggerId>0 && $watermark>0){
+            $this->webhookTriggers->complete(
+                $triggerId,$job->companyId,$job->meliAccountId,$job->id,$watermark
+            );
+        }
     }
 }

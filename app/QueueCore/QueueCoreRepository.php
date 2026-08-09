@@ -55,6 +55,89 @@ final class QueueCoreRepository
         return $this->lastEnqueueCreated;
     }
 
+    /**
+     * Jobs whose account token is not eligible do not belong to the executable
+     * FIFO. Parking them before the OAuth work is appended prevents a large
+     * historical head from starving token recovery without priority jumping.
+     */
+    public function parkRemoteWorkForOAuth(int $companyId, int $accountId, int $refreshVersion): int
+    {
+        if ($companyId < 1 || $accountId < 1 || $refreshVersion < 0) {
+            return 0;
+        }
+        $statement = $this->pdo->prepare(
+            "UPDATE queue_core_jobs
+             SET state='waiting_oauth',wait_refresh_version=?,next_attempt_at=NULL,
+                 last_error_class='oauth_refresh_required',updated_at=UTC_TIMESTAMP(3)
+             WHERE company_id=? AND meli_account_id=? AND queue_domain='operational'
+               AND state IN ('pending','retry_wait')
+               AND work_type NOT IN ('oauth_refresh','financial_projection')"
+        );
+        $statement->execute([$refreshVersion, $companyId, $accountId]);
+        return $statement->rowCount();
+    }
+
+    /**
+     * Append an exact observation without creating a second concurrently
+     * executable fetch for the same resource.  The scheduler row is the
+     * serialization point shared by Fresh and webhook producers; the oldest
+     * active logical job keeps its original FIFO id.
+     *
+     * @param list<string> $equivalentWorkTypes
+     */
+    public function enqueueCoalescedExact(QueueJob $job, array $equivalentWorkTypes): int
+    {
+        $types = array_values(array_unique(array_filter(array_map('strval', $equivalentWorkTypes))));
+        if ($job->resourceId === null || $job->resourceId === '' || $types === []) {
+            return $this->enqueue($job);
+        }
+        $ownsTransaction = !$this->pdo->inTransaction();
+        if ($ownsTransaction) {
+            $this->pdo->beginTransaction();
+        }
+        try {
+            $this->pdo->query(
+                "SELECT cycle_position FROM queue_core_scheduler_state
+                 WHERE scheduler_key='default' FOR UPDATE"
+            )->fetchColumn();
+            $in = implode(',', array_fill(0, count($types), '?'));
+            $lookup = $this->pdo->prepare(
+                "SELECT id FROM queue_core_jobs
+                 WHERE company_id=? AND meli_account_id=?
+                   AND resource_type=? AND resource_id=?
+                   AND queue_domain='operational'
+                   AND work_type IN ($in)
+                   AND state IN ('pending','claimed','running','retry_wait','waiting_oauth')
+                 ORDER BY id ASC LIMIT 1 FOR UPDATE"
+            );
+            $lookup->execute([
+                $job->companyId,
+                $job->meliAccountId,
+                $job->resourceType,
+                $job->resourceId,
+                ...$types,
+            ]);
+            $existing = (int) ($lookup->fetchColumn() ?: 0);
+            if ($existing > 0) {
+                $this->lastEnqueueCreated = false;
+                if ($ownsTransaction) {
+                    $this->pdo->commit();
+                }
+                return $existing;
+            }
+            $id = $this->enqueue($job);
+            if ($ownsTransaction) {
+                $this->pdo->commit();
+            }
+            return $id;
+        } catch (Throwable $error) {
+            if ($ownsTransaction && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
     public function claimNext(QueueRunRequest $request, array $registeredTypes): ?QueueClaim
     {
         if ($registeredTypes === [] || $request->maxJobs < 1 || microtime(true) >= $request->deadline) {

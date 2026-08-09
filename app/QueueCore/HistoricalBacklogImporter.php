@@ -85,6 +85,9 @@ final class HistoricalBacklogImporter
         $source = $this->registry->get($sourceKey);
         $this->assertCertified($source);
         $this->assertScope($companyId, $accountId);
+        if (!$this->featureEnabled()) {
+            return $this->result('feature_disabled', $sourceKey, $companyId, $accountId, 0, 0, 0, 0, 0, 0);
+        }
         if (!$this->acquireAdmissionLock()) {
             return $this->result('busy', $sourceKey, $companyId, $accountId, 0, 0, 0, 0, 0, 0);
         }
@@ -100,7 +103,8 @@ final class HistoricalBacklogImporter
             if ($available < 1) {
                 $this->updateCheckpoint($checkpoint, 'ready', 0, 0, 0, 0, (int) $checkpoint['cursor_id']);
                 $this->pdo->commit();
-                return $this->result('capacity_wait', $sourceKey, $companyId, $accountId, 0, 0, 0, 0, (int) $checkpoint['cursor_id'], (int) $checkpoint['high_water_id'], $outstanding);
+                $reason = $this->admission->blockReason($this->pdo);
+                return $this->result($reason === null ? 'capacity_wait' : $reason, $sourceKey, $companyId, $accountId, 0, 0, 0, 0, (int) $checkpoint['cursor_id'], (int) $checkpoint['high_water_id'], $outstanding);
             }
 
             $rows = $source->scan(
@@ -154,6 +158,15 @@ final class HistoricalBacklogImporter
             throw $error;
         } finally {
             $this->releaseAdmissionLock();
+        }
+    }
+
+    private function featureEnabled(): bool
+    {
+        try {
+            return (new QueueCoreFeatureFlagService($this->pdo))->enabled('historical_importer');
+        } catch (Throwable) {
+            return false;
         }
     }
 

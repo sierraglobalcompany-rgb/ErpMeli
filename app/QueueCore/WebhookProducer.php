@@ -55,8 +55,7 @@ final class WebhookProducer
             "SELECT id,company_id,meli_account_id
              FROM queue_core_webhook_triggers
              WHERE state='pending'
-             ORDER BY last_observed_at ASC,
-               FIELD(resource_type,'order','pack','shipment'),id ASC
+             ORDER BY last_observed_at ASC,id ASC
              LIMIT {$limit}"
         );
         foreach ($query->fetchAll(PDO::FETCH_ASSOC) as $candidate) {
@@ -80,7 +79,7 @@ final class WebhookProducer
                 $resourceId = (string) $trigger['resource_id'];
                 $job = new QueueJob(
                     (int) $trigger['company_id'], (int) $trigger['meli_account_id'],
-                    'webhook_' . $type . '_exact', $type, $resourceId, 'recovery', 50,
+                    $type . '_exact', $type, $resourceId, 'recovery', 50,
                     'webhook:' . $type . ':' . $resourceId,
                     'watermark:' . $watermark,
                     'webhook_v4', 'webhook-trigger:' . (int) $trigger['id'],
@@ -94,7 +93,12 @@ final class WebhookProducer
                     null,
                     'operational'
                 );
-                $jobId = $this->repository->enqueue($job);
+                $jobId = $type === 'order'
+                    ? $this->repository->enqueueCoalescedExact($job, ['order_exact','webhook_order_exact'])
+                    : $this->repository->enqueueCoalescedExact(
+                        $job,
+                        [$type . '_exact','webhook_' . $type . '_exact']
+                    );
                 $created = $this->repository->lastEnqueueCreated();
                 $update = $this->pdo->prepare(
                     "UPDATE queue_core_webhook_triggers

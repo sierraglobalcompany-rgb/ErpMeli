@@ -15,6 +15,7 @@ spl_autoload_register(static function (string $class) use ($root): void {
 use App\Core\Database;
 use App\QueueCore\QueueClaim;
 use App\QueueCore\QueueCoreRepository;
+use App\QueueCore\QueueJob;
 use App\QueueCore\QueueExecutionContext;
 use App\QueueCore\WebhookExactGateway;
 use App\QueueCore\WebhookOrderExactHandler;
@@ -34,7 +35,7 @@ $pdo = new PDO($dsn, getenv('QUEUE_CORE_TEST_USER') ?: '', getenv('QUEUE_CORE_TE
 $pdo->exec("SET time_zone='+00:00'");
 Database::setConnection($pdo);
 $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
-foreach (['queue_core_webhook_triggers', 'queue_core_events', 'queue_core_jobs', 'queue_engine_control', 'meli_accounts', 'companies'] as $table) {
+foreach (['queue_core_webhook_triggers', 'queue_core_events', 'queue_core_jobs', 'queue_core_scheduler_state', 'queue_engine_control', 'meli_accounts', 'companies'] as $table) {
     $pdo->exec("DROP TABLE IF EXISTS `{$table}`");
 }
 $pdo->exec('SET FOREIGN_KEY_CHECKS=1');
@@ -50,6 +51,8 @@ $pdo->exec("CREATE TABLE queue_core_jobs(
  payload_json JSON NOT NULL,provenance_json JSON NOT NULL,created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
  UNIQUE KEY uq_job(company_id,meli_account_id,work_type,idempotency_key,input_version)) ENGINE=InnoDB");
 $pdo->exec("CREATE TABLE queue_core_events(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,job_id BIGINT UNSIGNED NULL,company_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,lane VARCHAR(40),event_type VARCHAR(40),event_count INT,resources_count INT) ENGINE=InnoDB");
+$pdo->exec("CREATE TABLE queue_core_scheduler_state(scheduler_key VARCHAR(32) PRIMARY KEY,cycle_position INT NOT NULL DEFAULT 0,generation BIGINT UNSIGNED NOT NULL DEFAULT 0) ENGINE=InnoDB");
+$pdo->exec("INSERT INTO queue_core_scheduler_state VALUES('default',0,0)");
 $pdo->exec("CREATE TABLE queue_engine_control(control_key VARCHAR(32) PRIMARY KEY,active_engine VARCHAR(16) NOT NULL,generation BIGINT UNSIGNED NOT NULL,changed_at DATETIME(3) NOT NULL,changed_by VARCHAR(96) NOT NULL) ENGINE=InnoDB");
 $pdo->exec("INSERT INTO queue_engine_control VALUES('primary','v4',1,UTC_TIMESTAMP(3),'test')");
 $migration = preg_replace('/^--.*$/m', '', (string) file_get_contents($root . '/database/migrations/285_queue_core_webhook_ownership_b2.sql'));
@@ -98,10 +101,30 @@ $fake = new class implements WebhookExactGateway {
 $claim = new QueueClaim($jobId, 1, 11, 'webhook_order_exact', 'order', '9001', 'recovery', 50, 'running', 1, 5, 'test', 1, 'NOT_DISPATCHED', $payload, 'webhook_v4', null);
 $result = (new WebhookOrderExactHandler($triggers, $fake))->handle($claim, new QueueExecutionContext(1, microtime(true) + 10, 'test'));
 $assert($fake->calls === 1 && $result->outcome === 'completed', 'fake exact handler did not close one resource');
+$pdo->prepare("UPDATE queue_core_jobs SET state='completed' WHERE id=?")
+    ->execute([$jobId]);
 $row = $pdo->query("SELECT * FROM queue_core_webhook_triggers WHERE resource_id='9001'")->fetch();
 $assert((string) $row['state'] === 'pending' && (int) $row['completed_watermark'] === 100, 'inflight rerun was not preserved');
 $second = $producer->schedule(100, null, false);
 $assert($second['enqueued'] === 1 && (int) $pdo->query('SELECT COUNT(*) FROM queue_core_jobs')->fetchColumn() === 2, 'desired rerun did not create its exact next version');
+
+// Fresh and webhook observations share one active exact order fetch. The
+// existing FIFO id remains authoritative; the webhook trigger attaches to it.
+$freshId = $repository->enqueue(new QueueJob(
+    1, 11, 'order_exact', 'order', '9100', 'fresh_orders', 0,
+    'order:9100', 'snapshot:9100', 'fresh_orders_discovery', 'order:9100',
+    ['order_id' => '9100'], ['producer' => 'fresh_orders'], 5
+));
+$before = (int) $pdo->query('SELECT COUNT(*) FROM queue_core_jobs')->fetchColumn();
+$triggers->observe($validation(101, 'order', '9100'));
+$coalesced = $producer->schedule(100, null, false);
+$attached = (int) $pdo->query(
+    "SELECT inflight_job_id FROM queue_core_webhook_triggers WHERE resource_id='9100'"
+)->fetchColumn();
+$assert($attached === $freshId, 'webhook did not attach to the active Fresh exact job');
+$assert((int) $pdo->query('SELECT COUNT(*) FROM queue_core_jobs')->fetchColumn() === $before,
+    'Fresh plus webhook created a concurrent duplicate exact job');
+$assert($coalesced['duplicates'] >= 1, 'coalesced trigger was not reported as an existing logical job');
 
 $assert(!$triggers->observe($validation(999, 'order', '1'))['accepted'], 'unknown seller was not quarantinable');
 $scope = $triggers->observe($validation(202, 'shipment', '7001'));

@@ -136,6 +136,11 @@ final class CronV4Cli
             $saleMaterialized = $core['feature_flags']->enabled('pack_shipment_followups')
                 ? $core['sale_pipeline']->materializePending(min(20, $max))
                 : ['materialized'=>0,'review'=>0,'already_terminal'=>0,'disabled'=>1];
+            $historical = ['status' => 'feature_disabled', 'created' => 0];
+            if ($core['feature_flags']->enabled('historical_importer')
+                && $this->advancePhase($runLedger, $runId, 'historical_admission', $core, $executionLease, 3)) {
+                $historical = $this->runHistorical($pdo, $core['repository'], $core['feature_flags']);
+            }
             $effectiveDeadline = CronDeadlineContext::deadline() ?? $deadline;
             if (!$engineControl->stillCurrent($enginePermit)) {
                 $result = [
@@ -146,6 +151,7 @@ final class CronV4Cli
                     'webhook_producer' => $webhookProduced,
                     'producer' => $produced,
                     'sale_pipeline' => $saleMaterialized,
+                    'historical' => $historical,
                     'claimed' => 0,
                     'http' => 0,
                 ];
@@ -171,6 +177,11 @@ final class CronV4Cli
                 $runId,
             ));
 
+            try {
+                $healthSnapshot = (new QueueCoreHealthService($pdo))->persistSnapshot();
+            } catch (Throwable) {
+                $healthSnapshot = ['status' => 'unavailable'];
+            }
             $result = [
                 'ok' => true,
                 'status' => 'COMPLETE',
@@ -178,9 +189,11 @@ final class CronV4Cli
                 'webhook_producer' => $webhookProduced,
                 'producer' => $produced,
                 'sale_pipeline' => $saleMaterialized,
+                'historical' => $historical,
                 'recovered' => $recovered,
                 'run' => $run,
                 'metrics' => (new QueueMetricsService($pdo))->snapshot(),
+                'health_snapshot' => $healthSnapshot,
             ];
             $runLedger->finish(
                 $runId,
@@ -215,6 +228,38 @@ final class CronV4Cli
             }
             CronDeadlineContext::clear();
         }
+    }
+
+    /** @return array<string,mixed> */
+    private function runHistorical(
+        PDO $pdo,
+        QueueCoreRepository $repository,
+        QueueCoreFeatureFlagService $flags,
+    ): array {
+        $cap = $flags->hardCap('historical_importer', 10, HistoricalAdmissionPolicy::ABSOLUTE_HARD_CAP);
+        if ($cap < 1) {
+            return ['status' => 'feature_disabled', 'created' => 0];
+        }
+        $checkpoint = $pdo->query(
+            "SELECT source_key,company_id,meli_account_id
+             FROM queue_core_historical_checkpoints
+             WHERE enabled=1 AND state IN ('ready','running')
+             ORDER BY source_key,company_id,meli_account_id LIMIT 1"
+        )->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($checkpoint)) {
+            return ['status' => 'no_enabled_source', 'created' => 0];
+        }
+        return (new HistoricalBacklogImporter(
+            $pdo,
+            $repository,
+            new HistoricalBacklogSourceRegistry(),
+            new HistoricalAdmissionPolicy($cap),
+        ))->run(
+            (string) $checkpoint['source_key'],
+            (int) $checkpoint['company_id'],
+            (int) $checkpoint['meli_account_id'],
+            $cap,
+        );
     }
 
     /** @param array<string,mixed> $core */

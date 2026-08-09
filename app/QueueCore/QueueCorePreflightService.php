@@ -23,6 +23,8 @@ final class QueueCorePreflightService
         'queue_core_execution_leases', 'queue_engine_control',
         'queue_core_runs', 'queue_core_readiness_receipts',
         'queue_core_health_snapshots', 'queue_core_feature_flags',
+        'queue_core_historical_checkpoints', 'queue_core_historical_receipts',
+        'queue_core_historical_reviews',
         'api_rhythm_states', 'api_remote_permits', 'meli_accounts', 'meli_tokens',
     ];
 
@@ -60,6 +62,7 @@ final class QueueCorePreflightService
             '283_queue_engine_control_oauth_supervisor_b1_4.sql',
             '284_queue_core_sales_pipeline_b2.sql',
             '285_queue_core_webhook_ownership_b2.sql',
+            '286_queue_core_historical_deploy_b2.sql',
             '287_queue_core_readiness_observability_b2.sql',
         ];
         $applied = [];
@@ -81,6 +84,9 @@ final class QueueCorePreflightService
             'queue_core_attempts' => ['idx_queue_core_attempt_run'],
             'queue_core_pending_capabilities' => ['idx_queue_core_capability_lifecycle'],
             'queue_core_webhook_triggers' => ['idx_queue_core_webhook_pending'],
+            'queue_core_historical_checkpoints' => ['idx_qc_historical_enabled'],
+            'queue_core_historical_receipts' => ['idx_qc_historical_receipt_job'],
+            'queue_core_health_snapshots' => ['idx_queue_core_health_latest'],
         ];
         $missingIndexes = [];
         foreach ($requiredIndexes as $table => $indexes) {

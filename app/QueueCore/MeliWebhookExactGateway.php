@@ -9,6 +9,10 @@ use RuntimeException;
 
 final class MeliWebhookExactGateway implements WebhookExactGateway
 {
+    public function __construct(
+        private readonly ?SalePipelineCapabilityRepository $salePipeline = null,
+    ) {}
+
     public function sync(
         int $companyId,
         int $meliAccountId,
@@ -31,11 +35,15 @@ final class MeliWebhookExactGateway implements WebhookExactGateway
             'queue_core_job_id' => $queueJobId,
             'bulk' => false,
         ];
-        return match ($resourceType) {
+        $persisted = match ($resourceType) {
             'order' => $sync->syncOrderByIdForQueueCore($resourceId, $meta),
             'pack' => $sync->syncPackByIdForQueueCore($resourceId, $meta),
             'shipment' => $sync->syncShipmentByIdForQueueCore($resourceId, $meta),
             default => throw new RuntimeException('Webhook exact resource type is unsupported.'),
         };
+        if ($resourceType === 'order' && $this->salePipeline !== null) {
+            $this->salePipeline->materializePending(4, $persisted);
+        }
+        return $persisted;
     }
 }

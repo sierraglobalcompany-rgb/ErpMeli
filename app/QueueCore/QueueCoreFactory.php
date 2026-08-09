@@ -13,13 +13,19 @@ final class QueueCoreFactory
         $flags=new QueueCoreFeatureFlagService($pdo);
         $salePipeline=new SalePipelineCapabilityRepository($pdo,$repository);
         $registry=new QueueHandlerRegistry();
-        $registry->register('fresh_orders_discovery',new FreshOrdersDiscoveryHandler($pdo,$repository,$gateway??new MeliFreshOrdersGateway()));
-        $registry->register('order_exact',new OrderExactHandler(null,$flags->enabled('pack_shipment_followups')?$salePipeline:null));
-        $registry->register('financial_projection',new FinancialProjectionHandler($salePipeline));
-        $registry->register('pack_exact',new PackExactHandler($salePipeline));
-        $registry->register('shipment_exact',new ShipmentExactHandler($salePipeline));
         $webhookTriggers=new WebhookTriggerService($pdo);
-        $webhookGateway=new MeliWebhookExactGateway();
+        $registry->register('fresh_orders_discovery',new FreshOrdersDiscoveryHandler($pdo,$repository,$gateway??new MeliFreshOrdersGateway()));
+        $registry->register('order_exact',new OrderExactHandler(
+            null,
+            $flags->enabled('pack_shipment_followups')?$salePipeline:null,
+            $webhookTriggers
+        ));
+        $registry->register('financial_projection',new FinancialProjectionHandler($salePipeline));
+        $registry->register('pack_exact',new PackExactHandler($salePipeline,null,$webhookTriggers));
+        $registry->register('shipment_exact',new ShipmentExactHandler($salePipeline,null,$webhookTriggers));
+        $webhookGateway=new MeliWebhookExactGateway(
+            $flags->enabled('pack_shipment_followups') ? $salePipeline : null
+        );
         $registry->register('webhook_order_exact',new WebhookOrderExactHandler($webhookTriggers,$webhookGateway));
         $registry->register('webhook_pack_exact',new WebhookPackExactHandler($webhookTriggers,$webhookGateway));
         $registry->register('webhook_shipment_exact',new WebhookShipmentExactHandler($webhookTriggers,$webhookGateway));

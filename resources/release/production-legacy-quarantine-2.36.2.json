@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "release": "2.36.2",
+  "policy": "copy-verify-then-move-outside-webroot; never delete; block on hash mismatch",
+  "entries": [
+    {
+      "path": "app/Services/StorageMaintenanceService.php",
+      "expected_sha256": "f01c0d298b8c69974965be3f1d197cc0f4ace2dd52fd8e05083611211683b817",
+      "classification": "PRODUCTION_ONLY_STALE_TO_QUARANTINE",
+      "reason": "Unversioned destructive maintenance implementation with no certified runtime caller; the managed runtime uses OperationalMaintenanceService and TechnicalRetentionCliService.",
+      "rollback_destination": "operator-private/quarantine/prod-2.36.2/f01c0d298b8c69974965be3f1d197cc0f4ace2dd52fd8e05083611211683b817/app/Services/StorageMaintenanceService.php",
+      "must_be_unreachable_after_cutover": true
+    },
+    {
+      "path": "CronV3Cli.php",
+      "expected_sha256": "611d53a081477488fbdd9f1a2af3ac5164581a0348287bf889fc600377c4710c",
+      "classification": "PRODUCTION_ONLY_STALE_TO_QUARANTINE",
+      "reason": "Unauthorized root duplicate of a historical namespaced class; a real root PHP file is directly executable by the web server.",
+      "rollback_destination": "operator-private/quarantine/prod-2.36.2/611d53a081477488fbdd9f1a2af3ac5164581a0348287bf889fc600377c4710c/CronV3Cli.php",
+      "must_be_unreachable_after_cutover": true
+    },
+    {
+      "path": "EmergencyControlKernel.php",
+      "expected_sha256": "f9e69ae17b186e4354552521447a7df37766d31b5daea2bf1347f697af4c8eee",
+      "classification": "PRODUCTION_ONLY_STALE_TO_QUARANTINE",
+      "reason": "Unauthorized root duplicate of a historical namespaced class; a real root PHP file is directly executable by the web server.",
+      "rollback_destination": "operator-private/quarantine/prod-2.36.2/f9e69ae17b186e4354552521447a7df37766d31b5daea2bf1347f697af4c8eee/EmergencyControlKernel.php",
+      "must_be_unreachable_after_cutover": true
+    },
+    {
+      "path": "EmergencyControlService.php",
+      "expected_sha256": "66a6828d20852176c6908f2e01b1415ffbcf4815006d5a8ab8e67b71933d7219",
+      "classification": "PRODUCTION_ONLY_STALE_TO_QUARANTINE",
+      "reason": "Unauthorized root duplicate of a historical namespaced class; a real root PHP file is directly executable by the web server.",
+      "rollback_destination": "operator-private/quarantine/prod-2.36.2/66a6828d20852176c6908f2e01b1415ffbcf4815006d5a8ab8e67b71933d7219/EmergencyControlService.php",
+      "must_be_unreachable_after_cutover": true
+    },
+    {
+      "path": "ExecutionJournalService.php",
+      "expected_sha256": "c38eaed9a0a352adba27b0f9f2f386239bca923cbd4d88e8c6f617f1ac29beb8",
+      "classification": "PRODUCTION_ONLY_STALE_TO_QUARANTINE",
+      "reason": "Unauthorized root duplicate of a historical namespaced class; a real root PHP file is directly executable by the web server.",
+      "rollback_destination": "operator-private/quarantine/prod-2.36.2/c38eaed9a0a352adba27b0f9f2f386239bca923cbd4d88e8c6f617f1ac29beb8/ExecutionJournalService.php",
+      "must_be_unreachable_after_cutover": true
+    },
+    {
+      "path": "MeliApiClient.php",
+      "expected_sha256": "2d7f7652b7b83c61da59281d8695db4e9b2db0ecbd121e3f7eb37909b5f5a67b",
+      "classification": "PRODUCTION_ONLY_STALE_TO_QUARANTINE",
+      "reason": "Unauthorized root duplicate of a historical namespaced class; a real root PHP file is directly executable by the web server.",
+      "rollback_destination": "operator-private/quarantine/prod-2.36.2/2d7f7652b7b83c61da59281d8695db4e9b2db0ecbd121e3f7eb37909b5f5a67b/MeliApiClient.php",
+      "must_be_unreachable_after_cutover": true
+    }
+  ]
+}
+

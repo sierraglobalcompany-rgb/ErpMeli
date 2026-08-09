@@ -289,7 +289,7 @@ try {
     $protectedBefore = $snapshot($protectedRoots);
 
     $authority = json_decode(
-        (string) file_get_contents($repo . '/resources/release/production-legacy-quarantine-2.36.1.json'),
+        (string) file_get_contents($repo . '/resources/release/production-legacy-quarantine-2.36.2.json'),
         true,
         64,
         JSON_THROW_ON_ERROR,

@@ -25,6 +25,7 @@ $pdo = new PDO(
     (string) (getenv('QUEUE_CORE_TEST_PASS') ?: ''),
     [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC],
 );
+$pdo->exec("SET time_zone='+00:00'");
 
 $checks = 0;
 $assert = static function (bool $condition, string $message) use (&$checks): void {

@@ -101,4 +101,69 @@ foreach (['../escape.json', 'C:\\escape.json', 'resources\\escape.json'] as $uns
     $assert($has(RuntimePublicationPolicy::packageIssues($root, $manifest, $unsafe), 'package_path_unsafe'), 'Unsafe path passed: ' . $unsafePath);
 }
 
+$run = static function (array $command, ?string $cwd = null): array {
+    $pipes = [];
+    $process = proc_open(
+        $command,
+        [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $pipes,
+        $cwd,
+        null,
+        ['bypass_shell' => true],
+    );
+    if (!is_resource($process)) {
+        throw new RuntimeException('Unable to start package-builder test process.');
+    }
+    fclose($pipes[0]);
+    $stdout = stream_get_contents($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+
+    return [proc_close($process), (string) $stdout, (string) $stderr];
+};
+$removeTree = static function (string $path): void {
+    $resolved = realpath($path);
+    $temp = realpath(sys_get_temp_dir());
+    if ($resolved === false || $temp === false || !str_starts_with(strtolower($resolved), strtolower($temp . DIRECTORY_SEPARATOR))) {
+        throw new RuntimeException('Refusing to remove a path outside the temporary directory.');
+    }
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($resolved, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST,
+    );
+    foreach ($iterator as $entry) {
+        $entry->isDir() && !$entry->isLink() ? rmdir($entry->getPathname()) : unlink($entry->getPathname());
+    }
+    rmdir($resolved);
+};
+$clone = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'erp-meli-b21a-package-' . bin2hex(random_bytes(6));
+try {
+    [$cloneExit, , $cloneError] = $run(['git', 'clone', '--quiet', '--no-hardlinks', $root, $clone]);
+    $assert($cloneExit === 0, 'Unable to create isolated Git-exact package fixture: ' . trim($cloneError));
+    file_put_contents($clone . DIRECTORY_SEPARATOR . 'VERSION', "dirty-working-tree-version\n");
+    [$dirtyExit, $dirtyOutput] = $run([
+        PHP_BINARY,
+        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',
+        '--source=' . $clone,
+        '--dry-run=1',
+        '--git-exact=1',
+        '--release-id=b21a-dirty-version-test',
+    ], $clone);
+    $assert($dirtyExit === 0 && str_contains($dirtyOutput, '"ok":true'), 'Dirty working-tree VERSION influenced the Git-exact builder.');
+    [$subdirExit, , $subdirError] = $run([
+        PHP_BINARY,
+        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',
+        '--source=' . $clone . DIRECTORY_SEPARATOR . 'app',
+        '--dry-run=1',
+        '--git-exact=1',
+        '--release-id=b21a-subdir-test',
+    ], $clone);
+    $assert($subdirExit !== 0 && str_contains($subdirError, 'toplevel Git'), 'A Git subdirectory was accepted as the release source.');
+} finally {
+    if (is_dir($clone)) {
+        $removeTree($clone);
+    }
+}
+
 fwrite(STDOUT, 'Runtime package attestation: ' . $checks . " checks passed\n");

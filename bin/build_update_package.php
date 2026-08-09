@@ -39,7 +39,44 @@ if ($source === false || !is_dir($source) || (!$dryRun && ($keyPath === false ||
     fwrite(STDERR, "La fuente o la clave privada no existen.\n");
     exit(2);
 }
-$version = trim((string) (@file_get_contents($source . '/VERSION') ?: ($arguments['version'] ?? '')));
+$gitTopLevel = static function (string $path): ?string {
+    $pipes = [];
+    $process = proc_open(
+        ['git', '-C', $path, 'rev-parse', '--show-toplevel'],
+        [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $pipes,
+        null,
+        null,
+        ['bypass_shell' => true],
+    );
+    if (!is_resource($process)) {
+        return null;
+    }
+    fclose($pipes[0]);
+    $stdout = stream_get_contents($pipes[1]);
+    stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    if (proc_close($process) !== 0 || !is_string($stdout)) {
+        return null;
+    }
+
+    $resolved = realpath(trim($stdout));
+    return $resolved === false ? null : $resolved;
+};
+if ($gitExact) {
+    $topLevel = $gitTopLevel($source);
+    $sameRoot = $topLevel !== null && (PHP_OS_FAMILY === 'Windows'
+        ? strcasecmp($topLevel, $source) === 0
+        : $topLevel === $source);
+    if (!$sameRoot) {
+        fwrite(STDERR, "--source debe ser exactamente el toplevel Git para construir una release Git-exact.\n");
+        exit(3);
+    }
+}
+$version = $gitExact
+    ? trim(RuntimePublicationPolicy::gitBlob($source, 'HEAD', 'VERSION'))
+    : trim((string) (@file_get_contents($source . '/VERSION') ?: ($arguments['version'] ?? '')));
 if (preg_match('/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?$/', $version) !== 1) {
     fwrite(STDERR, "VERSION no es válida.\n");
     exit(2);

@@ -75,7 +75,8 @@ if (!class_exists(ZipArchive::class)) {
         . ' --private-key=' . escapeshellarg($keyPath)
         . ' --key-id=runtime-test'
         . ' --release-id=runtime-safety-test'
-        . ' --sequence=1';
+        . ' --sequence=1'
+        . ' --git-exact=1';
     exec($command . ' 2>&1', $output, $exitCode);
     $assert($exitCode === 0 && is_file($packagePath), 'El empaquetador allowlist no produjo una release válida.');
 

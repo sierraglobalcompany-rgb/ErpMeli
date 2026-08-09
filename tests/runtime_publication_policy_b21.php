@@ -1,0 +1,138 @@
+<?php
+
+declare(strict_types=1);
+
+require dirname(__DIR__) . '/app/Services/RuntimePublicationPolicy.php';
+
+use App\Services\RuntimePublicationPolicy;
+
+function rpAssert(bool $condition, string $message): void
+{
+    if (!$condition) {
+        throw new RuntimeException($message);
+    }
+}
+
+/** @param list<string> $arguments */
+function rpGit(string $root, array $arguments): string
+{
+    $pipes = [];
+    $process = proc_open(array_merge(['git', '-C', $root], $arguments), [
+        0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w'],
+    ], $pipes, null, null, ['bypass_shell' => true]);
+    if (!is_resource($process)) {
+        throw new RuntimeException('git unavailable');
+    }
+    fclose($pipes[0]);
+    $out = stream_get_contents($pipes[1]);
+    $err = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    if (proc_close($process) !== 0) {
+        throw new RuntimeException('git failed: ' . trim((string) $err));
+    }
+    return trim((string) $out);
+}
+
+function rpWrite(string $root, string $path, string $bytes): void
+{
+    $absolute = $root . '/' . $path;
+    if (!is_dir(dirname($absolute))) {
+        mkdir(dirname($absolute), 0777, true);
+    }
+    file_put_contents($absolute, $bytes);
+}
+
+$root = sys_get_temp_dir() . '/erp-runtime-policy-' . bin2hex(random_bytes(6));
+mkdir($root, 0777, true);
+try {
+    rpGit($root, ['init', '--quiet']);
+    rpGit($root, ['config', 'user.email', 'runtime-policy@example.invalid']);
+    rpGit($root, ['config', 'user.name', 'Runtime Policy Test']);
+    foreach ([
+        'VERSION', 'asset.php', 'bootstrap.php', 'index.php', 'login.php', 'actualizar.php',
+        'stop.php', 'mantenimiento.php', 'recuperar.php', 'launcher/entrypoint.php',
+        'public/index.php', 'resources/runtime-manifest.json', 'app/Test.php',
+    ] as $path) {
+        rpWrite($root, $path, $path === 'VERSION' ? "2.36.0\n" : "<?php // {$path}\n");
+    }
+    rpWrite($root, 'resources/data.json', "{}\n");
+    $registry = [
+        'schema_version' => 1,
+        'classification_rules' => [
+            ['id' => 'runtime-files', 'classification' => 'RUNTIME_REQUIRED', 'kind' => 'regex',
+                'value' => '#^(?:app/.*\\.php|resources/(?:data\\.json|release/queue-core-runtime-dependencies\\.json))$#D'],
+        ],
+        'runtime_dependencies' => [
+            ['id' => 'registry', 'path' => 'resources/release/queue-core-runtime-dependencies.json',
+                'classification' => 'RUNTIME_REQUIRED', 'required_in_runtime_manifest' => true,
+                'consumers' => [['source_path' => 'app/Test.php', 'symbol' => 'test', 'path_literal' => 'registry']],
+                'provenance' => ['kind' => 'generated']],
+            ['id' => 'data', 'path' => 'resources/data.json', 'classification' => 'RUNTIME_REQUIRED',
+                'required_in_runtime_manifest' => true,
+                'consumers' => [['source_path' => 'app/Test.php', 'symbol' => 'test', 'path_literal' => 'data']],
+                'provenance' => ['kind' => 'source']],
+        ],
+    ];
+    rpWrite($root, 'resources/release/queue-core-runtime-dependencies.json',
+        json_encode($registry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+    rpGit($root, ['add', '.']);
+    rpGit($root, ['commit', '--quiet', '-m', 'base']);
+    $base = rpGit($root, ['rev-parse', 'HEAD']);
+
+    rpWrite($root, 'app/Test.php', "<?php // changed\r\n");
+    rpGit($root, ['add', 'app/Test.php']);
+    rpGit($root, ['commit', '--quiet', '-m', 'head']);
+    $head = rpGit($root, ['rev-parse', 'HEAD']);
+    $manifest = RuntimePublicationPolicy::buildManifest($root, $head, $base);
+    rpAssert(RuntimePublicationPolicy::manifestIssues($root, $manifest, $head, $base) === [], 'valid manifest rejected');
+
+    $missing = $manifest;
+    unset($missing['components']['runtime_resources_data_json']);
+    rpAssert((bool) array_filter(RuntimePublicationPolicy::manifestIssues($root, $missing, $head, $base),
+        static fn (string $issue): bool => str_starts_with($issue, 'manifest_component_missing:')), 'missing not detected');
+
+    $stale = $manifest;
+    $stale['components']['runtime_app_test_php']['sha256'] = str_repeat('0', 64);
+    rpAssert(in_array('manifest_raw_hash_mismatch:app/Test.php',
+        RuntimePublicationPolicy::manifestIssues($root, $stale, $head, $base), true), 'stale hash not detected');
+
+    $orphan = $manifest;
+    $orphan['components']['runtime_version'] = [
+        'path' => 'VERSION', 'sha256' => hash('sha256', "2.36.0\n"),
+        'sha256_lf' => hash('sha256', "2.36.0\n"), 'text' => true,
+    ];
+    rpAssert(in_array('manifest_component_orphan:VERSION',
+        RuntimePublicationPolicy::manifestIssues($root, $orphan, $head, $base), true), 'orphan not detected');
+
+    $case = $manifest;
+    $case['components']['case_collision'] = $case['components']['runtime_app_test_php'];
+    $case['components']['case_collision']['path'] = 'APP/Test.php';
+    rpAssert((bool) array_filter(RuntimePublicationPolicy::manifestIssues($root, $case, $head, $base),
+        static fn (string $issue): bool => str_starts_with($issue, 'manifest_path_case_collision:')), 'case collision not detected');
+
+    $workingHashBefore = hash_file('sha256', $root . '/app/Test.php');
+    rpWrite($root, 'app/Test.php', "<?php // uncommitted mismatch\n");
+    $entry = array_values(array_filter(RuntimePublicationPolicy::packageEntries($root, $head),
+        static fn (array $row): bool => $row['path'] === 'app/Test.php'))[0] ?? null;
+    rpAssert(is_array($entry) && $entry['sha256'] === $manifest['components']['runtime_app_test_php']['sha256'],
+        'package did not use exact Git blob');
+    rpAssert(hash_file('sha256', $root . '/app/Test.php') !== $workingHashBefore, 'working mismatch fixture failed');
+
+    fwrite(STDOUT, "runtime_publication_policy_b21: PASS\n");
+} finally {
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+    foreach ($iterator as $entry) {
+        if ($entry->isDir()) {
+            @chmod($entry->getPathname(), 0777);
+            @rmdir($entry->getPathname());
+        } else {
+            @chmod($entry->getPathname(), 0666);
+            @unlink($entry->getPathname());
+        }
+    }
+    @rmdir($root);
+}

@@ -111,6 +111,15 @@ final class ReleaseIntegrityService
             }
         }
 
+        if (is_array($manifest)) {
+            foreach (RuntimePublicationPolicy::installedManifestIssues($root, $manifest) as $issue) {
+                $errors[] = [
+                    'code' => 'runtime_publication_policy_invalid',
+                    'component' => $issue,
+                ];
+            }
+        }
+
         foreach (['cron_probe', 'process_sync_queue'] as $requiredComponent) {
             if (!array_key_exists($requiredComponent, $components)) {
                 $errors[] = ['code' => 'component_not_declared', 'component' => $requiredComponent];

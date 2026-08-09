@@ -152,6 +152,7 @@
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_webhook_ownership_b2.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_webhook_lifecycle_b21.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/notification_topic_registry_fail_closed_b21.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/runtime_publication_policy_b21.php"
     ],
     "test:sales-control": "@php -d error_reporting=-1 -d display_errors=1 tests/sales_control_2211_mysql_integration.php",
     "test:hf12-db": "@php -d error_reporting=-1 -d display_errors=1 tests/emergency_oauth_refresh_real_integration_hf12.php",

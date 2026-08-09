@@ -36,6 +36,8 @@ foreach ([
     'resources/mercadolibre-api/generated/endpoints.json',
     'resources/release/queue-core-runtime-dependencies.json',
     'resources/release/managed-runtime-dependencies-2.36.1.json',
+    'resources/release/managed-runtime-dependencies-2.36.2.json',
+    'resources/release/production-legacy-quarantine-2.36.2.json',
     'bin/create_admin.php', 'bin/database_growth_audit.php', 'bin/database_physical_recovery.php',
     'bin/db_explain_audit.php', 'bin/meli_api_audit.php', 'bin/migrate.php',
     'bin/query_performance_report.php', 'bin/queue_core_dependency_check.php',
@@ -83,7 +85,7 @@ $assert(count((array) ($manifest['components'] ?? [])) === count($entries) - 1,
     'Manifest does not attest every non-self package member');
 
 $temporaryOutput = sys_get_temp_dir() . DIRECTORY_SEPARATOR
-    . 'erp-meli-2.36.1-managed-' . bin2hex(random_bytes(6)) . '.zip';
+    . 'erp-meli-2.36.2-managed-' . bin2hex(random_bytes(6)) . '.zip';
 $process = proc_open([
     PHP_BINARY,
     $root . '/bin/build_managed_runtime_release.php',
@@ -114,5 +116,5 @@ try {
     }
 }
 
-fwrite(STDOUT, 'Managed runtime package 2.36.1: ' . $checks . ' checks passed; files='
+fwrite(STDOUT, 'Managed runtime package 2.36.2: ' . $checks . ' checks passed; files='
     . count($entries) . '; classes=' . json_encode($classCounts, JSON_UNESCAPED_SLASHES) . "\n");

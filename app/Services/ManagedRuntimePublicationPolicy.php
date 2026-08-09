@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.36.1.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.36.2.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -39,10 +39,10 @@ final class ManagedRuntimePublicationPolicy
         'bin/queue_core_dependency_check.php',
         'bin/runtime_process_audit.php',
     ];
-    public const BASE_COMMIT = '0cb5ddab368d033e15bdb040b53bb8592248246c';
+    public const BASE_COMMIT = '75997f864b917c829d19f14e21cd7303d2685776';
     public const INSTALLED_BASE_COMMIT = 'f91cd534d271b964db1ad9e682260475eca96820';
-    public const VERSION = '2.36.1';
-    public const BUILD_ID = 'erp-meli-2.36.1-managed-runtime-cutover-rc1-20260809';
+    public const VERSION = '2.36.2';
+    public const BUILD_ID = 'erp-meli-2.36.2-managed-entrypoint-bootstrap-rc1-20260809';
     public const BUILT_AT = '2026-08-09T00:00:00Z';
     public const MINIMUM_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
 

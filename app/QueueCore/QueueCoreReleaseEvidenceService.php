@@ -101,7 +101,7 @@ final class QueueCoreReleaseEvidenceService
     }
 
     /** @return array{ok:bool,sha256:?string,bytes:int,path_verified:bool,format_valid:bool,table_count:int,data_statements:int,current_table_count:int,missing_table_count:int,critical_data_missing_count:int,critical_row_count_mismatch_count:int} */
-    public function verifyBackup(string $path, string $expectedSha256): array
+    public function verifyBackup(string $path, string $expectedSha256, bool $compareLiveRows = true): array
     {
         $expected = strtolower(trim($expectedSha256));
         $approved = strtolower(trim((string) Env::get('QUEUE_CORE_APPROVED_BACKUP_SHA256', '')));
@@ -121,6 +121,7 @@ final class QueueCoreReleaseEvidenceService
             $content['tables'],
             $content['data_tables'],
             $content['row_counts'],
+            $compareLiveRows,
         );
         $ok = is_string($sha)
             && $bytes > 0
@@ -416,7 +417,12 @@ final class QueueCoreReleaseEvidenceService
      * @param array<string,int> $dumpRowCounts
      * @return array{current_table_count:int,missing_table_count:int,critical_data_missing_count:int,critical_row_count_mismatch_count:int}
      */
-    private function compareBackupWithCurrentDatabase(array $dumpTables,array $dumpDataTables,array $dumpRowCounts): array
+    private function compareBackupWithCurrentDatabase(
+        array $dumpTables,
+        array $dumpDataTables,
+        array $dumpRowCounts,
+        bool $compareLiveRows,
+    ): array
     {
         $statement=$this->pdo->query(
             "SELECT LOWER(table_name)
@@ -439,8 +445,14 @@ final class QueueCoreReleaseEvidenceService
         foreach($dataCritical as $table){
             if(!in_array($table,$current,true))continue;
             $count=(int)$this->pdo->query('SELECT COUNT(*) FROM `'.$table.'`')->fetchColumn();
-            if($count>0&&!isset($dumpDataTables[$table]))$criticalMissing++;
-            if(in_array($table,$stableCounts,true)&&$count!==max(0,(int)($dumpRowCounts[$table]??0)))$rowCountMismatch++;
+            if($compareLiveRows && $count>0 && !isset($dumpDataTables[$table])) {
+                $criticalMissing++;
+            }
+            if($compareLiveRows
+                && in_array($table,$stableCounts,true)
+                && $count!==max(0,(int)($dumpRowCounts[$table]??0))) {
+                $rowCountMismatch++;
+            }
         }
         return [
             'current_table_count'=>count($current),

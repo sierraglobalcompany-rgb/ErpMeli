@@ -232,8 +232,15 @@ foreach(['meli_accounts','meli_tokens'] as $backupTable){
 }
 $backupSql.="INSERT INTO `app_settings` VALUES ('fixture');\nINSERT INTO `schema_migrations` VALUES ('fixture');\n";
 file_put_contents($backupFixture,$backupSql);
-putenv('QUEUE_CORE_APPROVED_BACKUP_PATH='.$backupFixture);
-putenv('QUEUE_CORE_APPROVED_BACKUP_SHA256='.hash_file('sha256',$backupFixture));
+$backupFixtureSha=(string)hash_file('sha256',$backupFixture);
+foreach([
+    'QUEUE_CORE_APPROVED_BACKUP_PATH'=>$backupFixture,
+    'QUEUE_CORE_APPROVED_BACKUP_SHA256'=>$backupFixtureSha,
+] as $backupEnvKey=>$backupEnvValue){
+    putenv($backupEnvKey.'='.$backupEnvValue);
+    $_ENV[$backupEnvKey]=$backupEnvValue;
+    $_SERVER[$backupEnvKey]=$backupEnvValue;
+}
 $pdo->exec("UPDATE queue_core_feature_flags SET enabled=1,generation=generation+1
             WHERE feature_key IN ('fresh_producer','webhook_producer','pack_shipment_followups')");
 $recordReadiness = static function (int $generation, array $accountIds) use ($pdo): void {
@@ -348,6 +355,12 @@ $missingBackup=$control->compareAndSwap('v4',1,'missing-backup');
 $check(!$missingBackup['ok']&&$missingBackup['reason']==='backup_artifact_unavailable',
     'Activation accepted a certified backup artifact that no longer exists.');
 file_put_contents($backupFixture,$backupBytes);
+$restoredBackupVerification=(new QueueCoreReleaseEvidenceService($pdo))->verifyBackup(
+    $backupFixture,
+    (string)getenv('QUEUE_CORE_APPROVED_BACKUP_SHA256'),
+    false,
+);
+$check($restoredBackupVerification['ok'],'restored certified backup failed static re-verification: '.json_encode($restoredBackupVerification));
 $toV4 = $control->compareAndSwap('v4', 1, 'test');
 $check($toV4['ok'] && $toV4['generation'] === 2, 'v4 CAS failed: ' . json_encode($toV4));
 $permitResult = $control->acquireRuntime('v4', 'operational');

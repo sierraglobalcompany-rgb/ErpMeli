@@ -16,13 +16,17 @@ if ($base !== '0cb5ddab368d033e15bdb040b53bb8592248246c' || $files === []) {
 foreach ($files as $entry) {
     $path = (string) ($entry['path'] ?? '');
     $expected = strtolower((string) ($entry['base_sha256'] ?? ''));
+    $expectedFinal = strtolower((string) ($entry['final_sha256'] ?? ''));
     $absolute = $root . '/' . $path;
     if ($path === '' || preg_match('/^[a-f0-9]{64}$/', $expected) !== 1 || !is_file($absolute)) {
         $failures[] = 'missing_or_invalid:' . $path;
         continue;
     }
     $actual = hash_file('sha256', $absolute);
-    if (!is_string($actual) || !hash_equals($expected, strtolower($actual))) {
+    if (!hash_equals($expected, $expectedFinal)
+        || !is_string($actual)
+        || !hash_equals($expected, strtolower($actual))
+    ) {
         $failures[] = 'hash_mismatch:' . $path;
     }
 }

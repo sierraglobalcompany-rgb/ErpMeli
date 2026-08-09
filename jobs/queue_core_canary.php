@@ -10,4 +10,3 @@ try{\App\Core\Database::useProfile('cli');$result=(new \App\QueueCore\QueueCoreC
 );}catch(\Throwable){$result=['ok'=>false,'status'=>'BLOCKED','reason'=>'canary_unavailable','physical_http_calls'=>0];}
 echo json_encode($result,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES).PHP_EOL;
 exit(!empty($result['ok'])?0:2);
-

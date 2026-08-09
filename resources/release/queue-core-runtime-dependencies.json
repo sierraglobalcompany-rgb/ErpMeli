@@ -51,6 +51,7 @@
         ".gitattributes",
         "VERSION",
         "bin/build_runtime_manifest_b21.php",
+        "bin/build_update_package.php",
         "bin/queue_core_dependency_check.php",
         "composer.json",
         "resources/runtime-manifest.json",
@@ -193,6 +194,13 @@
         "operations": ["file_get_contents", "require", "require_once"],
         "bounded_by": "Release root bootstrap, fixed jobs helpers and runtime-manifest.",
         "data_kind": "packaged_runtime_code"
+      },
+      {
+        "id": "runtime-publication-installed-registry",
+        "source_regex": "#^app/Services/RuntimePublicationPolicy\\.php$#D",
+        "operations": ["file_get_contents"],
+        "bounded_by": "Exact resources/release/queue-core-runtime-dependencies.json authority under the installed release root.",
+        "data_kind": "release_authority"
       },
       {
         "id": "notification-topic-generated-contract",

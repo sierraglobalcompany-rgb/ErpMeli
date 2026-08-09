@@ -51,4 +51,3 @@ final class QueueCoreCapacityService
         return $resources > 0 && $net > 0 ? round($resources / $net, 2) : null;
     }
 }
-

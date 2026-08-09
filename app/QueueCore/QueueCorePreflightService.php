@@ -16,8 +16,10 @@ final class QueueCorePreflightService
 {
     /** @var list<string> */
     private const REQUIRED_TABLES = [
+        'schema_migrations',
         'queue_core_jobs', 'queue_core_attempts', 'queue_core_dispatch_journal',
         'queue_core_producer_checkpoints', 'queue_core_pending_capabilities',
+        'queue_core_capability_dependencies', 'queue_core_webhook_triggers',
         'queue_core_execution_leases', 'queue_engine_control',
         'queue_core_runs', 'queue_core_readiness_receipts',
         'queue_core_health_snapshots', 'queue_core_feature_flags',
@@ -49,6 +51,50 @@ final class QueueCorePreflightService
         }
         if ($missing !== []) {
             $issues[] = 'required_schema_missing';
+        }
+
+        $requiredMigrations = [
+            '280_queue_core_cron_v4_phase_b1.sql',
+            '281_queue_core_reaudit1_fifo_fencing.sql',
+            '282_queue_core_architecture_closeout_b1_2.sql',
+            '283_queue_engine_control_oauth_supervisor_b1_4.sql',
+            '284_queue_core_sales_pipeline_b2.sql',
+            '285_queue_core_webhook_ownership_b2.sql',
+            '287_queue_core_readiness_observability_b2.sql',
+        ];
+        $applied = [];
+        if (!in_array('schema_migrations', $missing, true)) {
+            try {
+                $applied = array_map('strval', $this->pdo->query(
+                    'SELECT version FROM schema_migrations'
+                )->fetchAll(PDO::FETCH_COLUMN));
+                if (array_diff($requiredMigrations, $applied) !== []) {
+                    $issues[] = 'required_migrations_missing';
+                }
+            } catch (Throwable) {
+                $issues[] = 'schema_migrations_unavailable';
+            }
+        }
+
+        $requiredIndexes = [
+            'queue_core_jobs' => ['idx_queue_core_fifo_domain', 'idx_queue_core_health_depth'],
+            'queue_core_attempts' => ['idx_queue_core_attempt_run'],
+            'queue_core_pending_capabilities' => ['idx_queue_core_capability_lifecycle'],
+            'queue_core_webhook_triggers' => ['idx_queue_core_webhook_pending'],
+        ];
+        $missingIndexes = [];
+        foreach ($requiredIndexes as $table => $indexes) {
+            if (in_array($table, $missing, true)) {
+                continue;
+            }
+            foreach ($indexes as $index) {
+                if (!$this->indexExists($table, $index)) {
+                    $missingIndexes[] = $table . '.' . $index;
+                }
+            }
+        }
+        if ($missingIndexes !== []) {
+            $issues[] = 'required_indexes_missing';
         }
 
         $engine = null;
@@ -128,6 +174,8 @@ final class QueueCorePreflightService
             'issues' => $issues,
             'database_time_utc' => $this->databaseTime(),
             'missing_tables' => $missing,
+            'missing_indexes' => $missingIndexes,
+            'required_migrations_applied' => array_values(array_intersect($requiredMigrations, $applied)),
             'engine' => $engine,
             'safety' => [
                 'api' => (string) ($safety['api'] ?? 'unknown'),
@@ -155,6 +203,16 @@ final class QueueCorePreflightService
         );
         $statement->execute([$table]);
         return (int) $statement->fetchColumn() === 1;
+    }
+
+    private function indexExists(string $table, string $index): bool
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT COUNT(*) FROM information_schema.statistics
+             WHERE table_schema=DATABASE() AND table_name=? AND index_name=?'
+        );
+        $statement->execute([$table, $index]);
+        return (int) $statement->fetchColumn() > 0;
     }
 
     private function databaseTime(): ?string

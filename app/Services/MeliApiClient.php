@@ -148,6 +148,11 @@ final class MeliApiClient implements MeliReadClientInterface
         $meta['load_class'] = $profile['load_class'];
         $meta['workload_units'] = $profile['workload_units'];
         try {
+            \App\QueueCore\QueueCoreOwnershipGuard::assertLegacyTransportAllowed(
+                $method,
+                $path,
+                $meta
+            );
             $guard->assertMetadataScope($this->accountId, $meta);
             $guard->assertAllowed($this->accountId, $method, $path, $meta);
         } catch (\Throwable $blocked) {

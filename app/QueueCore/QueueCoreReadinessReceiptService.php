@@ -52,23 +52,51 @@ final class QueueCoreReadinessReceiptService
         if (Env::bool('ML_WRITE_ENABLED', false)) {
             return ['ok' => false, 'reason' => 'ml_write_enabled'];
         }
-        if (!(new EmergencyControlService())->automationStopped()) {
+        $safety = (new EmergencyControlService())->status();
+        if (($safety['automation'] ?? '') !== 'stopped') {
             return ['ok' => false, 'reason' => 'automation_not_stopped'];
+        }
+        if (($safety['api'] ?? '') !== 'enabled') {
+            return ['ok' => false, 'reason' => 'api_reads_not_enabled'];
+        }
+        $flags = new QueueCoreFeatureFlagService($this->pdo);
+        foreach (['fresh_producer', 'webhook_producer', 'pack_shipment_followups'] as $feature) {
+            if (!$flags->enabled($feature)) {
+                return ['ok' => false, 'reason' => $feature . '_disabled'];
+            }
         }
         $statement = $this->pdo->prepare(
             'SELECT receipt_type,MAX(id) latest_id
              FROM queue_core_readiness_receipts
              WHERE engine_generation=? AND status="pass" AND expires_at>UTC_TIMESTAMP(3)
+               AND receipt_type="preflight"
              GROUP BY receipt_type'
         );
         $statement->execute([max(0, $engineGeneration)]);
         $found = array_fill_keys(array_map('strval', $statement->fetchAll(PDO::FETCH_COLUMN)), true);
-        foreach (['preflight', 'canary', 'convergence'] as $required) {
-            if (!isset($found[$required])) {
-                return ['ok' => false, 'reason' => $required . '_receipt_missing'];
+        if (!isset($found['preflight'])) {
+            return ['ok' => false, 'reason' => 'preflight_receipt_missing'];
+        }
+        $accounts = array_map('intval', $this->pdo->query(
+            'SELECT id FROM meli_accounts WHERE status IN ("conectado","connected") ORDER BY id'
+        )->fetchAll(PDO::FETCH_COLUMN));
+        if ($accounts === []) {
+            return ['ok' => false, 'reason' => 'no_connected_accounts'];
+        }
+        $perAccount = $this->pdo->prepare(
+            'SELECT COUNT(DISTINCT r.meli_account_id)
+             FROM queue_core_readiness_receipts r
+             JOIN meli_accounts a ON a.id=r.meli_account_id
+               AND a.status IN ("conectado","connected")
+             WHERE r.engine_generation=? AND r.receipt_type=? AND r.status="pass"
+               AND r.expires_at>UTC_TIMESTAMP(3)'
+        );
+        foreach (['canary', 'convergence'] as $type) {
+            $perAccount->execute([max(0, $engineGeneration), $type]);
+            if ((int) $perAccount->fetchColumn() !== count($accounts)) {
+                return ['ok' => false, 'reason' => $type . '_account_receipts_missing'];
             }
         }
         return ['ok' => true, 'reason' => 'ready'];
     }
 }
-

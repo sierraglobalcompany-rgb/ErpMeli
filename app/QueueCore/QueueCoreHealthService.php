@@ -36,7 +36,7 @@ final class QueueCoreHealthService
 
         $checkpoint = [];
         $stmt = $this->pdo->query(
-            'SELECT a.company_id,a.id meli_account_id,a.status,t.expires_at,t.refresh_version,
+            'SELECT a.company_id,a.id meli_account_id,a.status,a.last_error,t.expires_at,t.refresh_version,
                     cp.watermark_at,cp.next_due_at,cp.last_error_class,
                     TIMESTAMPDIFF(SECOND,cp.watermark_at,UTC_TIMESTAMP(3)) freshness_lag_seconds
              FROM meli_accounts a
@@ -57,6 +57,13 @@ final class QueueCoreHealthService
             }
             if (!empty($row['expires_at']) && strtotime((string) $row['expires_at'] . ' UTC') <= time()) {
                 $reasons[] = 'oauth_expired';
+            }
+            $lastError = strtolower((string) ($row['last_error'] ?? ''));
+            if (str_contains($lastError, 'identity') || str_contains($lastError, 'seller_mismatch')) {
+                $reasons[] = 'identity_mismatch';
+            }
+            if (str_contains($lastError, 'rotated_credential_recovery_unavailable')) {
+                $reasons[] = 'rotated_credential_unrecoverable';
             }
             $checkpoint[] = [
                 'company_id' => (int) $row['company_id'],
@@ -82,6 +89,24 @@ final class QueueCoreHealthService
         if ((int) ($depth['waiting_oauth']['total'] ?? 0) > 0) {
             $reasons[] = 'waiting_oauth_present';
         }
+        if (!(new QueueCorePreflightService($this->pdo))->runtimeSchemaReady()) {
+            $reasons[] = 'schema_inconsistent';
+        }
+        $crossAccount = (int) $this->pdo->query(
+            'SELECT COUNT(*) FROM queue_core_jobs j
+             LEFT JOIN meli_accounts a ON a.id=j.meli_account_id
+             WHERE a.id IS NULL OR a.company_id<>j.company_id'
+        )->fetchColumn();
+        if ($crossAccount > 0) {
+            $reasons[] = 'cross_account_state';
+        }
+        $rateLimited = (int) $this->pdo->query(
+            'SELECT COUNT(*) FROM queue_core_attempts
+             WHERE http_status=429 AND started_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 HOUR)'
+        )->fetchColumn();
+        if ($rateLimited > 0) {
+            $reasons[] = 'sustained_429';
+        }
 
         $safety = (new EmergencyControlService())->status();
         $engine = (new QueueEngineControlService($this->pdo))->snapshot();
@@ -97,6 +122,8 @@ final class QueueCoreHealthService
         $reasons = array_values(array_unique($reasons));
         $red = array_intersect($reasons, [
             'engine_ownership_inconsistent', 'ml_write_enabled', 'remote_uncertain_present',
+            'identity_mismatch', 'rotated_credential_unrecoverable', 'schema_inconsistent',
+            'cross_account_state',
         ]);
         $state = $red !== [] ? 'RED' : ($reasons !== [] ? 'DEGRADED' : 'GREEN');
 
@@ -126,4 +153,3 @@ final class QueueCoreHealthService
         ];
     }
 }
-

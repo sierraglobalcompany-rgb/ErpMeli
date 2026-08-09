@@ -39,4 +39,32 @@ final class QueueCoreOwnershipGuard
             'http' => 0,
         ];
     }
+
+    /** @param array<string,mixed> $metadata */
+    public static function assertLegacyTransportAllowed(
+        string $method,
+        string $path,
+        array $metadata,
+        ?PDO $pdo = null,
+    ): void {
+        if (!self::v4OwnsWebhook($pdo)) {
+            return;
+        }
+        $source = (string) ($metadata['source'] ?? '');
+        if ($source === 'queue_core') {
+            return;
+        }
+        $normalized = '/' . ltrim((string) (parse_url($path, PHP_URL_PATH) ?: $path), '/');
+        // Initial OAuth authorization and the audited emergency flows are
+        // technical control-plane operations, not competing business owners.
+        if ($normalized === '/oauth/token'
+            && in_array($source, ['web', 'manual_emergency_oauth_refresh'], true)) {
+            return;
+        }
+        if ($source === 'manual_emergency_canary' && $normalized === '/users/me'
+            && strtoupper($method) === 'GET') {
+            return;
+        }
+        throw new QueueCorePreRemoteBlockedException('SKIPPED_V4_OWNER');
+    }
 }

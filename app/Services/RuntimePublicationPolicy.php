@@ -175,6 +175,9 @@ final class RuntimePublicationPolicy
         foreach (array_diff($actualPaths, $expected) as $path) {
             $issues[] = 'manifest_component_orphan:' . $path;
         }
+        if (!hash_equals($registry['runtime_manifest_paths_sha256'], self::pathInventoryHash($expected))) {
+            $issues[] = 'runtime_registry_manifest_inventory_mismatch';
+        }
         $policy = $manifest['publication_policy'] ?? null;
         if (!is_array($policy)
             || !hash_equals($base, (string) ($policy['base_commit'] ?? ''))
@@ -235,6 +238,9 @@ final class RuntimePublicationPolicy
             ) {
                 $issues[] = 'manifest_required_dependency_missing:' . (string) $dependency['path'];
             }
+        }
+        if (!hash_equals($registry['runtime_manifest_paths_sha256'], self::pathInventoryHash($paths))) {
+            $issues[] = 'manifest_installed_inventory_mismatch';
         }
         $policy = $manifest['publication_policy'] ?? null;
         if (!is_array($policy)
@@ -466,19 +472,20 @@ final class RuntimePublicationPolicy
         };
     }
 
-    /** @return array{classification_rules:list<array<string,mixed>>,runtime_dependencies:list<array<string,mixed>>} */
+    /** @return array{classification_rules:list<array<string,mixed>>,runtime_dependencies:list<array<string,mixed>>,runtime_manifest_paths_sha256:string} */
     private static function dependencyRegistry(string $root, string $head): array
     {
         return self::parseDependencyRegistry(self::gitBlob($root, $head, self::DEPENDENCY_REGISTRY));
     }
 
-    /** @return array{classification_rules:list<array<string,mixed>>,runtime_dependencies:list<array<string,mixed>>} */
+    /** @return array{classification_rules:list<array<string,mixed>>,runtime_dependencies:list<array<string,mixed>>,runtime_manifest_paths_sha256:string} */
     private static function parseDependencyRegistry(string $bytes): array
     {
         $decoded = json_decode($bytes, true);
         if (!is_array($decoded) || ($decoded['schema_version'] ?? null) !== 1
             || !is_array($decoded['classification_rules'] ?? null)
             || !is_array($decoded['runtime_dependencies'] ?? null)
+            || preg_match('/^[a-f0-9]{64}$/', (string) ($decoded['runtime_manifest_paths_sha256'] ?? '')) !== 1
         ) {
             throw new RuntimeException('Runtime dependency registry is malformed.');
         }
@@ -518,7 +525,11 @@ final class RuntimePublicationPolicy
             $dependencyIds[$id] = true;
             $dependencyPaths[strtolower($path)] = true;
         }
-        return ['classification_rules' => $rules, 'runtime_dependencies' => $dependencies];
+        return [
+            'classification_rules' => $rules,
+            'runtime_dependencies' => $dependencies,
+            'runtime_manifest_paths_sha256' => (string) $decoded['runtime_manifest_paths_sha256'],
+        ];
     }
 
     /** @param list<array<string,mixed>> $rules */
@@ -560,7 +571,7 @@ final class RuntimePublicationPolicy
         return $matches[0];
     }
 
-    /** @param array{classification_rules:list<array<string,mixed>>,runtime_dependencies:list<array<string,mixed>>} $registry */
+    /** @param array{classification_rules:list<array<string,mixed>>,runtime_dependencies:list<array<string,mixed>>,runtime_manifest_paths_sha256:string} $registry */
     private static function frontendArtifactAttested(string $path, array $registry): bool
     {
         foreach ($registry['runtime_dependencies'] as $dependency) {

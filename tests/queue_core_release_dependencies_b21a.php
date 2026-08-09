@@ -58,7 +58,7 @@ $assert(is_array($topics) && ($topics['classification'] ?? null) === 'RUNTIME_RE
 $assert(!empty($topics['consumers']) && !empty($topics['provenance']),
     'notification topics lack consumer/provenance authority');
 
-$classification = $run(['--json', '--classification-only', '--target=' . $target]);
+$classification = $run(['--json', '--classification-only', '--target=' . $target, '--authority=HEAD']);
 $assert($classification['exit'] === 0 && ($classification['json']['ok'] ?? false) === true,
     'the 142-path classification authority is incomplete: ' . json_encode($classification));
 $assert(($classification['json']['classification_counts'] ?? []) === [
@@ -75,7 +75,7 @@ $discovered = array_column($classification['json']['STATIC_RUNTIME_DEPENDENCIES_
 $assert(in_array('resources/mercadolibre-api/generated/notification-topics.json', $discovered, true),
     'static scanner did not independently discover notification-topics.json');
 
-$manifest = $run(['--json', '--target=' . $target]);
+$manifest = $run(['--json', '--target=' . $target, '--authority=HEAD']);
 $assert($manifest['exit'] === 1 && ($manifest['json']['ok'] ?? true) === false,
     'the known runtime dependency blocker was not reproduced');
 $assert(($manifest['json']['runtime_manifest_missing'] ?? []) ===

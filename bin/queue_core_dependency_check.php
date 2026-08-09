@@ -63,7 +63,10 @@ function manifestPaths(array $manifest): array
         }
     }
 
-    return array_values(array_unique($paths));
+    $paths = array_values(array_unique($paths));
+    sort($paths, SORT_STRING);
+
+    return $paths;
 }
 
 /** @return array<string,string> */
@@ -199,16 +202,19 @@ function unboundedDynamicRuntimePaths(array $sources, array $operations, array $
 }
 
 $root = dirname(__DIR__);
-$options = getopt('', ['json', 'classification-only', 'target:']);
-$registryPath = $root . '/resources/release/queue-core-runtime-dependencies.json';
-$registry = json_decode((string) @file_get_contents($registryPath), true);
+$options = getopt('', ['json', 'classification-only', 'target:', 'authority:']);
+$target = trim((string) ($options['target'] ?? 'HEAD'));
+$authority = trim((string) ($options['authority'] ?? $target));
+$registryResult = runGit($root, [
+    'show', $authority . ':resources/release/queue-core-runtime-dependencies.json',
+]);
+$registry = $registryResult['exit'] === 0 ? json_decode($registryResult['stdout'], true) : null;
 $issues = [];
 if (!is_array($registry)) {
     $issues[] = 'dependency_registry_invalid';
     $registry = [];
 }
 $base = (string) ($registry['coverage_base_commit'] ?? '');
-$target = trim((string) ($options['target'] ?? 'HEAD'));
 $paths = changedPaths($root, $base, $target, $issues);
 
 $rules = is_array($registry['classification_rules'] ?? null) ? $registry['classification_rules'] : [];
@@ -259,6 +265,14 @@ if (!is_array($manifest)) {
     $manifest = [];
 }
 $manifestPaths = manifestPaths($manifest);
+if ($authority === $target
+    && !hash_equals(
+        (string) ($registry['runtime_manifest_paths_sha256'] ?? ''),
+        hash('sha256', implode("\n", $manifestPaths) . "\n"),
+    )
+) {
+    $issues[] = 'runtime_manifest_inventory_contract_mismatch';
+}
 $manifestRequiredClasses = ['RUNTIME_REQUIRED', 'MIGRATION_DEPLOY_REQUIRED', 'FRONTEND_STATIC'];
 $runtimeMissing = [];
 foreach ($classified as $path => $classification) {
@@ -348,6 +362,7 @@ $result = [
     'authority_id' => (string) ($registry['authority_id'] ?? ''),
     'base' => $base,
     'target' => $target,
+    'authority' => $authority,
     'changed_paths' => count($paths),
     'classification_counts' => $counts,
     'runtime_manifest_missing' => $runtimeMissing,

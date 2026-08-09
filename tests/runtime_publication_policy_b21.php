@@ -59,6 +59,11 @@ try {
     rpWrite($root, 'resources/data.json', "{}\n");
     $registry = [
         'schema_version' => 1,
+        'runtime_manifest_paths_sha256' => hash('sha256', implode("\n", [
+            'app/Test.php',
+            'resources/data.json',
+            'resources/release/queue-core-runtime-dependencies.json',
+        ]) . "\n"),
         'classification_rules' => [
             ['id' => 'runtime-files', 'classification' => 'RUNTIME_REQUIRED', 'kind' => 'regex',
                 'value' => '#^(?:app/.*\\.php|resources/(?:data\\.json|release/queue-core-runtime-dependencies\\.json))$#D'],
@@ -95,6 +100,19 @@ try {
     rpAssert((bool) array_filter(RuntimePublicationPolicy::installedManifestIssues($root, $missing),
         static fn (string $issue): bool => str_starts_with($issue, 'manifest_required_dependency_missing:')),
         'installed readiness accepted an unmanifested runtime dependency');
+
+    $partial = $manifest;
+    unset($partial['components']['runtime_app_test_php']);
+    $partialPaths = array_values(array_map(
+        static fn (array $component): string => (string) $component['path'],
+        $partial['components'],
+    ));
+    sort($partialPaths, SORT_STRING);
+    $partial['publication_policy']['component_count'] = count($partialPaths);
+    $partial['publication_policy']['paths_sha256'] = hash('sha256', implode("\n", $partialPaths) . "\n");
+    rpAssert(in_array('manifest_installed_inventory_mismatch',
+        RuntimePublicationPolicy::installedManifestIssues($root, $partial), true),
+        'installed readiness accepted a self-consistent partial manifest');
 
     $stale = $manifest;
     $stale['components']['runtime_app_test_php']['sha256'] = str_repeat('0', 64);

@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "queue-core-b2.1-runtime-dependencies",
+  "runtime_manifest_paths_sha256": "ca29d9de4736f35880286e84583509c38f7e72972c92009c6d686c114176b564",
   "coverage_base_commit": "f91cd534d271b964db1ad9e682260475eca96820",
   "blocked_rc_snapshot": {
     "commit": "4ecd154f0a219a07d6ce0dc152be59037e9ef98b",
@@ -99,9 +100,11 @@
         }
       ],
       "provenance": {
-        "kind": "generated_static_contract",
+        "kind": "static_tracked_authority",
         "introduced_by_commit": "ab85a6be73260ab4d6b9d76c78e6626a43ccb567",
-        "authority": "Mercado Libre notification topic normalization contract"
+        "authority": "The tracked JSON is the canonical Mercado Libre notification topic normalization contract; no reproducible generator exists.",
+        "reproducible_generator": null,
+        "last_contract_change": "2026-08-09"
       },
       "missing_effect": "The registry loads zero rules; valid notifications become unknown_topic or quarantine."
     },

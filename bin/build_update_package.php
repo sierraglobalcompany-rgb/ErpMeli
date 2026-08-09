@@ -84,6 +84,10 @@ if (preg_match('/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?$/', $version) !== 1) {
     fwrite(STDERR, "VERSION no es válida.\n");
     exit(2);
 }
+if ($version === RuntimePublicationPolicy::VERSION && !$gitExact) {
+    fwrite(STDERR, "La release 2.36.0 exige --git-exact=1.\n");
+    exit(3);
+}
 $releaseId = strtolower((string) ($arguments['release-id'] ?? ($version . '-' . gmdate('YmdHis'))));
 if (preg_match('/^[a-z0-9][a-z0-9._-]{2,119}$/', $releaseId) !== 1) {
     fwrite(STDERR, "release-id no es válido.\n");

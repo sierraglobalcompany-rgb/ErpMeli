@@ -160,6 +160,18 @@ try {
     ], $clone);
     $assert($nonExactExit !== 0 && str_contains($nonExactError, 'exige --git-exact=1'),
         'Dirty working-tree VERSION bypassed mandatory Git-exact publication.');
+    $export = $clone . DIRECTORY_SEPARATOR . 'non-git-export';
+    mkdir($export);
+    file_put_contents($export . DIRECTORY_SEPARATOR . 'VERSION', "2.36.0\n");
+    [$exportExit, , $exportError] = $run([
+        PHP_BINARY,
+        $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',
+        '--source=' . $export,
+        '--dry-run=1',
+        '--release-id=b21a-export-bypass-test',
+    ], $clone);
+    $assert($exportExit !== 0 && str_contains($exportError, 'exige --git-exact=1'),
+        'A non-Git 2.36.0 export bypassed mandatory Git-exact publication.');
     [$subdirExit, , $subdirError] = $run([
         PHP_BINARY,
         $clone . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'build_update_package.php',

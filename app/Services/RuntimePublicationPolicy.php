@@ -99,7 +99,7 @@ final class RuntimePublicationPolicy
             'publication_policy' => [
                 'base_commit' => $base,
                 'component_count' => count($paths),
-                'paths_sha256' => self::pathInventoryHash($paths),
+                'paths_sha256' => self::pathInventoryHash(array_values($paths)),
                 'dependency_registry_sha256' => hash('sha256', $registryBytes),
                 'raw_git_blobs' => true,
             ],
@@ -279,7 +279,7 @@ final class RuntimePublicationPolicy
 
         $case = [];
         foreach ($files as $path => $bytes) {
-            if (!is_string($path) || !is_string($bytes) || !self::safePath($path)) {
+            if (!self::safePath($path)) {
                 $issues[] = 'package_path_unsafe';
                 continue;
             }
@@ -526,7 +526,7 @@ final class RuntimePublicationPolicy
     {
         $matches = [];
         foreach ($rules as $rule) {
-            if (!is_array($rule) || trim((string) ($rule['id'] ?? '')) === '') {
+            if (trim((string) ($rule['id'] ?? '')) === '') {
                 throw new RuntimeException('Runtime classification rule is malformed.');
             }
             $classification = (string) ($rule['classification'] ?? '');

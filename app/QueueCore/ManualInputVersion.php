@@ -19,6 +19,27 @@ final class ManualInputVersion
         return hash('sha256',json_encode($evidence,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR));
     }
 
+    /** @param array<string,mixed> $previewRow */
+    public static function deriveFromSourceAuthority(
+        array $previewRow,
+        ManualSourceAuthority $authority
+    ): string {
+        if(preg_match('/^[a-f0-9]{64}$/',$authority->durableInputVersion)!==1){
+            throw new \RuntimeException('La fuente exacta no entregó una versión durable certificada.');
+        }
+        $identity=[];
+        foreach(['queue_key','source_id','meli_account_id'] as $key){
+            if(array_key_exists($key,$previewRow))$identity[$key]=$previewRow[$key];
+        }
+        $evidence=[
+            'identity'=>self::canonical($identity),
+            'durable_source_version'=>$authority->durableInputVersion,
+            'operation'=>$authority->operationKey,
+            'uses_api'=>$authority->usesApi,
+        ];
+        return hash('sha256',json_encode($evidence,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR));
+    }
+
     private static function canonical(mixed $value): mixed
     {
         if(!is_array($value))return $value;

@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Core\Database;
 use App\QueueCore\ManualQueueLauncher;
 use App\QueueCore\ManualInputVersion;
+use App\QueueCore\ManualSourceAuthorityService;
 use RuntimeException;
 use Throwable;
 
@@ -38,26 +39,46 @@ final class ManualSingleStepService
             $queueKey = (string) ($row['queue_key'] ?? '');
             $sourceId = (string) ($row['source_id'] ?? '');
             $accountId = max(0, (int) ($row['meli_account_id'] ?? 0));
+            if ($accountId < 1) {
+                throw new RuntimeException('El trabajo exacto no tiene una cuenta autorizada.');
+            }
             $adapter = (new ManualCampaignAdapterRegistry())->forQueue($queueKey);
             if ($adapter === null || !$adapter->supportsExact()) {
                 throw new RuntimeException('El trabajo no tiene un ejecutor exacto certificado.');
             }
 
-            $companyId = 0;
-            if ($accountId > 0) {
-                $account = (new BusinessScopeContext())->account($accountId);
-                $companyId = (int) ($account['company_id'] ?? 0);
-                if ($companyId < 1) {
-                    throw new RuntimeException('No fue posible confirmar la empresa de la cuenta.');
-                }
+            $account = (new BusinessScopeContext())->account($accountId);
+            $companyId = (int) ($account['company_id'] ?? 0);
+            if ($companyId < 1) {
+                throw new RuntimeException('No fue posible confirmar la empresa de la cuenta.');
             }
             $state = $adapter->inspect($sourceId, $accountId);
             if (!$state->exists || $state->terminal || !$state->eligible) {
                 throw new RuntimeException($state->message);
             }
 
+            // El preview es solo una selección sanitizada. La identidad lógica,
+            // el contrato físico y la versión durable se releen desde la fila
+            // fuente inmediatamente antes de consumir y encolar.
+            $authority = (new ManualSourceAuthorityService())->inspect(
+                $queueKey,
+                $sourceId,
+                $accountId,
+                $companyId,
+                $state
+            );
+            if ($authority->explicitlyUnsupported) {
+                throw new RuntimeException(
+                    $authority->unsupportedReason
+                    ?? 'El trabajo exacto no tiene una capacidad Queue Core certificada.'
+                );
+            }
+
             $previews->consume($previewToken, $userId);
-            $inputVersion = ManualInputVersion::derive($row,$state);
+            $inputVersion = ManualInputVersion::deriveFromSourceAuthority(
+                $row,
+                $authority
+            );
             // Manual and Cron V4 are launchers only. Both enter the same
             // QueueRunner, scheduler, claim, fencing and retry path.
             return (new ManualQueueLauncher())->runExact(
@@ -65,9 +86,10 @@ final class ManualSingleStepService
                 $accountId,
                 $queueKey,
                 $sourceId,
-                $state->usesApi,
-                $state->operationKey,
-                $inputVersion
+                $authority->usesApi,
+                $authority->operationKey,
+                $inputVersion,
+                $authority->remoteContract
             );
         } finally {
             try {

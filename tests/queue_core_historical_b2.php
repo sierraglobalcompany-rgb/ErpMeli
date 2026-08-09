@@ -371,12 +371,25 @@ $scenario('deployment_gate_verifies_schema_and_backup', static function () use (
     foreach ($tables as $table) {
         if(in_array($table,$actualTables,true)){
             $showCreate=$pdo->query('SHOW CREATE TABLE `'.$table.'`')->fetch(PDO::FETCH_NUM);
-            $backupSql.=(string)($showCreate[1]??'').";\n";
+            $createSql=(string)($showCreate[1]??'');
+            if($table==='meli_orders'){
+                $createSql=(string)preg_replace(
+                    '/,?\s*`queue_snapshot_(?:version|at)`\s+[^,\r\n]+/i','',$createSql
+                );
+            }
+            $backupSql.=$createSql.";\n";
         }else{$backupSql .= 'CREATE TABLE `' . $table . "` (`id` BIGINT);\n";}
     }
     foreach (['companies','users','meli_accounts','meli_tokens','meli_orders','meli_order_items','meli_payments','meli_shipments'] as $table) {
-        $rows=in_array($table,$actualTables,true)?(int)$pdo->query('SELECT COUNT(*) FROM `'.$table.'`')->fetchColumn():0;
-        for($row=0;$row<$rows;$row++)$backupSql.='INSERT INTO `'.$table."` VALUES (1);\n";
+        if(!in_array($table,$actualTables,true))continue;
+        $rows=$pdo->query('SELECT * FROM `'.$table.'`')->fetchAll(PDO::FETCH_NUM);
+        if($rows===[])continue;
+        $tuples=[];
+        foreach($rows as $row){
+            $values=array_map(static fn(mixed $value): string=>$value===null?'NULL':$pdo->quote((string)$value),$row);
+            $tuples[]='('.implode(',',$values).')';
+        }
+        $backupSql.='INSERT INTO `'.$table.'` VALUES '.implode(',',$tuples).";\n";
     }
     $backupSql .= "INSERT INTO `app_settings` VALUES ('fixture');\nINSERT INTO `schema_migrations` VALUES ('fixture');\n";
     file_put_contents($backup, $backupSql);

@@ -236,8 +236,14 @@ foreach($backupTables as $backupTable){
 }
 foreach(['companies','users','meli_accounts','meli_tokens'] as $backupTable){
     if(!in_array($backupTable,$actualBackupTables,true))continue;
-    $backupRows=(int)$pdo->query('SELECT COUNT(*) FROM `'.$backupTable.'`')->fetchColumn();
-    for($backupRow=0;$backupRow<$backupRows;$backupRow++)$backupSql.='INSERT INTO `'.$backupTable."` VALUES (1);\n";
+    $backupRows=$pdo->query('SELECT * FROM `'.$backupTable.'`')->fetchAll(PDO::FETCH_NUM);
+    if($backupRows===[])continue;
+    $tuples=[];
+    foreach($backupRows as $backupRow){
+        $values=array_map(static fn(mixed $value): string=>$value===null?'NULL':$pdo->quote((string)$value),$backupRow);
+        $tuples[]='('.implode(',',$values).')';
+    }
+    $backupSql.='INSERT INTO `'.$backupTable.'` VALUES '.implode(',',$tuples).";\n";
 }
 $backupSql.="INSERT INTO `app_settings` VALUES ('fixture');\nINSERT INTO `schema_migrations` VALUES ('fixture');\n";
 file_put_contents($backupFixture,$backupSql);

@@ -134,6 +134,11 @@ final class QueueCoreReadinessReceiptService
                 return ['ok' => false, 'reason' => $evidence['reason']];
             }
         }
+        $backupPath=trim((string)Env::get('QUEUE_CORE_APPROVED_BACKUP_PATH',''));
+        $backupSha=trim((string)Env::get('QUEUE_CORE_APPROVED_BACKUP_SHA256',''));
+        if(!(new QueueCoreReleaseEvidenceService($this->pdo))->verifyBackup($backupPath,$backupSha)['ok']){
+            return ['ok'=>false,'reason'=>'backup_artifact_unavailable'];
+        }
         $manifest = (new \App\Services\QueueCoreDeploymentGateService($this->pdo))->runtimeManifestCheck();
         if (!$manifest['ok']) {
             return ['ok' => false, 'reason' => 'runtime_manifest_mismatch'];
@@ -191,6 +196,7 @@ final class QueueCoreReadinessReceiptService
             ],
             'release_manifest_hash' => is_string($manifestHash) ? $manifestHash : 'missing',
             'approved_backup_sha256' => strtolower(trim((string) Env::get('QUEUE_CORE_APPROVED_BACKUP_SHA256', ''))),
+            'approved_backup_path_hash' => hash('sha256',str_replace('\\','/',trim((string)Env::get('QUEUE_CORE_APPROVED_BACKUP_PATH','')))),
             'capability_registry_hash' => (new QueueCapabilityRegistry())->authorityHash(),
             'safety' => [
                 'api' => (string) ($safety['api'] ?? 'unknown'),

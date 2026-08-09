@@ -99,6 +99,14 @@ final class QueueCoreRollbackService
     /** @return array{ok:bool,status:string,restored:int,remaining:int,generation:int,webhooks_replayed:int,webhooks_remaining:int,webhook_errors:int} */
     public function prepare(int $expectedGeneration, int $limit = 50): array
     {
+        return (new EmergencyControlService())->withAutomationAuthorityLock(
+            fn (): array => $this->prepareWithAutomationStopped($expectedGeneration, $limit),
+        );
+    }
+
+    /** @return array{ok:bool,status:string,restored:int,remaining:int,generation:int,webhooks_replayed:int,webhooks_remaining:int,webhook_errors:int} */
+    private function prepareWithAutomationStopped(int $expectedGeneration, int $limit): array
+    {
         $preflight = $this->preflight();
         if (!$preflight['ok']) {
             throw new RuntimeException('Queue Core rollback preflight is blocked: ' . implode(',', $preflight['issues']));

@@ -340,6 +340,12 @@ $scenario('rollback_blocks_uncertain_and_running', static function () use ($rese
     $assert($blocked, 'rollback accepted uncertain remote evidence');
 });
 
+$scenario('rollback_holds_automation_authority', static function () use ($assert): void {
+    $source=(string)file_get_contents(dirname(__DIR__).'/app/Services/QueueCoreRollbackService.php');
+    $assert(str_contains($source,'withAutomationAuthorityLock'),
+        'rollback no longer holds the Automation authority across disable and replay');
+});
+
 $scenario('deployment_gate_verifies_schema_and_backup', static function () use ($reset, $assert, $pdo): void {
     $reset();
     $pdo->exec("UPDATE queue_engine_control SET active_engine='disabled',generation=0");
@@ -364,13 +370,16 @@ $scenario('deployment_gate_verifies_schema_and_backup', static function () use (
     foreach ($tables as $table) {
         $backupSql .= 'CREATE TABLE `' . $table . "` (`id` BIGINT);\n";
     }
-    foreach (['meli_accounts', 'meli_orders', 'meli_order_items', 'meli_payments', 'meli_shipments'] as $table) {
-        $backupSql .= 'INSERT INTO `' . $table . "` VALUES (1);\n";
+    foreach (['companies','users','meli_accounts','meli_tokens','meli_orders','meli_order_items','meli_payments','meli_shipments'] as $table) {
+        $rows=in_array($table,$tables,true)?(int)$pdo->query('SELECT COUNT(*) FROM `'.$table.'`')->fetchColumn():0;
+        for($row=0;$row<$rows;$row++)$backupSql.='INSERT INTO `'.$table."` VALUES (1);\n";
     }
+    $backupSql .= "INSERT INTO `app_settings` VALUES ('fixture');\nINSERT INTO `schema_migrations` VALUES ('fixture');\n";
     file_put_contents($backup, $backupSql);
     try {
         $sha = hash_file('sha256', $backup);
         putenv('QUEUE_CORE_APPROVED_BACKUP_SHA256=' . $sha);
+        putenv('QUEUE_CORE_APPROVED_BACKUP_PATH=' . $backup);
         $gate = (new QueueCoreDeploymentGateService($pdo))->inspect($backup, is_string($sha) ? $sha : '');
         $assert($gate['ok'], 'deployment gate rejected complete disabled schema: ' . implode(',', $gate['issues']));
     } finally {

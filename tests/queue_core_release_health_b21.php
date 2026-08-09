@@ -106,10 +106,12 @@ $backupSql = "CREATE TABLE `meli_accounts` (`id` BIGINT);\n"
     . "CREATE TABLE `meli_payments` (`id` BIGINT);\n"
     . "CREATE TABLE `meli_shipments` (`id` BIGINT);\n"
     . "CREATE TABLE `schema_migrations` (`version` VARCHAR(100));\n"
-    . "INSERT INTO `meli_accounts` VALUES (1);\n";
+    . "INSERT INTO `app_settings` VALUES ('fixture');\n"
+    . "INSERT INTO `schema_migrations` VALUES ('fixture');\n";
 file_put_contents($backupFixture, gzencode($backupSql, 6));
 $backupHash = hash_file('sha256', $backupFixture);
 putenv('QUEUE_CORE_APPROVED_BACKUP_SHA256=' . $backupHash);
+putenv('QUEUE_CORE_APPROVED_BACKUP_PATH=' . $backupFixture);
 $assert(is_string($backupHash) && $evidence->verifyBackup($backupFixture, $backupHash)['ok'], 'Structured SQL backup was rejected.');
 $pdo->exec('CREATE TABLE legacy_business_table(id BIGINT PRIMARY KEY)');
 $assert(!$evidence->verifyBackup($backupFixture, (string) $backupHash)['ok'], 'A miniature dump omitted a live legacy table and still certified.');

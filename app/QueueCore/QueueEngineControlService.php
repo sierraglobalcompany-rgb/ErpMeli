@@ -129,9 +129,19 @@ final class QueueEngineControlService
     public function compareAndSwap(string $desiredEngine, int $expectedGeneration, string $actor): array
     {
         if ($desiredEngine === 'v4') {
-            return (new EmergencyControlService())->withAutomationAuthorityLock(
-                fn (): array => $this->compareAndSwapLocked($desiredEngine, $expectedGeneration, $actor),
-            );
+            try {
+                return (new EmergencyControlService())->withAutomationAuthorityLock(
+                    fn (): array => QueueCoreReadinessOperationLock::with(
+                        $this->pdo,
+                        fn (): array => $this->compareAndSwapLocked($desiredEngine, $expectedGeneration, $actor),
+                    ),
+                );
+            } catch (RuntimeException $error) {
+                if ($error->getMessage() === 'Queue Core readiness authority is busy.') {
+                    return ['ok'=>false,'reason'=>'readiness_authority_busy']+$this->snapshot();
+                }
+                throw $error;
+            }
         }
         return $this->compareAndSwapLocked($desiredEngine, $expectedGeneration, $actor);
     }

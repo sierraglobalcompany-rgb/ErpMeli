@@ -8,29 +8,33 @@ if (PHP_SAPI !== 'cli') {
 }
 
 require dirname(__DIR__) . '/bootstrap.php';
+$arguments=is_array($_SERVER['argv']??null)?array_map('strval',$_SERVER['argv']):[];
 
 try {
     \App\Core\Database::useProfile('cli');
     $pdo = \App\Core\Database::connectionFresh();
-    $result = (new \App\QueueCore\QueueCorePreflightService($pdo))->check(true);
-    $record = in_array('--record', $argv ?? [], true);
-    if ($record) {
-        $engine = (new \App\QueueCore\QueueEngineControlService($pdo))->snapshot();
-        (new \App\QueueCore\QueueCoreReadinessReceiptService($pdo))->record(
-            $engine['generation'],
-            'preflight',
-            !empty($result['ok']),
-            [
-                'connected_accounts' => count($result['accounts'] ?? []),
-                'capabilities' => count($result['capabilities'] ?? []),
-                'missing_tables' => count($result['missing_tables'] ?? []),
-            ],
-            3600,
-        );
-        $result['technical_receipt_written'] = true;
-    } else {
-        $result['technical_receipt_written'] = false;
-    }
+    $result = \App\QueueCore\QueueCoreReadinessOperationLock::with($pdo, static function () use ($pdo, $arguments): array {
+        $result = (new \App\QueueCore\QueueCorePreflightService($pdo))->check(true);
+        $record = in_array('--record', $arguments, true);
+        if ($record) {
+            $engine = (new \App\QueueCore\QueueEngineControlService($pdo))->snapshot();
+            (new \App\QueueCore\QueueCoreReadinessReceiptService($pdo))->record(
+                $engine['generation'],
+                'preflight',
+                !empty($result['ok']),
+                [
+                    'connected_accounts' => count($result['accounts'] ?? []),
+                    'capabilities' => count($result['capabilities'] ?? []),
+                    'missing_tables' => count($result['missing_tables'] ?? []),
+                ],
+                3600,
+            );
+            $result['technical_receipt_written'] = true;
+        } else {
+            $result['technical_receipt_written'] = false;
+        }
+        return $result;
+    });
 } catch (\Throwable) {
     $result = [
         'ok' => false,

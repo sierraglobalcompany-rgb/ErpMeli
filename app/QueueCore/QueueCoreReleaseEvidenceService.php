@@ -100,35 +100,44 @@ final class QueueCoreReleaseEvidenceService
         ];
     }
 
-    /** @return array{ok:bool,sha256:?string,bytes:int,format_valid:bool,table_count:int,data_statements:int,current_table_count:int,missing_table_count:int,critical_data_missing_count:int} */
+    /** @return array{ok:bool,sha256:?string,bytes:int,path_verified:bool,format_valid:bool,table_count:int,data_statements:int,current_table_count:int,missing_table_count:int,critical_data_missing_count:int,critical_row_count_mismatch_count:int} */
     public function verifyBackup(string $path, string $expectedSha256): array
     {
         $expected = strtolower(trim($expectedSha256));
         $approved = strtolower(trim((string) Env::get('QUEUE_CORE_APPROVED_BACKUP_SHA256', '')));
+        $approvedPath=trim((string)Env::get('QUEUE_CORE_APPROVED_BACKUP_PATH',''));
+        $resolvedPath=$path!==''?realpath($path):false;
+        $resolvedApproved=$approvedPath!==''?realpath($approvedPath):false;
+        $pathVerified=is_string($resolvedPath)&&is_string($resolvedApproved)
+            &&hash_equals(str_replace('\\','/',$resolvedApproved),str_replace('\\','/',$resolvedPath));
         $exists = $path !== '' && is_file($path) && is_readable($path);
         $sha = $exists ? hash_file('sha256', $path) : false;
         $bytes = $exists ? max(0, (int) filesize($path)) : 0;
         $content = $exists ? $this->inspectSqlBackup($path) : [
             'format_valid' => false, 'table_count' => 0, 'data_statements' => 0,
-            'tables' => [], 'data_tables' => [],
+            'tables' => [], 'data_tables' => [], 'row_counts'=>[],
         ];
         $inventory = $this->compareBackupWithCurrentDatabase(
             $content['tables'],
             $content['data_tables'],
+            $content['row_counts'],
         );
         $ok = is_string($sha)
             && $bytes > 0
             && preg_match('/^[a-f0-9]{64}$/', $expected) === 1
             && preg_match('/^[a-f0-9]{64}$/', $approved) === 1
+            && $pathVerified
             && hash_equals($approved, $expected)
             && hash_equals($expected, strtolower($sha))
             && $content['format_valid']
             && $inventory['missing_table_count'] === 0
-            && $inventory['critical_data_missing_count'] === 0;
+            && $inventory['critical_data_missing_count'] === 0
+            && $inventory['critical_row_count_mismatch_count'] === 0;
         return [
             'ok' => $ok,
             'sha256' => is_string($sha) ? strtoupper($sha) : null,
             'bytes' => $bytes,
+            'path_verified'=>$pathVerified,
             'format_valid' => $content['format_valid'],
             'table_count' => $content['table_count'],
             'data_statements' => $content['data_statements'],
@@ -158,6 +167,8 @@ final class QueueCoreReleaseEvidenceService
             'current_table_count' => $verification['current_table_count'],
             'missing_table_count' => $verification['missing_table_count'],
             'critical_data_missing_count' => $verification['critical_data_missing_count'],
+            'critical_row_count_mismatch_count' => $verification['critical_row_count_mismatch_count'],
+            'path_verified'=>$verification['path_verified']?1:0,
             'format_valid' => $verification['format_valid'] ? 1 : 0,
             'verified' => $verification['ok'] ? 1 : 0,
         ];
@@ -354,16 +365,16 @@ final class QueueCoreReleaseEvidenceService
         return ['ok' => $passed, 'id' => $id, 'manifest' => $manifest];
     }
 
-    /** @return array{format_valid:bool,table_count:int,data_statements:int,tables:array<string,true>,data_tables:array<string,true>} */
+    /** @return array{format_valid:bool,table_count:int,data_statements:int,tables:array<string,true>,data_tables:array<string,true>,row_counts:array<string,int>} */
     private function inspectSqlBackup(string $path): array
     {
         $gzip=str_ends_with(strtolower($path),'.gz');
         $handle=$gzip?@gzopen($path,'rb'):@fopen($path,'rb');
         if($handle===false)return [
             'format_valid'=>false,'table_count'=>0,'data_statements'=>0,
-            'tables'=>[],'data_tables'=>[],
+            'tables'=>[],'data_tables'=>[],'row_counts'=>[],
         ];
-        $tables=[];$dataTables=[];$data=0;
+        $tables=[];$dataTables=[];$rowCounts=[];$data=0;$activeDataTable=null;
         $required=array_fill_keys([
             'companies','users','app_settings','schema_migrations','meli_accounts',
             'meli_tokens','meli_orders','meli_order_items','meli_payments','meli_shipments',
@@ -374,16 +385,22 @@ final class QueueCoreReleaseEvidenceService
                     $name=strtolower($match[1]);$tables[$name]=true;if(array_key_exists($name,$required))$required[$name]=true;
                 }
                 if(preg_match('/^(?:INSERT INTO|REPLACE INTO)\s+[`"]?([a-zA-Z0-9_]+)/i',$line,$match)===1){
-                    $data++;$dataTables[strtolower($match[1])]=true;
+                    $data++;$activeDataTable=strtolower($match[1]);$dataTables[$activeDataTable]=true;
+                    $rowCounts[$activeDataTable]=$rowCounts[$activeDataTable]??0;
+                    if(preg_match('/\bVALUES\s*\(/i',$line)===1)$rowCounts[$activeDataTable]++;
+                    if(str_ends_with(rtrim($line),';'))$activeDataTable=null;
                 }elseif(preg_match('/^COPY\s+[`"]?([a-zA-Z0-9_]+)/i',$line,$match)===1){
                     $data++;$dataTables[strtolower($match[1])]=true;
+                }elseif($activeDataTable!==null&&str_starts_with(ltrim($line),'(')){
+                    $rowCounts[$activeDataTable]++;
+                    if(str_ends_with(rtrim($line),';'))$activeDataTable=null;
                 }
             }
         }finally{$gzip?gzclose($handle):fclose($handle);}
         return [
             'format_valid'=>$tables!==[]&&$data>0&&!in_array(false,$required,true),
             'table_count'=>count($tables),'data_statements'=>$data,
-            'tables'=>$tables,'data_tables'=>$dataTables,
+            'tables'=>$tables,'data_tables'=>$dataTables,'row_counts'=>$rowCounts,
         ];
     }
 
@@ -396,9 +413,10 @@ final class QueueCoreReleaseEvidenceService
      *
      * @param array<string,true> $dumpTables
      * @param array<string,true> $dumpDataTables
-     * @return array{current_table_count:int,missing_table_count:int,critical_data_missing_count:int}
+     * @param array<string,int> $dumpRowCounts
+     * @return array{current_table_count:int,missing_table_count:int,critical_data_missing_count:int,critical_row_count_mismatch_count:int}
      */
-    private function compareBackupWithCurrentDatabase(array $dumpTables,array $dumpDataTables): array
+    private function compareBackupWithCurrentDatabase(array $dumpTables,array $dumpDataTables,array $dumpRowCounts): array
     {
         $statement=$this->pdo->query(
             "SELECT LOWER(table_name)
@@ -414,16 +432,21 @@ final class QueueCoreReleaseEvidenceService
             if(!isset($dumpTables[strtolower($table)]))$missing++;
         }
 
-        $criticalMissing=0;
-        foreach(['meli_accounts','meli_orders','meli_order_items','meli_payments','meli_shipments'] as $table){
+        $criticalMissing=0;$rowCountMismatch=0;
+        $dataCritical=['companies','users','app_settings','schema_migrations','meli_accounts','meli_tokens',
+            'meli_orders','meli_order_items','meli_payments','meli_shipments'];
+        $stableCounts=['companies','users','meli_accounts','meli_tokens','meli_orders','meli_order_items','meli_payments','meli_shipments'];
+        foreach($dataCritical as $table){
             if(!in_array($table,$current,true))continue;
             $count=(int)$this->pdo->query('SELECT COUNT(*) FROM `'.$table.'`')->fetchColumn();
             if($count>0&&!isset($dumpDataTables[$table]))$criticalMissing++;
+            if(in_array($table,$stableCounts,true)&&$count!==max(0,(int)($dumpRowCounts[$table]??0)))$rowCountMismatch++;
         }
         return [
             'current_table_count'=>count($current),
             'missing_table_count'=>$missing,
             'critical_data_missing_count'=>$criticalMissing,
+            'critical_row_count_mismatch_count'=>$rowCountMismatch,
         ];
     }
 

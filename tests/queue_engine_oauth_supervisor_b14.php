@@ -217,6 +217,23 @@ $tokenFixture=$pdo->prepare("INSERT INTO meli_tokens
 foreach([1,2,3] as $accountFixture){
     $tokenFixture->execute([$accountFixture,Crypto::encrypt('fixture-access'),Crypto::encrypt('fixture-refresh')]);
 }
+$backupFixture=$private.'/readiness-backup.sql';
+$backupTables=$pdo->query("SELECT LOWER(table_name) FROM information_schema.tables
+    WHERE table_schema=DATABASE() AND table_type='BASE TABLE'
+      AND table_name NOT LIKE 'queue\\_core\\_%' AND table_name<>'queue_engine_control'")->fetchAll(PDO::FETCH_COLUMN);
+$backupTables=array_values(array_unique(array_merge(array_map('strval',$backupTables),[
+    'companies','users','app_settings','schema_migrations','meli_accounts','meli_tokens',
+    'meli_orders','meli_order_items','meli_payments','meli_shipments',
+])));sort($backupTables,SORT_STRING);$backupSql='';
+foreach($backupTables as $backupTable)$backupSql.='CREATE TABLE `'.$backupTable."` (`id` BIGINT);\n";
+foreach(['meli_accounts','meli_tokens'] as $backupTable){
+    $backupRows=(int)$pdo->query('SELECT COUNT(*) FROM `'.$backupTable.'`')->fetchColumn();
+    for($backupRow=0;$backupRow<$backupRows;$backupRow++)$backupSql.='INSERT INTO `'.$backupTable."` VALUES (1);\n";
+}
+$backupSql.="INSERT INTO `app_settings` VALUES ('fixture');\nINSERT INTO `schema_migrations` VALUES ('fixture');\n";
+file_put_contents($backupFixture,$backupSql);
+putenv('QUEUE_CORE_APPROVED_BACKUP_PATH='.$backupFixture);
+putenv('QUEUE_CORE_APPROVED_BACKUP_SHA256='.hash_file('sha256',$backupFixture));
 $pdo->exec("UPDATE queue_core_feature_flags SET enabled=1,generation=generation+1
             WHERE feature_key IN ('fresh_producer','webhook_producer','pack_shipment_followups')");
 $recordReadiness = static function (int $generation, array $accountIds) use ($pdo): void {
@@ -320,6 +337,17 @@ $check(!$incomplete['ok']&&!$incomplete['continuous_coverage'],'first page witho
 $crossCompanyBlocked=false;
 try{(new QueueCoreConvergenceService($pdo))->compare(99,1,$windowFrom,$windowTo,20);}catch(RuntimeException){$crossCompanyBlocked=true;}
 $check($crossCompanyBlocked,'cross-company convergence scope was accepted');
+$authorityConnection=new PDO($dsn,$user,$pass,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
+$authorityConnection->query("SELECT GET_LOCK('erp_meli_queue_readiness_authority',0)")->fetchColumn();
+$busyReadiness=$control->compareAndSwap('v4',1,'concurrent-evidence');
+$check(!$busyReadiness['ok']&&$busyReadiness['reason']==='readiness_authority_busy',
+    'Activation crossed a concurrent readiness evidence operation.');
+$authorityConnection->query("SELECT RELEASE_LOCK('erp_meli_queue_readiness_authority')")->fetchColumn();
+$backupBytes=(string)file_get_contents($backupFixture);unlink($backupFixture);
+$missingBackup=$control->compareAndSwap('v4',1,'missing-backup');
+$check(!$missingBackup['ok']&&$missingBackup['reason']==='backup_artifact_unavailable',
+    'Activation accepted a certified backup artifact that no longer exists.');
+file_put_contents($backupFixture,$backupBytes);
 $toV4 = $control->compareAndSwap('v4', 1, 'test');
 $check($toV4['ok'] && $toV4['generation'] === 2, 'v4 CAS failed: ' . json_encode($toV4));
 $permitResult = $control->acquireRuntime('v4', 'operational');

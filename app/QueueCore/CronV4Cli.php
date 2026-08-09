@@ -121,7 +121,12 @@ final class CronV4Cli
                 $runFinalized = true;
                 return $result;
             }
-            $produced = $core['producer']->scheduleDueAccounts(min(20, $max));
+            $produced = $core['feature_flags']->enabled('fresh_producer')
+                ? $core['producer']->scheduleDueAccounts(min(20, $max))
+                : ['created'=>0,'revived'=>0,'existing'=>0,'blocked'=>0,'disabled'=>1];
+            $saleMaterialized = $core['feature_flags']->enabled('pack_shipment_followups')
+                ? $core['sale_pipeline']->materializePending(min(20, $max))
+                : ['materialized'=>0,'review'=>0,'already_terminal'=>0,'disabled'=>1];
             $effectiveDeadline = CronDeadlineContext::deadline() ?? $deadline;
             if (!$engineControl->stillCurrent($enginePermit)) {
                 $result = [
@@ -130,6 +135,7 @@ final class CronV4Cli
                     'side_effects' => 0,
                     'oauth_supervisor' => $oauthProduced,
                     'producer' => $produced,
+                    'sale_pipeline' => $saleMaterialized,
                     'claimed' => 0,
                     'http' => 0,
                 ];
@@ -160,6 +166,7 @@ final class CronV4Cli
                 'status' => 'COMPLETE',
                 'oauth_supervisor' => $oauthProduced,
                 'producer' => $produced,
+                'sale_pipeline' => $saleMaterialized,
                 'recovered' => $recovered,
                 'run' => $run,
                 'metrics' => (new QueueMetricsService($pdo))->snapshot(),

@@ -86,6 +86,7 @@ $assert(in_array('freshness_stale', $reasons, true), 'Freshness lag was invisibl
 $assert(in_array('webhook_observation_stalled', $reasons, true), 'Webhook lag was invisible to health.');
 $assert(in_array('dependency_query_unknown', $reasons, true), 'Dependency query failure failed open.');
 $assert(in_array('latest_readiness_failed', $reasons, true), 'Latest readiness failure was invisible.');
+$assert(in_array('latest_release_evidence_failed', $reasons, true), 'Latest capacity failure was invisible.');
 
 $ledger = new QueueCoreRunLedger($pdo);
 $runId = $ledger->begin(4, 'test', 'worker-b21');

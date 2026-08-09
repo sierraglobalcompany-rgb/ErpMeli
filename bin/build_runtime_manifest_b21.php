@@ -24,8 +24,13 @@ $paths = array_values(array_filter(array_map(
 ), static fn (string $path): bool => $path !== ''));
 $paths[] = 'jobs/cron_probe.php';
 $paths[] = 'jobs/process_sync_queue.php';
+$paths[] = 'jobs/queue_core_release_certify.php';
 $paths = array_values(array_unique(array_filter($paths, static function (string $path): bool {
-    if (in_array($path, ['jobs/cron_probe.php', 'jobs/process_sync_queue.php'], true)) {
+    if (in_array($path, [
+        'jobs/cron_probe.php',
+        'jobs/process_sync_queue.php',
+        'jobs/queue_core_release_certify.php',
+    ], true)) {
         return true;
     }
     return preg_match('#^(app|jobs|public|launcher|database/migrations)/#', $path) === 1

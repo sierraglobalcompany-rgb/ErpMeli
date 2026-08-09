@@ -6,6 +6,7 @@ namespace App\QueueCore;
 
 use App\Core\Env;
 use App\Services\EmergencyControlService;
+use App\Services\QueueCoreDeploymentGateService;
 use PDO;
 use Throwable;
 
@@ -132,9 +133,37 @@ final class QueueCoreHealthService
         if ($this->latestReadinessFailed()) {
             $reasons[] = 'latest_readiness_failed';
         }
+        if ($this->latestReleaseEvidenceFailed()) {
+            $reasons[] = 'latest_release_evidence_failed';
+        }
 
         $safety = (new EmergencyControlService())->status();
         $engine = (new QueueEngineControlService($this->pdo))->snapshot();
+        if ($engine['readiness_mode'] === 'preparing' || $engine['active_engine'] === 'v4') {
+            $evidenceGeneration = $engine['active_engine'] === 'v4'
+                ? max(0, (int) $engine['generation'] - 1)
+                : max(0, (int) $engine['generation']);
+            try {
+                $contextHash = (new QueueCoreReadinessReceiptService($this->pdo))
+                    ->currentContextHash($evidenceGeneration);
+                $releaseEvidence = new QueueCoreReleaseEvidenceService($this->pdo);
+                foreach (['backup', 'capacity', 'manifest'] as $type) {
+                    $evidence = $releaseEvidence->requireLatest(
+                        $evidenceGeneration,
+                        $type,
+                        $contextHash,
+                    );
+                    if (!$evidence['ok']) {
+                        $reasons[] = $evidence['reason'];
+                    }
+                }
+                if (!(new QueueCoreDeploymentGateService($this->pdo))->runtimeManifestCheck()['ok']) {
+                    $reasons[] = 'runtime_manifest_mismatch';
+                }
+            } catch (Throwable) {
+                $reasons[] = 'release_evidence_unknown';
+            }
+        }
         if ($engine['active_engine'] === 'v4' && !Env::bool('CRON_V4_ENABLED', false)) {
             $reasons[] = 'engine_enabled_launcher_disabled';
         }
@@ -150,7 +179,12 @@ final class QueueCoreHealthService
             'identity_mismatch', 'rotated_credential_unrecoverable', 'schema_inconsistent',
             'cross_account_state', 'blocking_review_present', 'freshness_stale',
             'dependency_query_unknown', 'webhook_query_unknown', 'webhook_observation_stalled',
-            'latest_readiness_failed',
+            'latest_readiness_failed', 'latest_release_evidence_failed',
+            'backup_evidence_missing', 'backup_latest_failed',
+            'backup_context_changed', 'backup_evidence_expired', 'capacity_evidence_missing',
+            'capacity_latest_failed', 'capacity_context_changed', 'capacity_evidence_expired',
+            'manifest_evidence_missing', 'manifest_latest_failed', 'manifest_context_changed',
+            'manifest_evidence_expired', 'runtime_manifest_mismatch', 'release_evidence_unknown',
         ]);
         $state = $red !== [] ? 'RED' : ($reasons !== [] ? 'DEGRADED' : 'GREEN');
 
@@ -299,6 +333,24 @@ final class QueueCoreHealthService
                    GROUP BY receipt_type,company_id,meli_account_id
                  ) latest ON latest.id=r.id
                  WHERE r.status='fail'"
+            )->fetchColumn() > 0;
+        } catch (Throwable) {
+            return true;
+        }
+    }
+
+    private function latestReleaseEvidenceFailed(): bool
+    {
+        try {
+            return (int) $this->pdo->query(
+                "SELECT COUNT(*)
+                 FROM queue_core_release_evidence e
+                 JOIN (
+                   SELECT evidence_type,company_id,meli_account_id,MAX(id) id
+                   FROM queue_core_release_evidence
+                   GROUP BY evidence_type,company_id,meli_account_id
+                 ) latest ON latest.id=e.id
+                 WHERE e.status='fail' OR e.expires_at<=UTC_TIMESTAMP(3)"
             )->fetchColumn() > 0;
         } catch (Throwable) {
             return true;

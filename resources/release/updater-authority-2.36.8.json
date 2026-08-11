@@ -26,7 +26,7 @@
     }
   ],
   "new_runtime_dependencies": [
-    {"path": "app/Services/ManagedRuntimePublicationPolicy.php", "sha256": "577242adab1f60e548f8584c09336c3dd506d33c08d65adb253db8c0e27bf695"},
+    {"path": "app/Services/ManagedRuntimePublicationPolicy.php", "sha256": "39bc15e71dbc5991f2b758460eb2a05eedd2e7f12a02465651bc20ad3f811e93"},
     {"path": "app/Services/DirectUpdateMetadataPromotionService.php", "sha256": "78218b1519cfe8221a86be93953d8f4fb3bbf46cd75a43f6edffafb69a767dce"},
     {"path": "app/Services/DirectUpdateTransitionPolicy.php", "sha256": "5f67ad44b8ee9f2c6ce59a050a79ca0e0597b78ae97b79cb37e0ab1aaefe4187"},
     {"path": "app/Services/CronV3RetirementForV4Service.php", "sha256": "8fedd197a8ca43954fd639604b8defce8225f4e3a17ce1113cb5a1d466007422"},
@@ -38,6 +38,6 @@
     {"path": "app/QueueCore/QueueCoreFeatureFlagService.php", "sha256": "25e785f44f409f60a3cc1a594a39f6aab7ddf8108d6fee7cdf87487bb6bcdf89"},
     {"path": "app/QueueCore/QueueCoreReadinessReceiptService.php", "sha256": "b572e4489c3755959ac047faba5ab28139874bd072d7e7bb02e944f32275e9ba"},
     {"path": "app/QueueCore/QueueCoreCanaryService.php", "sha256": "0a6f6e5482f14bfcf7d4232dae07bd68580bf8ce43b4a05660b3908a182a5426"},
-    {"path": "resources/release/managed-runtime-dependencies-2.36.8.json", "sha256": "0e8af635e689d7a401eb74ee9fe8f0d5c083aa5d6e1277a17159c118fe9038c2"}
+    {"path": "resources/release/managed-runtime-dependencies-2.36.8.json", "sha256": "55682b1e7ccb837cd3f727fe7175a83276c86af7ab11984975103867a54dbec5"}
   ]
 }

@@ -107,6 +107,14 @@ try {
     $env:DB_USER = 'root'
     $env:DB_PASS = ''
 
+    $pdoReady = $false
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        & php -r '$p=new PDO($argv[1],"root",""); echo $p->query("SELECT 1")->fetchColumn();' "mysql:host=127.0.0.1;port=$dbPort;dbname=erp_meli_lab;charset=utf8mb4" *> $null
+        if ($LASTEXITCODE -eq 0) { $pdoReady = $true; break }
+        Start-Sleep -Milliseconds 250
+    }
+    if (-not $pdoReady) { throw 'mariadb_external_pdo_not_ready' }
+
     $migrationLog = Join-Path $lab 'migrate.log'
     Push-Location $release
     try {
@@ -117,13 +125,6 @@ try {
         }
     } finally { Pop-Location }
 
-    $pdoReady = $false
-    for ($attempt = 0; $attempt -lt 30; $attempt++) {
-        & php -r '$p=new PDO($argv[1],"root",""); echo $p->query("SELECT 1")->fetchColumn();' "mysql:host=127.0.0.1;port=$dbPort;dbname=erp_meli_lab;charset=utf8mb4" *> $null
-        if ($LASTEXITCODE -eq 0) { $pdoReady = $true; break }
-        Start-Sleep -Milliseconds 250
-    }
-    if (-not $pdoReady) { throw 'mariadb_external_pdo_not_ready' }
     $schemaTruth = (& docker exec $container mariadb -N -uroot erp_meli_lab -e "SELECT CONCAT((SELECT COUNT(*) FROM schema_migrations),'|',(SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='users'));" 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $schemaTruth -ne '293|1') {
         Get-Content -LiteralPath $migrationLog -Tail 60 | Write-Error

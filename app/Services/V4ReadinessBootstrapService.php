@@ -27,7 +27,7 @@ use Throwable;
 final class V4ReadinessBootstrapService
 {
     public const CONFIRMATION_PHRASE = 'PREPARAR_Y_CERTIFICAR_V4_SIN_SCHEDULER';
-    public const REQUIRED_VERSION = '2.36.7';
+    public const REQUIRED_VERSION = '2.36.8';
     public const LAST_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
     public const LOCK_NAME = 'erp_meli_v4_readiness_bootstrap_2366';
     public const SCHEDULER_AUTHORITY_KEY = 'queue_core.v4.scheduler_authority';
@@ -95,6 +95,22 @@ final class V4ReadinessBootstrapService
 
             $snapshot = $this->snapshotWithPdo($pdo);
             $state = (string) ($snapshot['state'] ?? 'blocked');
+            if ($state === 'recovery_required') {
+                $recovery = $this->rollbackAuthorities(
+                    $pdo,
+                    $actorUserId,
+                    'partial_arm_recovery_2368',
+                );
+                return [
+                    'ok' => $recovery['state'] === 'rolled_back',
+                    'state' => 'recovered_fail_closed',
+                    'message' => 'El armado parcial fue restaurado a fail-closed. Vuelva a pulsar para iniciar una preparación nueva.',
+                    'requires_next_request' => true,
+                    'next_single_action' => 'USER_PRESS_PREPARE_AND_CERTIFY_V4_AGAIN',
+                    'scheduler_created' => false,
+                    'engine_activated' => false,
+                ];
+            }
             if ($state === 'ready_to_arm') {
                 return $this->armStableAuthorities($pdo, $actorUserId);
             }
@@ -167,24 +183,12 @@ final class V4ReadinessBootstrapService
 
         $flags = new QueueCoreFeatureFlagService($pdo);
         $flags->compareAndSwapReadinessFlags(self::FLAGS_DISABLED, self::FLAGS_READY, 1);
-        try {
-            (new EmergencyControlService())->startApiWithoutCanary(
-                'v4_readiness_bootstrap_2366',
-                'Lecturas habilitadas para readiness V4 acotado; automatización permanece detenida.',
-            );
-            (new CronV3SetupAssistantService($pdo, $this->configPath()))
-                ->prepareV4ReadinessConfig($actorUserId);
-        } catch (Throwable $error) {
-            try {
-                (new EmergencyControlService())->stopApi('v4_readiness_bootstrap_2366', 'Rollback de armado V4.');
-            } catch (Throwable) {
-            }
-            try {
-                $flags->compareAndSwapReadinessFlags(self::FLAGS_READY, self::FLAGS_DISABLED, 0);
-            } catch (Throwable) {
-            }
-            throw $error;
-        }
+        (new EmergencyControlService())->startApiWithoutCanary(
+            'v4_readiness_bootstrap_2368',
+            'Lecturas habilitadas para readiness V4 acotado; automatización permanece detenida.',
+        );
+        (new CronV3SetupAssistantService($pdo, $this->configPath()))
+            ->prepareV4ReadinessConfig($actorUserId);
 
         return [
             'ok' => true,
@@ -208,7 +212,7 @@ final class V4ReadinessBootstrapService
         $transition = $engineService->compareAndSwapReadiness(
             'preparing',
             (int) $pre['engine']['generation'],
-            'admin:' . $actorUserId . ':v4_readiness_bootstrap_2366',
+            'admin:' . $actorUserId . ':v4_readiness_bootstrap_2368',
         );
         if (empty($transition['ok']) || (int) ($transition['generation'] ?? -1) !== 1) {
             throw new RuntimeException('v4_bootstrap_generation_transition_failed');
@@ -383,7 +387,7 @@ final class V4ReadinessBootstrapService
                 throw new RuntimeException('v4_bootstrap_activation_gate:' . (string) ($activation['reason'] ?? 'unknown'));
             }
             $receipt = [
-                'operation' => 'v4_readiness_bootstrap_2366',
+                'operation' => 'v4_readiness_bootstrap_2368',
                 'result' => 'PASS',
                 'generation' => $generation,
                 'readiness_context_hash' => $contextHash,
@@ -446,6 +450,9 @@ final class V4ReadinessBootstrapService
         } elseif ($engine['active_engine'] === 'disabled' && $engine['readiness_mode'] === 'preparing') {
             $state = $contextStable ? 'preparing' : 'blocked';
             $reason = $contextStable ? 'readiness_in_progress' : 'readiness_context_changed';
+        } elseif (self::isRecoverablePartialArm($engine, $flags, $pre)) {
+            $state = 'recovery_required';
+            $reason = 'partial_arm_requires_fail_closed_recovery';
         } elseif ($engine['active_engine'] === 'disabled' && $engine['readiness_mode'] === 'idle'
             && $engine['generation'] === 0 && $pre['base_ok']) {
             if ($pre['runtime_ready'] && self::flagsMatch($flags, self::FLAGS_READY)
@@ -459,7 +466,11 @@ final class V4ReadinessBootstrapService
         }
 
         return [
-            'ok' => in_array($state, ['ready_to_arm', 'ready_for_context', 'preparing', 'certified'], true),
+            'ok' => in_array(
+                $state,
+                ['recovery_required', 'ready_to_arm', 'ready_for_context', 'preparing', 'certified'],
+                true,
+            ),
             'state' => $state,
             'reason' => $reason,
             'required_confirmation_phrase' => self::CONFIRMATION_PHRASE,
@@ -485,7 +496,7 @@ final class V4ReadinessBootstrapService
             "SELECT setting_value FROM app_settings WHERE setting_key='app.version' LIMIT 1"
         )->fetchColumn();
         if ($fileVersion !== self::REQUIRED_VERSION || $appVersion !== self::REQUIRED_VERSION) {
-            $issues[] = 'version_not_2367';
+            $issues[] = 'version_not_2368';
         }
         $schemaAuthority = $pdo->query(
             "SELECT COUNT(*) AS total,
@@ -610,6 +621,9 @@ final class V4ReadinessBootstrapService
             'api' => (string) ($safety['api'] ?? 'unknown'),
             'automation' => (string) ($safety['automation'] ?? 'unknown'),
             'ml_write_enabled' => Env::bool('ML_WRITE_ENABLED', false),
+            'cron_v4_enabled' => Env::bool('CRON_V4_ENABLED', false),
+            'cron_v3_enabled' => Env::bool('CRON_V3_ENABLED', false),
+            'cron_v3_shadow_enabled' => Env::bool('CRON_V3_SHADOW_ENABLED', false),
             'oauth_current_accounts' => count((array) ($preflight['accounts'] ?? [])),
             'scheduler_absent_recorded' => $scheduler['status'] === 'absent',
             'runtime_fail_closed' => $runtimeFailClosed,
@@ -766,7 +780,7 @@ final class V4ReadinessBootstrapService
         // Estas dos autoridades cortan ejecución remota aun cuando un CAS DB
         // esté contendido. Ningún fallo posterior puede impedir intentarlas.
         $attempt('api', fn (): null => (new EmergencyControlService())->stopApi(
-            'v4_readiness_rollback_2366',
+            'v4_readiness_rollback_2368',
             'Rollback fail-closed: ' . mb_substr($reason, 0, 120),
         ));
         $attempt('config', fn (): array => (new CronV3SetupAssistantService($pdo, $this->configPath()))
@@ -784,7 +798,7 @@ final class V4ReadinessBootstrapService
             $transition = $service->compareAndSwapReadiness(
                 'idle',
                 (int) $current['generation'],
-                'admin:' . $actorUserId . ':v4_readiness_rollback_2366',
+                'admin:' . $actorUserId . ':v4_readiness_rollback_2368',
             );
             if (empty($transition['ok'])) {
                 throw new RuntimeException('v4_bootstrap_rollback_engine_cas_failed');
@@ -845,6 +859,48 @@ final class V4ReadinessBootstrapService
         ksort($actualCanonical, SORT_STRING);
         ksort($expectedCanonical, SORT_STRING);
         return $actualCanonical === $expectedCanonical;
+    }
+
+    /**
+     * Reconoce únicamente la postimagen parcial observada cuando config.env ya
+     * habilitó readiness, pero el resto del armado volvió a fail-closed. Este
+     * estado nunca continúa hacia Queue Engine: sólo autoriza compensación.
+     *
+     * @param array<string,mixed> $engine
+     * @param array<string,bool> $flags
+     * @param array<string,mixed> $pre
+     */
+    private static function isRecoverablePartialArm(array $engine, array $flags, array $pre): bool
+    {
+        if (($engine['active_engine'] ?? '') !== 'disabled'
+            || ($engine['readiness_mode'] ?? '') !== 'idle'
+            || (int) ($engine['generation'] ?? -1) !== 0
+            || (string) ($engine['readiness_context_hash'] ?? '') !== ''
+            || !self::flagsMatch($flags, self::FLAGS_DISABLED)
+            || empty($pre['scheduler_absent_recorded'])
+            || empty($pre['cron_v4_enabled'])
+            || !empty($pre['cron_v3_enabled'])
+            || !empty($pre['cron_v3_shadow_enabled'])
+            || !empty($pre['ml_write_enabled'])
+            || ($pre['api'] ?? '') !== 'stopped'
+            || ($pre['automation'] ?? '') !== 'stopped') {
+            return false;
+        }
+
+        $allowed = [
+            'feature_generation_invalid:fresh_producer',
+            'feature_generation_invalid:webhook_producer',
+            'feature_generation_invalid:pack_shipment_followups',
+            'readiness_runtime_not_stable',
+        ];
+        $issues = array_values(array_unique(array_map('strval', (array) ($pre['issues'] ?? []))));
+        if ($issues === [] || array_diff($issues, $allowed) !== []) {
+            return false;
+        }
+
+        return in_array('feature_generation_invalid:fresh_producer', $issues, true)
+            && in_array('feature_generation_invalid:webhook_producer', $issues, true)
+            && in_array('feature_generation_invalid:pack_shipment_followups', $issues, true);
     }
 
     private function upsertSetting(PDO $pdo, string $key, string $value): void

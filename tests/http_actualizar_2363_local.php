@@ -211,7 +211,11 @@ try {
         'password' => $password,
         'backup_choice' => 'skip',
     ]);
-    $check($authorized['status'] === 200, 'authorize_http_' . $authorized['status']);
+    qa2363WriteHtml($artifactDirectory . '/actualizar-authorize.html', $authorized['body'], $releaseRoot);
+    $check(
+        $authorized['status'] === 200,
+        'authorize_http_' . $authorized['status'] . '_location_' . rawurlencode($authorized['location'])
+    );
     $check(str_contains($authorized['body'], 'Continuar actualización'), 'continue_button_missing');
 
     $stage = 'pre_mutation_snapshot';

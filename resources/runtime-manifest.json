@@ -1,16 +1,16 @@
 {
     "product": "erp-meli",
-    "version": "2.36.3",
-    "build_id": "erp-meli-2.36.3-direct-updater-authority-hotfix-rc1-20260810",
-    "built_at": "2026-08-10T00:00:00Z",
+    "version": "2.36.4",
+    "build_id": "erp-meli-2.36.4-safe-config-retirement-hotfix-rc1-20260811",
+    "built_at": "2026-08-11T14:45:00Z",
     "minimum_migration": "293_queue_core_runtime_profile_defaults_b2_1.sql",
     "publication_policy": {
         "base_commit": "75997f864b917c829d19f14e21cd7303d2685776",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 817,
-        "component_count": 816,
-        "paths_sha256": "36b143c2f7f2479de0e6e1e426eae983db2c480499d4242e4d2532bad9b7773a",
-        "dependency_registry_sha256": "fde2fa1c8d365d9024ce0e969cdd281b730eb9e0e8c311d1f3766070bd97d197",
+        "package_file_count": 819,
+        "component_count": 818,
+        "paths_sha256": "236886243408a5214fb45141d0303f159b56c21d7ce3efa57295bf4e1a99f1f5",
+        "dependency_registry_sha256": "9e521ff16267440c1509721bee7d982ccc04f4687c2dd4a7a490bb7c44506940",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -24,8 +24,8 @@
         },
         "runtime_version": {
             "path": "VERSION",
-            "sha256": "bf9bf2d887bf0a0b2874020c0fabb4cc7278f4b7095caeff0ce3a41410bc7660",
-            "sha256_lf": "bf9bf2d887bf0a0b2874020c0fabb4cc7278f4b7095caeff0ce3a41410bc7660",
+            "sha256": "fffff91cf61d9a1bdcec3168e22bed74a9b30750ab918ce7f459e196fee85cdb",
+            "sha256_lf": "fffff91cf61d9a1bdcec3168e22bed74a9b30750ab918ce7f459e196fee85cdb",
             "text": true
         },
         "runtime_actualizar_php": {
@@ -1950,8 +1950,8 @@
         },
         "runtime_app_services_cronv3setupassistantservice_php": {
             "path": "app/Services/CronV3SetupAssistantService.php",
-            "sha256": "3c35220338dd54396482f98ea580c802b74e72c712c3be5386ce0fead36b6506",
-            "sha256_lf": "3c35220338dd54396482f98ea580c802b74e72c712c3be5386ce0fead36b6506",
+            "sha256": "be8d7b101641af6c547296d3c2f866b56aadf88ede84a21d12d52054954d047b",
+            "sha256_lf": "be8d7b101641af6c547296d3c2f866b56aadf88ede84a21d12d52054954d047b",
             "text": true
         },
         "runtime_app_services_cronv3workrepository_php": {
@@ -2262,8 +2262,8 @@
         },
         "runtime_app_services_managedruntimepublicationpolicy_php": {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "dc3f3f81c1f166dd1462e4f18d5ed4961fdb45587a47f7669a283fa0116c94d4",
-            "sha256_lf": "dc3f3f81c1f166dd1462e4f18d5ed4961fdb45587a47f7669a283fa0116c94d4",
+            "sha256": "282eb82af1064b9a3626551fc6dc6846f439752cf17ec48c13c6bcbf2f8b2e57",
+            "sha256_lf": "282eb82af1064b9a3626551fc6dc6846f439752cf17ec48c13c6bcbf2f8b2e57",
             "text": true
         },
         "runtime_app_services_manualcampaignadapter_php": {
@@ -3972,8 +3972,8 @@
         },
         "runtime_app_views_settings_cron_shell_php": {
             "path": "app/Views/settings/cron_shell.php",
-            "sha256": "53a51a342e75c65039c336d31516a24e2ea2cdb9e62a340b0ef941cbe7122cd2",
-            "sha256_lf": "53a51a342e75c65039c336d31516a24e2ea2cdb9e62a340b0ef941cbe7122cd2",
+            "sha256": "60ee63d8848c2b24c9e3f6dea2888a0e38d74f21f8d37028b995b20652b779d5",
+            "sha256_lf": "60ee63d8848c2b24c9e3f6dea2888a0e38d74f21f8d37028b995b20652b779d5",
             "text": true
         },
         "runtime_app_views_settings_cron_v3_parked_php": {
@@ -4632,8 +4632,8 @@
         },
         "runtime_public_assets_app_js": {
             "path": "public/assets/app.js",
-            "sha256": "14b4bf814d6a433c1db63fe5660c774555d4e340701db68bc43b1529722bd885",
-            "sha256_lf": "14b4bf814d6a433c1db63fe5660c774555d4e340701db68bc43b1529722bd885",
+            "sha256": "5af67446d57bedbe3ef1d13a2473fb446f9a26f3a8991e9b8f2d67e215c3f7c8",
+            "sha256_lf": "5af67446d57bedbe3ef1d13a2473fb446f9a26f3a8991e9b8f2d67e215c3f7c8",
             "text": true
         },
         "runtime_public_assets_catalog_css": {
@@ -4870,6 +4870,12 @@
             "sha256_lf": "fde2fa1c8d365d9024ce0e969cdd281b730eb9e0e8c311d1f3766070bd97d197",
             "text": true
         },
+        "runtime_resources_release_managed_runtime_dependencies_2_36_4_json": {
+            "path": "resources/release/managed-runtime-dependencies-2.36.4.json",
+            "sha256": "9e521ff16267440c1509721bee7d982ccc04f4687c2dd4a7a490bb7c44506940",
+            "sha256_lf": "9e521ff16267440c1509721bee7d982ccc04f4687c2dd4a7a490bb7c44506940",
+            "text": true
+        },
         "runtime_resources_release_production_legacy_quarantine_2_36_1_json": {
             "path": "resources/release/production-legacy-quarantine-2.36.1.json",
             "sha256": "b6adf206e3d3857807d44d3ec0b2929535c2e184cf8fac07b975987bcc642f25",
@@ -4892,6 +4898,12 @@
             "path": "resources/release/updater-authority-2.36.3.json",
             "sha256": "0e798e280ab8949b3919fa461cb2823343737d7f8846a44562dd6806a134adbd",
             "sha256_lf": "0e798e280ab8949b3919fa461cb2823343737d7f8846a44562dd6806a134adbd",
+            "text": true
+        },
+        "runtime_resources_release_updater_authority_2_36_4_json": {
+            "path": "resources/release/updater-authority-2.36.4.json",
+            "sha256": "06aab08d3419fef1eb6d762b57aba976834e104c35accc1b244574a527e120c4",
+            "sha256_lf": "06aab08d3419fef1eb6d762b57aba976834e104c35accc1b244574a527e120c4",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

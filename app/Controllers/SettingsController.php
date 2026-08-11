@@ -710,11 +710,7 @@ final class SettingsController
                     (string) ($_POST['confirmation_phrase'] ?? '')
                 );
             } elseif ($action === 'v4_bootstrap') {
-                $result = (new \App\Services\V4ReadinessBootstrapService())->advance(
-                    (int) Auth::id(),
-                    (string) ($_POST['confirmation_phrase'] ?? ''),
-                    (string) ($_POST['scheduler_absent_confirmed'] ?? '') === '1',
-                );
+                $result = (new \App\Services\V4ReadinessBootstrapService())->advance((int) Auth::id());
             } elseif ($action === 'v4_rollback') {
                 $result = (new \App\Services\V4ReadinessBootstrapService())->rollback(
                     (int) Auth::id(),

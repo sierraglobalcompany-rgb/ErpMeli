@@ -214,17 +214,10 @@ $tone = match ($state) {
       <form method="post" action="<?= View::e($base) ?>/settings/cron/v3-setup/prepare-safe-config" data-v4-readiness-form>
         <input type="hidden" name="_token" value="<?= View::e($csrfToken) ?>">
         <input type="hidden" name="operation" value="v4_readiness_bootstrap">
-        <label>Frase de confirmación
-          <input type="text" name="confirmation_phrase" autocomplete="off" spellcheck="false" required
-                 placeholder="PREPARAR_Y_CERTIFICAR_V4_SIN_SCHEDULER">
-        </label>
         <label>Contraseña administrativa
           <input type="password" name="admin_password" autocomplete="current-password" required>
         </label>
-        <label class="checkbox-row">
-          <input type="checkbox" name="scheduler_absent_confirmed" value="1" required>
-          Confirmo que no existe ninguna tarea Cron de ERP MELI en Hostinger.
-        </label>
+        <p class="muted">La ausencia del scheduler se valida con la autoridad técnica registrada.</p>
         <button class="btn primary" type="submit" disabled>Preparar y certificar V4</button>
       </form>
       <pre class="code-block" data-v4-readiness-receipt hidden></pre>

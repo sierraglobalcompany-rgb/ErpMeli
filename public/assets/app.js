@@ -982,7 +982,6 @@
     }
     if (v4Form) {
       v4Form.dataset.preflightOk = v4.ok ? '1' : '0';
-      v4Form.dataset.confirmationPhrase = v4.required_confirmation_phrase || '';
       const button = v4Form.querySelector('button[type="submit"]');
       if (button) button.hidden = v4.state === 'certified';
     }
@@ -1487,19 +1486,13 @@
 
   root.querySelectorAll('[data-v4-readiness-form]').forEach((form) => {
     const button = form.querySelector('button[type="submit"]');
-    const phrase = form.querySelector('[name="confirmation_phrase"]');
     const password = form.querySelector('[name="admin_password"]');
-    const scheduler = form.querySelector('[name="scheduler_absent_confirmed"]');
     const syncButton = () => {
       if (!button) return;
       button.disabled = !(form.dataset.preflightOk === '1'
-        && phrase?.value.trim() === (form.dataset.confirmationPhrase || '')
-        && Boolean(password?.value)
-        && Boolean(scheduler?.checked));
+        && Boolean(password?.value));
     };
-    phrase?.addEventListener('input', syncButton);
     password?.addEventListener('input', syncButton);
-    scheduler?.addEventListener('change', syncButton);
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       syncButton();

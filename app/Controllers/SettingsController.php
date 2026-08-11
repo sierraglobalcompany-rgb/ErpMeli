@@ -581,11 +581,17 @@ final class SettingsController
         $this->requireAdminPermanent();
         $this->assertSameOrigin();
         Csrf::validate($_POST['_token'] ?? null);
-        if ((string) ($_POST['operation'] ?? '') === 'retire_for_v4') {
+        $operation = (string) ($_POST['operation'] ?? '');
+        if (in_array($operation, ['retire_for_v4', 'v4_readiness_bootstrap', 'v4_readiness_rollback'], true)) {
             (new \App\Services\AdministrativeReauthenticationService())->requirePassword(
                 (string) ($_POST['admin_password'] ?? '')
             );
-            $this->cronV3SetupMutation('retire');
+            $action = match ($operation) {
+                'retire_for_v4' => 'retire',
+                'v4_readiness_bootstrap' => 'v4_bootstrap',
+                'v4_readiness_rollback' => 'v4_rollback',
+            };
+            $this->cronV3SetupMutation($action);
             return;
         }
         $this->cronV3SetupMutation('prepare');
@@ -703,6 +709,17 @@ final class SettingsController
                     (int) Auth::id(),
                     (string) ($_POST['confirmation_phrase'] ?? '')
                 );
+            } elseif ($action === 'v4_bootstrap') {
+                $result = (new \App\Services\V4ReadinessBootstrapService())->advance(
+                    (int) Auth::id(),
+                    (string) ($_POST['confirmation_phrase'] ?? ''),
+                    (string) ($_POST['scheduler_absent_confirmed'] ?? '') === '1',
+                );
+            } elseif ($action === 'v4_rollback') {
+                $result = (new \App\Services\V4ReadinessBootstrapService())->rollback(
+                    (int) Auth::id(),
+                    (string) ($_POST['confirmation_phrase'] ?? ''),
+                );
             } else {
                 $service = new \App\Services\CronV3SetupAssistantService();
                 $result = $action === 'shadow'
@@ -731,6 +748,8 @@ final class SettingsController
                     => 'Otra operación de retiro V3 mantiene el lock. No se modificó nada.',
                 str_starts_with($error->getMessage(), 'v3_retirement_')
                     => 'Retiro V3 bloqueado: ' . substr($error->getMessage(), strlen('v3_retirement_')) . '.',
+                str_starts_with($error->getMessage(), 'v4_bootstrap_')
+                    => 'Readiness V4 bloqueado: ' . substr($error->getMessage(), strlen('v4_bootstrap_')) . '.',
                 default => \App\Services\SafeErrorPresenter::message(
                     $error,
                     'No fue posible actualizar la autoridad Cron. No se activó V4 ni Mercado Libre.',

@@ -22,6 +22,8 @@ final class CronV3RetirementForV4Service
     public const CONFIRMATION_PHRASE = 'RETIRAR_AUTORIDAD_V3_PARA_PREPARAR_V4';
     public const LOCK_NAME = 'erp_meli_v3_retirement_for_v4_2363';
     public const REQUIRED_APP_VERSION = '2.36.5';
+    /** @var list<string> */
+    public const SUPPORTED_APP_VERSIONS = ['2.36.5', '2.36.6'];
     public const LAST_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
     public const CHANGED_BY = 'v3_retired_for_v4_2363';
     public const RECEIPT_KEY = 'cron_v3.retirement_for_v4.receipt';
@@ -277,7 +279,7 @@ final class CronV3RetirementForV4Service
     private function preflightResult(array $authority): array
     {
         $reason = 'ready';
-        if ($authority['app_version'] !== self::REQUIRED_APP_VERSION) {
+        if (!in_array($authority['app_version'], self::SUPPORTED_APP_VERSIONS, true)) {
             $reason = 'v3_retirement_app_version_invalid';
         } elseif ($authority['schema_count'] !== 293
             || $authority['schema_max'] !== 293

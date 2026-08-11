@@ -6,6 +6,7 @@ namespace App\QueueCore;
 
 use App\Core\Env;
 use App\Services\EmergencyControlService;
+use App\Services\V4ReadinessBootstrapService;
 use PDO;
 use RuntimeException;
 
@@ -81,6 +82,14 @@ final class QueueCoreReadinessReceiptService
         }
         if (($safety['api'] ?? '') !== 'enabled') {
             return ['ok' => false, 'reason' => 'api_reads_not_enabled'];
+        }
+        $scheduler = $this->pdo->prepare(
+            'SELECT setting_value FROM app_settings WHERE setting_key=? LIMIT 1'
+        );
+        $scheduler->execute([V4ReadinessBootstrapService::SCHEDULER_AUTHORITY_KEY]);
+        $schedulerAuthority = json_decode((string) ($scheduler->fetchColumn() ?: ''), true);
+        if (!is_array($schedulerAuthority) || ($schedulerAuthority['status'] ?? '') !== 'absent') {
+            return ['ok' => false, 'reason' => 'hostinger_scheduler_absence_unverified'];
         }
         $authority = $this->readinessAuthority();
         if ($authority['active_engine'] !== 'disabled'
@@ -185,11 +194,28 @@ final class QueueCoreReadinessReceiptService
             'contract' => 'checkpoint_then_local_overlap_then_certified_legacy_then_explicit:v1',
             'operator_overrides' => $bootstrapStatement->fetchAll(PDO::FETCH_ASSOC),
         ];
+        $schedulerStatement = $this->pdo->prepare(
+            'SELECT setting_value FROM app_settings WHERE setting_key=? LIMIT 1'
+        );
+        $schedulerStatement->execute([V4ReadinessBootstrapService::SCHEDULER_AUTHORITY_KEY]);
+        $schedulerAuthority = json_decode((string) ($schedulerStatement->fetchColumn() ?: ''), true);
+        $schedulerContext = [
+            'status' => is_array($schedulerAuthority) ? (string) ($schedulerAuthority['status'] ?? 'unknown') : 'unknown',
+            'authority' => is_array($schedulerAuthority) ? (string) ($schedulerAuthority['authority'] ?? 'unknown') : 'unknown',
+            'confirmation_hash' => hash(
+                'sha256',
+                is_array($schedulerAuthority)
+                    ? (string) ($schedulerAuthority['actor_user_id'] ?? '') . '|'
+                        . (string) ($schedulerAuthority['confirmed_at'] ?? '')
+                    : 'missing',
+            ),
+        ];
         $context = [
             'engine_generation' => max(0, $engineGeneration),
             'accounts' => $accounts,
             'features' => $flags,
             'bootstrap_authorities' => $bootstrapAuthorities,
+            'hostinger_scheduler' => $schedulerContext,
             'runtime' => [
                 'cron_v4' => Env::bool('CRON_V4_ENABLED', false),
                 'cron_v3' => Env::bool('CRON_V3_ENABLED', false),

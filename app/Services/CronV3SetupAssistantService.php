@@ -37,6 +37,16 @@ final class CronV3SetupAssistantService
         'CRON_V3_API_CONNECT_TIMEOUT' => '3',
     ];
 
+    /** Configuración estable de readiness. CRON_V4 habilita autoridad, no crea scheduler. */
+    private const V4_READINESS_CONFIG = [
+        'CRON_V3_ENABLED' => 'false',
+        'CRON_V3_SHADOW_ENABLED' => 'false',
+        'CRON_V4_ENABLED' => 'true',
+        'CRON_V3_RATE_LIMIT' => '10',
+        'CRON_V3_API_TIMEOUT' => '8',
+        'CRON_V3_API_CONNECT_TIMEOUT' => '3',
+    ];
+
     private const OPERATIONAL_CONFIG = [
         'CRON_V3_ENABLED' => 'true',
         'CRON_V3_SHADOW_ENABLED' => 'false',
@@ -66,6 +76,10 @@ final class CronV3SetupAssistantService
             $retirementFactory,
             $this->configPath()
         ))->preflight();
+        $v4Readiness = (new V4ReadinessBootstrapService(
+            $retirementFactory,
+            $this->configPath()
+        ))->snapshot();
         $mlWriteEnabled = ($retirementPreflight['effective_flags']['ML_WRITE_ENABLED'] ?? null) === true;
         $safeApplied = $this->safeConfigApplied($config['values'])
             && $retirementPreflight['ok']
@@ -98,6 +112,7 @@ final class CronV3SetupAssistantService
             'process_overrides' => $processOverrides,
             'retirement_preflight' => $retirementPreflight,
             'retirement_action' => $retirementAction,
+            'v4_readiness_bootstrap' => $v4Readiness,
             'blocking' => $blocking,
             'doctors' => [
                 'local' => $this->compactDoctor($localDoctor),
@@ -129,6 +144,44 @@ final class CronV3SetupAssistantService
             'message' => 'Configuración segura de Cron V3 preparada. V3 real sigue apagado.',
             'config' => self::SAFE_CONFIG,
             'retirement_preflight' => $retirementPreflight,
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    public function prepareV4ReadinessConfig(?int $userId = null): array
+    {
+        $this->assertMlWritesDisabled();
+        $this->assertNoContradictingProcessOverrides(self::V4_READINESS_CONFIG);
+        $this->writeConfig(self::V4_READINESS_CONFIG);
+        $this->syncDatabaseFlags(self::V4_READINESS_CONFIG, $userId);
+        foreach (array_keys(self::V4_READINESS_CONFIG) as $key) {
+            AppSettingsService::clearCache($this->databaseKeyFor($key) ?? $key);
+        }
+
+        return [
+            'ok' => true,
+            'message' => 'Configuración V4 readiness preparada. No se creó scheduler ni se activó Queue Engine.',
+            'config' => self::V4_READINESS_CONFIG,
+            'requires_next_request' => true,
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    public function restoreV4FailClosedConfig(?int $userId = null): array
+    {
+        $this->assertMlWritesDisabled();
+        $this->assertNoContradictingProcessOverrides(self::SAFE_CONFIG);
+        $this->writeConfig(self::SAFE_CONFIG);
+        $this->syncDatabaseFlags(self::SAFE_CONFIG, $userId);
+        foreach (array_keys(self::SAFE_CONFIG) as $key) {
+            AppSettingsService::clearCache($this->databaseKeyFor($key) ?? $key);
+        }
+
+        return [
+            'ok' => true,
+            'message' => 'Configuración restaurada a fail-closed. V4, V3 y Shadow permanecen apagados.',
+            'config' => self::SAFE_CONFIG,
+            'requires_next_request' => true,
         ];
     }
 

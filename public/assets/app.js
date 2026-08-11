@@ -965,6 +965,31 @@
       receipt.hidden = false;
       receipt.textContent = JSON.stringify(retirementAction.receipt, null, 2);
     }
+    const v4 = lastSetup.v4_readiness_bootstrap || {};
+    const v4Panel = panel.querySelector('[data-v4-readiness-action]');
+    const v4Reason = panel.querySelector('[data-v4-readiness-reason]');
+    const v4Form = panel.querySelector('[data-v4-readiness-form]');
+    const v4Receipt = panel.querySelector('[data-v4-readiness-receipt]');
+    if (v4Panel) {
+      v4Panel.className = `${v4Panel.className.replace(/\b(success|warning|error)\b/g, '').trim()} ${v4.state === 'certified' ? 'success' : (v4.ok ? 'warning' : 'error')}`;
+    }
+    if (v4Reason) {
+      v4Reason.textContent = v4.state === 'certified'
+        ? 'Readiness V4 certificado. Queue Engine sigue disabled y no existe scheduler.'
+        : (v4.ok
+          ? `Estado: ${v4.state || 'listo'}. Siguiente paso manual: continuar la acción acotada.`
+          : `Bloqueado: ${v4.reason || 'preflight no disponible'}.`);
+    }
+    if (v4Form) {
+      v4Form.dataset.preflightOk = v4.ok ? '1' : '0';
+      v4Form.dataset.confirmationPhrase = v4.required_confirmation_phrase || '';
+      const button = v4Form.querySelector('button[type="submit"]');
+      if (button) button.hidden = v4.state === 'certified';
+    }
+    if (v4Receipt && v4.certified_receipt) {
+      v4Receipt.hidden = false;
+      v4Receipt.textContent = JSON.stringify(v4.certified_receipt, null, 2);
+    }
     panel.querySelectorAll('[data-cron-v3-setup-action]').forEach((form) => {
       const action = form.action || '';
       const button = form.querySelector('button[type="submit"]');
@@ -1453,6 +1478,56 @@
       } catch (error) {
         const reason = root.querySelector('[data-cron-v3-retirement-reason]');
         if (reason) reason.textContent = error?.message || 'No se pudo retirar V3. No se modificó nada.';
+      } finally {
+        if (button) button.textContent = previous;
+        syncButton();
+      }
+    });
+  });
+
+  root.querySelectorAll('[data-v4-readiness-form]').forEach((form) => {
+    const button = form.querySelector('button[type="submit"]');
+    const phrase = form.querySelector('[name="confirmation_phrase"]');
+    const password = form.querySelector('[name="admin_password"]');
+    const scheduler = form.querySelector('[name="scheduler_absent_confirmed"]');
+    const syncButton = () => {
+      if (!button) return;
+      button.disabled = !(form.dataset.preflightOk === '1'
+        && phrase?.value.trim() === (form.dataset.confirmationPhrase || '')
+        && Boolean(password?.value)
+        && Boolean(scheduler?.checked));
+    };
+    phrase?.addEventListener('input', syncButton);
+    password?.addEventListener('input', syncButton);
+    scheduler?.addEventListener('change', syncButton);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      syncButton();
+      if (button?.disabled) return;
+      const previous = button?.textContent || '';
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Ejecutando una etapa…';
+      }
+      try {
+        const response = await fetch(form.action, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' },
+          body: new FormData(form)
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) throw new Error(payload.message || 'No se pudo avanzar readiness V4.');
+        password.value = '';
+        const receipt = root.querySelector('[data-v4-readiness-receipt]');
+        if (receipt) {
+          receipt.hidden = false;
+          receipt.textContent = JSON.stringify(payload.receipt || payload, null, 2);
+        }
+        await fetchSetup();
+      } catch (error) {
+        const reason = root.querySelector('[data-v4-readiness-reason]');
+        if (reason) reason.textContent = error?.message || 'Readiness V4 bloqueado; se intentó rollback fail-closed.';
       } finally {
         if (button) button.textContent = previous;
         syncButton();

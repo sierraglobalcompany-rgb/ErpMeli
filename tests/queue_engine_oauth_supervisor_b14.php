@@ -264,6 +264,11 @@ foreach([
 }
 $pdo->exec("UPDATE queue_core_feature_flags SET enabled=1,generation=generation+1
             WHERE feature_key IN ('fresh_producer','webhook_producer','pack_shipment_followups')");
+$pdo->exec("INSERT INTO app_settings(setting_key,setting_value,is_encrypted,setting_group)
+    VALUES ('queue_core.v4.scheduler_authority',
+            '{\"status\":\"absent\",\"authority\":\"fixture\",\"actor_user_id\":1,\"confirmed_at\":\"2026-08-11T00:00:00Z\"}',
+            0,'queue_core')
+    ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),is_encrypted=0,setting_group='queue_core'");
 $recordReadiness = static function (int $generation, array $accountIds) use ($pdo): void {
     $receipts = new QueueCoreReadinessReceiptService($pdo);
     $receipts->record($generation, 'preflight', true, ['fixture' => 'b14'], 3600);

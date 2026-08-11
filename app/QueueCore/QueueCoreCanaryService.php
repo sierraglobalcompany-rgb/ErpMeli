@@ -109,10 +109,11 @@ final class QueueCoreCanaryService
             $persisted=$this->persisted($runId);
             $unsafeHttp=$this->unsafeKnownResponses($runId);
             $emptyWindow=$this->authoritativeEmptyWindow($runId,$companyId,$accountId);
+            $checkpoint=$this->freshCheckpoint($companyId,$accountId);
             // A local/no-op cycle cannot certify the remote read path.  A
             // passing canary proves one or more physical requests with known
             // responses and at least one locally persisted resource.
-            $passed=$totals['claimed']>0 && $http>0 && $known===$http && $unsafeHttp===0
+            $passed=$checkpoint!==[] && $totals['claimed']>0 && $http>0 && $known===$http && $unsafeHttp===0
                 && ($persisted>0||$emptyWindow) && $totals['retry_wait']===0
                 && $totals['waiting_oauth']===0
                 && $totals['review']===0 && $totals['dead']===0
@@ -126,12 +127,22 @@ final class QueueCoreCanaryService
                 ['account_id'=>$accountId,'claimed'=>$totals['claimed'],'http'=>$http,
                     'known'=>$known,'persisted'=>$persisted,'empty_window'=>$emptyWindow?1:0,
                     'unsafe_http'=>$unsafeHttp,'retry_wait'=>$totals['retry_wait'],
-                    'waiting_oauth'=>$totals['waiting_oauth'],'review'=>$totals['review'],'dead'=>$totals['dead']],
+                    'waiting_oauth'=>$totals['waiting_oauth'],'review'=>$totals['review'],'dead'=>$totals['dead'],
+                    'checkpoint_generation'=>(int)($checkpoint['generation']??-1),
+                    'watermark_sha256'=>hash('sha256',(string)($checkpoint['watermark_at']??'')),
+                    'window_from_sha256'=>hash('sha256',(string)($checkpoint['window_from']??'')),
+                    'window_to_sha256'=>hash('sha256',(string)($checkpoint['window_to']??''))],
                 3600,$companyId,$accountId
             );
             return ['ok'=>$passed,'status'=>$passed?'PASS':'NOT_PASSED','account_id'=>$accountId,
                 'jobs_claimed'=>$totals['claimed'],'physical_http_calls'=>$http,'known_responses'=>$known,
                 'resources_persisted'=>$persisted,'authoritative_empty_window'=>$emptyWindow,
+                'checkpoint'=>[
+                    'generation'=>(int)($checkpoint['generation']??-1),
+                    'watermark_sha256'=>hash('sha256',(string)($checkpoint['watermark_at']??'')),
+                    'window_from_sha256'=>hash('sha256',(string)($checkpoint['window_from']??'')),
+                    'window_to_sha256'=>hash('sha256',(string)($checkpoint['window_to']??'')),
+                ],
                 'final_states'=>$totals,'reason'=>$reason,'fifo_preserved'=>true];
         }catch(Throwable){
             try{$ledger->finish($runId,'failed','local_failure',['claimed'=>$totals['claimed']]);}catch(Throwable){}
@@ -160,6 +171,18 @@ final class QueueCoreCanaryService
         );
         $statement->execute([$runId,$companyId,$accountId]);
         return (int)$statement->fetchColumn()>0;
+    }
+    /** @return array<string,mixed> */
+    private function freshCheckpoint(int $companyId,int $accountId): array
+    {
+        $statement=$this->pdo->prepare(
+            "SELECT watermark_at,window_from,window_to,generation
+             FROM queue_core_producer_checkpoints
+             WHERE producer_key='fresh_orders' AND company_id=? AND meli_account_id=? LIMIT 1"
+        );
+        $statement->execute([$companyId,$accountId]);
+        $row=$statement->fetch(PDO::FETCH_ASSOC);
+        return is_array($row)?$row:[];
     }
     private function sum(int $runId,string $expression): int
     {$s=$this->pdo->prepare("SELECT COALESCE(SUM($expression),0) FROM queue_core_attempts WHERE run_id=?");$s->execute([$runId]);return max(0,(int)$s->fetchColumn());}

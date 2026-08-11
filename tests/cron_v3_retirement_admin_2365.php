@@ -18,13 +18,15 @@ $assert = static function (bool $condition, string $message) use (&$checks): voi
 };
 
 try {
-    $assert(hash_file('sha256', $oracle) === '0c17bb3487b223bcc69a2d3470a1d8e88f065dc2ac6a388b0939a611be451861', 'oracle_sha_invalid');
+    $oracleBytes = (string) file_get_contents($oracle);
+    $assert(hash('sha256', str_replace(["\r\n", "\r"], "\n", $oracleBytes))
+        === '0c17bb3487b223bcc69a2d3470a1d8e88f065dc2ac6a388b0939a611be451861', 'oracle_sha_invalid');
     $assert(substr_count($routes, '/settings/cron/v3-setup/prepare-safe-config') === 1, 'new_post_route_added');
     $assert(str_contains($controller, '$this->requireAdminPermanent();'), 'permanent_admin_gate_missing');
     $assert(str_contains($controller, '$this->assertSameOrigin();'), 'same_origin_gate_missing');
     $assert(str_contains($controller, "Csrf::validate(\$_POST['_token'] ?? null);"), 'csrf_gate_missing');
     $assert(str_contains($controller, 'AdministrativeReauthenticationService'), 'password_reauthentication_missing');
-    $assert(str_contains($controller, "operation'] ?? '') === 'retire_for_v4'"), 'operation_dispatch_missing');
+    $assert(str_contains($controller, "'retire_for_v4' => 'retire'"), 'operation_dispatch_missing');
     $assert(str_contains($view, 'Retirar autoridad V3 para preparar V4'), 'action_label_missing');
     $assert(str_contains($view, 'No borrará trabajos históricos, ventas ni intentos'), 'human_warning_missing');
     $assert(str_contains($view, 'name="confirmation_phrase"'), 'confirmation_phrase_missing');

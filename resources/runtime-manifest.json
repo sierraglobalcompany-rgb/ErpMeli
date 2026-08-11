@@ -7,10 +7,10 @@
     "publication_policy": {
         "base_commit": "75997f864b917c829d19f14e21cd7303d2685776",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 815,
-        "component_count": 814,
-        "paths_sha256": "468a451b8f2d0d60ee113dc22101b6e9f0a709813c2b5969088421b2b0362829",
-        "dependency_registry_sha256": "2a6b0b3512a231dfcbe0567974e5f45bef8133fc01546bc9ae1285adae652f01",
+        "package_file_count": 816,
+        "component_count": 815,
+        "paths_sha256": "1ad45fb4305ede8c36770899f289de8fc1084969acdb7874d72a61f1a05d0a32",
+        "dependency_registry_sha256": "d64686f7399d82fd4c76fec679dd226a1ae58503f22443afec84a3ae87d08a58",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -2262,8 +2262,8 @@
         },
         "runtime_app_services_managedruntimepublicationpolicy_php": {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "a9d5d0040174ad95db5364b9f69c1986490bc05987d6b92cd9274a0924510090",
-            "sha256_lf": "a9d5d0040174ad95db5364b9f69c1986490bc05987d6b92cd9274a0924510090",
+            "sha256": "dc3f3f81c1f166dd1462e4f18d5ed4961fdb45587a47f7669a283fa0116c94d4",
+            "sha256_lf": "dc3f3f81c1f166dd1462e4f18d5ed4961fdb45587a47f7669a283fa0116c94d4",
             "text": true
         },
         "runtime_app_services_manualcampaignadapter_php": {
@@ -4862,6 +4862,12 @@
             "path": "resources/release/managed-runtime-dependencies-2.36.2.json",
             "sha256": "2a6b0b3512a231dfcbe0567974e5f45bef8133fc01546bc9ae1285adae652f01",
             "sha256_lf": "2a6b0b3512a231dfcbe0567974e5f45bef8133fc01546bc9ae1285adae652f01",
+            "text": true
+        },
+        "runtime_resources_release_managed_runtime_dependencies_2_36_3_json": {
+            "path": "resources/release/managed-runtime-dependencies-2.36.3.json",
+            "sha256": "d64686f7399d82fd4c76fec679dd226a1ae58503f22443afec84a3ae87d08a58",
+            "sha256_lf": "d64686f7399d82fd4c76fec679dd226a1ae58503f22443afec84a3ae87d08a58",
             "text": true
         },
         "runtime_resources_release_production_legacy_quarantine_2_36_1_json": {

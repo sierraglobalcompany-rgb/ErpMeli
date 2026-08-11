@@ -47,6 +47,11 @@ try {
     $assert(str_contains($service, 'certifyManifest'), 'manifest_evidence_missing');
     $assert(str_contains($service, 'certifyCapacity'), 'capacity_evidence_missing');
     $assert(str_contains($service, 'canActivateV4'), 'real_activation_contract_missing');
+    $assert(
+        str_contains($service, '(new QueueCoreReadinessReceiptService($pdo))')
+        && substr_count($service, '->canActivateV4(') === 2,
+        'certified_snapshot_activation_recheck_missing'
+    );
     $assert(str_contains($service, 'compareAndSwapReadinessFlags'), 'feature_cas_missing');
     $assert(str_contains($service, 'startApiWithoutCanary'), 'api_enable_missing');
     $assert(str_contains($service, 'restoreV4FailClosedConfig'), 'config_rollback_missing');

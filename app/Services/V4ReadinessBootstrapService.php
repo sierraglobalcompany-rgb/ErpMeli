@@ -425,7 +425,7 @@ final class V4ReadinessBootstrapService
             && $engine['active_engine'] === 'disabled'
             && $engine['readiness_mode'] === 'preparing') {
             try {
-                $certificationGate = (new QueueCoreReadinessService($pdo))
+                $certificationGate = (new QueueCoreReadinessReceiptService($pdo))
                     ->canActivateV4((int) $engine['generation']);
             } catch (Throwable $error) {
                 $certificationGate = [

@@ -256,8 +256,17 @@ try {
     $inventoryPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_2.36.3_FTP_REPAIR_OVERLAY_INVENTORY.json';
     file_put_contents($inventoryPath, release2363Json($overlayInventory));
 
+    $instructionPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_2.36.3_FTP_INSTRUCTIONS.md';
+    $reportPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_2.36.2_ACTUALIZAR_ROOT_CAUSE_AND_2.36.3_HOTFIX_REPORT.md';
+    file_put_contents($instructionPath, ManagedRuntimePublicationPolicy::gitBlob($source, $commit, 'docs/release_2363_ftp_repair.md'));
+    file_put_contents($reportPath, ManagedRuntimePublicationPolicy::gitBlob(
+        $source,
+        $commit,
+        'docs/ERP_MELI_2.36.2_ACTUALIZAR_ROOT_CAUSE_AND_2.36.3_HOTFIX_REPORT.md',
+    ));
+
     $artifacts = [];
-    foreach ([$fullPath, $overlayPath, $updatePath, $inventoryPath] as $path) {
+    foreach ([$fullPath, $overlayPath, $updatePath, $inventoryPath, $instructionPath, $reportPath] as $path) {
         $artifacts[basename($path)] = ['bytes' => filesize($path), 'sha256' => hash_file('sha256', $path)];
     }
     $authority = [
@@ -275,6 +284,14 @@ try {
     $authorityPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_2.36.3_ARTIFACT_MANIFEST.json';
     file_put_contents($authorityPath, release2363Json($authority));
     $artifacts[basename($authorityPath)] = ['bytes' => filesize($authorityPath), 'sha256' => hash_file('sha256', $authorityPath)];
+    $sumsPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_2.36.3_SHA256SUMS.txt';
+    $sumLines = [];
+    foreach ($artifacts as $name => $definition) {
+        $sumLines[] = $definition['sha256'] . '  ' . $name;
+    }
+    sort($sumLines, SORT_STRING);
+    file_put_contents($sumsPath, implode("\n", $sumLines) . "\n");
+    $artifacts[basename($sumsPath)] = ['bytes' => filesize($sumsPath), 'sha256' => hash_file('sha256', $sumsPath)];
     fwrite(STDOUT, release2363Json([
         'ok' => true,
         'commit' => $commit,

@@ -27,7 +27,7 @@ use Throwable;
 final class V4ReadinessBootstrapService
 {
     public const CONFIRMATION_PHRASE = 'PREPARAR_Y_CERTIFICAR_V4_SIN_SCHEDULER';
-    public const REQUIRED_VERSION = '2.36.6';
+    public const REQUIRED_VERSION = '2.36.7';
     public const LAST_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
     public const LOCK_NAME = 'erp_meli_v4_readiness_bootstrap_2366';
     public const SCHEDULER_AUTHORITY_KEY = 'queue_core.v4.scheduler_authority';
@@ -448,10 +448,11 @@ final class V4ReadinessBootstrapService
             $reason = $contextStable ? 'readiness_in_progress' : 'readiness_context_changed';
         } elseif ($engine['active_engine'] === 'disabled' && $engine['readiness_mode'] === 'idle'
             && $engine['generation'] === 0 && $pre['base_ok']) {
-            if ($pre['runtime_ready'] && $flags === self::FLAGS_READY && $pre['scheduler_absent_recorded']) {
+            if ($pre['runtime_ready'] && self::flagsMatch($flags, self::FLAGS_READY)
+                && $pre['scheduler_absent_recorded']) {
                 $state = 'ready_for_context';
                 $reason = 'stable_authorities_ready';
-            } elseif ($pre['runtime_fail_closed'] && $flags === self::FLAGS_DISABLED) {
+            } elseif ($pre['runtime_fail_closed'] && self::flagsMatch($flags, self::FLAGS_DISABLED)) {
                 $state = 'ready_to_arm';
                 $reason = 'preconditions_pass';
             }
@@ -484,7 +485,7 @@ final class V4ReadinessBootstrapService
             "SELECT setting_value FROM app_settings WHERE setting_key='app.version' LIMIT 1"
         )->fetchColumn();
         if ($fileVersion !== self::REQUIRED_VERSION || $appVersion !== self::REQUIRED_VERSION) {
-            $issues[] = 'version_not_2366';
+            $issues[] = 'version_not_2367';
         }
         $schemaAuthority = $pdo->query(
             "SELECT COUNT(*) AS total,
@@ -735,7 +736,7 @@ final class V4ReadinessBootstrapService
             $engine = (new QueueEngineControlService($pdo))->snapshot();
             $flags = (new QueueCoreFeatureFlagService($pdo))->snapshot();
             $armed = $engine['readiness_mode'] === 'preparing'
-                || $flags === self::FLAGS_READY
+                || self::flagsMatch($flags, self::FLAGS_READY)
                 || Env::bool('CRON_V4_ENABLED', false)
                 || (new EmergencyControlService())->status()['api'] === 'enabled';
             if (!$armed) {
@@ -795,9 +796,9 @@ final class V4ReadinessBootstrapService
         $attempt('features', function () use ($pdo, $generation): null {
             $flags = new QueueCoreFeatureFlagService($pdo);
             $current = $flags->snapshot();
-            if ($current === self::FLAGS_READY) {
+            if (self::flagsMatch($current, self::FLAGS_READY)) {
                 $flags->compareAndSwapReadinessFlags(self::FLAGS_READY, self::FLAGS_DISABLED, $generation);
-            } elseif ($current !== self::FLAGS_DISABLED) {
+            } elseif (!self::flagsMatch($current, self::FLAGS_DISABLED)) {
                 throw new RuntimeException('v4_bootstrap_rollback_feature_authority_unknown');
             }
             return null;
@@ -831,6 +832,19 @@ final class V4ReadinessBootstrapService
         if (!$schedulerAbsent) {
             throw new RuntimeException('v4_bootstrap_scheduler_absence_unconfirmed');
         }
+    }
+
+    /** @param array<string,bool> $actual @param array<string,bool> $expected */
+    private static function flagsMatch(array $actual, array $expected): bool
+    {
+        if (count($actual) !== count($expected)) {
+            return false;
+        }
+        $actualCanonical = $actual;
+        $expectedCanonical = $expected;
+        ksort($actualCanonical, SORT_STRING);
+        ksort($expectedCanonical, SORT_STRING);
+        return $actualCanonical === $expectedCanonical;
     }
 
     private function upsertSetting(PDO $pdo, string $key, string $value): void

@@ -163,7 +163,7 @@ try {
         Start-Sleep -Milliseconds 250
     }
     if (-not $ready) {
-        Get-Content -LiteralPath $serverErr -Tail 30 | Write-Error
+        Get-Content -LiteralPath $serverErr -Tail 30 | Write-Host
         throw 'php_http_server_not_ready'
     }
 

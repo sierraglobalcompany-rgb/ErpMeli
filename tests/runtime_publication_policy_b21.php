@@ -92,7 +92,7 @@ try {
         ]) . "\n"),
         'classification_rules' => [
             ['id' => 'runtime-files', 'classification' => 'RUNTIME_REQUIRED', 'kind' => 'regex',
-                'value' => '#^(?:app/.*\\.php|resources/(?:mercadolibre-api/generated/data\\.json|release/managed-runtime-dependencies-2\\.36\\.6\\.json))$#D'],
+                'value' => '#^(?:app/.*\\.php|resources/(?:mercadolibre-api/generated/data\\.json|release/managed-runtime-dependencies-2\\.36\\.7\\.json))$#D'],
         ],
         'runtime_dependencies' => [
             ['id' => 'registry', 'path' => 'resources/release/managed-runtime-dependencies-2.36.7.json',

@@ -147,6 +147,8 @@ try {
     try {
         & php tests\direct_update_metadata_2369_mysql.php
         if ($LASTEXITCODE -ne 0) { throw 'direct_update_metadata_matrix_failed' }
+        & php tests\v4_readiness_partial_arm_2369_mysql.php
+        if ($LASTEXITCODE -ne 0) { throw 'v4_partial_arm_recovery_matrix_failed' }
     } finally { Pop-Location }
 
     $serverOut = Join-Path $lab 'php-server.stdout.log'

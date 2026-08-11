@@ -211,12 +211,14 @@ try {
         'password' => $password,
         'backup_choice' => 'skip',
     ]);
-    qa2363WriteHtml($artifactDirectory . '/actualizar-authorize.html', $authorized['body'], $releaseRoot);
     $check(
-        $authorized['status'] === 200,
+        $authorized['status'] === 303 && str_contains($authorized['location'], 'actualizar.php?result=advanced'),
         'authorize_http_' . $authorized['status'] . '_location_' . rawurlencode($authorized['location'])
     );
-    $check(str_contains($authorized['body'], 'Continuar actualización'), 'continue_button_missing');
+    $authorizedPage = qa2363Request($base . '/actualizar.php?result=advanced', $cookie);
+    qa2363WriteHtml($artifactDirectory . '/actualizar-authorize.html', $authorizedPage['body'], $releaseRoot);
+    $check($authorizedPage['status'] === 200, 'authorize_followup_http_' . $authorizedPage['status']);
+    $check(str_contains($authorizedPage['body'], 'Continuar actualización'), 'continue_button_missing');
 
     $stage = 'pre_mutation_snapshot';
     $dbBefore = qa2363DatabaseSnapshot($pdo);
@@ -232,13 +234,18 @@ try {
     $markerBefore = (string) file_get_contents(AppPaths::storage('installed-release.json'));
     $stage = 'metadata_post';
     $completed = qa2363Request($base . '/actualizar.php', $cookie, [
-        '_token' => qa2363Csrf($authorized['body']),
+        '_token' => qa2363Csrf($authorizedPage['body']),
         'action' => 'migrate',
     ]);
-    $check($completed['status'] === 200, 'migrate_http_' . $completed['status']);
-    $check(str_contains($completed['body'], 'Actualización completada'), 'completed_title_missing');
-    $check(str_contains($completed['body'], 'Solo se confirmó la metadata de la release'), 'metadata_only_notice_missing');
-    qa2363WriteHtml($artifactDirectory . '/actualizar-after.html', $completed['body'], $releaseRoot);
+    $check(
+        $completed['status'] === 303 && str_contains($completed['location'], 'actualizar.php?result=advanced'),
+        'migrate_http_' . $completed['status'] . '_location_' . rawurlencode($completed['location'])
+    );
+    $completedPage = qa2363Request($base . '/actualizar.php?result=advanced', $cookie);
+    $check($completedPage['status'] === 200, 'migrate_followup_http_' . $completedPage['status']);
+    $check(str_contains($completedPage['body'], 'Actualización completada'), 'completed_title_missing');
+    $check(str_contains($completedPage['body'], 'Solo se confirmó la metadata de la release'), 'metadata_only_notice_missing');
+    qa2363WriteHtml($artifactDirectory . '/actualizar-after.html', $completedPage['body'], $releaseRoot);
 
     $stage = 'post_mutation_snapshot';
     $dbAfter = qa2363DatabaseSnapshot($pdo);

@@ -105,7 +105,7 @@ try {
     }
     $sumLines = file($sumsPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
     foreach ($sumLines as $line) {
-        $assert(preg_match('/^([a-f0-9]{64})  ([^\\\/]+)$/', $line, $match) === 1, 'sha_line_invalid');
+        $assert(preg_match('~^([a-f0-9]{64})  ([^/\\\\]+)$~', $line, $match) === 1, 'sha_line_invalid');
         $assert(is_file($directory . '/' . $match[2]), 'sha_target_missing');
         $assert(hash_equals($match[1], hash_file('sha256', $directory . '/' . $match[2])), 'sha_target_invalid:' . $match[2]);
     }

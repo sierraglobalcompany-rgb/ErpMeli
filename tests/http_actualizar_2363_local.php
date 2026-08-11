@@ -237,15 +237,20 @@ try {
         '_token' => qa2363Csrf($authorizedPage['body']),
         'action' => 'migrate',
     ]);
+    $completedPage = qa2363Request(
+        $base . (str_contains($completed['location'], 'result=stopped')
+            ? '/actualizar.php?result=stopped'
+            : '/actualizar.php?result=advanced'),
+        $cookie
+    );
+    qa2363WriteHtml($artifactDirectory . '/actualizar-after.html', $completedPage['body'], $releaseRoot);
     $check(
         $completed['status'] === 303 && str_contains($completed['location'], 'actualizar.php?result=advanced'),
         'migrate_http_' . $completed['status'] . '_location_' . rawurlencode($completed['location'])
     );
-    $completedPage = qa2363Request($base . '/actualizar.php?result=advanced', $cookie);
     $check($completedPage['status'] === 200, 'migrate_followup_http_' . $completedPage['status']);
     $check(str_contains($completedPage['body'], 'Actualización completada'), 'completed_title_missing');
     $check(str_contains($completedPage['body'], 'Solo se confirmó la metadata de la release'), 'metadata_only_notice_missing');
-    qa2363WriteHtml($artifactDirectory . '/actualizar-after.html', $completedPage['body'], $releaseRoot);
 
     $stage = 'post_mutation_snapshot';
     $dbAfter = qa2363DatabaseSnapshot($pdo);

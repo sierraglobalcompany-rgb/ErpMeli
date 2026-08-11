@@ -279,8 +279,24 @@ try {
 
     $root = qa2369Request($base . '/', $cookie);
     $asset = qa2369Request($base . '/public/assets/update.css', $cookie);
+    $cronSettings = qa2369Request($base . '/settings/cron', $cookie);
+    $v4Start = strpos($cronSettings['body'], 'data-v4-readiness-form');
+    $v4End = strpos($cronSettings['body'], 'data-v4-readiness-receipt', $v4Start ?: 0);
+    $v4Form = $v4Start !== false && $v4End !== false
+        ? substr($cronSettings['body'], $v4Start, $v4End - $v4Start)
+        : '';
+    $retirementStart = strpos($cronSettings['body'], 'data-cron-v3-retirement-form');
+    $retirementEnd = strpos($cronSettings['body'], 'data-cron-v3-retirement-receipt', $retirementStart ?: 0);
+    $retirementForm = $retirementStart !== false && $retirementEnd !== false
+        ? substr($cronSettings['body'], $retirementStart, $retirementEnd - $retirementStart)
+        : '';
     $check(in_array($root['status'], [200, 302, 303], true), 'subfolder_root_http_' . $root['status']);
     $check($asset['status'] === 200, 'subfolder_asset_http_' . $asset['status']);
+    $check($cronSettings['status'] === 200, 'subfolder_cron_settings_http_' . $cronSettings['status']);
+    $check($v4Form !== '' && str_contains($v4Form, 'name="admin_password"'), 'v4_password_field_missing');
+    $check(!str_contains($v4Form, 'name="confirmation_phrase"'), 'v4_confirmation_phrase_present');
+    $check(!str_contains($v4Form, 'name="scheduler_absent_confirmed"'), 'v4_scheduler_checkbox_present');
+    $check(str_contains($retirementForm, 'name="confirmation_phrase"'), 'retirement_confirmation_phrase_missing');
 
     $receipt = [
         'status' => 'PASS',

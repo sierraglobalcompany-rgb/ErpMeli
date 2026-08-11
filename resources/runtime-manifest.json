@@ -1110,8 +1110,8 @@
         },
         "runtime_app_recovery_recoverykernel_php": {
             "path": "app/Recovery/RecoveryKernel.php",
-            "sha256": "73579c28fa5c9eb8d59a77e6250099b1b302b2bf2a20e31ad724d28bff36cdab",
-            "sha256_lf": "73579c28fa5c9eb8d59a77e6250099b1b302b2bf2a20e31ad724d28bff36cdab",
+            "sha256": "94311160f8bdb52e2054d6e16c82fb943c724ec865c67ba6d022c0ac90bf61ed",
+            "sha256_lf": "94311160f8bdb52e2054d6e16c82fb943c724ec865c67ba6d022c0ac90bf61ed",
             "text": true
         },
         "runtime_app_recovery_restorerecoverykernel_php": {
@@ -4890,8 +4890,8 @@
         },
         "runtime_resources_release_updater_authority_2_36_3_json": {
             "path": "resources/release/updater-authority-2.36.3.json",
-            "sha256": "beb128f4e69800815522e4bde827c90a3946da9dd243fdf6496053643a43bdc4",
-            "sha256_lf": "beb128f4e69800815522e4bde827c90a3946da9dd243fdf6496053643a43bdc4",
+            "sha256": "304edc3d033c97c0238291153a3993e8d7b707bddf6444530e39c316088e8769",
+            "sha256_lf": "304edc3d033c97c0238291153a3993e8d7b707bddf6444530e39c316088e8769",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

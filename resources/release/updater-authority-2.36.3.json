@@ -21,8 +21,8 @@
     {
       "path": "app/Recovery/RecoveryKernel.php",
       "previous_sha256": "4e3e02463c7271b0ad31792e64419ee1ff78e8a0054274c469ead73e22b91cf4",
-      "target_sha256": "94311160f8bdb52e2054d6e16c82fb943c724ec865c67ba6d022c0ac90bf61ed",
-      "reason": "Permit an authenticated metadata-only completion when schema 293 is already complete and block downgrades."
+      "target_sha256": "12496d0d492e043f81c59ec6552b8079c20639064593cefcc561d6256ec662b2",
+      "reason": "Permit an authenticated metadata-only completion when schema 293 is already complete, block downgrades, and keep its durable write-set to app.version, app_versions, and the signed marker."
     }
   ],
   "new_runtime_dependencies": [

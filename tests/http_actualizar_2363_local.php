@@ -149,6 +149,7 @@ function qa2363WriteHtml(string $path, string $html, string $releaseRoot): void
 
 $pdo = null;
 $releaseRoot = dirname(__DIR__);
+$stage = 'bootstrap';
 $checks = 0;
 $check = static function (bool $condition, string $message) use (&$checks): void {
     $checks++;
@@ -158,7 +159,9 @@ $check = static function (bool $condition, string $message) use (&$checks): void
 };
 
 try {
+    $stage = 'database_connect';
     $pdo = Database::connection();
+    $stage = 'seed_baseline';
     @unlink($cookie);
     $pdo->prepare('DELETE FROM users WHERE email=?')->execute([$email]);
     $insertUser = $pdo->prepare(
@@ -182,8 +185,10 @@ try {
     $check($lastMigration === '293_queue_core_runtime_profile_defaults_b2_1.sql', 'schema_293_missing');
     $check((new InstalledVersionMarkerService())->write('2.35.1', $lastMigration), 'baseline_marker_write_failed');
 
+    $stage = 'login_get';
     $login = qa2363Request($base . '/login.php', $cookie);
     $check($login['status'] === 200, 'login_get_http_' . $login['status']);
+    $stage = 'login_post';
     $authenticated = qa2363Request($base . '/login.php', $cookie, [
         '_token' => qa2363Csrf($login['body']),
         'email' => $email,
@@ -191,6 +196,7 @@ try {
     ]);
     $check($authenticated['status'] === 303, 'login_post_http_' . $authenticated['status']);
 
+    $stage = 'updater_before';
     $before = qa2363Request($base . '/actualizar.php', $cookie);
     $check($before['status'] === 200, 'updater_before_http_' . $before['status']);
     $check(str_contains($before['body'], 'Actualización lista para continuar'), 'metadata_ready_title_missing');
@@ -198,6 +204,7 @@ try {
     $check(!str_contains($before['body'], 'manifest_installed_inventory_mismatch'), 'legacy_false_positive_visible');
     qa2363WriteHtml($artifactDirectory . '/actualizar-before.html', $before['body'], $releaseRoot);
 
+    $stage = 'authorize';
     $authorized = qa2363Request($base . '/actualizar.php', $cookie, [
         '_token' => qa2363Csrf($before['body']),
         'action' => 'authorize',
@@ -207,6 +214,7 @@ try {
     $check($authorized['status'] === 200, 'authorize_http_' . $authorized['status']);
     $check(str_contains($authorized['body'], 'Continuar actualización'), 'continue_button_missing');
 
+    $stage = 'pre_mutation_snapshot';
     $dbBefore = qa2363DatabaseSnapshot($pdo);
     $otherSettingsBefore = qa2363Rows(
         $pdo,
@@ -218,6 +226,7 @@ try {
     );
     $storageBefore = qa2363StorageSnapshot(AppPaths::storage());
     $markerBefore = (string) file_get_contents(AppPaths::storage('installed-release.json'));
+    $stage = 'metadata_post';
     $completed = qa2363Request($base . '/actualizar.php', $cookie, [
         '_token' => qa2363Csrf($authorized['body']),
         'action' => 'migrate',
@@ -227,6 +236,7 @@ try {
     $check(str_contains($completed['body'], 'Solo se confirmó la metadata de la release'), 'metadata_only_notice_missing');
     qa2363WriteHtml($artifactDirectory . '/actualizar-after.html', $completed['body'], $releaseRoot);
 
+    $stage = 'post_mutation_snapshot';
     $dbAfter = qa2363DatabaseSnapshot($pdo);
     $allowedTables = ['app_settings' => true, 'app_versions' => true];
     foreach ($dbBefore as $table => $authority) {
@@ -276,7 +286,7 @@ try {
     );
     echo 'HTTP actualizar 2.36.3: PASS checks=' . $checks . PHP_EOL;
 } catch (Throwable $error) {
-    fwrite(STDERR, 'HTTP actualizar 2.36.3: FAIL ' . $error->getMessage() . PHP_EOL);
+    fwrite(STDERR, 'HTTP actualizar 2.36.3: FAIL stage=' . $stage . ' ' . $error->getMessage() . PHP_EOL);
     exit(1);
 } finally {
     @unlink($cookie);

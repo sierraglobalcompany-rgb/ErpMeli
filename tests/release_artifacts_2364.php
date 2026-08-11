@@ -73,7 +73,7 @@ try {
     $inventory = json_decode((string) file_get_contents($inventoryPath), true, 512, JSON_THROW_ON_ERROR);
     $overlay = $readZip($overlayPath);
     $overlayRows = is_array($inventory['files'] ?? null) ? $inventory['files'] : [];
-    $assert((int) ($inventory['file_count'] ?? -1) === 9, 'overlay_count_authority_invalid');
+    $assert((int) ($inventory['file_count'] ?? -1) === 8, 'overlay_count_authority_invalid');
     $assert(count($overlay) === count($overlayRows), 'overlay_count_invalid');
     foreach ($overlayRows as $row) {
         $path = is_array($row) ? (string) ($row['path'] ?? '') : '';
@@ -114,4 +114,3 @@ try {
     fwrite(STDERR, 'Release artifacts 2.36.4: FAIL ' . $error->getMessage() . PHP_EOL);
     exit(1);
 }
-

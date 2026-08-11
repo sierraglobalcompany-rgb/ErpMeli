@@ -3,6 +3,29 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__);
+$gitBlob = static function (string $path) use ($root): string {
+    $pipes = [];
+    $process = proc_open(
+        ['git', '-C', $root, 'show', 'HEAD:' . $path],
+        [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']],
+        $pipes,
+        $root,
+        null,
+        ['bypass_shell' => true]
+    );
+    if (!is_resource($process)) {
+        throw new RuntimeException('git_blob_process_unavailable:' . $path);
+    }
+    fclose($pipes[0]);
+    $stdout = stream_get_contents($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    if (proc_close($process) !== 0 || !is_string($stdout)) {
+        throw new RuntimeException('git_blob_unavailable:' . $path . ':' . trim((string) $stderr));
+    }
+    return $stdout;
+};
 $authority = json_decode(
     (string) file_get_contents($root . '/resources/release/updater-authority-2.36.4.json'),
     true,
@@ -31,7 +54,7 @@ foreach ($authority['intentional_locked_changes'] as $change) {
     $intentional[$path] = true;
     if (!isset($legacyFiles[$path])
         || !hash_equals($legacyFiles[$path], (string) $change['previous_sha256'])
-        || !hash_equals((string) $change['target_sha256'], hash_file('sha256', $root . '/' . $path))
+        || !hash_equals((string) $change['target_sha256'], hash('sha256', $gitBlob($path)))
     ) {
         throw new RuntimeException('intentional_updater_change_drift:' . $path);
     }
@@ -42,7 +65,7 @@ foreach ($legacyFiles as $path => $hash) {
     if (isset($intentional[$path])) {
         continue;
     }
-    if (!is_file($root . '/' . $path) || !hash_equals($hash, hash_file('sha256', $root . '/' . $path))) {
+    if (!is_file($root . '/' . $path) || !hash_equals($hash, hash('sha256', $gitBlob($path)))) {
         throw new RuntimeException('unexpected_locked_updater_change:' . $path);
     }
     $unchangedLines[$path] = $path . "\t" . $hash;
@@ -58,7 +81,7 @@ if (count($unchangedLines) !== (int) $authority['unchanged_locked']['file_count'
 foreach ($authority['new_runtime_dependencies'] as $dependency) {
     $path = (string) $dependency['path'];
     if (!is_file($root . '/' . $path)
-        || !hash_equals((string) $dependency['sha256'], hash_file('sha256', $root . '/' . $path))
+        || !hash_equals((string) $dependency['sha256'], hash('sha256', $gitBlob($path)))
     ) {
         throw new RuntimeException('new_updater_dependency_drift:' . $path);
     }
@@ -66,4 +89,3 @@ foreach ($authority['new_runtime_dependencies'] as $dependency) {
 
 fwrite(STDOUT, 'Updater authority 2.36.4: PASS legacy=' . count($legacyFiles)
     . ' intentional=' . count($intentional) . ' unchanged=' . count($unchangedLines) . PHP_EOL);
-

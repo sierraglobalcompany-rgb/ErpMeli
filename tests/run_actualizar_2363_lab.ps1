@@ -124,6 +124,11 @@ try {
         Start-Sleep -Milliseconds 250
     }
     if (-not $pdoReady) { throw 'mariadb_external_pdo_not_ready' }
+    $schemaTruth = (& docker exec $container mariadb -N -uroot erp_meli_lab -e "SELECT CONCAT((SELECT COUNT(*) FROM schema_migrations),'|',(SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='users'));" 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $schemaTruth -ne '293|1') {
+        Get-Content -LiteralPath $migrationLog -Tail 60 | Write-Error
+        throw "schema_001_293_not_materialized:$schemaTruth"
+    }
 
     $serverOut = Join-Path $lab 'php-server.stdout.log'
     $serverErr = Join-Path $lab 'php-server.stderr.log'

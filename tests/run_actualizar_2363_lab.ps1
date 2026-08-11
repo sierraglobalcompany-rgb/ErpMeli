@@ -12,6 +12,7 @@ $rawRoots = @(
 $prefix = 'erp-meli-2363-http-lab-'
 $lab = Join-Path ([IO.Path]::GetTempPath()) ($prefix + [guid]::NewGuid().ToString('N'))
 $container = 'erp-meli-2363-http-' + [guid]::NewGuid().ToString('N').Substring(0, 10)
+$containerCreated = $false
 $server = $null
 
 function Get-FreeTcpPort {
@@ -68,7 +69,10 @@ try {
 
     $dbPort = Get-FreeTcpPort
     do { $webPort = Get-FreeTcpPort } while ($webPort -eq $dbPort)
-    $appKey = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant()
+    $keyBytes = New-Object byte[] 32
+    $keyGenerator = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $keyGenerator.GetBytes($keyBytes) } finally { $keyGenerator.Dispose() }
+    $appKey = ([BitConverter]::ToString($keyBytes) -replace '-', '').ToLowerInvariant()
     $config = @(
         'APP_ENV=local',
         "APP_URL=http://127.0.0.1:$webPort/erp-meli",
@@ -93,6 +97,7 @@ try {
 
     $containerId = & docker run -d --name $container -p "127.0.0.1:$dbPort`:3306" -e MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=1 -e MARIADB_DATABASE=erp_meli_lab mariadb:11.8
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($containerId)) { throw 'mariadb_start_failed' }
+    $containerCreated = $true
     $ready = $false
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
         & docker exec $container mariadb-admin ping -uroot --silent *> $null
@@ -108,11 +113,13 @@ try {
     $env:DB_PASS = ''
 
     $pdoReady = $false
-    for ($attempt = 0; $attempt -lt 30; $attempt++) {
-        & php -r '$p=new PDO($argv[1],"root",""); echo $p->query("SELECT 1")->fetchColumn();' "mysql:host=127.0.0.1;port=$dbPort;dbname=erp_meli_lab;charset=utf8mb4" *> $null
+    $env:ERP_2363_READY_DSN = "mysql:host=127.0.0.1;port=$dbPort;dbname=erp_meli_lab;charset=utf8mb4"
+    for ($attempt = 0; $attempt -lt 60; $attempt++) {
+        & php (Join-Path $worktree 'tests\mysql_ready_2363_lab.php')
         if ($LASTEXITCODE -eq 0) { $pdoReady = $true; break }
-        Start-Sleep -Milliseconds 250
+        Start-Sleep -Milliseconds 500
     }
+    Remove-Item Env:ERP_2363_READY_DSN -ErrorAction SilentlyContinue
     if (-not $pdoReady) { throw 'mariadb_external_pdo_not_ready' }
 
     $migrationLog = Join-Path $lab 'migrate.log'
@@ -120,7 +127,9 @@ try {
     try {
         & php tests\migrate_001_293_2363_lab.php *> $migrationLog
         if ($LASTEXITCODE -ne 0) {
-            Get-Content -LiteralPath $migrationLog -Tail 40 | Write-Error
+            Get-Content -LiteralPath $migrationLog -Tail 40 | Write-Host
+            & docker inspect --format '{{json .State}}' $container | Write-Host
+            & docker logs --tail 40 $container 2>&1 | Write-Host
             throw 'migration_001_293_failed'
         }
     } finally { Pop-Location }
@@ -182,6 +191,7 @@ try {
 } finally {
     Remove-Item Env:ERP_2363_HTTP_BASE -ErrorAction SilentlyContinue
     Remove-Item Env:ERP_2363_HTTP_ARTIFACTS -ErrorAction SilentlyContinue
+    Remove-Item Env:ERP_2363_READY_DSN -ErrorAction SilentlyContinue
     foreach ($name in @('DB_HOST','DB_PORT','DB_NAME','DB_USER','DB_PASS')) {
         Remove-Item ("Env:" + $name) -ErrorAction SilentlyContinue
     }
@@ -192,7 +202,9 @@ try {
         Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
         $server.WaitForExit(5000) | Out-Null
     }
-    & docker rm -f $container *> $null
+    if ($containerCreated) {
+        & docker rm -f $container *> $null
+    }
     if (Test-Path -LiteralPath $lab) {
         Assert-SafeLabPath $lab
         Remove-Item -LiteralPath $lab -Recurse -Force

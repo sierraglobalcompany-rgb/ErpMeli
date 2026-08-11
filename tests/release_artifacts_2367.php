@@ -73,7 +73,7 @@ try {
     $inventory = json_decode((string) file_get_contents($inventoryPath), true, 512, JSON_THROW_ON_ERROR);
     $overlay = $readZip($overlayPath);
     $overlayRows = is_array($inventory['files'] ?? null) ? $inventory['files'] : [];
-    $assert((int) ($inventory['file_count'] ?? -1) === 14, 'overlay_count_authority_invalid');
+    $assert((int) ($inventory['file_count'] ?? -1) === 6, 'overlay_count_authority_invalid');
     $assert(count($overlay) === count($overlayRows), 'overlay_count_invalid');
     foreach ($overlayRows as $row) {
         $path = is_array($row) ? (string) ($row['path'] ?? '') : '';

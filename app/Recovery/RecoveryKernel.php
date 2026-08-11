@@ -322,6 +322,12 @@ final class RecoveryKernel
                             . 'Inicie sesión nuevamente.',
                     $failureCode === 'database_unavailable'
                         => 'MariaDB no respondió dentro del tiempo seguro. No se modificó la base de datos.',
+                    $failureCode === 'direct_update_downgrade_refused'
+                        => 'La versión registrada en MariaDB es posterior a los archivos subidos. Se bloqueó el downgrade sin modificar datos.',
+                    $failureCode === 'direct_update_lock_busy'
+                        => 'Otra finalización local conserva el bloqueo de actualización. Espere a que termine y vuelva a comprobar.',
+                    $failureCode === 'direct_update_version_cas_miss'
+                        => 'La versión instalada cambió durante la comprobación. No se firmó la actualización; recargue el estado.',
                     $action === 'authorize' && $identityConfirmed
                         => $this->backupFailureMessage($failure),
                     in_array($action, ['recover_backup', 'cancel_backup', 'cleanup_backup'], true)

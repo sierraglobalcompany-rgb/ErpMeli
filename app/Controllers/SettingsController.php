@@ -581,6 +581,13 @@ final class SettingsController
         $this->requireAdminPermanent();
         $this->assertSameOrigin();
         Csrf::validate($_POST['_token'] ?? null);
+        if ((string) ($_POST['operation'] ?? '') === 'retire_for_v4') {
+            (new \App\Services\AdministrativeReauthenticationService())->requirePassword(
+                (string) ($_POST['admin_password'] ?? '')
+            );
+            $this->cronV3SetupMutation('retire');
+            return;
+        }
         $this->cronV3SetupMutation('prepare');
     }
 
@@ -691,10 +698,17 @@ final class SettingsController
     {
         $wantsJson = str_contains(strtolower((string) ($_SERVER['HTTP_ACCEPT'] ?? '')), 'application/json');
         try {
-            $service = new \App\Services\CronV3SetupAssistantService();
-            $result = $action === 'shadow'
-                ? $service->enableShadow((int) Auth::id())
-                : $service->prepareSafeConfig((int) Auth::id());
+            if ($action === 'retire') {
+                $result = (new \App\Services\CronV3RetirementForV4Service())->retire(
+                    (int) Auth::id(),
+                    (string) ($_POST['confirmation_phrase'] ?? '')
+                );
+            } else {
+                $service = new \App\Services\CronV3SetupAssistantService();
+                $result = $action === 'shadow'
+                    ? $service->enableShadow((int) Auth::id())
+                    : $service->prepareSafeConfig((int) Auth::id());
+            }
             if ($wantsJson) {
                 $this->json($result);
                 return;
@@ -709,9 +723,17 @@ final class SettingsController
                 str_starts_with($error->getMessage(), 'cron_v3_process_env_override:')
                     => 'No se modificó config.env: una variable del proceso sobrescribe '
                         . substr($error->getMessage(), strlen('cron_v3_process_env_override:')) . '.',
+                $error->getMessage() === 'v3_retirement_confirmation_invalid'
+                    => 'Escriba la frase de confirmación exacta antes de retirar V3.',
+                $error->getMessage() === 'v3_retirement_already_completed'
+                    => 'V3 ya fue retirado. La operación no se repitió y no hizo DML.',
+                $error->getMessage() === 'v3_retirement_lock_busy'
+                    => 'Otra operación de retiro V3 mantiene el lock. No se modificó nada.',
+                str_starts_with($error->getMessage(), 'v3_retirement_')
+                    => 'Retiro V3 bloqueado: ' . substr($error->getMessage(), strlen('v3_retirement_')) . '.',
                 default => \App\Services\SafeErrorPresenter::message(
                     $error,
-                    'No fue posible preparar Cron V3. No se activó V3 real ni Mercado Libre.',
+                    'No fue posible actualizar la autoridad Cron. No se activó V4 ni Mercado Libre.',
                     ['module' => 'cron_v3_setup', 'action' => $action]
                 ),
             };

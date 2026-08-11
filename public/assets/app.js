@@ -926,6 +926,45 @@
         : `Bloqueado: ${conflicts.length ? conflicts.join(', ') : 'uno o más flags no están apagados'}.`;
       retirementState.className = retirement.ok ? 'notice success' : 'notice error';
     }
+    const retirementAction = lastSetup.retirement_action || {};
+    const actionPanel = panel.querySelector('[data-cron-v3-retirement-action]');
+    const actionReason = panel.querySelector('[data-cron-v3-retirement-reason]');
+    const retirementForm = panel.querySelector('[data-cron-v3-retirement-form]');
+    const receipt = panel.querySelector('[data-cron-v3-retirement-receipt]');
+    const reasonLabels = {
+      ready: 'Listo: versión, schema, flags, Queue Engine y ownership cumplen el contrato.',
+      v3_retirement_already_completed: 'V3 ya fue retirado. La operación no puede repetirse.',
+      v3_retirement_app_version_invalid: 'La versión instalada no corresponde al hotfix 2.36.5.',
+      v3_retirement_schema_invalid: 'El schema no es exactamente 293.',
+      v3_retirement_engine_not_idle: 'Queue Engine debe permanecer disabled/idle.',
+      v3_retirement_process_override_conflict: 'Existe un override de proceso contradictorio.',
+      v3_retirement_effective_flags_invalid: 'Los cuatro flags efectivos deben estar apagados.',
+      v3_retirement_foreign_ownership: 'Existe ownership habilitado fuera de V3.',
+      v3_retirement_no_active_ownership: 'No existe ownership V3 activo para retirar.'
+    };
+    if (actionPanel) {
+      actionPanel.className = `${actionPanel.className.replace(/\b(success|warning|error)\b/g, '').trim()} ${retirementAction.ok ? 'success' : 'warning'}`;
+    }
+    if (actionReason) {
+      actionReason.textContent = reasonLabels[retirementAction.reason]
+        || `Bloqueado: ${retirementAction.reason || 'preflight no disponible'}.`;
+    }
+    if (retirementForm) {
+      retirementForm.dataset.preflightOk = retirementAction.ok ? '1' : '0';
+      retirementForm.dataset.confirmationPhrase = retirementAction.required_confirmation_phrase || '';
+      const phrase = retirementForm.querySelector('[name="confirmation_phrase"]');
+      const password = retirementForm.querySelector('[name="admin_password"]');
+      const button = retirementForm.querySelector('button[type="submit"]');
+      if (button) {
+        button.disabled = !(retirementAction.ok
+          && phrase?.value.trim() === retirementForm.dataset.confirmationPhrase
+          && Boolean(password?.value));
+      }
+    }
+    if (receipt && retirementAction.receipt) {
+      receipt.hidden = false;
+      receipt.textContent = JSON.stringify(retirementAction.receipt, null, 2);
+    }
     panel.querySelectorAll('[data-cron-v3-setup-action]').forEach((form) => {
       const action = form.action || '';
       const button = form.querySelector('button[type="submit"]');
@@ -1370,6 +1409,53 @@
           button.disabled = false;
           button.textContent = previous;
         }
+      }
+    });
+  });
+
+  root.querySelectorAll('[data-cron-v3-retirement-form]').forEach((form) => {
+    const button = form.querySelector('button[type="submit"]');
+    const phrase = form.querySelector('[name="confirmation_phrase"]');
+    const password = form.querySelector('[name="admin_password"]');
+    const syncButton = () => {
+      if (!button) return;
+      button.disabled = !(form.dataset.preflightOk === '1'
+        && phrase?.value.trim() === (form.dataset.confirmationPhrase || '')
+        && Boolean(password?.value));
+    };
+    phrase?.addEventListener('input', syncButton);
+    password?.addEventListener('input', syncButton);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      syncButton();
+      if (button?.disabled) return;
+      const previous = button?.textContent || '';
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Retirando autoridad V3…';
+      }
+      try {
+        const response = await fetch(form.action, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' },
+          body: new FormData(form)
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) throw new Error(payload.message || 'No se pudo retirar V3.');
+        password.value = '';
+        const receipt = root.querySelector('[data-cron-v3-retirement-receipt]');
+        if (receipt && payload.receipt) {
+          receipt.hidden = false;
+          receipt.textContent = JSON.stringify(payload.receipt, null, 2);
+        }
+        await fetchSetup();
+      } catch (error) {
+        const reason = root.querySelector('[data-cron-v3-retirement-reason]');
+        if (reason) reason.textContent = error?.message || 'No se pudo retirar V3. No se modificó nada.';
+      } finally {
+        if (button) button.textContent = previous;
+        syncButton();
       }
     });
   });

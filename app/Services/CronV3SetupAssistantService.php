@@ -60,7 +60,12 @@ final class CronV3SetupAssistantService
         $localDoctor = (new CronV3DoctorService($this->pdo))->snapshot('local');
         $remoteDoctor = (new CronV3DoctorService($this->pdo))->snapshot('remote');
         $shadow = $this->shadowSignals();
-        $retirementPreflight = $this->retirementPreflight($config['values']);
+        $retirementPreflight = $this->retirementPreflightSnapshot();
+        $retirementFactory = $this->pdo instanceof PDO ? fn (): PDO => $this->pdo : null;
+        $retirementAction = (new CronV3RetirementForV4Service(
+            $retirementFactory,
+            $this->configPath()
+        ))->preflight();
         $mlWriteEnabled = ($retirementPreflight['effective_flags']['ML_WRITE_ENABLED'] ?? null) === true;
         $safeApplied = $this->safeConfigApplied($config['values'])
             && $retirementPreflight['ok']
@@ -92,6 +97,7 @@ final class CronV3SetupAssistantService
             'canary_active_by_evidence' => $canaryActiveByEvidence,
             'process_overrides' => $processOverrides,
             'retirement_preflight' => $retirementPreflight,
+            'retirement_action' => $retirementAction,
             'blocking' => $blocking,
             'doctors' => [
                 'local' => $this->compactDoctor($localDoctor),
@@ -190,6 +196,17 @@ final class CronV3SetupAssistantService
     public static function desiredSafeConfig(): array
     {
         return self::SAFE_CONFIG;
+    }
+
+    /** @return array<string,mixed> */
+    public function retirementPreflightSnapshot(): array
+    {
+        $path = $this->configPath();
+        $exists = is_file($path);
+        $body = $exists ? (string) file_get_contents($path) : '';
+        $result = $this->retirementPreflight($this->parseConfig($body));
+        $result['config_sha256'] = hash('sha256', $exists ? $body : '<ABSENT>');
+        return $result;
     }
 
     /** @return array{values:array<string,string>,exists:bool} */

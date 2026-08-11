@@ -189,6 +189,24 @@ $tone = match ($state) {
         <button class="btn" type="submit">Activar Shadow V3</button>
       </form>
     </div>
+    <section class="notice warning mt-2" data-cron-v3-retirement-action>
+      <strong>Retirar autoridad V3 para preparar V4</strong>
+      <p data-cron-v3-retirement-reason>Verificando versión, schema, Queue Engine y ownership activo…</p>
+      <p>Esto desactivará la autoridad interna de Cron V3. No borrará trabajos históricos, ventas ni intentos. Cron V4 seguirá apagado.</p>
+      <form method="post" action="<?= View::e($base) ?>/settings/cron/v3-setup/prepare-safe-config" data-cron-v3-retirement-form>
+        <input type="hidden" name="_token" value="<?= View::e($csrfToken) ?>">
+        <input type="hidden" name="operation" value="retire_for_v4">
+        <label>Frase de confirmación
+          <input type="text" name="confirmation_phrase" autocomplete="off" spellcheck="false" required
+                 placeholder="RETIRAR_AUTORIDAD_V3_PARA_PREPARAR_V4">
+        </label>
+        <label>Contraseña administrativa
+          <input type="password" name="admin_password" autocomplete="current-password" required>
+        </label>
+        <button class="btn danger" type="submit" disabled>Retirar autoridad V3 para preparar V4</button>
+      </form>
+      <pre class="code-block" data-cron-v3-retirement-receipt hidden></pre>
+    </section>
     <div class="cron-command-grid" data-cron-v3-commands>
       <article><span>V2 real actual</span><code>Se cargará desde el asistente.</code></article>
       <article><span>V3 local shadow</span><code>Se cargará desde el asistente.</code></article>

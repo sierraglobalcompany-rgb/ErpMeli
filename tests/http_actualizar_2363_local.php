@@ -198,11 +198,11 @@ try {
 
     $stage = 'updater_before';
     $before = qa2363Request($base . '/actualizar.php', $cookie);
+    qa2363WriteHtml($artifactDirectory . '/actualizar-before.html', $before['body'], $releaseRoot);
     $check($before['status'] === 200, 'updater_before_http_' . $before['status']);
     $check(str_contains($before['body'], 'Actualización lista para continuar'), 'metadata_ready_title_missing');
     $check(str_contains($before['body'], 'Falta confirmar la versión instalada'), 'metadata_ready_notice_missing');
     $check(!str_contains($before['body'], 'manifest_installed_inventory_mismatch'), 'legacy_false_positive_visible');
-    qa2363WriteHtml($artifactDirectory . '/actualizar-before.html', $before['body'], $releaseRoot);
 
     $stage = 'authorize';
     $authorized = qa2363Request($base . '/actualizar.php', $cookie, [

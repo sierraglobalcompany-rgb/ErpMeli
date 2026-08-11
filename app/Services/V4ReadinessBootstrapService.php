@@ -486,10 +486,17 @@ final class V4ReadinessBootstrapService
         if ($fileVersion !== self::REQUIRED_VERSION || $appVersion !== self::REQUIRED_VERSION) {
             $issues[] = 'version_not_2366';
         }
-        $migration = $pdo->prepare('SELECT COUNT(*) FROM schema_migrations WHERE version=?');
-        $migration->execute([self::LAST_MIGRATION]);
-        if ((int) $migration->fetchColumn() !== 1) {
-            $issues[] = 'schema_293_missing';
+        $schemaAuthority = $pdo->query(
+            "SELECT COUNT(*) AS total,
+                    COALESCE(MAX(CAST(SUBSTRING_INDEX(version,'_',1) AS UNSIGNED)),0) AS max_version,
+                    SUM(version='" . self::LAST_MIGRATION . "') AS migration_293
+             FROM schema_migrations"
+        )->fetch(PDO::FETCH_ASSOC) ?: [];
+        $schemaCount = (int) ($schemaAuthority['total'] ?? 0);
+        $schemaMax = (int) ($schemaAuthority['max_version'] ?? 0);
+        $migration293Count = (int) ($schemaAuthority['migration_293'] ?? 0);
+        if ($schemaCount !== 293 || $schemaMax !== 293 || $migration293Count !== 1) {
+            $issues[] = 'schema_authority_invalid';
         }
         $v3 = (int) $pdo->query(
             "SELECT COUNT(*) FROM cron_v3_queue_ownership WHERE owner_engine='v3' OR enabled=1"
@@ -588,8 +595,10 @@ final class V4ReadinessBootstrapService
             'issues' => array_values(array_unique($issues)),
             'file_version' => $fileVersion,
             'app_version' => $appVersion,
-            'schema' => 293,
-            'pending_migrations' => 0,
+            'schema' => $schemaMax,
+            'schema_count' => $schemaCount,
+            'migration_293_count' => $migration293Count,
+            'pending_migrations' => max(0, $schemaMax - 293),
             'v3_active_ownership' => $v3,
             'v3_retired' => !in_array('v3_retirement_evidence_missing', $issues, true),
             'active_leases' => $leases,

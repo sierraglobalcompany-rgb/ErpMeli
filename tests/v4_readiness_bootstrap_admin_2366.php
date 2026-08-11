@@ -36,6 +36,9 @@ try {
 
     $assert(str_contains($service, "public const REQUIRED_VERSION = '2.36.6'"), 'version_gate_missing');
     $assert(str_contains($service, "public const LAST_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql'"), 'schema_gate_missing');
+    $assert(str_contains($service, 'COUNT(*) AS total'), 'schema_count_gate_missing');
+    $assert(str_contains($service, 'AS max_version'), 'schema_max_gate_missing');
+    $assert(str_contains($service, '$schemaCount !== 293 || $schemaMax !== 293 || $migration293Count !== 1'), 'schema_exact_authority_missing');
     $assert(str_contains($service, "SELECT GET_LOCK(?,0)"), 'advisory_lock_missing');
     $assert(str_contains($service, "'preparing'"), 'readiness_transition_missing');
     $assert(str_contains($service, "(int) (\$transition['generation'] ?? -1) !== 1"), 'generation_0_to_1_gate_missing');
@@ -47,11 +50,11 @@ try {
     $assert(str_contains($service, 'certifyManifest'), 'manifest_evidence_missing');
     $assert(str_contains($service, 'certifyCapacity'), 'capacity_evidence_missing');
     $assert(str_contains($service, 'canActivateV4'), 'real_activation_contract_missing');
-    $assert(
-        str_contains($service, '(new QueueCoreReadinessReceiptService($pdo))')
-        && substr_count($service, '->canActivateV4(') === 2,
-        'certified_snapshot_activation_recheck_missing'
-    );
+    $assert(preg_match(
+        '/\$certificationGate\s*=\s*\(new QueueCoreReadinessReceiptService\(\$pdo\)\)\s*' .
+        '->canActivateV4\(\(int\) \$engine\[\x27generation\x27\]\);/',
+        $service,
+    ) === 1, 'certified_snapshot_activation_recheck_missing');
     $assert(str_contains($service, 'compareAndSwapReadinessFlags'), 'feature_cas_missing');
     $assert(str_contains($service, 'startApiWithoutCanary'), 'api_enable_missing');
     $assert(str_contains($service, 'restoreV4FailClosedConfig'), 'config_rollback_missing');

@@ -27,7 +27,7 @@ use Throwable;
 final class V4ReadinessBootstrapService
 {
     public const CONFIRMATION_PHRASE = 'PREPARAR_Y_CERTIFICAR_V4_SIN_SCHEDULER';
-    public const REQUIRED_VERSION = '2.36.9';
+    public const REQUIRED_VERSION = '2.36.10';
     public const LAST_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
     public const LOCK_NAME = 'erp_meli_v4_readiness_bootstrap_2366';
     public const SCHEDULER_AUTHORITY_KEY = 'queue_core.v4.scheduler_authority';
@@ -101,7 +101,7 @@ final class V4ReadinessBootstrapService
                 $recovery = $this->rollbackAuthorities(
                     $pdo,
                     $actorUserId,
-                    'partial_arm_recovery_2369',
+                    'partial_arm_recovery_23610',
                 );
                 return [
                     'ok' => $recovery['state'] === 'rolled_back',
@@ -178,9 +178,10 @@ final class V4ReadinessBootstrapService
         }
 
         $flags = new QueueCoreFeatureFlagService($pdo);
-        $flags->compareAndSwapReadinessFlags(self::FLAGS_DISABLED, self::FLAGS_READY, 1);
+        $nextGeneration = (int) $pre['engine']['generation'] + 1;
+        $flags->compareAndSwapReadinessFlags(self::FLAGS_DISABLED, self::FLAGS_READY, $nextGeneration);
         (new EmergencyControlService())->startApiWithoutCanary(
-            'v4_readiness_bootstrap_2369',
+            'v4_readiness_bootstrap_23610',
             'Lecturas habilitadas para readiness V4 acotado; automatización permanece detenida.',
         );
         (new CronV3SetupAssistantService($pdo, $this->configPath()))
@@ -189,7 +190,8 @@ final class V4ReadinessBootstrapService
         return [
             'ok' => true,
             'state' => 'environment_armed',
-            'message' => 'Configuración estable preparada. Vuelva a pulsar para crear el contexto generation 1.',
+            'message' => 'Configuración estable preparada para generation ' . $nextGeneration
+                . '. Vuelva a pulsar para crear el contexto.',
             'requires_next_request' => true,
             'next_single_action' => 'USER_PRESS_PREPARE_AND_CERTIFY_V4_AGAIN',
             'scheduler_created' => false,
@@ -205,15 +207,17 @@ final class V4ReadinessBootstrapService
             throw new RuntimeException('v4_bootstrap_preconditions:' . (string) $pre['reason']);
         }
         $engineService = new QueueEngineControlService($pdo);
+        $expectedGeneration = (int) $pre['engine']['generation'];
         $transition = $engineService->compareAndSwapReadiness(
             'preparing',
-            (int) $pre['engine']['generation'],
-            'admin:' . $actorUserId . ':v4_readiness_bootstrap_2369',
+            $expectedGeneration,
+            'admin:' . $actorUserId . ':v4_readiness_bootstrap_23610',
         );
-        if (empty($transition['ok']) || (int) ($transition['generation'] ?? -1) !== 1) {
+        if (empty($transition['ok'])
+            || (int) ($transition['generation'] ?? -1) !== $expectedGeneration + 1) {
             throw new RuntimeException('v4_bootstrap_generation_transition_failed');
         }
-        $generation = 1;
+        $generation = $expectedGeneration + 1;
         $contextHash = (string) ($transition['readiness_context_hash'] ?? '');
         if (preg_match('/^[a-f0-9]{64}$/', $contextHash) !== 1) {
             throw new RuntimeException('v4_bootstrap_context_missing');
@@ -252,7 +256,8 @@ final class V4ReadinessBootstrapService
             return [
                 'ok' => true,
                 'state' => 'preparing',
-                'message' => 'Contexto generation 1 y evidencia base certificados. Siguiente clic: canario de una cuenta.',
+                'message' => 'Contexto generation ' . $generation
+                    . ' y evidencia base certificados. Siguiente clic: canario de una cuenta.',
                 'generation' => $generation,
                 'readiness_context_hash' => $contextHash,
                 'next_single_action' => 'USER_PRESS_PREPARE_AND_CERTIFY_V4_AGAIN',
@@ -267,7 +272,7 @@ final class V4ReadinessBootstrapService
     {
         $generation = (int) ($snapshot['engine']['generation'] ?? -1);
         $contextHash = (string) ($snapshot['engine']['readiness_context_hash'] ?? '');
-        if ($generation !== 1 || preg_match('/^[a-f0-9]{64}$/', $contextHash) !== 1) {
+        if ($generation < 1 || preg_match('/^[a-f0-9]{64}$/', $contextHash) !== 1) {
             throw new RuntimeException('v4_bootstrap_readiness_authority_invalid');
         }
         $currentHash = (new QueueCoreReadinessReceiptService($pdo))->currentContextHash($generation);
@@ -383,7 +388,7 @@ final class V4ReadinessBootstrapService
                 throw new RuntimeException('v4_bootstrap_activation_gate:' . (string) ($activation['reason'] ?? 'unknown'));
             }
             $receipt = [
-                'operation' => 'v4_readiness_bootstrap_2369',
+                'operation' => 'v4_readiness_bootstrap_23610',
                 'result' => 'PASS',
                 'generation' => $generation,
                 'readiness_context_hash' => $contextHash,
@@ -444,18 +449,22 @@ final class V4ReadinessBootstrapService
             $state = 'blocked';
             $reason = 'certified_authority_not_current';
         } elseif ($engine['active_engine'] === 'disabled' && $engine['readiness_mode'] === 'preparing') {
-            $state = $contextStable ? 'preparing' : 'blocked';
-            $reason = $contextStable ? 'readiness_in_progress' : 'readiness_context_changed';
+            $state = $contextStable && $pre['ok'] ? 'preparing' : 'blocked';
+            $reason = !$contextStable
+                ? 'readiness_context_changed'
+                : ($pre['ok'] ? 'readiness_in_progress' : (string) $pre['reason']);
         } elseif (self::isRecoverablePartialArm($engine, $flags, $pre)) {
             $state = 'recovery_required';
             $reason = 'partial_arm_requires_fail_closed_recovery';
         } elseif ($engine['active_engine'] === 'disabled' && $engine['readiness_mode'] === 'idle'
-            && $engine['generation'] === 0 && $pre['base_ok']) {
+            && $engine['generation'] >= 0 && $pre['base_ok']) {
             if ($pre['runtime_ready'] && self::flagsMatch($flags, self::FLAGS_READY)
-                && $pre['scheduler_absent_recorded']) {
+                && $pre['scheduler_absent_recorded']
+                && ($pre['feature_generation_authority']['profile'] ?? '') === 'armed') {
                 $state = 'ready_for_context';
                 $reason = 'stable_authorities_ready';
-            } elseif ($pre['runtime_fail_closed'] && self::flagsMatch($flags, self::FLAGS_DISABLED)) {
+            } elseif ($pre['runtime_fail_closed'] && self::flagsMatch($flags, self::FLAGS_DISABLED)
+                && ($pre['feature_generation_authority']['profile'] ?? '') === 'fail_closed') {
                 $state = 'ready_to_arm';
                 $reason = 'preconditions_pass';
             }
@@ -471,6 +480,7 @@ final class V4ReadinessBootstrapService
             'reason' => $reason,
             'engine' => $engine,
             'feature_flags' => $flags,
+            'feature_generation_authority' => $pre['feature_generation_authority'] ?? [],
             'preconditions' => $pre,
             'receipt_inventory' => $this->receiptInventory($pdo, $engine),
             'certified_receipt' => $certified,
@@ -490,7 +500,7 @@ final class V4ReadinessBootstrapService
             "SELECT setting_value FROM app_settings WHERE setting_key='app.version' LIMIT 1"
         )->fetchColumn();
         if ($fileVersion !== self::REQUIRED_VERSION || $appVersion !== self::REQUIRED_VERSION) {
-            $issues[] = 'version_not_2369';
+            $issues[] = 'version_not_23610';
         }
         $schemaAuthority = $pdo->query(
             "SELECT COUNT(*) AS total,
@@ -519,7 +529,9 @@ final class V4ReadinessBootstrapService
             || ($retirement['cron_v3.certified_cutover.phase'] ?? '') !== 'retired_for_v4') {
             $issues[] = 'v3_retirement_evidence_missing';
         }
-        $historical = (new QueueCoreFeatureFlagService($pdo))->enabled('historical_importer');
+        $featureService = new QueueCoreFeatureFlagService($pdo);
+        $featureFlags = $featureService->snapshot();
+        $historical = $featureService->enabled('historical_importer');
         if ($historical) {
             $issues[] = 'historical_importer_enabled';
         }
@@ -531,20 +543,6 @@ final class V4ReadinessBootstrapService
             $featureGenerations[(string) $feature] = (int) $generation;
         }
         ksort($featureGenerations, SORT_STRING);
-        $expectedFeatureGenerations = $expectRuntimeReady
-            ? [
-                'fresh_producer' => 1,
-                'webhook_producer' => 1,
-                'pack_shipment_followups' => 1,
-                'remote_financial' => 0,
-                'historical_importer' => 0,
-            ]
-            : array_fill_keys(QueueCoreFeatureFlagService::READINESS_FEATURES, 0);
-        foreach ($expectedFeatureGenerations as $feature => $generation) {
-            if (!array_key_exists($feature, $featureRows) || (int) $featureRows[$feature] !== $generation) {
-                $issues[] = 'feature_generation_invalid:' . $feature;
-            }
-        }
         $leases = (int) $pdo->query(
             'SELECT COUNT(*) FROM queue_core_execution_leases WHERE expires_at IS NOT NULL AND expires_at>UTC_TIMESTAMP(3)'
         )->fetchColumn();
@@ -566,6 +564,19 @@ final class V4ReadinessBootstrapService
         $engine = (new QueueEngineControlService($pdo))->snapshot();
         if ($engine['active_engine'] !== 'disabled') {
             $issues[] = 'engine_not_disabled';
+        }
+        $featureGenerationAuthority = self::featureGenerationAuthority(
+            $engine,
+            $featureFlags,
+            $featureGenerations,
+        );
+        if (empty($featureGenerationAuthority['ok'])) {
+            if (($featureGenerationAuthority['profile'] ?? '') === 'invalid') {
+                $issues[] = 'feature_generation_profile_invalid';
+            }
+            foreach ((array) ($featureGenerationAuthority['mismatches'] ?? []) as $mismatch) {
+                $issues[] = 'feature_generation_invalid:' . (string) ($mismatch['feature'] ?? 'unknown');
+            }
         }
         $safety = (new EmergencyControlService())->status();
         if (($safety['automation'] ?? '') !== 'stopped') {
@@ -621,6 +632,7 @@ final class V4ReadinessBootstrapService
             'active_runs' => $activeRuns,
             'historical_importer' => $historical,
             'feature_generations' => $featureGenerations,
+            'feature_generation_authority' => $featureGenerationAuthority,
             'engine' => $engine,
             'api' => (string) ($safety['api'] ?? 'unknown'),
             'automation' => (string) ($safety['automation'] ?? 'unknown'),
@@ -785,7 +797,7 @@ final class V4ReadinessBootstrapService
         // Estas dos autoridades cortan ejecución remota aun cuando un CAS DB
         // esté contendido. Ningún fallo posterior puede impedir intentarlas.
         $attempt('api', fn (): null => (new EmergencyControlService())->stopApi(
-            'v4_readiness_rollback_2369',
+            'v4_readiness_rollback_23610',
             'Rollback fail-closed: ' . mb_substr($reason, 0, 120),
         ));
         $attempt('config', fn (): array => (new CronV3SetupAssistantService($pdo, $this->configPath()))
@@ -803,7 +815,7 @@ final class V4ReadinessBootstrapService
             $transition = $service->compareAndSwapReadiness(
                 'idle',
                 (int) $current['generation'],
-                'admin:' . $actorUserId . ':v4_readiness_rollback_2369',
+                'admin:' . $actorUserId . ':v4_readiness_rollback_23610',
             );
             if (empty($transition['ok'])) {
                 throw new RuntimeException('v4_bootstrap_rollback_engine_cas_failed');
@@ -819,6 +831,23 @@ final class V4ReadinessBootstrapService
                 $flags->compareAndSwapReadinessFlags(self::FLAGS_READY, self::FLAGS_DISABLED, $generation);
             } elseif (!self::flagsMatch($current, self::FLAGS_DISABLED)) {
                 throw new RuntimeException('v4_bootstrap_rollback_feature_authority_unknown');
+            }
+            return null;
+        });
+
+        $attempt('feature_generation_authority', function () use ($pdo): null {
+            $engineCurrent = (new QueueEngineControlService($pdo))->snapshot();
+            $flagsCurrent = (new QueueCoreFeatureFlagService($pdo))->snapshot();
+            $rows = $pdo->query(
+                'SELECT feature_key,generation FROM queue_core_feature_flags ORDER BY feature_key'
+            )->fetchAll(PDO::FETCH_KEY_PAIR);
+            $generations = [];
+            foreach ($rows as $feature => $featureGeneration) {
+                $generations[(string) $feature] = (int) $featureGeneration;
+            }
+            $authority = self::featureGenerationAuthority($engineCurrent, $flagsCurrent, $generations);
+            if (empty($authority['ok']) || ($authority['profile'] ?? '') !== 'fail_closed') {
+                throw new RuntimeException('v4_bootstrap_rollback_feature_generation_invalid');
             }
             return null;
         });
@@ -860,6 +889,74 @@ final class V4ReadinessBootstrapService
         return $actualCanonical === $expectedCanonical;
     }
 
+    /**
+     * Deriva la única autoridad de generaciones válida para cada estado V4.
+     * La generación del motor nunca se reinicia: un baseline fail-closed usa G,
+     * el armado reserva G+1 y preparing confirma esa misma G+1.
+     *
+     * @param array<string,mixed> $engine
+     * @param array<string,bool> $flags
+     * @param array<string,int> $observed
+     * @return array{ok:bool,profile:string,engine_generation:int,expected:array<string,int>,observed:array<string,int>,mismatches:list<array{feature:string,expected:?int,observed:?int}>}
+     */
+    private static function featureGenerationAuthority(array $engine, array $flags, array $observed): array
+    {
+        $generation = (int) ($engine['generation'] ?? -1);
+        $profile = 'invalid';
+        $readinessGeneration = -1;
+        if (($engine['active_engine'] ?? '') === 'disabled' && $generation >= 0) {
+            if (($engine['readiness_mode'] ?? '') === 'idle'
+                && self::flagsMatch($flags, self::FLAGS_DISABLED)) {
+                $profile = 'fail_closed';
+                $readinessGeneration = $generation;
+            } elseif (($engine['readiness_mode'] ?? '') === 'idle'
+                && self::flagsMatch($flags, self::FLAGS_READY)) {
+                $profile = 'armed';
+                $readinessGeneration = $generation + 1;
+            } elseif (($engine['readiness_mode'] ?? '') === 'preparing'
+                && self::flagsMatch($flags, self::FLAGS_READY)) {
+                $profile = 'preparing';
+                $readinessGeneration = $generation;
+            }
+        }
+
+        $expected = [];
+        if ($profile !== 'invalid') {
+            $expected = [
+                'fresh_producer' => $readinessGeneration,
+                'webhook_producer' => $readinessGeneration,
+                'pack_shipment_followups' => $readinessGeneration,
+                'remote_financial' => 0,
+                'historical_importer' => 0,
+            ];
+            ksort($expected, SORT_STRING);
+        }
+        $observedCanonical = $observed;
+        ksort($observedCanonical, SORT_STRING);
+
+        $mismatches = [];
+        foreach (array_values(array_unique(array_merge(array_keys($expected), array_keys($observedCanonical)))) as $feature) {
+            $expectedValue = array_key_exists($feature, $expected) ? $expected[$feature] : null;
+            $observedValue = array_key_exists($feature, $observedCanonical) ? $observedCanonical[$feature] : null;
+            if ($expectedValue !== $observedValue) {
+                $mismatches[] = [
+                    'feature' => (string) $feature,
+                    'expected' => $expectedValue,
+                    'observed' => $observedValue,
+                ];
+            }
+        }
+
+        return [
+            'ok' => $profile !== 'invalid' && $mismatches === [],
+            'profile' => $profile,
+            'engine_generation' => $generation,
+            'expected' => $expected,
+            'observed' => $observedCanonical,
+            'mismatches' => $mismatches,
+        ];
+    }
+
     /** @param array{status?:mixed,authority?:mixed} $scheduler */
     private static function schedulerAbsenceRecorded(array $scheduler): bool
     {
@@ -883,17 +980,16 @@ final class V4ReadinessBootstrapService
      */
     private static function isRecoverablePartialArm(array $engine, array $flags, array $pre): bool
     {
-        $expectedGenerations = array_fill_keys(QueueCoreFeatureFlagService::READINESS_FEATURES, 0);
-        ksort($expectedGenerations, SORT_STRING);
-        $actualGenerations = (array) ($pre['feature_generations'] ?? []);
-        ksort($actualGenerations, SORT_STRING);
+        $generationAuthority = (array) ($pre['feature_generation_authority'] ?? []);
 
         if (($engine['active_engine'] ?? '') !== 'disabled'
             || ($engine['readiness_mode'] ?? '') !== 'idle'
-            || (int) ($engine['generation'] ?? -1) !== 0
+            || (int) ($engine['generation'] ?? -1) < 0
             || (string) ($engine['readiness_context_hash'] ?? '') !== ''
             || !self::flagsMatch($flags, self::FLAGS_DISABLED)
-            || $actualGenerations !== $expectedGenerations
+            || empty($generationAuthority['ok'])
+            || ($generationAuthority['profile'] ?? '') !== 'fail_closed'
+            || (int) ($generationAuthority['engine_generation'] ?? -1) !== (int) ($engine['generation'] ?? -1)
             || ($pre['file_version'] ?? '') !== self::REQUIRED_VERSION
             || ($pre['app_version'] ?? '') !== self::REQUIRED_VERSION
             || (int) ($pre['schema'] ?? -1) !== 293

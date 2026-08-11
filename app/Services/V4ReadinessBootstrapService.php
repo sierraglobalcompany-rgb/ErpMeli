@@ -167,15 +167,9 @@ final class V4ReadinessBootstrapService
     private function armStableAuthorities(PDO $pdo, int $actorUserId): array
     {
         $pre = $this->preconditions($pdo, false);
-        if (!$pre['ok']) {
+        if (!$pre['ok'] || empty($pre['scheduler_absent_recorded'])) {
             throw new RuntimeException('v4_bootstrap_preconditions:' . (string) $pre['reason']);
         }
-        $this->upsertSetting($pdo, self::SCHEDULER_AUTHORITY_KEY, json_encode([
-            'status' => 'absent',
-            'authority' => 'permanent_admin_explicit_confirmation',
-            'actor_user_id' => $actorUserId,
-            'confirmed_at' => gmdate('Y-m-d\TH:i:s\Z'),
-        ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
 
         $flags = new QueueCoreFeatureFlagService($pdo);
         $flags->compareAndSwapReadinessFlags(self::FLAGS_DISABLED, self::FLAGS_READY, 1);
@@ -584,6 +578,9 @@ final class V4ReadinessBootstrapService
             $issues[] = 'oauth_accounts_not_current_3_of_3';
         }
         $scheduler = $this->schedulerAuthority($pdo);
+        if ($scheduler['status'] !== 'absent' || $scheduler['authority'] === 'unknown') {
+            $issues[] = 'scheduler_absence_authority_missing';
+        }
         $runtimeFailClosed = !Env::bool('CRON_V4_ENABLED', false)
             && !Env::bool('CRON_V3_ENABLED', false)
             && !Env::bool('CRON_V3_SHADOW_ENABLED', false)
@@ -626,7 +623,8 @@ final class V4ReadinessBootstrapService
             'cron_v3_shadow_enabled' => Env::bool('CRON_V3_SHADOW_ENABLED', false),
             'oauth_current_accounts' => count((array) ($preflight['accounts'] ?? [])),
             'queue_core_preflight_ok' => !empty($preflight['ok']),
-            'scheduler_absent_recorded' => $scheduler['status'] === 'absent',
+            'scheduler_absent_recorded' => $scheduler['status'] === 'absent'
+                && $scheduler['authority'] !== 'unknown',
             'runtime_fail_closed' => $runtimeFailClosed,
             'runtime_ready' => $runtimeReady,
         ];

@@ -91,6 +91,12 @@ try {
     $armEnd = strpos($service, 'private function enterReadiness', $armStart ?: 0);
     $armBody = $armStart !== false && $armEnd !== false ? substr($service, $armStart, $armEnd - $armStart) : '';
     $assert($armBody !== '' && !str_contains($armBody, 'catch (Throwable'), 'partial_local_rollback_remains');
+    $assert(!str_contains($armBody, 'SCHEDULER_AUTHORITY_KEY'), 'scheduler_absence_fabricated_during_arm');
+    $assert(str_contains($service, "'scheduler_absence_authority_missing'"), 'scheduler_absence_precondition_missing');
+    $assert(str_contains(
+        $service,
+        "\$scheduler['status'] === 'absent'\n                && \$scheduler['authority'] !== 'unknown'",
+    ), 'scheduler_structured_authority_missing');
     $assert(str_contains($service, 'startApiWithoutCanary'), 'api_enable_missing');
     $assert(str_contains($service, 'restoreV4FailClosedConfig'), 'config_rollback_missing');
     $assert(str_contains($service, 'stopApi'), 'api_rollback_missing');

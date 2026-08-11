@@ -32,6 +32,19 @@ $authority = json_decode(
     32,
     JSON_THROW_ON_ERROR
 );
+$lineEndingEquivalent = 0;
+$matchesLockedAuthority = static function (string $bytes, string $expected) use (&$lineEndingEquivalent): bool {
+    if (hash_equals($expected, hash('sha256', $bytes))) {
+        return true;
+    }
+    $lf = str_replace(["\r\n", "\r"], "\n", $bytes);
+    $crlf = str_replace("\n", "\r\n", $lf);
+    if (hash_equals($expected, hash('sha256', $crlf))) {
+        $lineEndingEquivalent++;
+        return true;
+    }
+    return false;
+};
 $legacyPath = $root . '/' . (string) $authority['supersedes_inventory']['path'];
 $legacyBytes = file_get_contents($legacyPath);
 if (!is_string($legacyBytes)
@@ -65,7 +78,7 @@ foreach ($legacyFiles as $path => $hash) {
     if (isset($intentional[$path])) {
         continue;
     }
-    if (!is_file($root . '/' . $path) || !hash_equals($hash, hash('sha256', $gitBlob($path)))) {
+    if (!is_file($root . '/' . $path) || !$matchesLockedAuthority($gitBlob($path), $hash)) {
         throw new RuntimeException('unexpected_locked_updater_change:' . $path);
     }
     $unchangedLines[$path] = $path . "\t" . $hash;
@@ -88,4 +101,5 @@ foreach ($authority['new_runtime_dependencies'] as $dependency) {
 }
 
 fwrite(STDOUT, 'Updater authority 2.36.4: PASS legacy=' . count($legacyFiles)
-    . ' intentional=' . count($intentional) . ' unchanged=' . count($unchangedLines) . PHP_EOL);
+    . ' intentional=' . count($intentional) . ' unchanged=' . count($unchangedLines)
+    . ' crlf_equivalent=' . $lineEndingEquivalent . PHP_EOL);

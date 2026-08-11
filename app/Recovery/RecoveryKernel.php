@@ -241,6 +241,7 @@ final class RecoveryKernel
                     $this->revalidateAdministrator();
                     $this->assertReleaseFilesReady();
                     $before = $this->migrationState();
+                    $metadataOnlyCompletion = (int) $before['pending_count'] === 0;
                     $fileVersion = AppVersionService::fileVersion();
                     if ((int) $before['pending_count'] === 0
                         && preg_match('/^\d+\.\d+\.\d+$/D', (string) $before['installed_version']) === 1
@@ -248,8 +249,9 @@ final class RecoveryKernel
                     ) {
                         throw new \RuntimeException('direct_update_downgrade_refused');
                     }
-                    $migrator = new Migrator($this->pdo, $this->root . '/database/migrations');
-                    $results = $migrator->run(1);
+                    $results = $metadataOnlyCompletion
+                        ? []
+                        : (new Migrator($this->pdo, $this->root . '/database/migrations'))->run(1);
                     $applied = array_values(array_filter(
                         $results,
                         static fn (array $row): bool => in_array((string) ($row['status'] ?? ''), ['applied', 'adopted'], true)
@@ -266,14 +268,18 @@ final class RecoveryKernel
                             (string) ($state['last_applied'] ?? ''),
                             'Actualización completada desde el actualizador directo.'
                         );
-                        CacheInvalidationService::invalidateKnown('direct_update_completed', AppVersionService::fileVersion());
+                        if (!$metadataOnlyCompletion) {
+                            CacheInvalidationService::invalidateKnown('direct_update_completed', AppVersionService::fileVersion());
+                        }
                         $fileVersion = AppVersionService::fileVersion();
-                        if (version_compare($fileVersion, '2.30.0', '>=')) {
-                            (new CronV3SetupAssistantService($this->pdo, null, $this->root))
-                                ->prepareOperationalConfig((int) Auth::id());
-                        } else {
-                            (new CronV3SetupAssistantService($this->pdo, null, $this->root))
-                                ->prepareSafeConfig((int) Auth::id());
+                        if (!$metadataOnlyCompletion) {
+                            if (version_compare($fileVersion, '2.30.0', '>=')) {
+                                (new CronV3SetupAssistantService($this->pdo, null, $this->root))
+                                    ->prepareOperationalConfig((int) Auth::id());
+                            } else {
+                                (new CronV3SetupAssistantService($this->pdo, null, $this->root))
+                                    ->prepareSafeConfig((int) Auth::id());
+                            }
                         }
                         Session::forget('_recovery_authorized_at');
                         Session::forget('_recovery_authorized_user');
@@ -281,9 +287,11 @@ final class RecoveryKernel
                         Session::forget('_recovery_backup_summary');
                         Session::forget('_recovery_backup_id');
                         $safety = (new SystemSafetyStatusService())->status();
-                        $notice = version_compare(AppVersionService::fileVersion(), '2.30.0', '>=')
-                            ? 'Actualización completada. Cron V3 quedó preparado como motor operativo y V2 se saltará solo. '
-                            : 'Actualización completada. Cron V3 quedó preparado en modo seguro. ';
+                        $notice = $metadataOnlyCompletion
+                            ? 'Actualización completada. Solo se confirmó la metadata de la release; el esquema y la configuración operativa no cambiaron. '
+                            : (version_compare(AppVersionService::fileVersion(), '2.30.0', '>=')
+                                ? 'Actualización completada. Cron V3 quedó preparado como motor operativo y V2 se saltará solo. '
+                                : 'Actualización completada. Cron V3 quedó preparado en modo seguro. ');
                         $notice .= ((string) ($safety['api'] ?? '') === 'stopped'
                             ? 'La salida hacia Mercado Libre continúa detenida.'
                             : 'Revise el freno de mano antes de habilitar consultas.');

@@ -80,4 +80,3 @@ $integrity = (new ReleaseIntegrityService())->inspectDirectory($root, false, fal
 $assert((bool) ($integrity['ok'] ?? false), 'Current Git release integrity failed: ' . json_encode($integrity['errors'] ?? []));
 
 fwrite(STDOUT, 'Release integrity authority 2.36.5: PASS checks=' . $checks . PHP_EOL);
-

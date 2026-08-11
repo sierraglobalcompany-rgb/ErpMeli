@@ -103,4 +103,3 @@ foreach ($authority['new_runtime_dependencies'] as $dependency) {
 fwrite(STDOUT, 'Updater authority 2.36.5: PASS legacy=' . count($legacyFiles)
     . ' intentional=' . count($intentional) . ' unchanged=' . count($unchangedLines)
     . ' crlf_equivalent=' . $lineEndingEquivalent . PHP_EOL);
-

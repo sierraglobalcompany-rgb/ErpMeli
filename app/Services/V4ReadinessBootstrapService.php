@@ -420,12 +420,29 @@ final class V4ReadinessBootstrapService
             $contextStable = hash_equals($engine['readiness_context_hash'], $calculated);
         }
         $certified = $this->certifiedReceipt($pdo, $engine);
+        $certificationGate = null;
+        if ($certified !== null && $contextStable
+            && $engine['active_engine'] === 'disabled'
+            && $engine['readiness_mode'] === 'preparing') {
+            try {
+                $certificationGate = (new QueueCoreReadinessService($pdo))
+                    ->canActivateV4((int) $engine['generation']);
+            } catch (Throwable $error) {
+                $certificationGate = [
+                    'ok' => false,
+                    'issues' => ['certified_authority_check_failed:' . $this->safeReason($error)],
+                ];
+            }
+        }
 
         $state = 'blocked';
         $reason = (string) ($pre['reason'] ?? 'preconditions_failed');
-        if ($certified !== null && $contextStable) {
+        if ($certified !== null && $contextStable && !empty($certificationGate['ok'])) {
             $state = 'certified';
             $reason = 'ready';
+        } elseif ($certified !== null) {
+            $state = 'blocked';
+            $reason = 'certified_authority_not_current';
         } elseif ($engine['active_engine'] === 'disabled' && $engine['readiness_mode'] === 'preparing') {
             $state = $contextStable ? 'preparing' : 'blocked';
             $reason = $contextStable ? 'readiness_in_progress' : 'readiness_context_changed';
@@ -451,6 +468,7 @@ final class V4ReadinessBootstrapService
             'preconditions' => $pre,
             'receipt_inventory' => $this->receiptInventory($pdo, $engine),
             'certified_receipt' => $certified,
+            'certification_gate' => $certificationGate,
             'context_hash_stable' => $contextStable,
             'scheduler_created' => false,
             'engine_activated' => false,

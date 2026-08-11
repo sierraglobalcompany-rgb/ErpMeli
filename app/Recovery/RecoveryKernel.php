@@ -258,7 +258,11 @@ final class RecoveryKernel
                     ));
                     $state = $this->migrationState();
                     if ($state['pending_count'] === 0) {
-                        $integrity = (new ReleaseIntegrityService())->inspectDirectory($this->root, true, false);
+                        $integrity = (new ReleaseIntegrityService())->inspectDirectory(
+                            $this->root,
+                            !$metadataOnlyCompletion,
+                            false
+                        );
                         if (!(bool) ($integrity['ok'] ?? false)) {
                             throw new \RuntimeException('release_schema_inconsistent');
                         }

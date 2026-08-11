@@ -41,10 +41,29 @@ final class ManagedRuntimePublicationPolicy
     ];
     public const BASE_COMMIT = '75997f864b917c829d19f14e21cd7303d2685776';
     public const INSTALLED_BASE_COMMIT = 'f91cd534d271b964db1ad9e682260475eca96820';
-    public const VERSION = '2.36.2';
-    public const BUILD_ID = 'erp-meli-2.36.2-managed-entrypoint-bootstrap-rc1-20260809';
-    public const BUILT_AT = '2026-08-09T00:00:00Z';
+    public const VERSION = '2.36.3';
+    public const BUILD_ID = 'erp-meli-2.36.3-direct-updater-authority-hotfix-rc1-20260810';
+    public const BUILT_AT = '2026-08-10T00:00:00Z';
     public const MINIMUM_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
+    /** @var array<string,array{build_id:string,minimum_migration:string,dependency_registry:string}> */
+    private const INSTALLED_PROFILES = [
+        '2.36.2' => [
+            'build_id' => 'erp-meli-2.36.2-managed-entrypoint-bootstrap-rc1-20260809',
+            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.2.json',
+        ],
+        self::VERSION => [
+            'build_id' => self::BUILD_ID,
+            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'dependency_registry' => self::DEPENDENCY_REGISTRY,
+        ],
+    ];
+
+    /** @param array<string,mixed> $manifest */
+    public static function recognizesInstalledManifest(array $manifest): bool
+    {
+        return self::installedProfile($manifest) !== null;
+    }
 
     /** @return list<string> */
     public static function manifestPaths(string $root, string $head = 'HEAD', string $base = self::BASE_COMMIT): array
@@ -207,7 +226,9 @@ final class ManagedRuntimePublicationPolicy
     /** @param array<string,mixed> $manifest @return list<string> */
     public static function installedManifestIssues(string $root, array $manifest): array
     {
-        $registryPath = rtrim($root, '/\\') . '/' . self::DEPENDENCY_REGISTRY;
+        $profile = self::installedProfile($manifest);
+        $dependencyRegistry = $profile['dependency_registry'] ?? self::DEPENDENCY_REGISTRY;
+        $registryPath = rtrim($root, '/\\') . '/' . $dependencyRegistry;
         $registryBytes = is_file($registryPath) ? file_get_contents($registryPath) : false;
         if (!is_string($registryBytes)) {
             return ['runtime_dependency_registry_missing'];
@@ -262,13 +283,28 @@ final class ManagedRuntimePublicationPolicy
         ) {
             $issues[] = 'manifest_publication_policy_mismatch';
         }
-        if (!hash_equals(self::VERSION, (string) ($manifest['version'] ?? ''))
-            || !hash_equals(self::MINIMUM_MIGRATION, (string) ($manifest['minimum_migration'] ?? ''))
-            || !hash_equals(self::BUILD_ID, (string) ($manifest['build_id'] ?? ''))
-        ) {
+        if ($profile === null) {
             $issues[] = 'manifest_release_identity_mismatch';
         }
         return array_values(array_unique($issues));
+    }
+
+    /**
+     * @param array<string,mixed> $manifest
+     * @return array{build_id:string,minimum_migration:string,dependency_registry:string}|null
+     */
+    private static function installedProfile(array $manifest): ?array
+    {
+        $version = trim((string) ($manifest['version'] ?? ''));
+        $profile = self::INSTALLED_PROFILES[$version] ?? null;
+        if (!is_array($profile)
+            || !hash_equals($profile['build_id'], trim((string) ($manifest['build_id'] ?? '')))
+            || !hash_equals($profile['minimum_migration'], trim((string) ($manifest['minimum_migration'] ?? '')))
+        ) {
+            return null;
+        }
+
+        return $profile;
     }
 
     /**

@@ -16,6 +16,8 @@ use App\Core\SecurityHeaders;
 use App\Services\AppVersionService;
 use App\Services\BackupCenterService;
 use App\Services\CacheInvalidationService;
+use App\Services\DirectUpdateMetadataPromotionService;
+use App\Services\DirectUpdateTransitionPolicy;
 use App\Services\InstalledVersionMarkerService;
 use App\Services\Migrator;
 use App\Services\MigrationExecutionException;
@@ -238,6 +240,14 @@ final class RecoveryKernel
                     $this->connect('migration');
                     $this->revalidateAdministrator();
                     $this->assertReleaseFilesReady();
+                    $before = $this->migrationState();
+                    $fileVersion = AppVersionService::fileVersion();
+                    if ((int) $before['pending_count'] === 0
+                        && preg_match('/^\d+\.\d+\.\d+$/D', (string) $before['installed_version']) === 1
+                        && version_compare((string) $before['installed_version'], $fileVersion, '>')
+                    ) {
+                        throw new \RuntimeException('direct_update_downgrade_refused');
+                    }
                     $migrator = new Migrator($this->pdo, $this->root . '/database/migrations');
                     $results = $migrator->run(1);
                     $applied = array_values(array_filter(
@@ -250,15 +260,13 @@ final class RecoveryKernel
                         if (!(bool) ($integrity['ok'] ?? false)) {
                             throw new \RuntimeException('release_schema_inconsistent');
                         }
-                        (new AppVersionService())->registerCurrent('Actualización completada desde el actualizador directo.');
-                        $markerWritten = (new InstalledVersionMarkerService())->write(
+                        (new DirectUpdateMetadataPromotionService())->promote(
+                            $this->pdo,
                             AppVersionService::fileVersion(),
-                            (string) ($state['last_applied'] ?? '')
+                            (string) ($state['last_applied'] ?? ''),
+                            'Actualización completada desde el actualizador directo.'
                         );
                         CacheInvalidationService::invalidateKnown('direct_update_completed', AppVersionService::fileVersion());
-                        if (!$markerWritten) {
-                            throw new \RuntimeException('installed_release_marker_write_failed');
-                        }
                         $fileVersion = AppVersionService::fileVersion();
                         if (version_compare($fileVersion, '2.30.0', '>=')) {
                             (new CronV3SetupAssistantService($this->pdo, null, $this->root))
@@ -858,6 +866,15 @@ HTML);
         $markerMatches = (bool) $marker['valid']
             && hash_equals($fileVersion, (string) $marker['version']);
         $minimumApplied = (bool) ($databaseIntegrity['schema']['migration_applied'] ?? false);
+        $transition = DirectUpdateTransitionPolicy::evaluate(
+            $fileVersion,
+            (string) $state['installed_version'],
+            $pending,
+            $filesReady,
+            $minimumApplied
+        );
+        $metadataOnlyEligible = (bool) $transition['metadata_only_eligible'];
+        $schemaHardBlocked = $dbReady && $pending === 0 && !$schemaMatches && !$metadataOnlyEligible;
         $finished = $dbReady
             && $pending === 0
             && $filesReady
@@ -900,7 +917,10 @@ HTML);
                 . 'Vuelva a subir todos los archivos de la misma release. El actualizador no aplicará migraciones hasta que VERSION, manifiesto, componentes y migración mínima coincidan.'
                 . $issueList
                 . '</div>';
-        } elseif ($dbReady && $pending === 0 && !$schemaMatches) {
+        } elseif ($metadataOnlyEligible) {
+            $integrityHtml = '<div class="notice warning" role="status"><strong>Falta confirmar la versión instalada</strong><br>'
+                . 'El esquema ya está completo y no hay migraciones SQL pendientes. Confirme el respaldo y su identidad para finalizar únicamente app.version y el marcador firmado.</div>';
+        } elseif ($schemaHardBlocked) {
             $integrityHtml = '<div class="notice error" role="alert"><strong>El esquema no coincide con los archivos</strong><br>'
                 . 'Abra el diagnóstico de migraciones. La actualización no se marcará como terminada mientras exista esta diferencia.</div>';
         } elseif ($dbReady && $pending === 0 && !$markerMatches) {
@@ -908,7 +928,7 @@ HTML);
                 . 'Recargue la página después de comprobar el esquema. No se consultará Mercado Libre.</div>';
         }
         $button = '';
-        if (!$filesReady || ($dbReady && $pending === 0 && !$schemaMatches)) {
+        if (!$filesReady || $schemaHardBlocked) {
             $button = '<a class="button secondary" href="' . $action . '">Comprobar de nuevo</a>';
         } elseif ($dbReady && !$finished && in_array($backupDecision, ['pending', 'failed'], true)) {
             $recoverButton = '';

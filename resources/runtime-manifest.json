@@ -1,15 +1,15 @@
 {
     "product": "erp-meli",
-    "version": "2.36.2",
-    "build_id": "erp-meli-2.36.2-managed-entrypoint-bootstrap-rc1-20260809",
-    "built_at": "2026-08-09T00:00:00Z",
+    "version": "2.36.3",
+    "build_id": "erp-meli-2.36.3-direct-updater-authority-hotfix-rc1-20260810",
+    "built_at": "2026-08-10T00:00:00Z",
     "minimum_migration": "293_queue_core_runtime_profile_defaults_b2_1.sql",
     "publication_policy": {
         "base_commit": "75997f864b917c829d19f14e21cd7303d2685776",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 813,
-        "component_count": 812,
-        "paths_sha256": "c14738e946870d33a56481eed3393301bbfd0b00923c107d412fdb0c3551d2e4",
+        "package_file_count": 815,
+        "component_count": 814,
+        "paths_sha256": "468a451b8f2d0d60ee113dc22101b6e9f0a709813c2b5969088421b2b0362829",
         "dependency_registry_sha256": "2a6b0b3512a231dfcbe0567974e5f45bef8133fc01546bc9ae1285adae652f01",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
@@ -24,8 +24,8 @@
         },
         "runtime_version": {
             "path": "VERSION",
-            "sha256": "84f88f4d55b36412f93d79a969751d52f5002cf90530f5cf1a3dd9cfc210ffd2",
-            "sha256_lf": "84f88f4d55b36412f93d79a969751d52f5002cf90530f5cf1a3dd9cfc210ffd2",
+            "sha256": "bf9bf2d887bf0a0b2874020c0fabb4cc7278f4b7095caeff0ce3a41410bc7660",
+            "sha256_lf": "bf9bf2d887bf0a0b2874020c0fabb4cc7278f4b7095caeff0ce3a41410bc7660",
             "text": true
         },
         "runtime_actualizar_php": {
@@ -1110,8 +1110,8 @@
         },
         "runtime_app_recovery_recoverykernel_php": {
             "path": "app/Recovery/RecoveryKernel.php",
-            "sha256": "4e3e02463c7271b0ad31792e64419ee1ff78e8a0054274c469ead73e22b91cf4",
-            "sha256_lf": "4e3e02463c7271b0ad31792e64419ee1ff78e8a0054274c469ead73e22b91cf4",
+            "sha256": "73579c28fa5c9eb8d59a77e6250099b1b302b2bf2a20e31ad724d28bff36cdab",
+            "sha256_lf": "73579c28fa5c9eb8d59a77e6250099b1b302b2bf2a20e31ad724d28bff36cdab",
             "text": true
         },
         "runtime_app_recovery_restorerecoverykernel_php": {
@@ -2032,6 +2032,18 @@
             "sha256_lf": "2decb9aa63eb9c1cf9630fd1ce4a8ab9423958de8541866118635d62f144e206",
             "text": true
         },
+        "runtime_app_services_directupdatemetadatapromotionservice_php": {
+            "path": "app/Services/DirectUpdateMetadataPromotionService.php",
+            "sha256": "78218b1519cfe8221a86be93953d8f4fb3bbf46cd75a43f6edffafb69a767dce",
+            "sha256_lf": "78218b1519cfe8221a86be93953d8f4fb3bbf46cd75a43f6edffafb69a767dce",
+            "text": true
+        },
+        "runtime_app_services_directupdatetransitionpolicy_php": {
+            "path": "app/Services/DirectUpdateTransitionPolicy.php",
+            "sha256": "5f67ad44b8ee9f2c6ce59a050a79ca0e0597b78ae97b79cb37e0ab1aaefe4187",
+            "sha256_lf": "5f67ad44b8ee9f2c6ce59a050a79ca0e0597b78ae97b79cb37e0ab1aaefe4187",
+            "text": true
+        },
         "runtime_app_services_emailnotificationservice_php": {
             "path": "app/Services/EmailNotificationService.php",
             "sha256": "7ddd10c4f57c2090bb67c90f9ee2963059fe7e8c9eb7d063883f75cf05008249",
@@ -2250,8 +2262,8 @@
         },
         "runtime_app_services_managedruntimepublicationpolicy_php": {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "065ab7012a52ffa076cdf645d7739f7cd9e3747f65b21298f232a37accbb5763",
-            "sha256_lf": "065ab7012a52ffa076cdf645d7739f7cd9e3747f65b21298f232a37accbb5763",
+            "sha256": "a9d5d0040174ad95db5364b9f69c1986490bc05987d6b92cd9274a0924510090",
+            "sha256_lf": "a9d5d0040174ad95db5364b9f69c1986490bc05987d6b92cd9274a0924510090",
             "text": true
         },
         "runtime_app_services_manualcampaignadapter_php": {
@@ -2778,8 +2790,8 @@
         },
         "runtime_app_services_releaseintegrityservice_php": {
             "path": "app/Services/ReleaseIntegrityService.php",
-            "sha256": "33aa577f0057f9da5ec9bc619e9a794da61df097d03a4c47321c0c618f1dbf82",
-            "sha256_lf": "33aa577f0057f9da5ec9bc619e9a794da61df097d03a4c47321c0c618f1dbf82",
+            "sha256": "519cecd67ef7ef4142396cedb13de4a23c1bce5463b2bde3eb2f5d1dee80541f",
+            "sha256_lf": "519cecd67ef7ef4142396cedb13de4a23c1bce5463b2bde3eb2f5d1dee80541f",
             "text": true
         },
         "runtime_app_services_remotepayloadmigrationservice_php": {

@@ -131,6 +131,15 @@ try {
         throw "schema_001_293_not_materialized:$schemaTruth"
     }
 
+    $env:ERP_2363_MYSQL_DSN = "mysql:host=127.0.0.1;port=$dbPort;charset=utf8mb4"
+    $env:ERP_2363_MYSQL_USER = 'root'
+    $env:ERP_2363_MYSQL_PASS = ''
+    Push-Location $release
+    try {
+        & php tests\direct_update_metadata_2363_mysql.php
+        if ($LASTEXITCODE -ne 0) { throw 'direct_update_metadata_matrix_failed' }
+    } finally { Pop-Location }
+
     $serverOut = Join-Path $lab 'php-server.stdout.log'
     $serverErr = Join-Path $lab 'php-server.stderr.log'
     $server = Start-Process -FilePath (Get-Command php).Source -ArgumentList @('-S', "127.0.0.1:$webPort", '-t', $webroot) -PassThru -WindowStyle Hidden -RedirectStandardOutput $serverOut -RedirectStandardError $serverErr
@@ -174,6 +183,9 @@ try {
     Remove-Item Env:ERP_2363_HTTP_BASE -ErrorAction SilentlyContinue
     Remove-Item Env:ERP_2363_HTTP_ARTIFACTS -ErrorAction SilentlyContinue
     foreach ($name in @('DB_HOST','DB_PORT','DB_NAME','DB_USER','DB_PASS')) {
+        Remove-Item ("Env:" + $name) -ErrorAction SilentlyContinue
+    }
+    foreach ($name in @('ERP_2363_MYSQL_DSN','ERP_2363_MYSQL_USER','ERP_2363_MYSQL_PASS')) {
         Remove-Item ("Env:" + $name) -ErrorAction SilentlyContinue
     }
     if ($null -ne $server -and -not $server.HasExited) {

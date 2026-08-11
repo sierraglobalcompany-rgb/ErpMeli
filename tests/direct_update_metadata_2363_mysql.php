@@ -16,7 +16,8 @@ if (!mkdir($temporary . '/storage', 0770, true) && !is_dir($temporary . '/storag
 }
 define('ERP_INSTALLATION_ROOT', $temporary);
 define('ERP_SHARED_ROOT', $temporary);
-putenv('APP_KEY=local-2363-test-key-' . bin2hex(random_bytes(16)));
+$appKey = 'local-2363-test-key-' . bin2hex(random_bytes(16));
+putenv('APP_KEY=' . $appKey);
 
 $root = dirname(__DIR__);
 require $root . '/app/Core/Env.php';
@@ -104,6 +105,65 @@ try {
     $assert($pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === '2.35.1', 'DB rollback after marker failure failed.');
     $assert((int) $pdo->query("SELECT COUNT(*) FROM app_versions WHERE version='2.36.3'")->fetchColumn() === 0, 'History rollback after marker failure failed.');
     $assert(file_get_contents($temporary . '/storage/installed-release.json') === $baselineMarker, 'Marker preimage changed on failed promotion.');
+
+    putenv('APP_KEY=' . $appKey);
+    unset($_ENV['APP_KEY'], $_SERVER['APP_KEY']);
+    @unlink($temporary . '/storage/installed-release.json');
+    $service->promote($pdo, '2.36.3', '293_queue_core_runtime_profile_defaults_b2_1.sql', 'absent marker');
+    $absentTarget = $marker->read();
+    $assert($absentTarget['valid'] && $absentTarget['version'] === '2.36.3', 'Absent marker was not promoted safely.');
+
+    $pdo->exec("UPDATE app_settings SET setting_value='2.35.1' WHERE setting_key='app.version'");
+    $pdo->exec("DELETE FROM app_versions WHERE version='2.36.3'");
+    file_put_contents($temporary . '/storage/installed-release.json', '{"tampered":true}');
+    $service->promote($pdo, '2.36.3', '293_queue_core_runtime_profile_defaults_b2_1.sql', 'tampered marker');
+    $tamperedTarget = $marker->read();
+    $assert($tamperedTarget['valid'] && $tamperedTarget['version'] === '2.36.3', 'Tampered marker was not replaced by exact target authority.');
+
+    $pdo->exec("UPDATE app_settings SET setting_value='2.35.1' WHERE setting_key='app.version'");
+    $pdo->exec("DELETE FROM app_versions WHERE version='2.36.3'");
+    file_put_contents($temporary . '/storage/installed-release.json', $baselineMarker);
+    $contender = new PDO($dsn . ';dbname=' . $database, $user, $password, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES => false,
+        PDO::ATTR_PERSISTENT => false,
+    ]);
+    $assert((int) $contender->query("SELECT GET_LOCK('erp_meli_direct_update_metadata',0)")->fetchColumn() === 1, 'Could not acquire contention fixture lock.');
+    try {
+        $service->promote($pdo, '2.36.3', '293_queue_core_runtime_profile_defaults_b2_1.sql', 'contended');
+        throw new RuntimeException('Contended promotion unexpectedly succeeded.');
+    } catch (RuntimeException $expected) {
+        $assert($expected->getMessage() === 'direct_update_lock_busy', 'Unexpected contention failure.');
+    } finally {
+        $contender->query("SELECT RELEASE_LOCK('erp_meli_direct_update_metadata')");
+        $contender = null;
+    }
+    $assert($pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === '2.35.1', 'Lock contention changed app.version.');
+    $assert(file_get_contents($temporary . '/storage/installed-release.json') === $baselineMarker, 'Lock contention changed marker.');
+
+    $stale = new PDO($dsn . ';dbname=' . $database, $user, $password, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES => false,
+        PDO::ATTR_PERSISTENT => false,
+    ]);
+    $stale->exec('SET SESSION wait_timeout=1');
+    sleep(2);
+    try {
+        $stale->query('SELECT 1');
+        throw new RuntimeException('Expired connection unexpectedly remained usable.');
+    } catch (PDOException) {
+        $assert(true, 'Expired connection was rejected.');
+    }
+    $fresh = new PDO($dsn . ';dbname=' . $database, $user, $password, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES => false,
+        PDO::ATTR_PERSISTENT => false,
+    ]);
+    $service->promote($fresh, '2.36.3', '293_queue_core_runtime_profile_defaults_b2_1.sql', 'fresh after expiry');
+    $assert($fresh->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === '2.36.3', 'Fresh connection did not complete promotion.');
 
     fwrite(STDOUT, 'Direct update metadata 2.36.3: PASS checks=' . $checks . PHP_EOL);
 } finally {

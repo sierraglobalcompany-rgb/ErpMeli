@@ -149,11 +149,14 @@ try {
 
     $env:ERP_2363_HTTP_BASE = "http://127.0.0.1:$webPort/erp-meli"
     $env:ERP_2363_HTTP_ARTIFACTS = $ArtifactDirectory
-    Push-Location $release
-    try {
-        & php tests\http_actualizar_2363_local.php
-        if ($LASTEXITCODE -ne 0) { throw 'http_actualizar_test_failed' }
-    } finally { Pop-Location }
+    $httpTestOut = Join-Path $ArtifactDirectory 'http-actualizar.stdout.log'
+    $httpTestErr = Join-Path $ArtifactDirectory 'http-actualizar.stderr.log'
+    $httpTest = Start-Process -FilePath (Get-Command php).Source -ArgumentList @('tests\http_actualizar_2363_local.php') -WorkingDirectory $release -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput $httpTestOut -RedirectStandardError $httpTestErr
+    if ($httpTest.ExitCode -ne 0) {
+        Get-Content -LiteralPath $httpTestErr -Tail 40 | Write-Error
+        throw 'http_actualizar_test_failed'
+    }
+    Get-Content -LiteralPath $httpTestOut
 
     foreach ($name in @('actualizar-before','actualizar-after')) {
         $html = Join-Path $ArtifactDirectory ($name + '.html')

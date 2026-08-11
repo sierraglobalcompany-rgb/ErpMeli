@@ -38,6 +38,6 @@
     {"path": "app/QueueCore/QueueCoreFeatureFlagService.php", "sha256": "25e785f44f409f60a3cc1a594a39f6aab7ddf8108d6fee7cdf87487bb6bcdf89"},
     {"path": "app/QueueCore/QueueCoreReadinessReceiptService.php", "sha256": "b572e4489c3755959ac047faba5ab28139874bd072d7e7bb02e944f32275e9ba"},
     {"path": "app/QueueCore/QueueCoreCanaryService.php", "sha256": "0a6f6e5482f14bfcf7d4232dae07bd68580bf8ce43b4a05660b3908a182a5426"},
-    {"path": "resources/release/managed-runtime-dependencies-2.36.9.json", "sha256": "682f02e9caeeb0f5f5cf9b87b3fe2d9941508ad93771b3199b06e9056a02cd3b"}
+    {"path": "resources/release/managed-runtime-dependencies-2.36.9.json", "sha256": "18d87801656b8a538fb9eb5822432fb18fdd9fc6f2613ebb8635c80f32e26ed3"}
   ]
 }

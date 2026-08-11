@@ -20,6 +20,24 @@ try {
     $method = new ReflectionMethod(V4ReadinessBootstrapService::class, 'isRecoverablePartialArm');
     $recoverable = static fn (array $engine, array $flags, array $pre): bool =>
         (bool) $method->invoke(null, $engine, $flags, $pre);
+    $schedulerMethod = new ReflectionMethod(V4ReadinessBootstrapService::class, 'schedulerAbsenceRecorded');
+    $schedulerRecorded = static fn (array $authority): bool =>
+        (bool) $schedulerMethod->invoke(null, $authority);
+    $assert($schedulerRecorded([
+        'status' => 'absent',
+        'authority' => 'permanent_admin_explicit_confirmation',
+    ]), 'explicit_scheduler_authority_rejected');
+    $assert($schedulerRecorded([
+        'status' => 'absent',
+        'authority' => 'rollback_preserved_absence',
+    ]), 'rollback_scheduler_authority_rejected');
+    foreach (['', 'unknown', 'fixture', 'forged'] as $authority) {
+        $assert(!$schedulerRecorded(['status' => 'absent', 'authority' => $authority]), 'foreign_scheduler_authority_accepted:' . $authority);
+    }
+    $assert(!$schedulerRecorded([
+        'status' => 'present',
+        'authority' => 'permanent_admin_explicit_confirmation',
+    ]), 'present_scheduler_accepted');
 
     $engine = [
         'active_engine' => 'disabled',

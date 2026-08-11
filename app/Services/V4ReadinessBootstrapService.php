@@ -33,6 +33,12 @@ final class V4ReadinessBootstrapService
     public const SCHEDULER_AUTHORITY_KEY = 'queue_core.v4.scheduler_authority';
     public const CERTIFIED_RECEIPT_KEY = 'queue_core.v4.readiness_certified_receipt';
 
+    /** @var list<string> */
+    private const SCHEDULER_ABSENCE_AUTHORITIES = [
+        'permanent_admin_explicit_confirmation',
+        'rollback_preserved_absence',
+    ];
+
     /** @var array<string,bool> */
     private const FLAGS_DISABLED = [
         'fresh_producer' => false,
@@ -578,7 +584,8 @@ final class V4ReadinessBootstrapService
             $issues[] = 'oauth_accounts_not_current_3_of_3';
         }
         $scheduler = $this->schedulerAuthority($pdo);
-        if ($scheduler['status'] !== 'absent' || $scheduler['authority'] === 'unknown') {
+        $schedulerAbsentRecorded = self::schedulerAbsenceRecorded($scheduler);
+        if (!$schedulerAbsentRecorded) {
             $issues[] = 'scheduler_absence_authority_missing';
         }
         $runtimeFailClosed = !Env::bool('CRON_V4_ENABLED', false)
@@ -623,8 +630,7 @@ final class V4ReadinessBootstrapService
             'cron_v3_shadow_enabled' => Env::bool('CRON_V3_SHADOW_ENABLED', false),
             'oauth_current_accounts' => count((array) ($preflight['accounts'] ?? [])),
             'queue_core_preflight_ok' => !empty($preflight['ok']),
-            'scheduler_absent_recorded' => $scheduler['status'] === 'absent'
-                && $scheduler['authority'] !== 'unknown',
+            'scheduler_absent_recorded' => $schedulerAbsentRecorded,
             'runtime_fail_closed' => $runtimeFailClosed,
             'runtime_ready' => $runtimeReady,
         ];
@@ -852,6 +858,17 @@ final class V4ReadinessBootstrapService
         ksort($actualCanonical, SORT_STRING);
         ksort($expectedCanonical, SORT_STRING);
         return $actualCanonical === $expectedCanonical;
+    }
+
+    /** @param array{status?:mixed,authority?:mixed} $scheduler */
+    private static function schedulerAbsenceRecorded(array $scheduler): bool
+    {
+        return ($scheduler['status'] ?? null) === 'absent'
+            && in_array(
+                (string) ($scheduler['authority'] ?? ''),
+                self::SCHEDULER_ABSENCE_AUTHORITIES,
+                true,
+            );
     }
 
     /**

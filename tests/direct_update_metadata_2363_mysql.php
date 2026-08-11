@@ -89,12 +89,17 @@ try {
     $pdo->exec("UPDATE app_settings SET setting_value='2.35.1' WHERE setting_key='app.version'");
     $pdo->exec("DELETE FROM app_versions WHERE version='2.36.3'");
     file_put_contents($temporary . '/storage/installed-release.json', $baselineMarker);
-    putenv('APP_KEY=');
+    putenv('APP_KEY');
+    $_ENV['APP_KEY'] = '';
+    $_SERVER['APP_KEY'] = '';
     try {
         $service->promote($pdo, '2.36.3', '293_queue_core_runtime_profile_defaults_b2_1.sql');
         throw new RuntimeException('Marker failure unexpectedly succeeded.');
     } catch (RuntimeException $expected) {
-        $assert($expected->getMessage() === 'installed_release_marker_write_failed', 'Unexpected marker failure error.');
+        $assert(
+            $expected->getMessage() === 'installed_release_marker_write_failed',
+            'Unexpected marker failure error: ' . $expected->getMessage()
+        );
     }
     $assert($pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === '2.35.1', 'DB rollback after marker failure failed.');
     $assert((int) $pdo->query("SELECT COUNT(*) FROM app_versions WHERE version='2.36.3'")->fetchColumn() === 0, 'History rollback after marker failure failed.');

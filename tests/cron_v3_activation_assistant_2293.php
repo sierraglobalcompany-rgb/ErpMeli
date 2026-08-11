@@ -17,7 +17,7 @@ if ($fixture === false) {
     throw new RuntimeException('No se pudo preparar config fixture.');
 }
 
-foreach (['CRON_V3_ENABLED', 'CRON_V3_SHADOW_ENABLED', 'CRON_V3_RATE_LIMIT', 'CRON_V3_API_TIMEOUT', 'CRON_V3_API_CONNECT_TIMEOUT', 'ML_WRITE_ENABLED'] as $key) {
+foreach (['CRON_V3_ENABLED', 'CRON_V3_SHADOW_ENABLED', 'CRON_V4_ENABLED', 'CRON_V3_RATE_LIMIT', 'CRON_V3_API_TIMEOUT', 'CRON_V3_API_CONNECT_TIMEOUT', 'ML_WRITE_ENABLED'] as $key) {
     putenv($key);
     unset($_ENV[$key], $_SERVER[$key]);
 }
@@ -41,6 +41,7 @@ try {
     $assert(str_contains($body, 'MELI_CLIENT_SECRET=secret-oauth'), 'MELI_CLIENT_SECRET fue alterado.');
     $assert(str_contains($body, 'CRON_V3_ENABLED=false'), 'CRON_V3_ENABLED debe quedar apagado.');
     $assert(str_contains($body, 'CRON_V3_SHADOW_ENABLED=false'), 'Shadow debe iniciar apagado.');
+    $assert(str_contains($body, 'CRON_V4_ENABLED=false'), 'Cron V4 debe permanecer apagado durante el retiro V3.');
     $assert(str_contains($body, 'CRON_V3_RATE_LIMIT=10'), 'Rate seguro faltante.');
     $assert(str_contains($body, 'CRON_V3_API_TIMEOUT=8'), 'Timeout API seguro faltante.');
     $assert(str_contains($body, 'CRON_V3_API_CONNECT_TIMEOUT=3'), 'Connect timeout seguro faltante.');
@@ -55,12 +56,32 @@ try {
         putenv('CRON_V3_ENABLED');
     }
 
+    putenv('CRON_V4_ENABLED=true');
+    try {
+        (new CronV3SetupAssistantService(null, $fixture, dirname(__DIR__)))->prepareSafeConfig(9);
+        throw new RuntimeException('El override V4 de proceso no fue bloqueado.');
+    } catch (RuntimeException $expected) {
+        $assert($expected->getMessage() === 'cron_v3_process_env_override:CRON_V4_ENABLED', 'Bloqueo inesperado para override V4.');
+    } finally {
+        putenv('CRON_V4_ENABLED');
+    }
+
     putenv('ML_WRITE_ENABLED=true');
     try {
         (new CronV3SetupAssistantService(null, $fixture, dirname(__DIR__)))->prepareSafeConfig(9);
         throw new RuntimeException('ML_WRITE_ENABLED=true no bloqueó la preparación.');
     } catch (RuntimeException $expected) {
         $assert($expected->getMessage() === 'cron_v3_ml_write_enabled', 'Bloqueo inesperado para ML_WRITE_ENABLED.');
+    } finally {
+        putenv('ML_WRITE_ENABLED');
+    }
+
+    putenv('ML_WRITE_ENABLED=valor-invalido');
+    try {
+        (new CronV3SetupAssistantService(null, $fixture, dirname(__DIR__)))->prepareSafeConfig(9);
+        throw new RuntimeException('ML_WRITE_ENABLED inválido no bloqueó la preparación.');
+    } catch (RuntimeException $expected) {
+        $assert($expected->getMessage() === 'cron_v3_ml_write_enabled', 'Bloqueo inesperado para ML_WRITE_ENABLED inválido.');
     } finally {
         putenv('ML_WRITE_ENABLED');
     }

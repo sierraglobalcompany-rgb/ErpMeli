@@ -17,7 +17,11 @@ $apiJs = $read('public/assets/api-health.js');
 
 $assert(str_contains($js, 'renderOperationalSnapshot'), 'Cron debe pintar desde operational-snapshot.json.');
 $assert(str_contains($js, 'root.dataset.operationalUrl'), 'El frontend debe consultar la ruta operativa directamente.');
-$assert(str_contains($js, '[data-cron-v3-setup], [data-cron-v3-canary]'), 'Shadow/Canario deben ocultarse cuando V3 operativo sea verdad.');
+$assert(str_contains($js, "root.querySelectorAll('[data-cron-v3-setup]')"), 'El panel de configuración segura debe tratarse por separado.');
+$assert(str_contains($js, "root.querySelectorAll('[data-cron-v3-canary]')"), 'El canario legado debe ocultarse cuando V3 operativo sea verdad.');
+$assert(str_contains($js, "root.querySelectorAll('[data-cron-v3-shadow-action]')"), 'La acción Shadow debe ocultarse durante el retiro operativo.');
+$assert(str_contains($js, 'panel.hidden = false'), 'El panel de configuración segura debe permanecer visible.');
+$assert(str_contains($view, 'data-cron-v3-retirement-flag="CRON_V4_ENABLED"'), 'La vista debe exponer el estado efectivo de Cron V4.');
 $assert(str_contains($view, 'cron_v3_local.php --runtime=45 --max-items=50'), 'La vista debe mostrar comando V3 local activo.');
 $assert(str_contains($view, 'ERP_CRON_SKIP reason=v3_operational'), 'La vista debe explicar que V2 salta durante el corte.');
 $assert(str_contains($apiShell, '<noscript>'), 'Salud API necesita fallback sin JavaScript.');

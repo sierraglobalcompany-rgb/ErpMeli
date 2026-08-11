@@ -15,14 +15,23 @@ final class CronV3SetupAssistantService
     private const CONFIG_KEYS = [
         'CRON_V3_ENABLED',
         'CRON_V3_SHADOW_ENABLED',
+        'CRON_V4_ENABLED',
         'CRON_V3_RATE_LIMIT',
         'CRON_V3_API_TIMEOUT',
         'CRON_V3_API_CONNECT_TIMEOUT',
     ];
 
+    private const RETIREMENT_FLAGS = [
+        'CRON_V3_ENABLED' => false,
+        'CRON_V3_SHADOW_ENABLED' => false,
+        'CRON_V4_ENABLED' => false,
+        'ML_WRITE_ENABLED' => false,
+    ];
+
     private const SAFE_CONFIG = [
         'CRON_V3_ENABLED' => 'false',
         'CRON_V3_SHADOW_ENABLED' => 'false',
+        'CRON_V4_ENABLED' => 'false',
         'CRON_V3_RATE_LIMIT' => '10',
         'CRON_V3_API_TIMEOUT' => '8',
         'CRON_V3_API_CONNECT_TIMEOUT' => '3',
@@ -51,9 +60,10 @@ final class CronV3SetupAssistantService
         $localDoctor = (new CronV3DoctorService($this->pdo))->snapshot('local');
         $remoteDoctor = (new CronV3DoctorService($this->pdo))->snapshot('remote');
         $shadow = $this->shadowSignals();
-        $mlWriteEnabled = Env::bool('ML_WRITE_ENABLED', false);
+        $retirementPreflight = $this->retirementPreflight($config['values']);
+        $mlWriteEnabled = ($retirementPreflight['effective_flags']['ML_WRITE_ENABLED'] ?? null) === true;
         $safeApplied = $this->safeConfigApplied($config['values'])
-            && !$mlWriteEnabled
+            && $retirementPreflight['ok']
             && $processOverrides === [];
         $doctorReady = !empty($localDoctor['ok']) && !empty($remoteDoctor['ok']);
         $shadowEnabled = filter_var($this->effectiveValue('CRON_V3_SHADOW_ENABLED', 'false'), FILTER_VALIDATE_BOOL);
@@ -81,6 +91,7 @@ final class CronV3SetupAssistantService
             'active_enabled' => $activeEnabled,
             'canary_active_by_evidence' => $canaryActiveByEvidence,
             'process_overrides' => $processOverrides,
+            'retirement_preflight' => $retirementPreflight,
             'blocking' => $blocking,
             'doctors' => [
                 'local' => $this->compactDoctor($localDoctor),
@@ -102,11 +113,16 @@ final class CronV3SetupAssistantService
         foreach (array_keys(self::SAFE_CONFIG) as $key) {
             AppSettingsService::clearCache($this->databaseKeyFor($key) ?? $key);
         }
+        $retirementPreflight = $this->retirementPreflight($this->readConfigFile()['values']);
+        if (!$retirementPreflight['ok']) {
+            throw new \RuntimeException('cron_v3_safe_config_postcondition_failed');
+        }
 
         return [
             'ok' => true,
             'message' => 'Configuración segura de Cron V3 preparada. V3 real sigue apagado.',
             'config' => self::SAFE_CONFIG,
+            'retirement_preflight' => $retirementPreflight,
         ];
     }
 
@@ -281,17 +297,63 @@ final class CronV3SetupAssistantService
     private function safeConfigApplied(array $values): bool
     {
         foreach (self::SAFE_CONFIG as $key => $value) {
-            if ($key === 'CRON_V3_ENABLED' || $key === 'CRON_V3_SHADOW_ENABLED') {
-                continue;
-            }
             if (!array_key_exists($key, $values) || $this->normalize($values[$key]) !== $this->normalize($value)) {
                 return false;
             }
         }
-        if (!array_key_exists('CRON_V3_ENABLED', $values) || !array_key_exists('CRON_V3_SHADOW_ENABLED', $values)) {
-            return false;
-        }
         return true;
+    }
+
+    /**
+     * @param array<string,string> $values
+     * @return array{
+     *   ok:bool,
+     *   effective_flags:array<string,?bool>,
+     *   sources:array<string,string>,
+     *   process_override_conflicts:list<string>,
+     *   required_state:array<string,bool>
+     * }
+     */
+    private function retirementPreflight(array $values): array
+    {
+        $effectiveFlags = [];
+        $sources = [];
+        $conflicts = [];
+        $ok = true;
+
+        foreach (self::RETIREMENT_FLAGS as $key => $required) {
+            $process = $this->processValue($key);
+            $config = $values[$key] ?? null;
+            $raw = $process ?? $config ?? ($required ? 'true' : 'false');
+            $effective = $this->strictBool($raw);
+
+            $effectiveFlags[$key] = $effective;
+            $sources[$key] = $process !== null ? 'process' : ($config !== null ? 'config' : 'default');
+            if ($process !== null && $effective !== $required) {
+                $conflicts[] = $key;
+            }
+            if ($effective !== $required) {
+                $ok = false;
+            }
+        }
+
+        sort($conflicts, SORT_STRING);
+        return [
+            'ok' => $ok && $conflicts === [],
+            'effective_flags' => $effectiveFlags,
+            'sources' => $sources,
+            'process_override_conflicts' => $conflicts,
+            'required_state' => self::RETIREMENT_FLAGS,
+        ];
+    }
+
+    private function strictBool(string $value): ?bool
+    {
+        return match ($this->normalize($value)) {
+            'true' => true,
+            'false' => false,
+            default => null,
+        };
     }
 
     /** @param array<string,string> $updates */
@@ -385,7 +447,7 @@ final class CronV3SetupAssistantService
 
     private function assertMlWritesDisabled(): void
     {
-        if (Env::bool('ML_WRITE_ENABLED', false)) {
+        if ($this->strictBool($this->effectiveValue('ML_WRITE_ENABLED', 'false')) !== false) {
             throw new \RuntimeException('cron_v3_ml_write_enabled');
         }
     }

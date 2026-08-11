@@ -588,11 +588,19 @@
       || String(runtime.cutover?.state || '') === 'operational_active';
   };
 
-  const hideLegacyV3PanelsWhenOperational = () => {
+  const syncLegacyV3PanelsForOperationalState = () => {
     const operationalMode = isRuntimeOperational(lastRuntime);
-    root.querySelectorAll('[data-cron-v3-setup], [data-cron-v3-canary]').forEach((panel) => {
+    root.querySelectorAll('[data-cron-v3-setup]').forEach((panel) => {
+      panel.hidden = false;
+      panel.setAttribute('aria-hidden', 'false');
+    });
+    root.querySelectorAll('[data-cron-v3-canary]').forEach((panel) => {
       panel.hidden = operationalMode;
       panel.setAttribute('aria-hidden', operationalMode ? 'true' : 'false');
+    });
+    root.querySelectorAll('[data-cron-v3-shadow-action]').forEach((form) => {
+      form.hidden = operationalMode;
+      form.setAttribute('aria-hidden', operationalMode ? 'true' : 'false');
     });
     return operationalMode;
   };
@@ -706,7 +714,7 @@
         v2: payload.runtime?.v2 || lastRuntime?.v2,
       });
     }
-    hideLegacyV3PanelsWhenOperational();
+    syncLegacyV3PanelsForOperationalState();
 
     renderCronV3(payload.v3);
     renderRuntime({ runtime: payload.runtime });
@@ -835,7 +843,7 @@
     const panel = root.querySelector('[data-cron-v3-setup]');
     const setup = payload?.setup || payload;
     if (!panel || !setup) return;
-    if (hideLegacyV3PanelsWhenOperational()) return;
+    syncLegacyV3PanelsForOperationalState();
     lastSetup = mergeDefined(lastSetup, setup);
     const stateMap = {
       needs_safe_config: ['is-warning', 'Preparar config'],
@@ -897,6 +905,27 @@
         ? 'Asistente actualizado · el canario real se controla en la tarjeta siguiente'
         : 'Asistente actualizado · V3 real sigue apagado';
     }
+    const retirement = lastSetup.retirement_preflight || {};
+    const effectiveFlags = retirement.effective_flags || {};
+    const sources = retirement.sources || {};
+    Object.keys(retirement.required_state || {}).forEach((key) => {
+      const value = panel.querySelector(`[data-cron-v3-retirement-flag="${key}"]`);
+      if (!value) return;
+      const effective = effectiveFlags[key];
+      const label = effective === false ? 'Apagado' : (effective === true ? 'ACTIVO' : 'Inválido');
+      value.textContent = `${label} · ${sources[key] || 'desconocido'}`;
+      value.className = effective === false ? 'is-success' : 'is-danger';
+    });
+    const conflicts = Array.isArray(retirement.process_override_conflicts)
+      ? retirement.process_override_conflicts
+      : [];
+    const retirementState = panel.querySelector('[data-cron-v3-retirement-state]');
+    if (retirementState) {
+      retirementState.textContent = retirement.ok
+        ? 'Configuración efectiva segura: 4/4 flags apagados y sin overrides contradictorios.'
+        : `Bloqueado: ${conflicts.length ? conflicts.join(', ') : 'uno o más flags no están apagados'}.`;
+      retirementState.className = retirement.ok ? 'notice success' : 'notice error';
+    }
     panel.querySelectorAll('[data-cron-v3-setup-action]').forEach((form) => {
       const action = form.action || '';
       const button = form.querySelector('button[type="submit"]');
@@ -915,7 +944,7 @@
     const panel = root.querySelector('[data-cron-v3-canary]');
     const canary = payload?.canary || payload;
     if (!panel || !canary) return;
-    if (hideLegacyV3PanelsWhenOperational()) return;
+    if (syncLegacyV3PanelsForOperationalState()) return;
     lastCanary = mergeDefined(lastCanary, canary);
     const stateMap = {
       blocked: ['is-warning', 'Bloqueado'],
@@ -1025,7 +1054,7 @@
     const runtime = payload?.runtime || payload;
     if (!panel || !runtime) return;
     lastRuntime = mergeDefined(lastRuntime, runtime);
-    hideLegacyV3PanelsWhenOperational();
+    syncLegacyV3PanelsForOperationalState();
     const stateMap = {
       operational: ['is-success', 'V3 operativo'],
       hostinger_still_v2: ['is-warning', 'Hostinger todavía llama V2'],

@@ -172,12 +172,19 @@ $tone = match ($state) {
     <ol class="cron-next-list cron-v3-setup-steps" data-cron-v3-setup-steps>
       <li><strong>Instalación lista</strong><span>Por comprobar</span></li>
     </ol>
+    <div class="cron-command-grid" data-cron-v3-retirement-preflight>
+      <article><span>CRON_V3_ENABLED</span><strong data-cron-v3-retirement-flag="CRON_V3_ENABLED">Comprobando</strong></article>
+      <article><span>CRON_V3_SHADOW_ENABLED</span><strong data-cron-v3-retirement-flag="CRON_V3_SHADOW_ENABLED">Comprobando</strong></article>
+      <article><span>CRON_V4_ENABLED</span><strong data-cron-v3-retirement-flag="CRON_V4_ENABLED">Comprobando</strong></article>
+      <article><span>ML_WRITE_ENABLED</span><strong data-cron-v3-retirement-flag="ML_WRITE_ENABLED">Comprobando</strong></article>
+    </div>
+    <p class="notice warning" data-cron-v3-retirement-state aria-live="polite">Verificando configuración efectiva y overrides de proceso…</p>
     <div class="page-actions mt-2">
       <form method="post" action="<?= View::e($base) ?>/settings/cron/v3-setup/prepare-safe-config" data-cron-v3-setup-action>
         <input type="hidden" name="_token" value="<?= View::e($csrfToken) ?>">
         <button class="btn primary" type="submit">Preparar configuración segura</button>
       </form>
-      <form method="post" action="<?= View::e($base) ?>/settings/cron/v3-setup/enable-shadow" data-cron-v3-setup-action>
+      <form method="post" action="<?= View::e($base) ?>/settings/cron/v3-setup/enable-shadow" data-cron-v3-setup-action data-cron-v3-shadow-action>
         <input type="hidden" name="_token" value="<?= View::e($csrfToken) ?>">
         <button class="btn" type="submit">Activar Shadow V3</button>
       </form>

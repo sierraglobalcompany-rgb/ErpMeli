@@ -215,12 +215,12 @@ try {
         'product_id' => 'erp-meli',
         'release_id' => 'erp-meli-2.36.5-managed-local',
         'version' => '2.36.5',
-        'sequence' => 23604,
+        'sequence' => 23605,
         'channel' => 'manual',
         'source_trust' => 'local_admin',
         'published_at' => ManagedRuntimePublicationPolicy::BUILT_AT,
         'expires_at' => '2099-12-31T23:59:59+00:00',
-        'upgrade_from' => ['2.36.3'],
+        'upgrade_from' => ['2.36.4'],
         'required_bridges' => [],
         'requirements' => [
             'php_min' => '8.3.0',
@@ -239,7 +239,7 @@ try {
     release2365Zip($updatePath, $entries, $files, $timestamp, $updateManifestBytes);
 
     $overlayInventory = [
-        'schema' => 'erp-meli-2363-ftp-overlay-v1',
+        'schema' => 'erp-meli-2365-ftp-overlay-v1',
         'version' => '2.36.5',
         'base_commit' => $baseCommit,
         'commit' => $commit,
@@ -257,12 +257,12 @@ try {
     file_put_contents($inventoryPath, release2365Json($overlayInventory));
 
     $instructionPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_2.36.5_FTP_INSTRUCTIONS.md';
-    $reportPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_2.36.5_SAFE_CONFIG_HOTFIX_REPORT.md';
-    file_put_contents($instructionPath, ManagedRuntimePublicationPolicy::gitBlob($source, $commit, 'docs/release_2365_safe_config.md'));
+    $reportPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_2.36.5_V3_RETIREMENT_ADMIN_REPORT.md';
+    file_put_contents($instructionPath, ManagedRuntimePublicationPolicy::gitBlob($source, $commit, 'docs/release_2365_v3_retirement_admin.md'));
     file_put_contents($reportPath, ManagedRuntimePublicationPolicy::gitBlob(
         $source,
         $commit,
-        'docs/ERP_MELI_2.36.5_SAFE_CONFIG_HOTFIX_REPORT.md',
+        'docs/ERP_MELI_2.36.5_V3_RETIREMENT_ADMIN_REPORT.md',
     ));
 
     $artifacts = [];
@@ -270,7 +270,7 @@ try {
         $artifacts[basename($path)] = ['bytes' => filesize($path), 'sha256' => hash_file('sha256', $path)];
     }
     $authority = [
-        'schema' => 'erp-meli-2363-artifacts-v1',
+        'schema' => 'erp-meli-2365-artifacts-v1',
         'source' => 'GIT_OBJECT_DATABASE',
         'commit' => $commit,
         'tree' => $tree,
@@ -304,4 +304,3 @@ try {
     fwrite(STDERR, 'Artifact build 2.36.5: FAIL ' . $error->getMessage() . "\n");
     exit(1);
 }
-

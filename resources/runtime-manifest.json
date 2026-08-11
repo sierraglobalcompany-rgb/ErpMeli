@@ -3198,8 +3198,8 @@
         },
         "runtime_app_services_v4readinessbootstrapservice_php": {
             "path": "app/Services/V4ReadinessBootstrapService.php",
-            "sha256": "9ad5ae828ab0af3160ab43008d8a6a78c5bcca9442403a341b7bfd5bee3130bc",
-            "sha256_lf": "9ad5ae828ab0af3160ab43008d8a6a78c5bcca9442403a341b7bfd5bee3130bc",
+            "sha256": "94da136caf33d68a1a8799c11a1b69c73579cafba4fee330f041c5b3934c515a",
+            "sha256_lf": "94da136caf33d68a1a8799c11a1b69c73579cafba4fee330f041c5b3934c515a",
             "text": true
         },
         "runtime_app_services_verifiedsalescaptureservice_php": {
@@ -4974,8 +4974,8 @@
         },
         "runtime_resources_release_updater_authority_2_36_9_json": {
             "path": "resources/release/updater-authority-2.36.9.json",
-            "sha256": "65916a413177e9e49eae27ee5bb5f25cdd98e54a865b326407157522e7dc07c8",
-            "sha256_lf": "65916a413177e9e49eae27ee5bb5f25cdd98e54a865b326407157522e7dc07c8",
+            "sha256": "faf5132e9308860c6045d7e15299e3ab714a4e87ee7259f5b5f9d37c8a1b9b88",
+            "sha256_lf": "faf5132e9308860c6045d7e15299e3ab714a4e87ee7259f5b5f9d37c8a1b9b88",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

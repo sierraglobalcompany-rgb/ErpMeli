@@ -7,6 +7,7 @@ use App\Core\Database;
 use App\Services\InstalledVersionMarkerService;
 
 require dirname(__DIR__) . '/bootstrap.php';
+restore_exception_handler();
 
 $base = rtrim((string) (getenv('ERP_2363_HTTP_BASE') ?: ''), '/');
 $artifactDirectory = (string) (getenv('ERP_2363_HTTP_ARTIFACTS') ?: '');
@@ -146,7 +147,7 @@ function qa2363WriteHtml(string $path, string $html, string $releaseRoot): void
     }
 }
 
-$pdo = Database::connection();
+$pdo = null;
 $releaseRoot = dirname(__DIR__);
 $checks = 0;
 $check = static function (bool $condition, string $message) use (&$checks): void {
@@ -157,6 +158,7 @@ $check = static function (bool $condition, string $message) use (&$checks): void
 };
 
 try {
+    $pdo = Database::connection();
     @unlink($cookie);
     $pdo->prepare('DELETE FROM users WHERE email=?')->execute([$email]);
     $insertUser = $pdo->prepare(
@@ -278,5 +280,7 @@ try {
     exit(1);
 } finally {
     @unlink($cookie);
-    $pdo->prepare('DELETE FROM users WHERE email=?')->execute([$email]);
+    if ($pdo instanceof PDO) {
+        $pdo->prepare('DELETE FROM users WHERE email=?')->execute([$email]);
+    }
 }

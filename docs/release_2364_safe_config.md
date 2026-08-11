@@ -19,4 +19,3 @@ Pulse una sola vez “Preparar configuración segura”. La operación exige y m
 - cero overrides de proceso contradictorios.
 
 No cree Cron V4, no active Queue Engine y no ejecute el SQL de retiro hasta revisar el resultado del preflight.
-

@@ -40,4 +40,3 @@ $invalidFile = DirectUpdateTransitionPolicy::evaluate('desconocida', '2.35.1', 0
 $assert($invalidFile['reason'] === 'file_version_invalid', 'Invalid file version was accepted.');
 
 fwrite(STDOUT, 'Direct update transition 2.36.4: PASS checks=' . $checks . PHP_EOL);
-

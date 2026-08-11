@@ -304,4 +304,3 @@ try {
     fwrite(STDERR, 'Artifact build 2.36.4: FAIL ' . $error->getMessage() . "\n");
     exit(1);
 }
-

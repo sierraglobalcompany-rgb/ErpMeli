@@ -310,4 +310,3 @@ try {
         $pdo->prepare('DELETE FROM users WHERE email=?')->execute([$email]);
     }
 }
-

@@ -173,4 +173,3 @@ try {
     @rmdir($temporary);
     putenv('APP_KEY');
 }
-

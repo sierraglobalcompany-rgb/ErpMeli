@@ -17,4 +17,3 @@ El snapshot del asistente tampoco incorporaba `CRON_V4_ENABLED` a la autoridad s
 ## Límites
 
 No hay migraciones, endpoints nuevos, creación de cron, activación de Queue Engine, llamadas a Mercado Libre ni DML comercial. La transición de versión sólo puede actualizar `app_settings['app.version']`, `app_versions['2.36.4']` y el marker firmado mediante el flujo metadata-only certificado.
-

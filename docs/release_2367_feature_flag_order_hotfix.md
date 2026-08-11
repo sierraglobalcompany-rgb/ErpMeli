@@ -19,4 +19,3 @@ activa Queue Engine.
 
 No suba `ERP_MELI_2.36.7_GIT_EXACT.zip` sobre una instalación con estado
 persistente. El paquete `.erpupd` es para el actualizador administrativo.
-

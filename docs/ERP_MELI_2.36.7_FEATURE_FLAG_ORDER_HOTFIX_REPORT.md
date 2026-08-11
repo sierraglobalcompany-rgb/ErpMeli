@@ -28,4 +28,3 @@ convergencia, capacidad, OAuth, FIFO ni Queue Engine. No hay migración.
 
 Los hashes finales son autoridad de los sidecars generados por
 `bin/build_release_2367_artifacts.php`.
-

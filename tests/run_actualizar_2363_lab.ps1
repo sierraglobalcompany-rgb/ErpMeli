@@ -67,7 +67,7 @@ try {
     if ($migrationCount -ne 293) { throw "lab_migration_count_invalid:$migrationCount" }
 
     $dbPort = Get-FreeTcpPort
-    $webPort = Get-FreeTcpPort
+    do { $webPort = Get-FreeTcpPort } while ($webPort -eq $dbPort)
     $appKey = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant()
     $config = @(
         'APP_ENV=local',
@@ -101,6 +101,12 @@ try {
     }
     if (-not $ready) { throw 'mariadb_not_ready' }
 
+    $env:DB_HOST = '127.0.0.1'
+    $env:DB_PORT = [string]$dbPort
+    $env:DB_NAME = 'erp_meli_lab'
+    $env:DB_USER = 'root'
+    $env:DB_PASS = ''
+
     $migrationLog = Join-Path $lab 'migrate.log'
     Push-Location $release
     try {
@@ -110,6 +116,14 @@ try {
             throw 'migration_001_293_failed'
         }
     } finally { Pop-Location }
+
+    $pdoReady = $false
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        & php -r '$p=new PDO($argv[1],"root",""); echo $p->query("SELECT 1")->fetchColumn();' "mysql:host=127.0.0.1;port=$dbPort;dbname=erp_meli_lab;charset=utf8mb4" *> $null
+        if ($LASTEXITCODE -eq 0) { $pdoReady = $true; break }
+        Start-Sleep -Milliseconds 250
+    }
+    if (-not $pdoReady) { throw 'mariadb_external_pdo_not_ready' }
 
     $serverOut = Join-Path $lab 'php-server.stdout.log'
     $serverErr = Join-Path $lab 'php-server.stderr.log'
@@ -150,6 +164,9 @@ try {
 } finally {
     Remove-Item Env:ERP_2363_HTTP_BASE -ErrorAction SilentlyContinue
     Remove-Item Env:ERP_2363_HTTP_ARTIFACTS -ErrorAction SilentlyContinue
+    foreach ($name in @('DB_HOST','DB_PORT','DB_NAME','DB_USER','DB_PASS')) {
+        Remove-Item ("Env:" + $name) -ErrorAction SilentlyContinue
+    }
     if ($null -ne $server -and -not $server.HasExited) {
         Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
         $server.WaitForExit(5000) | Out-Null

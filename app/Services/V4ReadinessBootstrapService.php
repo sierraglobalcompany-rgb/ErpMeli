@@ -751,42 +751,72 @@ final class V4ReadinessBootstrapService
     /** @return array{state:string} */
     private function rollbackAuthorities(PDO $pdo, int $actorUserId, string $reason): array
     {
-        $engineService = new QueueEngineControlService($pdo);
-        $engine = $engineService->snapshot();
-        if ($engine['active_engine'] !== 'disabled') {
-            throw new RuntimeException('v4_bootstrap_rollback_engine_not_disabled');
-        }
-        if ($engine['readiness_mode'] === 'preparing') {
-            $transition = $engineService->compareAndSwapReadiness(
+        $errors = [];
+        $attempt = static function (string $authority, Closure $operation) use (&$errors): mixed {
+            try {
+                return $operation();
+            } catch (Throwable $error) {
+                $safe = preg_replace('/[^a-zA-Z0-9_.:-]+/', '_', $error->getMessage()) ?: 'failed';
+                $errors[] = $authority . ':' . substr($safe, 0, 120);
+                return null;
+            }
+        };
+
+        // Estas dos autoridades cortan ejecución remota aun cuando un CAS DB
+        // esté contendido. Ningún fallo posterior puede impedir intentarlas.
+        $attempt('api', fn (): null => (new EmergencyControlService())->stopApi(
+            'v4_readiness_rollback_2366',
+            'Rollback fail-closed: ' . mb_substr($reason, 0, 120),
+        ));
+        $attempt('config', fn (): array => (new CronV3SetupAssistantService($pdo, $this->configPath()))
+            ->restoreV4FailClosedConfig($actorUserId));
+
+        $engine = $attempt('engine', function () use ($pdo, $actorUserId): array {
+            $service = new QueueEngineControlService($pdo);
+            $current = $service->snapshot();
+            if ($current['active_engine'] !== 'disabled') {
+                throw new RuntimeException('v4_bootstrap_rollback_engine_not_disabled');
+            }
+            if ($current['readiness_mode'] !== 'preparing') {
+                return $current;
+            }
+            $transition = $service->compareAndSwapReadiness(
                 'idle',
-                (int) $engine['generation'],
+                (int) $current['generation'],
                 'admin:' . $actorUserId . ':v4_readiness_rollback_2366',
             );
             if (empty($transition['ok'])) {
                 throw new RuntimeException('v4_bootstrap_rollback_engine_cas_failed');
             }
-            $engine = $transition;
+            return $transition;
+        });
+        $generation = is_array($engine) ? max(0, (int) ($engine['generation'] ?? 0)) : 0;
+
+        $attempt('features', function () use ($pdo, $generation): null {
+            $flags = new QueueCoreFeatureFlagService($pdo);
+            $current = $flags->snapshot();
+            if ($current === self::FLAGS_READY) {
+                $flags->compareAndSwapReadinessFlags(self::FLAGS_READY, self::FLAGS_DISABLED, $generation);
+            } elseif ($current !== self::FLAGS_DISABLED) {
+                throw new RuntimeException('v4_bootstrap_rollback_feature_authority_unknown');
+            }
+            return null;
+        });
+
+        $attempt('scheduler_authority', fn (): null => $this->upsertSetting(
+            $pdo,
+            self::SCHEDULER_AUTHORITY_KEY,
+            json_encode([
+                'status' => 'absent',
+                'authority' => 'rollback_preserved_absence',
+                'actor_user_id' => $actorUserId,
+                'rolled_back_at' => gmdate('Y-m-d\TH:i:s\Z'),
+            ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+        ));
+
+        if ($errors !== []) {
+            throw new RuntimeException('v4_bootstrap_rollback_incomplete:' . implode(',', array_unique($errors)));
         }
-        $flags = new QueueCoreFeatureFlagService($pdo);
-        if ($flags->snapshot() === self::FLAGS_READY) {
-            $flags->compareAndSwapReadinessFlags(
-                self::FLAGS_READY,
-                self::FLAGS_DISABLED,
-                max(0, (int) ($engine['generation'] ?? 0)),
-            );
-        }
-        (new EmergencyControlService())->stopApi(
-            'v4_readiness_rollback_2366',
-            'Rollback fail-closed: ' . mb_substr($reason, 0, 120),
-        );
-        (new CronV3SetupAssistantService($pdo, $this->configPath()))
-            ->restoreV4FailClosedConfig($actorUserId);
-        $this->upsertSetting($pdo, self::SCHEDULER_AUTHORITY_KEY, json_encode([
-            'status' => 'absent',
-            'authority' => 'rollback_preserved_absence',
-            'actor_user_id' => $actorUserId,
-            'rolled_back_at' => gmdate('Y-m-d\TH:i:s\Z'),
-        ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
         return ['state' => 'rolled_back'];
     }
 

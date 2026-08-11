@@ -59,6 +59,17 @@ try {
     $assert(str_contains($service, 'startApiWithoutCanary'), 'api_enable_missing');
     $assert(str_contains($service, 'restoreV4FailClosedConfig'), 'config_rollback_missing');
     $assert(str_contains($service, 'stopApi'), 'api_rollback_missing');
+    $rollbackStart = strpos($service, 'private function rollbackAuthorities');
+    $rollbackBody = $rollbackStart === false ? '' : substr($service, $rollbackStart);
+    $assert(
+        strpos($rollbackBody, '$attempt(\'api\'') < strpos($rollbackBody, '$attempt(\'engine\''),
+        'api_fail_closed_not_prioritized'
+    );
+    $assert(
+        strpos($rollbackBody, '$attempt(\'config\'') < strpos($rollbackBody, '$attempt(\'engine\''),
+        'config_fail_closed_not_prioritized'
+    );
+    $assert(str_contains($rollbackBody, 'v4_bootstrap_rollback_incomplete:'), 'rollback_error_aggregation_missing');
     $assert(str_contains($service, "compareAndSwapReadiness(\n                'idle'"), 'engine_rollback_cas_missing');
     $assert(str_contains($service, "'scheduler_created' => false"), 'scheduler_absence_receipt_missing');
     $assert(str_contains($service, "'engine_activated' => false"), 'engine_disabled_receipt_missing');

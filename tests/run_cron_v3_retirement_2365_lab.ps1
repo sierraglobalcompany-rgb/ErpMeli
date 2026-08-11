@@ -44,6 +44,8 @@ try {
     try {
         & php tests/cron_v3_retirement_2365_mysql.php
         if ($LASTEXITCODE -ne 0) { throw 'retirement_mysql_matrix_failed' }
+        & php tests/direct_update_metadata_2365_mysql.php
+        if ($LASTEXITCODE -ne 0) { throw 'direct_update_metadata_matrix_failed' }
     } finally {
         Pop-Location
     }

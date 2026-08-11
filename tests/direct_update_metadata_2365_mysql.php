@@ -10,13 +10,13 @@ if ($dsn === '') {
     exit(0);
 }
 
-$temporary = sys_get_temp_dir() . '/erp-meli-2363-db-' . bin2hex(random_bytes(6));
+$temporary = sys_get_temp_dir() . '/erp-meli-2365-db-' . bin2hex(random_bytes(6));
 if (!mkdir($temporary . '/storage', 0770, true) && !is_dir($temporary . '/storage')) {
     throw new RuntimeException('temporary_create_failed');
 }
 define('ERP_INSTALLATION_ROOT', $temporary);
 define('ERP_SHARED_ROOT', $temporary);
-$appKey = 'local-2363-test-key-' . bin2hex(random_bytes(16));
+$appKey = 'local-2365-test-key-' . bin2hex(random_bytes(16));
 putenv('APP_KEY=' . $appKey);
 
 $root = dirname(__DIR__);
@@ -34,7 +34,7 @@ $server = new PDO($dsn, $user, $password, [
     PDO::ATTR_EMULATE_PREPARES => false,
     PDO::ATTR_PERSISTENT => false,
 ]);
-$database = 'erp_2363_' . bin2hex(random_bytes(5));
+$database = 'erp_2365_' . bin2hex(random_bytes(5));
 $server->exec('CREATE DATABASE `' . $database . '` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
 $checks = 0;
 $assert = static function (bool $condition, string $message) use (&$checks): void {
@@ -77,7 +77,7 @@ try {
     $service->promote($pdo, '2.36.5', '293_queue_core_runtime_profile_defaults_b2_1.sql', 'repeat');
     $assert((int) $pdo->query("SELECT COUNT(*) FROM app_versions WHERE version='2.36.5'")->fetchColumn() === 1, 'Idempotent retry duplicated history.');
 
-    $pdo->exec("UPDATE app_settings SET setting_value='2.36.5' WHERE setting_key='app.version'");
+    $pdo->exec("UPDATE app_settings SET setting_value='2.36.6' WHERE setting_key='app.version'");
     $markerBeforeDowngrade = file_get_contents($temporary . '/storage/installed-release.json');
     try {
         $service->promote($pdo, '2.36.5', '293_queue_core_runtime_profile_defaults_b2_1.sql');
@@ -173,4 +173,3 @@ try {
     @rmdir($temporary);
     putenv('APP_KEY');
 }
-

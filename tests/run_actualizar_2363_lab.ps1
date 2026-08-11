@@ -110,7 +110,7 @@ try {
     $migrationLog = Join-Path $lab 'migrate.log'
     Push-Location $release
     try {
-        & php bin\migrate.php *> $migrationLog
+        & php tests\migrate_001_293_2363_lab.php *> $migrationLog
         if ($LASTEXITCODE -ne 0) {
             Get-Content -LiteralPath $migrationLog -Tail 40 | Write-Error
             throw 'migration_001_293_failed'

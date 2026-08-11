@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require dirname(__DIR__) . '/app/Services/MeliNotificationTopicRegistry.php';
 require dirname(__DIR__) . '/app/Services/ManagedRuntimePublicationPolicy.php';
+require dirname(__DIR__) . '/app/Services/UpdateFilesystemService.php';
 require dirname(__DIR__) . '/app/Services/UpdateManifestService.php';
 
 use App\Services\ManagedRuntimePublicationPolicy;

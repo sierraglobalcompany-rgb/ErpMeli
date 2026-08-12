@@ -157,7 +157,7 @@ try {
     $ready = $false
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
         try {
-            $response = Invoke-WebRequest -Uri "http://127.0.0.1:$webPort/erp-meli/login.php" -MaximumRedirection 0 -TimeoutSec 2
+            $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$webPort/erp-meli/login.php" -MaximumRedirection 0 -TimeoutSec 2
             if ($response.StatusCode -eq 200) { $ready = $true; break }
         } catch {}
         Start-Sleep -Milliseconds 250

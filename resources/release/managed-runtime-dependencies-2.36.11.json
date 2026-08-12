@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "queue-core-b2.1-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "3bc0b9110de9f2bac77b0d31c3d534f2f969a2bbd398f5268636658e595d8e12",
+  "runtime_manifest_paths_sha256": "29cf6e1f2b2f3f9c8414c40895395b052871a6fd394960b749d457a2054c19fc",
   "coverage_base_commit": "f91cd534d271b964db1ad9e682260475eca96820",
   "blocked_rc_snapshot": {
     "commit": "4ecd154f0a219a07d6ce0dc152be59037e9ef98b",

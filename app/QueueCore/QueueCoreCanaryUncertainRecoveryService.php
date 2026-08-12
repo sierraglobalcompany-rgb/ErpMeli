@@ -333,10 +333,27 @@ final class QueueCoreCanaryUncertainRecoveryService
                     COALESCE(SUM(physical_http_calls),0) physical_http_calls,
                     COALESCE(SUM(response_known_at IS NOT NULL),0) known_responses,
                     COALESCE(SUM(resources_persisted),0) resources_persisted
-             FROM queue_core_attempts WHERE run_id=?'
+             FROM queue_core_attempts
+             WHERE run_id=? AND company_id=? AND meli_account_id=?'
         );
-        $aggregate->execute([(int) $attemptRow['run_id']]);
+        $aggregate->execute([
+            (int) $attemptRow['run_id'],
+            (int) $job['company_id'],
+            (int) $job['meli_account_id'],
+        ]);
         $measured = $aggregate->fetch(PDO::FETCH_ASSOC) ?: [];
+        $foreignScope = $this->pdo->prepare(
+            'SELECT COUNT(*) FROM queue_core_attempts
+             WHERE run_id=? AND (company_id<>? OR meli_account_id<>?)'
+        );
+        $foreignScope->execute([
+            (int) $attemptRow['run_id'],
+            (int) $job['company_id'],
+            (int) $job['meli_account_id'],
+        ]);
+        if ((int) $foreignScope->fetchColumn() !== 0) {
+            return 'run_tenant_scope_invalid';
+        }
         foreach (['jobs_claimed', 'physical_http_calls', 'known_responses', 'resources_persisted'] as $field) {
             if ((int) ($runRow[$field] ?? -1) !== (int) ($measured[$field] ?? -2)) {
                 return 'run_metrics_invalid';

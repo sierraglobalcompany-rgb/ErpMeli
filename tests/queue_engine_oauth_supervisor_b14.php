@@ -829,17 +829,22 @@ $pdo->exec('SET FOREIGN_KEY_CHECKS=1');
 $pdo->exec("UPDATE queue_engine_control
             SET active_engine='disabled',readiness_mode='idle',readiness_context_hash=NULL,generation=10");
 $repository = new QueueCoreRepository($pdo);
-$uncertainFixture = static function (string $method, string $launcher = 'canary_v4') use ($pdo, $repository): int {
+$uncertainFixture = static function (
+    string $method,
+    string $launcher = 'canary_v4',
+    int $companyId = 1,
+    int $meliAccountId = 1,
+) use ($pdo, $repository): int {
     $suffix = bin2hex(random_bytes(4));
     $worker = 'worker-' . $suffix;
     $jobId = $repository->enqueue(new QueueJob(
-        1, 1, 'fresh_orders_discovery', 'orders_window', null, 'fresh_orders', 0,
+        $companyId, $meliAccountId, 'fresh_orders_discovery', 'orders_window', null, 'fresh_orders', 0,
         'uncertain-' . $suffix, 'v1', 'v4_readiness', null, [], [], 5, null, 'operational'
     ));
     $runId = (new QueueCoreRunLedger($pdo))->begin(9, $launcher, $worker);
     $claim = $repository->claimNext(new QueueRunRequest(
         $launcher, $worker, 1, microtime(true) + 20, 30, [],
-        ['fresh_orders_discovery'], 1, null, 'operational', $jobId, $runId
+        ['fresh_orders_discovery'], $meliAccountId, null, 'operational', $jobId, $runId
     ), ['fresh_orders_discovery']);
     if (!$claim instanceof \App\QueueCore\QueueClaim) {
         throw new RuntimeException('uncertain fixture could not claim its exact job');
@@ -914,6 +919,32 @@ $check(
         && ($repository->job($secondGet)['state'] ?? '') === 'review'
         && (int) $pdo->query("SELECT COUNT(*) FROM queue_core_events WHERE event_type='recovered'")->fetchColumn() === 0,
     'one bounded recovery request accepted more than one uncertain canary GET'
+);
+
+// A run is not valid authority when it contains any attempt belonging to a
+// different tenant, even if the target tenant's own metrics still match.
+$pdo->exec('SET FOREIGN_KEY_CHECKS=0');
+foreach (['queue_core_dispatch_journal', 'queue_core_attempts', 'queue_core_events', 'queue_core_jobs', 'queue_core_runs'] as $table) {
+    $pdo->exec("TRUNCATE TABLE `$table`");
+}
+$pdo->exec('SET FOREIGN_KEY_CHECKS=1');
+$tenantJob = $uncertainFixture('GET');
+$foreignJob = $uncertainFixture('GET', 'canary_v4', 1, 2);
+$tenantRun = (int) $pdo->query("SELECT run_id FROM queue_core_attempts WHERE job_id=$tenantJob")->fetchColumn();
+$pdo->prepare("UPDATE queue_core_jobs
+               SET state='completed',dispatch_state='DISPATCHED_RESULT_KNOWN',last_error_class=NULL
+               WHERE id=? AND company_id=1 AND meli_account_id=2")
+    ->execute([$foreignJob]);
+$pdo->prepare('UPDATE queue_core_attempts
+               SET run_id=? WHERE job_id=? AND company_id=1 AND meli_account_id=2')
+    ->execute([$tenantRun, $foreignJob]);
+$foreignScopeRecovery = $recovery->recover(1);
+$check(
+    empty($foreignScopeRecovery['ok']) && ($foreignScopeRecovery['state'] ?? '') === 'blocked'
+        && ($repository->job($tenantJob)['state'] ?? '') === 'review'
+        && ($repository->job($foreignJob)['state'] ?? '') === 'completed'
+        && (int) $pdo->query("SELECT COUNT(*) FROM queue_core_events WHERE event_type='recovered'")->fetchColumn() === 0,
+    'cross-tenant attempt contamination inside one canary run was accepted'
 );
 
 echo 'PASS queue_engine_oauth_supervisor_b14 ' . $passed . '/' . $total . PHP_EOL;

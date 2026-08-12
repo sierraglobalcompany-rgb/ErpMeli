@@ -32,7 +32,7 @@
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanDatabaseContract.php",
-            "sha256": "4c48c903ab2ec710b8ed89be1801faaa479ff5adf2276c71ed7b93a3929e0e00"
+            "sha256": "3ee377dc2457f53de74829c9e33bd5995cf90cd1e5832481dbd6fe42ba6115bb"
         },
         {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",

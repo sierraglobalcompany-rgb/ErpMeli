@@ -87,6 +87,10 @@ try {
     $manifestService = new UpdateManifestService();
     $manifest = $manifestService->decode($manifestBytes);
     $assert(($manifest['source_trust'] ?? null) === 'local_admin', 'update_source_trust_invalid');
+    $assert(($manifest['version'] ?? null) === '2.38.0', 'update_version_invalid');
+    $assert(($manifest['upgrade_from'] ?? null) === ['2.37.2'], 'update_source_version_invalid');
+    $assert(in_array('295_inventory_warehouse_v1_2_38_0.sql', (array) ($manifest['migrations'] ?? []), true), 'migration_295_missing');
+    $assert(!array_filter((array) ($manifest['migrations'] ?? []), static fn (string $name): bool => str_starts_with($name, '296_')), 'migration_296_present');
     $assert(!isset($manifest['signature']), 'unexpected_update_signature');
     $assert($manifestService->verifySignature($manifest) === 'local_unsigned', 'local_admin_signature_status_invalid');
     unset($update['update-manifest.json']);
@@ -95,6 +99,16 @@ try {
         $path = is_array($row) ? (string) ($row['path'] ?? '') : '';
         $assert(isset($update[$path]), 'update_file_missing:' . $path);
         $assert(hash_equals((string) $row['sha256'], hash('sha256', $update[$path])), 'update_file_hash_invalid:' . $path);
+    }
+
+    foreach (array_keys($full + $overlay + $update) as $path) {
+        $normalized = strtolower((string) $path);
+        $assert(!in_array($normalized, ['.env', 'config.env', 'shared/config.env', 'pause_meli_api', 'pause_erp_automation', 'shared/current-release.json'], true), 'protected_file_packaged:' . $path);
+        $assert(!preg_match('#^(?:storage|shared/storage|logs|sessions|backups)/#', $normalized), 'protected_tree_packaged:' . $path);
+    }
+    foreach (['app/Services/InventoryLedgerService.php', 'app/Services/OrderInventoryService.php',
+        'database/migrations/295_inventory_warehouse_v1_2_38_0.sql'] as $requiredOverlay) {
+        $assert(isset($overlay[$requiredOverlay]), 'required_overlay_path_missing:' . $requiredOverlay);
     }
 
     $authority = json_decode((string) file_get_contents($authorityPath), true, 64, JSON_THROW_ON_ERROR);

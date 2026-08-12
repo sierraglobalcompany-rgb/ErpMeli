@@ -13,7 +13,7 @@ $types = [
 ];
 $reviewLabels = [
     'UNLINKED_PRODUCT'=>'Producto vendido sin vínculo',
-    'DEFAULT_WAREHOUSE_MISSING'=>'Falta bodega predeterminada',
+    'WAREHOUSE_NOT_CONFIGURED'=>'Falta bodega predeterminada',
     'INSUFFICIENT_STOCK'=>'Existencia insuficiente',
     'PARTIAL_RETURN_AUTHORITY_REQUIRED'=>'Devolución parcial por revisar',
 ];

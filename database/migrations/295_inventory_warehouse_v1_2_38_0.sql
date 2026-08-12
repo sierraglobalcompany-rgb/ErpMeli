@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS inventory_reviews (
     external_order_id VARCHAR(80) NOT NULL,
     internal_product_id BIGINT UNSIGNED NULL,
     reason_code ENUM(
-        'UNLINKED_PRODUCT','DEFAULT_WAREHOUSE_MISSING',
+        'UNLINKED_PRODUCT','WAREHOUSE_NOT_CONFIGURED',
         'INSUFFICIENT_STOCK','PARTIAL_RETURN_AUTHORITY_REQUIRED'
     ) NOT NULL,
     state ENUM('open','resolved','dismissed') NOT NULL DEFAULT 'open',

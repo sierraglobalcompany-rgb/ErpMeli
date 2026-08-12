@@ -2833,7 +2833,7 @@
                     "ORDINAL_POSITION": 7,
                     "COLUMN_NAME": "reason_code",
                     "DATA_TYPE": "enum",
-                    "COLUMN_TYPE": "enum('UNLINKED_PRODUCT','DEFAULT_WAREHOUSE_MISSING','INSUFFICIENT_STOCK','PARTIAL_RETURN_AUTHORITY_REQUIRED')",
+                    "COLUMN_TYPE": "enum('UNLINKED_PRODUCT','WAREHOUSE_NOT_CONFIGURED','INSUFFICIENT_STOCK','PARTIAL_RETURN_AUTHORITY_REQUIRED')",
                     "IS_NULLABLE": "NO",
                     "COLUMN_DEFAULT": null,
                     "EXTRA": "",

@@ -35,10 +35,10 @@ final class OrderInventoryService
 
         $warehouse = $this->defaultWarehouse($companyId);
         if ($warehouse === null) {
-            $this->review($order, null, 'DEFAULT_WAREHOUSE_MISSING', null, null, []);
+            $this->review($order, null, 'WAREHOUSE_NOT_CONFIGURED', null, null, []);
             return ['outcome' => 'review', 'movements' => 0, 'reviews' => 1];
         }
-        $this->resolveReason($companyId, $accountId, $orderId, 'DEFAULT_WAREHOUSE_MISSING');
+        $this->resolveReason($companyId, $accountId, $orderId, 'WAREHOUSE_NOT_CONFIGURED');
 
         $lines = $this->saleLines($companyId, $accountId, $orderId);
         $specs = [];

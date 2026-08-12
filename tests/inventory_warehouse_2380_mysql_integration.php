@@ -70,7 +70,7 @@ $pdo->exec((string) file_get_contents(dirname(__DIR__) . '/database/migrations/2
 
 $pdo->exec("INSERT INTO companies VALUES (1,'Empresa A',1,NULL),(2,'Empresa B',1,NULL)");
 $pdo->exec("INSERT INTO meli_accounts VALUES (1,1,'Cuenta A'),(2,2,'Cuenta B')");
-$pdo->exec("INSERT INTO internal_products VALUES (1,1,'SKU-1','Producto 1','unidad','active',NULL),(2,1,'SKU-2','Producto 2','unidad','active',NULL),(3,1,'SKU-3','Concurrencia','unidad','active',NULL),(4,2,'SKU-B','Producto B','unidad','active',NULL)");
+$pdo->exec("INSERT INTO internal_products VALUES (1,1,'SKU-1','Producto 1','unidad','active',NULL),(2,1,'SKU-2','Producto 2','unidad','active',NULL),(3,1,'SKU-3','Concurrencia','unidad','active',NULL),(4,2,'SKU-B','Producto B','unidad','active',NULL),(5,1,'SKU-N','Caso numérico','unidad','active',NULL)");
 $pdo->exec("INSERT INTO inventory_warehouses(company_id,code,name,status,is_default) VALUES (1,'MAIN','Principal','active',1),(2,'B','Bodega B','active',0)");
 $pdo->exec("INSERT INTO meli_items VALUES (1,1,'MLA1','Producto ML','MLSKU')");
 $pdo->exec("INSERT INTO product_meli_links(internal_product_id,meli_account_id,meli_item_id,meli_variation_id,conversion_factor,status) VALUES (1,1,1,0,3.0000,'active')");
@@ -110,6 +110,25 @@ try {
 }
 $assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()==='19.000000', 'insufficient_zero_delta');
 
+// Casos numéricos obligatorios: 100@10 + 50@16 = 150@12; venta 10 = 120.
+$ledger->applyBatch([$base('opening','100','10','numeric-opening',5)]);
+$numericOpening = $pdo->query('SELECT on_hand,average_unit_cost FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=5')->fetch();
+$assert($numericOpening['on_hand']==='100.000000' && $numericOpening['average_unit_cost']==='10.000000', 'numeric_case_1');
+$ledger->applyBatch([$base('receipt','50','16','numeric-receipt',5)]);
+$numericWeighted = $pdo->query('SELECT on_hand,average_unit_cost FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=5')->fetch();
+$assert($numericWeighted['on_hand']==='150.000000' && $numericWeighted['average_unit_cost']==='12.000000', 'numeric_case_2');
+$numericSale = $ledger->applyBatch([$base('sale_issue','10','0','numeric-sale',5)])[0];
+for ($repeat=0; $repeat<10; $repeat++) {
+    $ledger->applyBatch([$base('sale_issue','10','0','numeric-sale',5)]);
+}
+$assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=5')->fetchColumn()==='140.000000', 'numeric_case_3_idempotent_stock');
+$assert($numericSale['unit_cost']==='12.000000' && $numericSale['total_cost']==='120.000000', 'numeric_case_3_sale_cost');
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE internal_product_id=5 AND movement_type='sale_issue'")->fetchColumn()===1, 'numeric_case_4_sale_once');
+$ledger->applyBatch([$base('sale_reversal','10','12','numeric-reversal',5) + ['reversal_of_movement_id'=>(int)$numericSale['id']]]);
+$ledger->applyBatch([$base('sale_reversal','10','12','numeric-reversal',5) + ['reversal_of_movement_id'=>(int)$numericSale['id']]]);
+$assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=5')->fetchColumn()==='150.000000', 'numeric_case_5_reversal_stock');
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE internal_product_id=5 AND movement_type='sale_reversal'")->fetchColumn()===1, 'numeric_case_5_reversal_once');
+
 // Venta real: 2 unidades ML x factor 3 = 6 unidades de bodega, una sola vez.
 $pdo->exec("INSERT INTO meli_orders VALUES (10,1,'ORDER-1','PACK-1','paid','paid')");
 $pdo->exec("INSERT INTO meli_order_items(meli_order_id,meli_account_id,external_item_id,external_variation_id,title,seller_sku,quantity) VALUES (10,1,'MLA1',NULL,'P','MLSKU',2)");
@@ -137,7 +156,7 @@ $pdo->exec("INSERT INTO meli_orders VALUES (13,1,'ORDER-U',NULL,'paid','paid'),(
 $pdo->exec("INSERT INTO meli_order_items(meli_order_id,meli_account_id,external_item_id,external_variation_id,title,seller_sku,quantity) VALUES (13,1,'UNLINKED',NULL,'U','U',1),(20,2,'OTHER',NULL,'O','O',1)");
 $projection->project(1,1,13); $projection->project(2,2,20);
 $assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_reviews WHERE reason_code='UNLINKED_PRODUCT' AND company_id=1 AND meli_account_id=1")->fetchColumn()===1, 'unlinked_review');
-$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_reviews WHERE reason_code='DEFAULT_WAREHOUSE_MISSING' AND company_id=2 AND meli_account_id=2")->fetchColumn()===1, 'warehouse_review');
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_reviews WHERE reason_code='WAREHOUSE_NOT_CONFIGURED' AND company_id=2 AND meli_account_id=2")->fetchColumn()===1, 'warehouse_review');
 $assert((int)$pdo->query('SELECT COUNT(*) FROM inventory_movements WHERE company_id=2')->fetchColumn()===0, 'tenant_b_no_mutation');
 
 // Reembolso parcial nunca adivina cantidades: queda en revisión sin tocar existencias.

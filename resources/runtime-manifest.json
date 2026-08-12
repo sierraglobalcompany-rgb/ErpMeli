@@ -2298,8 +2298,8 @@
         },
         "runtime_app_services_inventoryledgerservice_php": {
             "path": "app/Services/InventoryLedgerService.php",
-            "sha256": "7493be05106ef680fee45b4cd3cb2b77b246427014eb492db5bf8bf0dcf54a47",
-            "sha256_lf": "7493be05106ef680fee45b4cd3cb2b77b246427014eb492db5bf8bf0dcf54a47",
+            "sha256": "128b171c0bb9f10838c3cfc1475bcbfe444b8a32fe0ff05cfab71cdcc4757927",
+            "sha256_lf": "128b171c0bb9f10838c3cfc1475bcbfe444b8a32fe0ff05cfab71cdcc4757927",
             "text": true
         },
         "runtime_app_services_inventoryqueryservice_php": {
@@ -2310,8 +2310,8 @@
         },
         "runtime_app_services_inventorywarehouseservice_php": {
             "path": "app/Services/InventoryWarehouseService.php",
-            "sha256": "2b6049ed31584e728d262eaa3270e0432c9e0553b00150beb63aedb07e3f0fda",
-            "sha256_lf": "2b6049ed31584e728d262eaa3270e0432c9e0553b00150beb63aedb07e3f0fda",
+            "sha256": "98e7ad69443c5f230c98581ec6bd02c3290482ea90226d2870f765bd895047ba",
+            "sha256_lf": "98e7ad69443c5f230c98581ec6bd02c3290482ea90226d2870f765bd895047ba",
             "text": true
         },
         "runtime_app_services_largestremainderallocator_php": {
@@ -2748,8 +2748,8 @@
         },
         "runtime_app_services_orderinventoryservice_php": {
             "path": "app/Services/OrderInventoryService.php",
-            "sha256": "0e2bf2ebaa3dd7c770ef58dac58eb600949c7c781befbeb49eeffe7bfb070aae",
-            "sha256_lf": "0e2bf2ebaa3dd7c770ef58dac58eb600949c7c781befbeb49eeffe7bfb070aae",
+            "sha256": "9b8bee5780a647511d882b0d1214aa7fec046b4dd4e8b6a0ca5f76c5c74f7b28",
+            "sha256_lf": "9b8bee5780a647511d882b0d1214aa7fec046b4dd4e8b6a0ca5f76c5c74f7b28",
             "text": true
         },
         "runtime_app_services_ordersyncservice_php": {
@@ -5238,8 +5238,8 @@
         },
         "runtime_resources_release_updater_authority_2_38_0_json": {
             "path": "resources/release/updater-authority-2.38.0.json",
-            "sha256": "d4d7373ffe1acede3bd7939abb08cc91a8eaa766f1ccd552b41b846082f44352",
-            "sha256_lf": "d4d7373ffe1acede3bd7939abb08cc91a8eaa766f1ccd552b41b846082f44352",
+            "sha256": "31cbc6d93ef2e5f7192967ebdeb5eb8d2fa108f38973883568302133f398415d",
+            "sha256_lf": "31cbc6d93ef2e5f7192967ebdeb5eb8d2fa108f38973883568302133f398415d",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

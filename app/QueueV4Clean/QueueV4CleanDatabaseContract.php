@@ -9,7 +9,8 @@ use RuntimeException;
 
 final class QueueV4CleanDatabaseContract
 {
-    private const CONTRACT = 'resources/release/queue-v4-canonical-db-contract-2.37.1.json';
+    private const CONTRACT = 'resources/release/queue-v4-canonical-db-contract-2.37.2.json';
+    private int $metadataQueryCount = 0;
 
     public function __construct(private readonly PDO $pdo)
     {
@@ -18,7 +19,14 @@ final class QueueV4CleanDatabaseContract
     /** @return list<string> */
     public function issues(): array
     {
+        $this->metadataQueryCount = 0;
         $contract = $this->load();
+        $expectedTables = $contract['tables'];
+        $tableNames = array_keys($expectedTables);
+        if ($tableNames === [] || array_filter($tableNames, 'is_string') !== $tableNames) {
+            throw new RuntimeException('queue_v4_clean_db_contract_invalid');
+        }
+
         $database = (string) $this->pdo->query('SELECT DATABASE()')->fetchColumn();
         $issues = [];
         $server = (string) $this->pdo->getAttribute(PDO::ATTR_SERVER_VERSION);
@@ -30,32 +38,80 @@ final class QueueV4CleanDatabaseContract
         if (!hash_equals((string) ($contract['database_version_family'] ?? ''), (string) ($versionMatch[1] ?? ''))) {
             $issues[] = 'db_contract_server_version_invalid';
         }
-        foreach ($contract['tables'] as $table => $expected) {
+
+        $placeholders = implode(',', array_fill(0, count($tableNames), '?'));
+        $parameters = array_merge([$database], $tableNames);
+        $tables = $this->group(
+            $this->metadata(
+                'SELECT TABLE_NAME,ENGINE,TABLE_COLLATION
+                 FROM information_schema.TABLES
+                 WHERE TABLE_SCHEMA=? AND TABLE_NAME IN (' . $placeholders . ')
+                   AND TABLE_TYPE="BASE TABLE"
+                 ORDER BY TABLE_NAME',
+                $parameters
+            ),
+            'TABLE_NAME'
+        );
+        $columns = $this->group(
+            $this->metadata(
+                'SELECT TABLE_NAME,ORDINAL_POSITION,COLUMN_NAME,DATA_TYPE,COLUMN_TYPE,IS_NULLABLE,
+                        COLUMN_DEFAULT,EXTRA,CHARACTER_SET_NAME,COLLATION_NAME
+                 FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA=? AND TABLE_NAME IN (' . $placeholders . ')
+                 ORDER BY TABLE_NAME,ORDINAL_POSITION',
+                $parameters
+            ),
+            'TABLE_NAME'
+        );
+        $indexes = $this->group(
+            $this->metadata(
+                'SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,COLLATION,INDEX_TYPE
+                 FROM information_schema.STATISTICS
+                 WHERE TABLE_SCHEMA=? AND TABLE_NAME IN (' . $placeholders . ')
+                 ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX',
+                $parameters
+            ),
+            'TABLE_NAME'
+        );
+        $foreignKeys = $this->group(
+            $this->metadata(
+                'SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.ORDINAL_POSITION,k.COLUMN_NAME,
+                        k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,
+                        r.MATCH_OPTION,r.UPDATE_RULE,r.DELETE_RULE
+                 FROM information_schema.KEY_COLUMN_USAGE k
+                 INNER JOIN information_schema.REFERENTIAL_CONSTRAINTS r
+                   ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA
+                  AND r.TABLE_NAME=k.TABLE_NAME
+                  AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME
+                 WHERE k.CONSTRAINT_SCHEMA=? AND k.TABLE_NAME IN (' . $placeholders . ')
+                   AND k.REFERENCED_TABLE_NAME IS NOT NULL
+                 ORDER BY k.TABLE_NAME,k.CONSTRAINT_NAME,k.ORDINAL_POSITION',
+                $parameters
+            ),
+            'TABLE_NAME'
+        );
+
+        foreach ($expectedTables as $table => $expected) {
             if (!is_string($table) || !is_array($expected)) {
                 $issues[] = 'db_contract_document_invalid';
                 continue;
             }
-            $tableStatement = $this->pdo->prepare(
-                'SELECT ENGINE,TABLE_COLLATION FROM information_schema.TABLES
-                 WHERE BINARY TABLE_SCHEMA=BINARY ? AND BINARY TABLE_NAME=BINARY ?
-                   AND TABLE_TYPE="BASE TABLE"'
-            );
-            $tableStatement->execute([$database, $table]);
-            $observedTable = $tableStatement->fetch(PDO::FETCH_ASSOC);
-            if (!is_array($observedTable)) {
+            $observedTableRows = $tables[$table] ?? [];
+            if (count($observedTableRows) !== 1) {
                 $issues[] = 'db_contract_table_missing:' . $table;
                 continue;
             }
-            if ((string) $observedTable['ENGINE'] !== (string) ($expected['engine'] ?? '')) {
+            $observedTable = $observedTableRows[0];
+            if ((string) ($observedTable['ENGINE'] ?? '') !== (string) ($expected['engine'] ?? '')) {
                 $issues[] = 'db_contract_engine_invalid:' . $table;
             }
-            if ((string) $observedTable['TABLE_COLLATION'] !== (string) ($expected['collation'] ?? '')) {
+            if ((string) ($observedTable['TABLE_COLLATION'] ?? '') !== (string) ($expected['collation'] ?? '')) {
                 $issues[] = 'db_contract_collation_invalid:' . $table;
             }
             foreach ([
-                'columns' => $this->columns($database, $table),
-                'indexes' => $this->indexes($database, $table),
-                'foreign_keys' => $this->foreignKeys($database, $table),
+                'columns' => $columns[$table] ?? [],
+                'indexes' => $indexes[$table] ?? [],
+                'foreign_keys' => $foreignKeys[$table] ?? [],
             ] as $part => $observed) {
                 if ($this->normalize($observed) !== $this->normalize($expected[$part] ?? [])) {
                     $issues[] = 'db_contract_' . $part . '_invalid:' . $table;
@@ -65,51 +121,32 @@ final class QueueV4CleanDatabaseContract
         return array_values(array_unique($issues));
     }
 
-    /** @return list<array<string,mixed>> */
-    private function columns(string $database, string $table): array
+    public function metadataQueryCount(): int
     {
-        $statement = $this->pdo->prepare(
-            'SELECT ORDINAL_POSITION,COLUMN_NAME,DATA_TYPE,COLUMN_TYPE,IS_NULLABLE,
-                    COLUMN_DEFAULT,EXTRA,CHARACTER_SET_NAME,COLLATION_NAME
-             FROM information_schema.COLUMNS
-             WHERE BINARY TABLE_SCHEMA=BINARY ? AND BINARY TABLE_NAME=BINARY ?
-             ORDER BY ORDINAL_POSITION'
-        );
-        $statement->execute([$database, $table]);
+        return $this->metadataQueryCount;
+    }
+
+    /** @param list<mixed> $parameters @return list<array<string,mixed>> */
+    private function metadata(string $sql, array $parameters): array
+    {
+        $this->metadataQueryCount++;
+        $statement = $this->pdo->prepare($sql);
+        $statement->execute($parameters);
         return $statement->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    /** @return list<array<string,mixed>> */
-    private function indexes(string $database, string $table): array
+    /** @param list<array<string,mixed>> $rows @return array<string,list<array<string,mixed>>> */
+    private function group(array $rows, string $key): array
     {
-        $statement = $this->pdo->prepare(
-            'SELECT INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,COLLATION,INDEX_TYPE
-             FROM information_schema.STATISTICS
-             WHERE BINARY TABLE_SCHEMA=BINARY ? AND BINARY TABLE_NAME=BINARY ?
-             ORDER BY INDEX_NAME,SEQ_IN_INDEX'
-        );
-        $statement->execute([$database, $table]);
-        return $statement->fetchAll(PDO::FETCH_ASSOC);
-    }
-
-    /** @return list<array<string,mixed>> */
-    private function foreignKeys(string $database, string $table): array
-    {
-        $statement = $this->pdo->prepare(
-            'SELECT k.CONSTRAINT_NAME,k.ORDINAL_POSITION,k.COLUMN_NAME,
-                    k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,
-                    r.MATCH_OPTION,r.UPDATE_RULE,r.DELETE_RULE
-             FROM information_schema.KEY_COLUMN_USAGE k
-             INNER JOIN information_schema.REFERENTIAL_CONSTRAINTS r
-               ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA
-              AND r.TABLE_NAME=k.TABLE_NAME
-              AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME
-             WHERE BINARY k.CONSTRAINT_SCHEMA=BINARY ? AND BINARY k.TABLE_NAME=BINARY ?
-               AND k.REFERENCED_TABLE_NAME IS NOT NULL
-             ORDER BY k.CONSTRAINT_NAME,k.ORDINAL_POSITION'
-        );
-        $statement->execute([$database, $table]);
-        return $statement->fetchAll(PDO::FETCH_ASSOC);
+        $grouped = [];
+        foreach ($rows as $row) {
+            $name = (string) ($row[$key] ?? '');
+            unset($row[$key]);
+            if ($name !== '') {
+                $grouped[$name][] = $row;
+            }
+        }
+        return $grouped;
     }
 
     /** @return array<string,mixed> */

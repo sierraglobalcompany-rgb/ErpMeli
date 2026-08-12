@@ -514,6 +514,7 @@
 (() => {
   const root = document.querySelector('[data-queue-v4-clean]');
   if (!root) return;
+  const statusTimeoutMs = 8000;
   const password = root.querySelector('[data-qv4-password]');
   const feedback = root.querySelector('[data-qv4-feedback]');
   let snapshot = null;
@@ -555,14 +556,31 @@
     syncButtons();
   };
   const refresh = async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), statusTimeoutMs);
     try {
-      const response = await fetch(root.dataset.statusUrl, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
-      const data = await response.json();
+      const response = await fetch(root.dataset.statusUrl, {
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' },
+        signal: controller.signal
+      });
+      if (response.status === 504) throw new Error('El backend Queue V4 agotó el tiempo de respuesta.');
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.toLowerCase().includes('application/json')) {
+        throw new Error('Queue V4 devolvió una respuesta no válida.');
+      }
+      const data = await response.json().catch(() => { throw new Error('Queue V4 devolvió JSON inválido.'); });
       if (!response.ok || data.ok === false) throw new Error(data.message || 'Queue V4 no disponible.');
       render(data);
       feedback.textContent = 'Estado actualizado sin mutaciones.';
     } catch (error) {
-      feedback.textContent = error?.message || 'No se pudo leer Queue V4.';
+      snapshot = null;
+      syncButtons();
+      feedback.textContent = error?.name === 'AbortError'
+        ? 'El backend Queue V4 agotó el tiempo de respuesta.'
+        : (error?.message || 'No se pudo leer Queue V4.');
+    } finally {
+      clearTimeout(timeout);
     }
   };
   password?.addEventListener('input', syncButtons);

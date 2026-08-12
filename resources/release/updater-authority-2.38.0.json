@@ -40,7 +40,7 @@
     {"path":"app/Services/OrderInventoryService.php","sha256":"68f69ccbe4f27f0198524c38367968de5939f0d1e48ded3b4806a242b64735ee"},
     {"path":"app/Services/OrderSyncService.php","sha256":"a5e2989c89a52c83159cc5faf97eabdc01f5f8ce7925f56b88a2bc43fd33e799"},
     {"path":"app/Views/inventory/index.php","sha256":"d3ff4a4b4946f8d33d00b7e989fda91f21feeb26d3d2218c81d0fdc0ea77da2d"},
-    {"path":"app/Views/inventory/kardex.php","sha256":"e9f3e66c947c8961ca5707509f320c62c862c4875dbec02abd5be8a27ccd3751"},
+    {"path":"app/Views/inventory/kardex.php","sha256":"0dbd8a79d145bd57835348e457b006464d2fd851fc3169fbcf736925ebf17d17"},
     {"path":"app/Views/layouts/app.php","sha256":"c72eae3c1a097139cfbab3c64bb0e1c3f7f44b2669cf72e50e73e3e9a59fe94c"},
     {"path":"database/migrations/295_inventory_warehouse_v1_2_38_0.sql","sha256":"b840a7cebb90287465bb9ad25cd08b03422bec46c687dd2aa701493f83ce273d"},
     {"path":"public/index.php","sha256":"6e296096bc7267e47c7bf8e7abad03f7646ae94ead85e75db00417387663b841"},

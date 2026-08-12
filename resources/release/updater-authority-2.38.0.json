@@ -44,7 +44,7 @@
     {"path":"app/Views/layouts/app.php","sha256":"c72eae3c1a097139cfbab3c64bb0e1c3f7f44b2669cf72e50e73e3e9a59fe94c"},
     {"path":"database/migrations/295_inventory_warehouse_v1_2_38_0.sql","sha256":"9077d65ce477cab1b149963dd1605e6c324d9e84843692bedec934fa723c4203"},
     {"path":"public/index.php","sha256":"6e296096bc7267e47c7bf8e7abad03f7646ae94ead85e75db00417387663b841"},
-    {"path":"resources/release/managed-runtime-dependencies-2.38.0.json","sha256":"b00732b5f03e9d5718a350106e93ec9a9cd3ccb17342e002d11bac73129e3931"},
+    {"path":"resources/release/managed-runtime-dependencies-2.38.0.json","sha256":"cde734f9859a7090ae614e8451f7c5dea092356b45ae69b0f2c4ba7242094176"},
     {"path":"resources/release/queue-v4-canonical-db-contract-2.38.0.json","sha256":"369f6256c541d3f9609fc3513417eaf1af6aac009aaae3d491168beacbe00124"}
   ]
 }

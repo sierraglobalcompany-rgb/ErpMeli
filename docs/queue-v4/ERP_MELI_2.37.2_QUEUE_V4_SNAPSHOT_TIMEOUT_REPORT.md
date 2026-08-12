@@ -41,3 +41,12 @@ REMEDIATION=4_BATCHED_METADATA_QUERIES+SAFE_JSON_TIMEOUT_UI
 MIGRATION_295=NO
 PRODUCTION_MUTATIONS=0
 ```
+
+## Resultado del laboratorio final
+
+- Contrato/full flow MariaDB 11.8.8: PASS, 64 checks.
+- Consultas agrupadas de metadata: 4, incluso con 8 schemas y 32 tablas señuelo.
+- Derivas bloqueadas: columna/nullability, collation, índice, FK y tabla ausente.
+- HTTP `/erp-meli/settings/cron/queue-v4.json`: 200 JSON, `READY_TO_TEST`, 76.433 ms.
+- Readiness: `CERTIFIED`, 3/3 GET `/users/me`, cero jobs y cero DML comercial.
+- UI: PASS 10 checks; 504, HTML y JSON inválido permanecen fail-closed.

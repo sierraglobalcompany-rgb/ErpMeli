@@ -1,16 +1,16 @@
 {
     "product": "erp-meli",
-    "version": "2.37.2",
-    "build_id": "erp-meli-2.37.2-queue-v4-snapshot-timeout-rc1-20260812",
-    "built_at": "2026-08-13T00:30:00Z",
-    "minimum_migration": "294_queue_v4_clean_greenfield_2_37_0.sql",
+    "version": "2.38.0",
+    "build_id": "erp-meli-2.38.0-inventory-warehouse-v1-rc1-20260812",
+    "built_at": "2026-08-13T03:00:00Z",
+    "minimum_migration": "295_inventory_warehouse_v1_2_38_0.sql",
     "publication_policy": {
-        "base_commit": "1dc31993f7a5f7840b905abcc97bb730c6f1e8bd",
+        "base_commit": "c40d073705833c94911c254ec633bf8eb231375e",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 862,
-        "component_count": 861,
-        "paths_sha256": "2561a003b1e81c5eef13a17ba624217fc4897861f69afcb264a2dfce62b462dc",
-        "dependency_registry_sha256": "c726ce224fab947e049e0a6e5b1ae52f83001d04332e1f2eb42c8262e212fa22",
+        "package_file_count": 874,
+        "component_count": 873,
+        "paths_sha256": "9afc96160ab37f32e0adf5f86ed230bf3a25031594f545efbcb649bc45e68149",
+        "dependency_registry_sha256": "b00732b5f03e9d5718a350106e93ec9a9cd3ccb17342e002d11bac73129e3931",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -24,8 +24,8 @@
         },
         "runtime_version": {
             "path": "VERSION",
-            "sha256": "27a16368444fe1abd38916edc34d006efa3ffc8f24d5f3a44270148227c9f87d",
-            "sha256_lf": "27a16368444fe1abd38916edc34d006efa3ffc8f24d5f3a44270148227c9f87d",
+            "sha256": "8d5265d7f8be7dfc0dba0212bf1b16d32e418171a7d9f9202c3ff1f16fc5a268",
+            "sha256_lf": "8d5265d7f8be7dfc0dba0212bf1b16d32e418171a7d9f9202c3ff1f16fc5a268",
             "text": true
         },
         "runtime_actualizar_php": {
@@ -158,6 +158,12 @@
             "path": "app/Controllers/InternalProductController.php",
             "sha256": "d62344d995c973ab0b0c05a5e55f038fb79a7e01feffe03813ae7e1192028c6b",
             "sha256_lf": "d62344d995c973ab0b0c05a5e55f038fb79a7e01feffe03813ae7e1192028c6b",
+            "text": true
+        },
+        "runtime_app_controllers_inventorycontroller_php": {
+            "path": "app/Controllers/InventoryController.php",
+            "sha256": "61af6bc61078215b911dd5b815f8895a20ffd623092e7a873e6e3f910591c64c",
+            "sha256_lf": "61af6bc61078215b911dd5b815f8895a20ffd623092e7a873e6e3f910591c64c",
             "text": true
         },
         "runtime_app_controllers_logcontroller_php": {
@@ -1110,8 +1116,8 @@
         },
         "runtime_app_queuev4clean_queuev4cleandatabasecontract_php": {
             "path": "app/QueueV4Clean/QueueV4CleanDatabaseContract.php",
-            "sha256": "3ee377dc2457f53de74829c9e33bd5995cf90cd1e5832481dbd6fe42ba6115bb",
-            "sha256_lf": "3ee377dc2457f53de74829c9e33bd5995cf90cd1e5832481dbd6fe42ba6115bb",
+            "sha256": "e2aad3595a079f6b550ea014415eb9c6fb5e8e6ba1831e37f7e8182663e80da1",
+            "sha256_lf": "e2aad3595a079f6b550ea014415eb9c6fb5e8e6ba1831e37f7e8182663e80da1",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleanproducer_php": {
@@ -1122,8 +1128,8 @@
         },
         "runtime_app_queuev4clean_queuev4cleanreadinessservice_php": {
             "path": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
-            "sha256": "ec74d5ef0369624c55da4d5906c5d60cae469ad08c00a0274a7c361aa4f68796",
-            "sha256_lf": "ec74d5ef0369624c55da4d5906c5d60cae469ad08c00a0274a7c361aa4f68796",
+            "sha256": "61bec711fd1bb0ef7ac7bc46b7d2c594a8f421ec61cf2feb793721fc34104ec6",
+            "sha256_lf": "61bec711fd1bb0ef7ac7bc46b7d2c594a8f421ec61cf2feb793721fc34104ec6",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleanrepository_php": {
@@ -1176,8 +1182,8 @@
         },
         "runtime_app_repositories_navigationrepository_php": {
             "path": "app/Repositories/NavigationRepository.php",
-            "sha256": "ea301567b6aecd59c49662f50734e81638bb19e5f7031c8f550daca27b7a6cef",
-            "sha256_lf": "ea301567b6aecd59c49662f50734e81638bb19e5f7031c8f550daca27b7a6cef",
+            "sha256": "7ed915c0965cbaa050845e5df85dae5a08c06fd41d359fc585f241c21fba5452",
+            "sha256_lf": "7ed915c0965cbaa050845e5df85dae5a08c06fd41d359fc585f241c21fba5452",
             "text": true
         },
         "runtime_app_repositories_routemetadatarepository_php": {
@@ -2278,6 +2284,36 @@
             "sha256_lf": "79bcf5d26b538da0c02a38e960825b19cef8bd77d3860407e3cd1a706bdafbe2",
             "text": true
         },
+        "runtime_app_services_inventoryapplicationservice_php": {
+            "path": "app/Services/InventoryApplicationService.php",
+            "sha256": "2eab4a219d1d8b0b1e1e0952ac9134d0421416c68737fc53e358bff830f7f826",
+            "sha256_lf": "2eab4a219d1d8b0b1e1e0952ac9134d0421416c68737fc53e358bff830f7f826",
+            "text": true
+        },
+        "runtime_app_services_inventoryinsufficientstock_php": {
+            "path": "app/Services/InventoryInsufficientStock.php",
+            "sha256": "0a68369143975583c7bbe150efa0c07f76e933c160ca9bf1d6883f135d1b5e13",
+            "sha256_lf": "0a68369143975583c7bbe150efa0c07f76e933c160ca9bf1d6883f135d1b5e13",
+            "text": true
+        },
+        "runtime_app_services_inventoryledgerservice_php": {
+            "path": "app/Services/InventoryLedgerService.php",
+            "sha256": "132d4530e517ff22a2feda22966e6a6aed497d368b83a3a419f59981e25df6b5",
+            "sha256_lf": "132d4530e517ff22a2feda22966e6a6aed497d368b83a3a419f59981e25df6b5",
+            "text": true
+        },
+        "runtime_app_services_inventoryqueryservice_php": {
+            "path": "app/Services/InventoryQueryService.php",
+            "sha256": "b09b313227476d828788e544362e4300ecf0299462ea53e61e693c4690706b36",
+            "sha256_lf": "b09b313227476d828788e544362e4300ecf0299462ea53e61e693c4690706b36",
+            "text": true
+        },
+        "runtime_app_services_inventorywarehouseservice_php": {
+            "path": "app/Services/InventoryWarehouseService.php",
+            "sha256": "2b6049ed31584e728d262eaa3270e0432c9e0553b00150beb63aedb07e3f0fda",
+            "sha256_lf": "2b6049ed31584e728d262eaa3270e0432c9e0553b00150beb63aedb07e3f0fda",
+            "text": true
+        },
         "runtime_app_services_largestremainderallocator_php": {
             "path": "app/Services/LargestRemainderAllocator.php",
             "sha256": "d84cdd30b19accdb76ca7142280ca88c2ea6c63d0d31942f9a3167112d439f40",
@@ -2322,8 +2358,8 @@
         },
         "runtime_app_services_managedruntimepublicationpolicy_php": {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "ed5dc18caabfac70de50fe644b7bf645a36a38eec631a6cf5a889ab8be2e7877",
-            "sha256_lf": "ed5dc18caabfac70de50fe644b7bf645a36a38eec631a6cf5a889ab8be2e7877",
+            "sha256": "563868155b5c9bbfd6f37b48da434970ce9c11d70690d0d3afdc9a4b3319b4bd",
+            "sha256_lf": "563868155b5c9bbfd6f37b48da434970ce9c11d70690d0d3afdc9a4b3319b4bd",
             "text": true
         },
         "runtime_app_services_manualcampaignadapter_php": {
@@ -2710,10 +2746,16 @@
             "sha256_lf": "a484f3726077ff6070876c87ea74ffe65702678618cb123e6029705cdd843619",
             "text": true
         },
+        "runtime_app_services_orderinventoryservice_php": {
+            "path": "app/Services/OrderInventoryService.php",
+            "sha256": "5f0a271053b886b57e1d3e80d1fdf46b1f40b816d100ac3576d488256ce4ece5",
+            "sha256_lf": "5f0a271053b886b57e1d3e80d1fdf46b1f40b816d100ac3576d488256ce4ece5",
+            "text": true
+        },
         "runtime_app_services_ordersyncservice_php": {
             "path": "app/Services/OrderSyncService.php",
-            "sha256": "2b96854df5a0999941a0eb84aafe7047390258b2996d80e8fc7f29e5239b5151",
-            "sha256_lf": "2b96854df5a0999941a0eb84aafe7047390258b2996d80e8fc7f29e5239b5151",
+            "sha256": "a5e2989c89a52c83159cc5faf97eabdc01f5f8ce7925f56b88a2bc43fd33e799",
+            "sha256_lf": "a5e2989c89a52c83159cc5faf97eabdc01f5f8ce7925f56b88a2bc43fd33e799",
             "text": true
         },
         "runtime_app_services_packqueryservice_php": {
@@ -3604,10 +3646,22 @@
             "sha256_lf": "f08ff9c5fbee35315b2680a71857ca357390b735c3f5dda3a5bca686c96b1fc8",
             "text": true
         },
+        "runtime_app_views_inventory_index_php": {
+            "path": "app/Views/inventory/index.php",
+            "sha256": "8cd9f02fc92b07e2fdd98bb2814c5670adfad6ea2c1185a1b923addf0b967363",
+            "sha256_lf": "8cd9f02fc92b07e2fdd98bb2814c5670adfad6ea2c1185a1b923addf0b967363",
+            "text": true
+        },
+        "runtime_app_views_inventory_kardex_php": {
+            "path": "app/Views/inventory/kardex.php",
+            "sha256": "e9f3e66c947c8961ca5707509f320c62c862c4875dbec02abd5be8a27ccd3751",
+            "sha256_lf": "e9f3e66c947c8961ca5707509f320c62c862c4875dbec02abd5be8a27ccd3751",
+            "text": true
+        },
         "runtime_app_views_layouts_app_php": {
             "path": "app/Views/layouts/app.php",
-            "sha256": "592f4b9b33a7c8acd660e6fae4f9b3ea8e4cca4e0e4010fa0bf9dcf1f3b2c21c",
-            "sha256_lf": "592f4b9b33a7c8acd660e6fae4f9b3ea8e4cca4e0e4010fa0bf9dcf1f3b2c21c",
+            "sha256": "c72eae3c1a097139cfbab3c64bb0e1c3f7f44b2669cf72e50e73e3e9a59fe94c",
+            "sha256_lf": "c72eae3c1a097139cfbab3c64bb0e1c3f7f44b2669cf72e50e73e3e9a59fe94c",
             "text": true
         },
         "runtime_app_views_logs_index_php": {
@@ -4390,6 +4444,12 @@
             "sha256_lf": "34b4bad427015595037e4159252739c4e795e9f794f4af7f8f0bb6dd2d483409",
             "text": true
         },
+        "runtime_database_migrations_295_inventory_warehouse_v1_2_38_0_sql": {
+            "path": "database/migrations/295_inventory_warehouse_v1_2_38_0.sql",
+            "sha256": "9077d65ce477cab1b149963dd1605e6c324d9e84843692bedec934fa723c4203",
+            "sha256_lf": "9077d65ce477cab1b149963dd1605e6c324d9e84843692bedec934fa723c4203",
+            "text": true
+        },
         "runtime_index_php": {
             "path": "index.php",
             "sha256": "befdf35b69a17f2e3b61606ecfb35c90f84e8bc0cc30ee39549a6c6270fcf7e4",
@@ -4806,8 +4866,8 @@
         },
         "runtime_public_index_php": {
             "path": "public/index.php",
-            "sha256": "1c9fdc9cbf63bd187902518c5291e4b72c7c2e5217435fb4bda077720ae8984c",
-            "sha256_lf": "1c9fdc9cbf63bd187902518c5291e4b72c7c2e5217435fb4bda077720ae8984c",
+            "sha256": "6e296096bc7267e47c7bf8e7abad03f7646ae94ead85e75db00417387663b841",
+            "sha256_lf": "6e296096bc7267e47c7bf8e7abad03f7646ae94ead85e75db00417387663b841",
             "text": true
         },
         "runtime_public_login_php": {
@@ -5038,6 +5098,12 @@
             "sha256_lf": "c726ce224fab947e049e0a6e5b1ae52f83001d04332e1f2eb42c8262e212fa22",
             "text": true
         },
+        "runtime_resources_release_managed_runtime_dependencies_2_38_0_json": {
+            "path": "resources/release/managed-runtime-dependencies-2.38.0.json",
+            "sha256": "b00732b5f03e9d5718a350106e93ec9a9cd3ccb17342e002d11bac73129e3931",
+            "sha256_lf": "b00732b5f03e9d5718a350106e93ec9a9cd3ccb17342e002d11bac73129e3931",
+            "text": true
+        },
         "runtime_resources_release_production_legacy_quarantine_2_36_1_json": {
             "path": "resources/release/production-legacy-quarantine-2.36.1.json",
             "sha256": "b6adf206e3d3857807d44d3ec0b2929535c2e184cf8fac07b975987bcc642f25",
@@ -5066,6 +5132,12 @@
             "path": "resources/release/queue-v4-canonical-db-contract-2.37.2.json",
             "sha256": "a93cc05534332c971a6a7841893f994bbbb2e916a4a3284719bfe91f0cc73cc1",
             "sha256_lf": "a93cc05534332c971a6a7841893f994bbbb2e916a4a3284719bfe91f0cc73cc1",
+            "text": true
+        },
+        "runtime_resources_release_queue_v4_canonical_db_contract_2_38_0_json": {
+            "path": "resources/release/queue-v4-canonical-db-contract-2.38.0.json",
+            "sha256": "369f6256c541d3f9609fc3513417eaf1af6aac009aaae3d491168beacbe00124",
+            "sha256_lf": "369f6256c541d3f9609fc3513417eaf1af6aac009aaae3d491168beacbe00124",
             "text": true
         },
         "runtime_resources_release_updater_authority_2_36_10_json": {

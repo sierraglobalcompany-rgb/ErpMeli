@@ -45,7 +45,7 @@ try {
         'ML_WRITE_ENABLED=false',
         'CRON_V3_ENABLED=false',
         'CRON_V3_SHADOW_ENABLED=false',
-        'CRON_V4_ENABLED=true',
+        'CRON_V4_ENABLED=false',
         'ERP_PRIVATE_PATH=' . str_replace('\\', '/', $private),
     ]) . "\n");
     file_put_contents($fixture . '/PAUSE_MELI_API', "test\n");
@@ -142,6 +142,51 @@ try {
 
     $repeat = $rollback->invoke($service, $pdo, 7, 'generation_2_repeat');
     $assert(($repeat['state'] ?? '') === 'rolled_back', 'generation_rollback_not_idempotent');
+
+    // Falla después de habilitar flags, antes de iniciar API: incidente productivo 2.36.10.
+    $pdo->exec(
+        "UPDATE queue_core_feature_flags
+         SET enabled=CASE WHEN feature_key IN ('fresh_producer','webhook_producer','pack_shipment_followups') THEN 1 ELSE 0 END,
+             generation=CASE WHEN feature_key IN ('fresh_producer','webhook_producer','pack_shipment_followups') THEN 3 ELSE 0 END"
+    );
+    $result = $rollback->invoke($service, $pdo, 7, 'flags_only_partial');
+    $assert(($result['state'] ?? '') === 'rolled_back', 'flags_only_partial_not_rolled_back');
+
+    // Falla después de API, antes de config.env.
+    $pdo->exec(
+        "UPDATE queue_core_feature_flags
+         SET enabled=CASE WHEN feature_key IN ('fresh_producer','webhook_producer','pack_shipment_followups') THEN 1 ELSE 0 END,
+             generation=CASE WHEN feature_key IN ('fresh_producer','webhook_producer','pack_shipment_followups') THEN 3 ELSE 0 END"
+    );
+    @unlink($fixture . '/PAUSE_MELI_API');
+    $result = $rollback->invoke($service, $pdo, 7, 'api_started_partial');
+    $assert(($result['state'] ?? '') === 'rolled_back', 'api_started_partial_not_rolled_back');
+    $assert(is_file($fixture . '/PAUSE_MELI_API'), 'api_started_partial_not_stopped');
+
+    // Postimagen histórica config-only con flags ya compensados.
+    file_put_contents(
+        $configPath,
+        str_replace('CRON_V4_ENABLED=false', 'CRON_V4_ENABLED=true', (string) file_get_contents($configPath)),
+    );
+    $result = $rollback->invoke($service, $pdo, 7, 'config_only_partial');
+    $assert(($result['state'] ?? '') === 'rolled_back', 'config_only_partial_not_rolled_back');
+    $assert(str_contains((string) file_get_contents($configPath), 'CRON_V4_ENABLED=false'), 'config_only_partial_not_restored');
+
+    // Falla después de entrar a preparing; la generación avanza, nunca se reinicia.
+    $pdo->exec(
+        "UPDATE queue_engine_control
+         SET readiness_mode='preparing',readiness_context_hash='" . str_repeat('a', 64) . "',generation=3"
+    );
+    $pdo->exec(
+        "UPDATE queue_core_feature_flags
+         SET enabled=CASE WHEN feature_key IN ('fresh_producer','webhook_producer','pack_shipment_followups') THEN 1 ELSE 0 END,
+             generation=CASE WHEN feature_key IN ('fresh_producer','webhook_producer','pack_shipment_followups') THEN 3 ELSE 0 END"
+    );
+    $result = $rollback->invoke($service, $pdo, 7, 'preparing_partial');
+    $assert(($result['state'] ?? '') === 'rolled_back', 'preparing_partial_not_rolled_back');
+    $assert((int) $pdo->query("SELECT generation FROM queue_engine_control WHERE control_key='primary'")->fetchColumn() === 4, 'preparing_generation_not_monotonic');
+    $assert((int) $pdo->query("SELECT COUNT(*) FROM queue_core_feature_flags WHERE enabled<>0")->fetchColumn() === 0, 'preparing_flags_not_disabled');
+    $assert((int) $pdo->query("SELECT COUNT(*) FROM queue_core_feature_flags WHERE feature_key IN ('fresh_producer','webhook_producer','pack_shipment_followups') AND generation<>4")->fetchColumn() === 0, 'preparing_flag_generation_not_normalized');
 
     $pdo->exec("UPDATE queue_core_feature_flags SET generation=1 WHERE feature_key='fresh_producer'");
     $blocked = false;

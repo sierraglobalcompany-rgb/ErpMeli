@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "target_version": "2.38.0",
+  "contract": "The 2.37.2 to 2.38.0 update adds migration 295 and the tenant-scoped Inventory Warehouse V1 ledger. It preserves Queue V4 Clean as the sole scheduler, performs no Mercado Libre HTTP beyond the already-authorized order fetch, never enables ML_WRITE, and preserves the frozen updater write-set.",
+  "supersedes_inventory": {
+    "path": "resources/release/updater-locked-file-inventory-2.36.1.json",
+    "sha256": "7b90dab866e6b49d785ce8c706f3ea7ce7db6846fdd1678e6a953a6bf4e31fd5",
+    "file_count": 29
+  },
+  "unchanged_locked": {
+    "file_count": 27,
+    "sorted_path_hash_lines_sha256": "76d38e632333da994447234dc809557150bdf7ed09f1c9643aa12056c21a6f5a"
+  },
+  "intentional_locked_changes": [
+    {
+      "path": "app/Services/ReleaseIntegrityService.php",
+      "previous_sha256": "33aa577f0057f9da5ec9bc619e9a794da61df097d03a4c47321c0c618f1dbf82",
+      "target_sha256": "519cecd67ef7ef4142396cedb13de4a23c1bce5463b2bde3eb2f5d1dee80541f",
+      "reason": "Select the exact legacy or managed publication authority from a recognized manifest identity."
+    },
+    {
+      "path": "app/Recovery/RecoveryKernel.php",
+      "previous_sha256": "4e3e02463c7271b0ad31792e64419ee1ff78e8a0054274c469ead73e22b91cf4",
+      "target_sha256": "219db6ee360e9fa20b1c21a0bfeb7b44355e403d9ef7676e72371d3c48daa668",
+      "reason": "Permit authenticated metadata-only completion while preserving the narrow updater write-set."
+    }
+  ],
+  "new_runtime_dependencies": [
+    {"path":"VERSION","sha256":"8d5265d7f8be7dfc0dba0212bf1b16d32e418171a7d9f9202c3ff1f16fc5a268"},
+    {"path":"app/Controllers/InventoryController.php","sha256":"61af6bc61078215b911dd5b815f8895a20ffd623092e7a873e6e3f910591c64c"},
+    {"path":"app/QueueV4Clean/QueueV4CleanDatabaseContract.php","sha256":"e2aad3595a079f6b550ea014415eb9c6fb5e8e6ba1831e37f7e8182663e80da1"},
+    {"path":"app/QueueV4Clean/QueueV4CleanReadinessService.php","sha256":"61bec711fd1bb0ef7ac7bc46b7d2c594a8f421ec61cf2feb793721fc34104ec6"},
+    {"path":"app/Repositories/NavigationRepository.php","sha256":"7ed915c0965cbaa050845e5df85dae5a08c06fd41d359fc585f241c21fba5452"},
+    {"path":"app/Services/InventoryApplicationService.php","sha256":"2eab4a219d1d8b0b1e1e0952ac9134d0421416c68737fc53e358bff830f7f826"},
+    {"path":"app/Services/InventoryInsufficientStock.php","sha256":"0a68369143975583c7bbe150efa0c07f76e933c160ca9bf1d6883f135d1b5e13"},
+    {"path":"app/Services/InventoryLedgerService.php","sha256":"132d4530e517ff22a2feda22966e6a6aed497d368b83a3a419f59981e25df6b5"},
+    {"path":"app/Services/InventoryQueryService.php","sha256":"b09b313227476d828788e544362e4300ecf0299462ea53e61e693c4690706b36"},
+    {"path":"app/Services/InventoryWarehouseService.php","sha256":"2b6049ed31584e728d262eaa3270e0432c9e0553b00150beb63aedb07e3f0fda"},
+    {"path":"app/Services/ManagedRuntimePublicationPolicy.php","sha256":"563868155b5c9bbfd6f37b48da434970ce9c11d70690d0d3afdc9a4b3319b4bd"},
+    {"path":"app/Services/OrderInventoryService.php","sha256":"5f0a271053b886b57e1d3e80d1fdf46b1f40b816d100ac3576d488256ce4ece5"},
+    {"path":"app/Services/OrderSyncService.php","sha256":"a5e2989c89a52c83159cc5faf97eabdc01f5f8ce7925f56b88a2bc43fd33e799"},
+    {"path":"app/Views/inventory/index.php","sha256":"8cd9f02fc92b07e2fdd98bb2814c5670adfad6ea2c1185a1b923addf0b967363"},
+    {"path":"app/Views/inventory/kardex.php","sha256":"e9f3e66c947c8961ca5707509f320c62c862c4875dbec02abd5be8a27ccd3751"},
+    {"path":"app/Views/layouts/app.php","sha256":"c72eae3c1a097139cfbab3c64bb0e1c3f7f44b2669cf72e50e73e3e9a59fe94c"},
+    {"path":"database/migrations/295_inventory_warehouse_v1_2_38_0.sql","sha256":"9077d65ce477cab1b149963dd1605e6c324d9e84843692bedec934fa723c4203"},
+    {"path":"public/index.php","sha256":"6e296096bc7267e47c7bf8e7abad03f7646ae94ead85e75db00417387663b841"},
+    {"path":"resources/release/managed-runtime-dependencies-2.38.0.json","sha256":"b00732b5f03e9d5718a350106e93ec9a9cd3ccb17342e002d11bac73129e3931"},
+    {"path":"resources/release/queue-v4-canonical-db-contract-2.38.0.json","sha256":"369f6256c541d3f9609fc3513417eaf1af6aac009aaae3d491168beacbe00124"}
+  ]
+}

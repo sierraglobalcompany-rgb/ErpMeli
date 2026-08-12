@@ -188,8 +188,21 @@ final class InventoryQueryService
     /** @return array{0:list<string>,1:array<string,mixed>} */
     private function movementFilters(array $filters): array
     {
-        [$companySql, $params] = $this->companyPredicate('m.company_id', (int) ($filters['company_id'] ?? 0), 'movement_company');
+        $companyId = (int) ($filters['company_id'] ?? 0);
+        [$companySql, $params] = $this->companyPredicate('m.company_id', $companyId, 'movement_company');
         $where = [$companySql];
+        $authorizedAccounts = $this->scope->accountIds(null, $companyId);
+        if ($authorizedAccounts === []) {
+            $where[] = 'm.meli_account_id IS NULL';
+        } else {
+            $slots = [];
+            foreach ($authorizedAccounts as $index => $authorizedAccount) {
+                $key = 'movement_scope_account_' . $index;
+                $slots[] = ':' . $key;
+                $params[$key] = $authorizedAccount;
+            }
+            $where[] = '(m.meli_account_id IS NULL OR m.meli_account_id IN (' . implode(',', $slots) . '))';
+        }
         foreach (['warehouse_id' => 'movement_warehouse', 'internal_product_id' => 'movement_product'] as $field => $key) {
             if ((int) ($filters[$field] ?? 0) > 0) {
                 $where[] = 'm.' . $field . '=:' . $key;
@@ -198,7 +211,7 @@ final class InventoryQueryService
         }
         $accountId = (int) ($filters['account_id'] ?? 0);
         if ($accountId > 0) {
-            if (!in_array($accountId, $this->scope->accountIds(), true)) {
+            if (!in_array($accountId, $authorizedAccounts, true)) {
                 throw new HttpException(404, 'No se encontró la cuenta solicitada.');
             }
             $where[] = 'm.meli_account_id=:movement_account';

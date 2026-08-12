@@ -32,9 +32,9 @@ final class ProductLinkService
                     i.external_item_id, i.title, i.seller_sku, i.thumbnail, i.price, i.status item_status,
                     a.account_name
              FROM product_meli_links l
-             JOIN internal_products p ON p.id=l.internal_product_id
-             JOIN meli_items i ON i.id=l.meli_item_id
              JOIN meli_accounts a ON a.id=l.meli_account_id
+             JOIN internal_products p ON p.id=l.internal_product_id AND p.company_id=a.company_id
+             JOIN meli_items i ON i.id=l.meli_item_id AND i.meli_account_id=l.meli_account_id
              WHERE ' . implode(' AND ', $where) . '
              ORDER BY l.updated_at DESC LIMIT 50'
         );
@@ -83,11 +83,11 @@ final class ProductLinkService
              FROM meli_items i
              JOIN meli_accounts a ON a.id=i.meli_account_id
              LEFT JOIN (
-                SELECT meli_item_id, MAX(id) active_link_id
+                SELECT meli_account_id,meli_item_id, MAX(id) active_link_id
                 FROM product_meli_links
                 WHERE status="active"
-                GROUP BY meli_item_id
-             ) l ON l.meli_item_id=i.id
+                GROUP BY meli_account_id,meli_item_id
+             ) l ON l.meli_account_id=i.meli_account_id AND l.meli_item_id=i.id
              WHERE ' . implode(' AND ', $where) . '
              ORDER BY i.updated_at DESC LIMIT 50'
         );
@@ -101,64 +101,81 @@ final class ProductLinkService
         if ($internalProductId < 1 || $meliItemId < 1) {
             throw new RuntimeException('Seleccione producto interno y publicación.');
         }
-        if ($factor <= 0) {
+        $factor = round($factor, 4);
+        if ($factor < 0.0001) {
             throw new RuntimeException('La cantidad de bodega que descuenta cada venta debe ser mayor que cero.');
         }
         $pdo = Database::connection();
-        [$scopeSql, $scopeParams] = $this->accountScope('i.meli_account_id', 0, 'link_item_scope');
-        $item = $pdo->prepare(
-            'SELECT i.*,a.company_id
-             FROM meli_items i
-             JOIN meli_accounts a ON a.id=i.meli_account_id
-             WHERE i.id=:id AND ' . $scopeSql
-        );
-        $item->execute(['id' => $meliItemId] + $scopeParams);
-        $meli = $item->fetch(PDO::FETCH_ASSOC);
-        if (!$meli) {
-            throw new \App\Core\HttpException(404, 'No se encontró la publicación solicitada.');
+        $ownsTransaction = !$pdo->inTransaction();
+        if ($ownsTransaction) {
+            $pdo->beginTransaction();
         }
-        [$companySql, $companyParams] = $this->companyScope('company_id', 'link_product_company');
-        $product = $pdo->prepare(
-            'SELECT * FROM internal_products
-             WHERE id=:id AND deleted_at IS NULL AND ' . $companySql . ' AND company_id=:item_company'
-        );
-        $product->execute(['id' => $internalProductId, 'item_company' => (int) $meli['company_id']] + $companyParams);
-        if (!$product->fetch(PDO::FETCH_ASSOC)) {
-            throw new \App\Core\HttpException(404, 'No se encontró el producto interno solicitado.');
+        try {
+            [$scopeSql, $scopeParams] = $this->accountScope('i.meli_account_id', 0, 'link_item_scope');
+            $item = $pdo->prepare(
+                'SELECT i.*,a.company_id
+                 FROM meli_items i
+                 JOIN meli_accounts a ON a.id=i.meli_account_id
+                 WHERE i.id=:id AND ' . $scopeSql . ' FOR UPDATE'
+            );
+            $item->execute(['id' => $meliItemId] + $scopeParams);
+            $meli = $item->fetch(PDO::FETCH_ASSOC);
+            if (!$meli) {
+                throw new \App\Core\HttpException(404, 'No se encontró la publicación solicitada.');
+            }
+            [$companySql, $companyParams] = $this->companyScope('company_id', 'link_product_company');
+            $product = $pdo->prepare(
+                'SELECT * FROM internal_products
+                 WHERE id=:id AND deleted_at IS NULL AND status="active"
+                   AND ' . $companySql . ' AND company_id=:item_company FOR UPDATE'
+            );
+            $product->execute(['id' => $internalProductId, 'item_company' => (int) $meli['company_id']] + $companyParams);
+            if (!$product->fetch(PDO::FETCH_ASSOC)) {
+                throw new \App\Core\HttpException(404, 'No se encontró el producto interno solicitado.');
+            }
+            $exists = $pdo->prepare('SELECT id FROM product_meli_links WHERE meli_account_id=:account AND meli_item_id=:item AND meli_variation_id=:variation AND status="active" LIMIT 1 FOR UPDATE');
+            $exists->execute(['account' => $meli['meli_account_id'], 'item' => $meliItemId, 'variation' => $variationId]);
+            if ($exists->fetchColumn()) {
+                throw new RuntimeException('Esta publicación/variación ya tiene un vínculo activo.');
+            }
+            $stmt = $pdo->prepare(
+                'INSERT INTO product_meli_links
+                 (internal_product_id,meli_account_id,meli_item_id,meli_variation_id,meli_variation_external_id,meli_title_snapshot,meli_sku_snapshot,item_snapshot_json,conversion_factor,status,link_source)
+                 VALUES (:internal,:account,:item,:variation,:variation_external,:title,:sku,:snapshot,:factor,"active",:source)'
+            );
+            $stmt->execute([
+                'internal' => $internalProductId,
+                'account' => (int) $meli['meli_account_id'],
+                'item' => $meliItemId,
+                'variation' => max(0, $variationId),
+                'variation_external' => $variationId > 0 ? $variationId : null,
+                'title' => $meli['title'],
+                'sku' => $meli['seller_sku'],
+                'snapshot' => json_encode($meli, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'factor' => $factor,
+                'source' => in_array($source, ['manual', 'from_item', 'from_order', 'suggested'], true) ? $source : 'manual',
+            ]);
+            if ($ownsTransaction) {
+                $pdo->commit();
+            }
+        } catch (\Throwable $error) {
+            if ($ownsTransaction && $pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
         }
-        $exists = $pdo->prepare('SELECT id FROM product_meli_links WHERE meli_account_id=:account AND meli_item_id=:item AND meli_variation_id=:variation AND status="active" LIMIT 1');
-        $exists->execute(['account' => $meli['meli_account_id'], 'item' => $meliItemId, 'variation' => $variationId]);
-        if ($exists->fetchColumn()) {
-            throw new RuntimeException('Esta publicación/variación ya tiene un vínculo activo.');
-        }
-        $stmt = $pdo->prepare(
-            'INSERT INTO product_meli_links
-             (internal_product_id,meli_account_id,meli_item_id,meli_variation_id,meli_variation_external_id,meli_title_snapshot,meli_sku_snapshot,item_snapshot_json,conversion_factor,status,link_source)
-             VALUES (:internal,:account,:item,:variation,:variation_external,:title,:sku,:snapshot,:factor,"active",:source)'
-        );
-        $stmt->execute([
-            'internal' => $internalProductId,
-            'account' => (int) $meli['meli_account_id'],
-            'item' => $meliItemId,
-            'variation' => max(0, $variationId),
-            'variation_external' => $variationId > 0 ? $variationId : null,
-            'title' => $meli['title'],
-            'sku' => $meli['seller_sku'],
-            'snapshot' => json_encode($meli, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-            'factor' => round($factor, 4),
-            'source' => in_array($source, ['manual', 'from_item', 'from_order', 'suggested'], true) ? $source : 'manual',
-        ]);
     }
 
     public function updateFactor(int $linkId, float $factor): void
     {
         $this->assertCanWrite();
-        if ($factor <= 0) {
+        $factor = round($factor, 4);
+        if ($factor < 0.0001) {
             throw new RuntimeException('La cantidad de bodega que descuenta cada venta debe ser mayor que cero.');
         }
         $this->assertLinkAuthorized($linkId);
         Database::connection()->prepare('UPDATE product_meli_links SET conversion_factor=:factor WHERE id=:id AND status="active"')
-            ->execute(['factor' => round($factor, 4), 'id' => $linkId]);
+            ->execute(['factor' => $factor, 'id' => $linkId]);
     }
 
     public function unlink(int $linkId): void
@@ -170,9 +187,13 @@ final class ProductLinkService
 
     private function assertLinkAuthorized(int $linkId): void
     {
-        [$scopeSql, $params] = $this->accountScope('meli_account_id', 0, 'existing_link_scope');
+        [$scopeSql, $params] = $this->accountScope('l.meli_account_id', 0, 'existing_link_scope');
         $stmt = Database::connection()->prepare(
-            'SELECT id FROM product_meli_links WHERE id=:id AND ' . $scopeSql . ' LIMIT 1'
+            'SELECT l.id FROM product_meli_links l
+             JOIN meli_accounts a ON a.id=l.meli_account_id
+             JOIN internal_products p ON p.id=l.internal_product_id AND p.company_id=a.company_id
+             JOIN meli_items i ON i.id=l.meli_item_id AND i.meli_account_id=l.meli_account_id
+             WHERE l.id=:id AND ' . $scopeSql . ' LIMIT 1'
         );
         $stmt->execute(['id' => $linkId] + $params);
         if (!$stmt->fetchColumn()) {

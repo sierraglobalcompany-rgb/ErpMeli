@@ -65,12 +65,26 @@ final class InventoryLedgerService
         $companyId = (int) $spec['company_id'];
         $warehouseId = (int) $spec['warehouse_id'];
         $productId = (int) $spec['internal_product_id'];
+        // A retry is authorized by the immutable movement itself. Entity state
+        // may have changed after the original commit, but a replay must remain
+        // a zero-write idempotent read.
+        $existing = $this->pdo->prepare(
+            'SELECT * FROM inventory_movements
+             WHERE company_id=? AND meli_account_id<=>? AND idempotency_key=? LIMIT 1'
+        );
+        $existing->execute([$companyId, $spec['meli_account_id'], $spec['idempotency_key']]);
+        $movement = $existing->fetch(PDO::FETCH_ASSOC);
+        if (is_array($movement)) {
+            $this->assertExistingEquivalent($movement, $spec);
+            return $movement;
+        }
+        $allowInactiveEntities = in_array($spec['movement_type'], ['sale_reversal', 'release'], true);
         $this->assertEntities(
             $companyId,
             $warehouseId,
             $productId,
             $spec['meli_account_id'],
-            in_array($spec['movement_type'], ['sale_reversal', 'release'], true)
+            $allowInactiveEntities
         );
         $this->assertReversalAuthority($spec);
 
@@ -92,9 +106,12 @@ final class InventoryLedgerService
             throw new RuntimeException('No se pudo bloquear el saldo de inventario.');
         }
 
+        // Recheck only after the entity/balance mutex. A missing-row gap lock
+        // before these locks can deadlock two first writers of the same key.
         $existing = $this->pdo->prepare(
             'SELECT * FROM inventory_movements
-             WHERE company_id=? AND meli_account_id<=>? AND idempotency_key=? LIMIT 1'
+             WHERE company_id=? AND meli_account_id<=>? AND idempotency_key=?
+             FOR UPDATE'
         );
         $existing->execute([$companyId, $spec['meli_account_id'], $spec['idempotency_key']]);
         $movement = $existing->fetch(PDO::FETCH_ASSOC);
@@ -106,6 +123,9 @@ final class InventoryLedgerService
         $type = (string) $spec['movement_type'];
         $quantity = (string) $spec['quantity'];
         $unitCost = (string) $spec['unit_cost'];
+        if (in_array($type, ['reserve', 'release'], true)) {
+            $unitCost = '0.000000';
+        }
         $onHandDelta = '0.000000';
         $reservedDelta = '0.000000';
 
@@ -252,14 +272,17 @@ final class InventoryLedgerService
         int $warehouseId,
         int $productId,
         ?int $accountId,
-        bool $allowInactiveWarehouse
+        bool $allowInactiveEntities
     ): void
     {
         $stmt = $this->pdo->prepare(
             'SELECT w.id
              FROM inventory_warehouses w
              JOIN internal_products p ON p.id=? AND p.company_id=w.company_id AND p.deleted_at IS NULL
-             WHERE w.id=? AND w.company_id=?' . ($allowInactiveWarehouse ? '' : ' AND w.status="active"') . ' LIMIT 1'
+             WHERE w.id=? AND w.company_id=?' . ($allowInactiveEntities
+                ? ''
+                : ' AND w.status="active" AND p.status="active"') . '
+             FOR UPDATE'
         );
         $stmt->execute([$productId, $warehouseId, $companyId]);
         if (!$stmt->fetchColumn()) {

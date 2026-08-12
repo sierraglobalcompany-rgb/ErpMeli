@@ -78,6 +78,12 @@ $assert(str_contains($producer, 'queue_v4_clean_certified_account_set_invalid'),
 $assert(str_contains($producer, "producer_key='inventory_order_refresh'"), 'inventory lifecycle refresh checkpoint missing');
 $assert(str_contains($producer, 'INTERVAL 15 MINUTE'), 'inventory lifecycle refresh is not bounded');
 $assert(str_contains($producer, 'reversal.reversal_of_movement_id=issue.id'), 'inventory lifecycle refresh does not stop after reversal');
+$assert(str_contains($producer, 'inventory_pending_floor') && str_contains($producer, 'inventory_pending_cursor'), 'inventory crash-gap floor/cursor authority missing');
+$assert(str_contains($producer, 'ensurePendingProjectionAuthority($accounts)'), 'active-upgrade pending floor bootstrap missing');
+$assert(str_contains($producer, 'inventory_refresh_turn'), 'inventory refresh source alternation missing');
+$assert(str_contains($repository, 'state IN ("completed","review")'), 'inventory review job cannot be revived safely');
+$assert(str_contains($control, 'initializePendingAuthority') && str_contains($control, 'inventory_pending_floor'), 'activation does not capture inventory cutover floor');
+$assert(strpos($control, 'initializePendingAuthority') < strpos($control, "engine_state='ACTIVE'"), 'inventory floor is not captured before activation');
 $assert(str_contains($control, "engine_state='ACTIVE',scheduler_enabled=1"), 'activation does not enable internal scheduler atomically');
 $assert(str_contains($control, 'activationIssues()'), 'activation does not revalidate current readiness authority');
 $assert(str_contains($appJs, "(snapshot?.issues || []).length === 0"), 'activation UI ignores current readiness issues');

@@ -39,6 +39,10 @@ final class QueueV4CleanProducer
         if (count($accounts) !== 3) {
             throw new RuntimeException('queue_v4_clean_certified_account_set_invalid');
         }
+        // Upgrades may inherit an already ACTIVE 2.37.2 engine and therefore
+        // never call activate() again. Capture the cutover floors for all
+        // certified tenants before any producer branch can schedule work.
+        $this->ensurePendingProjectionAuthority($accounts);
         $created = 0;
         $now = time();
         $windowSeconds = max(60, min(900, $windowSeconds));
@@ -147,8 +151,19 @@ final class QueueV4CleanProducer
                     }
                     $cursor = max(0, (int) ($checkpoint['last_job_id'] ?? 0));
                 }
-                $order = $this->inventoryOrderCandidate($companyId, $accountId, $cursor);
-                if ($order === null && $cursor > 0) {
+                $turn = $this->inventoryRefreshTurn($companyId, $accountId);
+                $order = $turn === 0
+                    ? $this->inventoryOrderCandidate($companyId, $accountId, $cursor)
+                    : $this->pendingProjectionCandidate($companyId, $accountId);
+                $source = $turn === 0 ? 'inventory_lifecycle_refresh' : 'inventory_pending_projection';
+                if ($order === null && $turn === 0) {
+                    $order = $this->pendingProjectionCandidate($companyId, $accountId);
+                    $source = 'inventory_pending_projection';
+                } elseif ($order === null) {
+                    $order = $this->inventoryOrderCandidate($companyId, $accountId, $cursor);
+                    $source = 'inventory_lifecycle_refresh';
+                }
+                if ($order === null && $cursor > 0 && $source === 'inventory_lifecycle_refresh') {
                     $order = $this->inventoryOrderCandidate($companyId, $accountId, 0);
                 }
                 $lastOrderId = $cursor;
@@ -160,12 +175,15 @@ final class QueueV4CleanProducer
                         'order_exact',
                         $externalId,
                         'order:' . $externalId,
-                        ['order_id' => $externalId, 'source' => 'inventory_lifecycle_refresh'],
+                        ['order_id' => $externalId, 'source' => $source],
                         3,
                     );
-                    $lastOrderId = (int) $order['id'];
+                    if ($source === 'inventory_lifecycle_refresh') {
+                        $lastOrderId = (int) $order['id'];
+                    }
                     $created++;
                 }
+                $this->setInventoryRefreshTurn($companyId, $accountId, 1 - $turn);
                 $update = $this->pdo->prepare(
                     "UPDATE queue_v4_clean_checkpoints
                      SET last_job_id=?,next_due_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 15 MINUTE)
@@ -185,6 +203,51 @@ final class QueueV4CleanProducer
             }
         }
         return $created;
+    }
+
+    /** @param list<array<string,mixed>> $accounts */
+    private function ensurePendingProjectionAuthority(array $accounts): void
+    {
+        $this->pdo->beginTransaction();
+        try {
+            foreach ($accounts as $account) {
+                $companyId = (int) $account['company_id'];
+                $accountId = (int) $account['meli_account_id'];
+                $select = $this->pdo->prepare(
+                    'SELECT producer_key,last_job_id FROM queue_v4_clean_checkpoints
+                     WHERE producer_key IN ("inventory_pending_floor","inventory_pending_cursor")
+                       AND company_id=? AND meli_account_id=? ORDER BY producer_key FOR UPDATE'
+                );
+                $select->execute([$companyId, $accountId]);
+                $rows = $select->fetchAll(PDO::FETCH_KEY_PAIR);
+                if (isset($rows['inventory_pending_cursor']) !== isset($rows['inventory_pending_floor'])) {
+                    throw new RuntimeException('queue_v4_clean_inventory_pending_authority_incomplete');
+                }
+                if (isset($rows['inventory_pending_floor'], $rows['inventory_pending_cursor'])) {
+                    continue;
+                }
+                $maximum = $this->pdo->prepare(
+                    'SELECT COALESCE(MAX(o.id),0) FROM meli_orders o
+                     JOIN meli_accounts a ON a.id=o.meli_account_id AND a.company_id=?
+                     WHERE o.meli_account_id=?'
+                );
+                $maximum->execute([$companyId, $accountId]);
+                $floor = (int) $maximum->fetchColumn();
+                $insert = $this->pdo->prepare(
+                    'INSERT INTO queue_v4_clean_checkpoints
+                     (producer_key,company_id,meli_account_id,last_job_id,next_due_at)
+                     VALUES (?,?,?,?,UTC_TIMESTAMP(3))'
+                );
+                $insert->execute(['inventory_pending_floor', $companyId, $accountId, $floor]);
+                $insert->execute(['inventory_pending_cursor', $companyId, $accountId, $floor]);
+            }
+            $this->pdo->commit();
+        } catch (Throwable $error) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $error;
+        }
     }
 
     /** @return array{id:int,external_order_id:string}|null */
@@ -214,6 +277,84 @@ final class QueueV4CleanProducer
         if (!is_array($row) || !ctype_digit((string) $row['external_order_id'])) {
             return null;
         }
+        return ['id' => (int) $row['id'], 'external_order_id' => (string) $row['external_order_id']];
+    }
+
+    private function inventoryRefreshTurn(int $companyId, int $accountId): int
+    {
+        $statement = $this->pdo->prepare(
+            "SELECT COALESCE(last_job_id,0) FROM queue_v4_clean_checkpoints
+             WHERE producer_key='inventory_refresh_turn' AND company_id=? AND meli_account_id=? FOR UPDATE"
+        );
+        $statement->execute([$companyId, $accountId]);
+        $value = $statement->fetchColumn();
+        if ($value === false) {
+            $this->pdo->prepare(
+                "INSERT INTO queue_v4_clean_checkpoints
+                 (producer_key,company_id,meli_account_id,last_job_id,next_due_at)
+                 VALUES ('inventory_refresh_turn',?,?,0,UTC_TIMESTAMP(3))"
+            )->execute([$companyId, $accountId]);
+            return 0;
+        }
+        return ((int) $value) % 2;
+    }
+
+    private function setInventoryRefreshTurn(int $companyId, int $accountId, int $turn): void
+    {
+        $this->pdo->prepare(
+            "UPDATE queue_v4_clean_checkpoints SET last_job_id=?
+             WHERE producer_key='inventory_refresh_turn' AND company_id=? AND meli_account_id=?"
+        )->execute([$turn, $companyId, $accountId]);
+    }
+
+    /** @return array{id:int,external_order_id:string}|null */
+    private function pendingProjectionCandidate(int $companyId, int $accountId): ?array
+    {
+        $floorKey = 'inventory_pending_floor';
+        $cursorKey = 'inventory_pending_cursor';
+        $checkpoint = $this->pdo->prepare(
+            'SELECT producer_key,last_job_id FROM queue_v4_clean_checkpoints
+             WHERE producer_key IN (?,?) AND company_id=? AND meli_account_id=?
+             ORDER BY producer_key FOR UPDATE'
+        );
+        $checkpoint->execute([$floorKey, $cursorKey, $companyId, $accountId]);
+        $values = [];
+        foreach ($checkpoint->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $values[(string) $row['producer_key']] = (int) ($row['last_job_id'] ?? 0);
+        }
+        if (!isset($values[$floorKey], $values[$cursorKey])) {
+            throw new RuntimeException('queue_v4_clean_inventory_pending_authority_missing');
+        }
+        $floor = $values[$floorKey];
+        $cursor = max($floor, $values[$cursorKey]);
+        $statement = $this->pdo->prepare(
+            'SELECT o.id,o.external_order_id
+             FROM meli_orders o
+             JOIN meli_accounts a ON a.id=o.meli_account_id AND a.company_id=?
+             WHERE o.meli_account_id=? AND o.id>? AND LOWER(o.status)="paid"
+               AND NOT EXISTS (
+                 SELECT 1 FROM inventory_movements captured
+                 WHERE captured.company_id=a.company_id
+                   AND captured.meli_account_id=o.meli_account_id
+                   AND captured.reference_type="meli_order"
+                   AND captured.reference_id=o.external_order_id
+                   AND captured.movement_type="sale_issue"
+               )
+             ORDER BY o.id ASC LIMIT 1'
+        );
+        $statement->execute([$companyId, $accountId, $cursor]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row) && $cursor > $floor) {
+            $statement->execute([$companyId, $accountId, $floor]);
+            $row = $statement->fetch(PDO::FETCH_ASSOC);
+        }
+        if (!is_array($row) || !ctype_digit((string) $row['external_order_id'])) {
+            return null;
+        }
+        $this->pdo->prepare(
+            "UPDATE queue_v4_clean_checkpoints SET last_job_id=?
+             WHERE producer_key='inventory_pending_cursor' AND company_id=? AND meli_account_id=?"
+        )->execute([(int) $row['id'], $companyId, $accountId]);
         return ['id' => (int) $row['id'], 'external_order_id' => (string) $row['external_order_id']];
     }
 }

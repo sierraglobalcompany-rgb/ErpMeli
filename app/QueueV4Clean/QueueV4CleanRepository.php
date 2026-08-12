@@ -67,11 +67,11 @@ final class QueueV4CleanRepository
              VALUES (?,?,?,?,?,?,?)
              ON DUPLICATE KEY UPDATE
                id=LAST_INSERT_ID(id),
-               completed_at=IF(state="completed",NULL,completed_at),
-               available_at=IF(state="completed",UTC_TIMESTAMP(3),available_at),
-               attempt_count=IF(state="completed",0,attempt_count),
-               last_error_class=IF(state="completed",NULL,last_error_class),
-               state=IF(state="completed","ready",state)'
+               completed_at=IF(state IN ("completed","review"),NULL,completed_at),
+               available_at=IF(state IN ("completed","review"),UTC_TIMESTAMP(3),available_at),
+               attempt_count=IF(state IN ("completed","review"),0,attempt_count),
+               last_error_class=IF(state IN ("completed","review"),NULL,last_error_class),
+               state=IF(state IN ("completed","review"),"ready",state)'
         );
         $statement->execute([
             $companyId,

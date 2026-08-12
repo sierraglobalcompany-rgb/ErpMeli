@@ -111,3 +111,43 @@ CREATE TABLE IF NOT EXISTS inventory_reviews (
     CONSTRAINT fk_inventory_review_order FOREIGN KEY (meli_order_id) REFERENCES meli_orders(id),
     CONSTRAINT fk_inventory_review_product FOREIGN KEY (internal_product_id) REFERENCES internal_products(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Fija el corte histórico de Inventario durante la instalación, antes de que
+-- el código 2.38.0 pueda proyectar órdenes. Sólo las cuentas de la última
+-- certificación Queue V4 quedan autorizadas. INSERT IGNORE preserva una
+-- autoridad ya materializada por un intento previo de la misma migración.
+INSERT IGNORE INTO queue_v4_clean_checkpoints
+    (producer_key,company_id,meli_account_id,last_job_id,next_due_at)
+SELECT checkpoint_keys.producer_key,
+       ra.company_id,
+       ra.meli_account_id,
+       COALESCE(MAX(o.id),0),
+       UTC_TIMESTAMP(3)
+FROM queue_v4_clean_readiness_accounts ra
+INNER JOIN queue_v4_clean_readiness_runs rr
+        ON rr.id=ra.readiness_run_id
+       AND rr.state='CERTIFIED'
+INNER JOIN meli_accounts a
+        ON a.id=ra.meli_account_id
+       AND a.company_id=ra.company_id
+CROSS JOIN (
+    SELECT 'inventory_pending_floor' AS producer_key
+    UNION ALL
+    SELECT 'inventory_pending_cursor'
+) checkpoint_keys
+LEFT JOIN meli_orders o
+       ON o.meli_account_id=ra.meli_account_id
+WHERE ra.outcome='PASS'
+  AND ra.readiness_run_id=(
+      SELECT MAX(certified.id)
+      FROM queue_v4_clean_readiness_runs certified
+      WHERE certified.state='CERTIFIED'
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM queue_v4_clean_checkpoints existing
+      WHERE existing.company_id=ra.company_id
+        AND existing.meli_account_id=ra.meli_account_id
+        AND existing.producer_key IN ('inventory_pending_floor','inventory_pending_cursor')
+  )
+GROUP BY checkpoint_keys.producer_key,ra.company_id,ra.meli_account_id;

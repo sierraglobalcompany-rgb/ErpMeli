@@ -6,6 +6,8 @@ use App\Services\InventoryInsufficientStock;
 use App\Services\InventoryLedgerService;
 use App\Services\InventoryApplicationService;
 use App\Services\InventoryWarehouseService;
+use App\Services\InventoryQueryService;
+use App\Services\ProductLinkService;
 use App\Services\OrderInventoryService;
 use App\Services\MeliReadClientInterface;
 use App\Core\Database;
@@ -49,8 +51,66 @@ if (($argv[1] ?? '') === '--concurrent-child') {
         echo "CHILD_UNEXPECTED_PASS\n";
         exit(3);
     } catch (Throwable $e) {
-        echo str_contains($e->getMessage(), 'Lock wait timeout') ? "CHILD_LOCKED\n" : "CHILD_ERROR:" . get_class($e) . "\n";
+        echo str_contains($e->getMessage(), 'Lock wait timeout') ? "CHILD_LOCKED\n" : "CHILD_ERROR:" . get_class($e) . ':' . $e->getMessage() . "\n";
         exit(str_contains($e->getMessage(), 'Lock wait timeout') ? 0 : 4);
+    }
+}
+
+if (($argv[1] ?? '') === '--review-dismiss-child') {
+    $reviewId = (int) ($argv[2] ?? 0);
+    $pdo->exec('SET SESSION innodb_lock_wait_timeout=2');
+    Database::setConnection($pdo);
+    Session::put('user', [
+        'id'=>1,'name'=>'Admin local','email'=>'admin@local.invalid','role'=>'admin','is_temporary'=>0,
+        'expires_at'=>null,'session_generation'=>(new App\Services\SessionGenerationService())->current(),
+    ]);
+    try {
+        (new InventoryApplicationService())->dismissReview($reviewId, 'Cierre concurrente de laboratorio');
+        echo "CHILD_DISMISSED\n";
+        exit(0);
+    } catch (App\Core\HttpException $e) {
+        echo "CHILD_ALREADY_TERMINAL\n";
+        exit(0);
+    } catch (Throwable $e) {
+        echo str_contains($e->getMessage(), 'Lock wait timeout') ? "CHILD_LOCKED\n" : "CHILD_ERROR:" . get_class($e) . ':' . $e->getMessage() . "\n";
+        exit(str_contains($e->getMessage(), 'Lock wait timeout') ? 0 : 6);
+    }
+}
+
+if (($argv[1] ?? '') === '--review-retry-child') {
+    $reviewId = (int) ($argv[2] ?? 0);
+    Database::setConnection($pdo);
+    Session::put('user', [
+        'id'=>1,'name'=>'Admin local','email'=>'admin@local.invalid','role'=>'admin','is_temporary'=>0,
+        'expires_at'=>null,'session_generation'=>(new App\Services\SessionGenerationService())->current(),
+    ]);
+    try {
+        $result = (new InventoryApplicationService())->retryReview($reviewId);
+        echo json_encode(['ok'=>true,'result'=>$result], JSON_UNESCAPED_SLASHES), "\n";
+        exit(0);
+    } catch (Throwable $e) {
+        echo "CHILD_ERROR:" . get_class($e) . ':' . $e->getMessage() . "\n";
+        exit(7);
+    }
+}
+
+if (($argv[1] ?? '') === '--product-link-child') {
+    $itemId = (int) ($argv[2] ?? 0);
+    Database::setConnection($pdo);
+    Session::put('user', [
+        'id'=>1,'name'=>'Admin local','email'=>'admin@local.invalid','role'=>'admin','is_temporary'=>0,
+        'expires_at'=>null,'session_generation'=>(new App\Services\SessionGenerationService())->current(),
+    ]);
+    try {
+        (new ProductLinkService())->link(1, $itemId, 0, 1.0, 'manual');
+        echo "CHILD_LINKED\n";
+        exit(0);
+    } catch (RuntimeException $error) {
+        echo str_contains($error->getMessage(), 'ya tiene un vínculo activo') ? "CHILD_LINK_REJECTED\n" : "CHILD_ERROR:{$error->getMessage()}\n";
+        exit(str_contains($error->getMessage(), 'ya tiene un vínculo activo') ? 0 : 8);
+    } catch (Throwable $error) {
+        echo 'CHILD_ERROR:' . get_class($error) . ':' . $error->getMessage() . "\n";
+        exit(9);
     }
 }
 
@@ -62,7 +122,7 @@ $assert = static function (bool $condition, string $label) use (&$checks): void 
     }
 };
 
-$tables = ['queue_v4_clean_attempts','queue_v4_clean_readiness_accounts','queue_v4_clean_jobs','queue_v4_clean_runs','queue_v4_clean_checkpoints','queue_v4_clean_leases','queue_v4_clean_readiness_runs','queue_v4_clean_control','app_settings','meli_tokens',
+$tables = ['user_meli_account_access','queue_v4_clean_attempts','queue_v4_clean_readiness_accounts','queue_v4_clean_jobs','queue_v4_clean_runs','queue_v4_clean_checkpoints','queue_v4_clean_leases','queue_v4_clean_readiness_runs','queue_v4_clean_control','app_settings','meli_tokens',
     'audit_logs','user_company_access','users','inventory_reviews','inventory_movements','inventory_balances','inventory_warehouses',
     'product_meli_links','meli_order_items','meli_orders','meli_items','internal_products','meli_accounts','companies'];
 foreach ($tables as $table) {
@@ -71,6 +131,7 @@ foreach ($tables as $table) {
 $pdo->exec('CREATE TABLE companies(id BIGINT UNSIGNED PRIMARY KEY,name VARCHAR(160),status TINYINT NOT NULL DEFAULT 1,deleted_at DATETIME NULL) ENGINE=InnoDB');
 $pdo->exec('CREATE TABLE users(id BIGINT UNSIGNED PRIMARY KEY,name VARCHAR(160),email VARCHAR(190),role VARCHAR(40),status TINYINT,is_temporary TINYINT DEFAULT 0) ENGINE=InnoDB');
 $pdo->exec('CREATE TABLE user_company_access(user_id BIGINT UNSIGNED NOT NULL,company_id BIGINT UNSIGNED NOT NULL,PRIMARY KEY(user_id,company_id),FOREIGN KEY(user_id) REFERENCES users(id),FOREIGN KEY(company_id) REFERENCES companies(id)) ENGINE=InnoDB');
+$pdo->exec('CREATE TABLE user_meli_account_access(user_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,PRIMARY KEY(user_id,meli_account_id)) ENGINE=InnoDB');
 $pdo->exec('CREATE TABLE audit_logs(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,user_id BIGINT UNSIGNED NULL,action VARCHAR(80),module VARCHAR(80),entity_type VARCHAR(80),entity_id BIGINT UNSIGNED NULL,meli_account_id BIGINT UNSIGNED NULL,ip_hash CHAR(64),before_json LONGTEXT NULL,after_json LONGTEXT NULL,created_at DATETIME DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB');
 $pdo->exec('CREATE TABLE meli_accounts(id BIGINT UNSIGNED PRIMARY KEY,company_id BIGINT UNSIGNED NOT NULL,account_name VARCHAR(160),meli_user_id VARCHAR(80) NULL DEFAULT NULL,status VARCHAR(20) NOT NULL DEFAULT "connected",FOREIGN KEY(company_id) REFERENCES companies(id)) ENGINE=InnoDB');
 $pdo->exec('CREATE TABLE meli_tokens(meli_account_id BIGINT UNSIGNED PRIMARY KEY,FOREIGN KEY(meli_account_id) REFERENCES meli_accounts(id)) ENGINE=InnoDB');
@@ -79,7 +140,7 @@ $pdo->exec('CREATE TABLE internal_products(id BIGINT UNSIGNED PRIMARY KEY,compan
 $pdo->exec('CREATE TABLE meli_items(id BIGINT UNSIGNED PRIMARY KEY,meli_account_id BIGINT UNSIGNED NOT NULL,external_item_id VARCHAR(80) NOT NULL,title VARCHAR(160),seller_sku VARCHAR(80),UNIQUE KEY uq_item(meli_account_id,external_item_id),FOREIGN KEY(meli_account_id) REFERENCES meli_accounts(id)) ENGINE=InnoDB');
 $pdo->exec('CREATE TABLE meli_orders(id BIGINT UNSIGNED PRIMARY KEY,meli_account_id BIGINT UNSIGNED NOT NULL,external_order_id VARCHAR(80) NOT NULL,external_pack_id VARCHAR(80) NULL,status VARCHAR(60),status_detail VARCHAR(100),UNIQUE KEY uq_order(meli_account_id,external_order_id),FOREIGN KEY(meli_account_id) REFERENCES meli_accounts(id)) ENGINE=InnoDB');
 $pdo->exec('CREATE TABLE meli_order_items(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_order_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,external_item_id VARCHAR(80) NOT NULL,external_variation_id BIGINT UNSIGNED NULL,title VARCHAR(160),seller_sku VARCHAR(80),quantity DECIMAL(18,4) NOT NULL,FOREIGN KEY(meli_order_id) REFERENCES meli_orders(id),FOREIGN KEY(meli_account_id) REFERENCES meli_accounts(id)) ENGINE=InnoDB');
-$pdo->exec('CREATE TABLE product_meli_links(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,internal_product_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,meli_item_id BIGINT UNSIGNED NOT NULL,meli_variation_id BIGINT UNSIGNED NOT NULL DEFAULT 0,conversion_factor DECIMAL(18,4) NOT NULL DEFAULT 1,status VARCHAR(20) NOT NULL,FOREIGN KEY(internal_product_id) REFERENCES internal_products(id),FOREIGN KEY(meli_account_id) REFERENCES meli_accounts(id),FOREIGN KEY(meli_item_id) REFERENCES meli_items(id)) ENGINE=InnoDB');
+$pdo->exec('CREATE TABLE product_meli_links(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,internal_product_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,meli_item_id BIGINT UNSIGNED NOT NULL,meli_variation_id BIGINT UNSIGNED NOT NULL DEFAULT 0,meli_variation_external_id BIGINT UNSIGNED NULL,meli_title_snapshot VARCHAR(160) NULL,meli_sku_snapshot VARCHAR(80) NULL,item_snapshot_json LONGTEXT NULL,conversion_factor DECIMAL(18,4) NOT NULL DEFAULT 1,status VARCHAR(20) NOT NULL,link_source VARCHAR(20) NOT NULL DEFAULT "manual",deactivated_at DATETIME NULL,FOREIGN KEY(internal_product_id) REFERENCES internal_products(id),FOREIGN KEY(meli_account_id) REFERENCES meli_accounts(id),FOREIGN KEY(meli_item_id) REFERENCES meli_items(id)) ENGINE=InnoDB');
 $pdo->exec((string) file_get_contents(dirname(__DIR__) . '/database/migrations/294_queue_v4_clean_greenfield_2_37_0.sql'));
 $pdo->exec((string) file_get_contents(dirname(__DIR__) . '/database/migrations/295_inventory_warehouse_v1_2_38_0.sql'));
 
@@ -88,6 +149,7 @@ $pdo->exec("INSERT INTO meli_accounts VALUES (1,1,'Cuenta A','1001','connected')
 $pdo->exec('INSERT INTO meli_tokens VALUES (1),(2),(3)');
 $pdo->exec("INSERT INTO users VALUES (1,'Admin local','admin@local.invalid','admin',1,0)");
 $pdo->exec("INSERT INTO user_company_access VALUES (1,1),(1,2)");
+$pdo->exec('INSERT INTO user_meli_account_access VALUES (1,1),(1,2),(1,3)');
 $pdo->exec("INSERT INTO internal_products VALUES (1,1,'SKU-1','Producto 1','unidad','active',NULL),(2,1,'SKU-2','Producto 2','unidad','active',NULL),(3,1,'SKU-3','Concurrencia','unidad','active',NULL),(4,2,'SKU-B','Producto B','unidad','active',NULL),(5,1,'SKU-N','Caso numérico','unidad','active',NULL),(6,1,'SKU-M','Operación manual','unidad','active',NULL)");
 $pdo->exec("INSERT INTO inventory_warehouses(company_id,code,name,status,is_default) VALUES (1,'MAIN','Principal','active',1),(2,'B','Bodega B','active',0)");
 $pdo->exec("INSERT INTO meli_items VALUES (1,1,'MLA1','Producto ML','MLSKU')");
@@ -210,6 +272,45 @@ $ledger->applyBatch([$base('sale_reversal','10','12','numeric-reversal',5) + ['r
 $ledger->applyBatch([$base('sale_reversal','10','12','numeric-reversal',5) + ['reversal_of_movement_id'=>(int)$numericSale['id']]]);
 $assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=5')->fetchColumn()==='150.000000', 'numeric_case_5_reversal_stock');
 $assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE internal_product_id=5 AND movement_type='sale_reversal'")->fetchColumn()===1, 'numeric_case_5_reversal_once');
+$reserveCost = $ledger->applyBatch([$base('reserve','1','999','reserve-cost-zero',5)])[0];
+$releaseCost = $ledger->applyBatch([$base('release','1','999','release-cost-zero',5)])[0];
+$assert($reserveCost['unit_cost']==='0.000000' && $releaseCost['unit_cost']==='0.000000', 'reserve_release_cost_zero');
+try {
+    (new ProductLinkService())->updateFactor(1, 0.00001);
+    $assert(false, 'quantized_zero_factor_must_throw');
+} catch (RuntimeException) {
+    $assert(true, 'quantized_zero_factor_blocked');
+}
+
+// La publicación es el mutex físico: dos POST concurrentes no pueden crear
+// dos vínculos activos para la misma cuenta/item/variación.
+$pdo->exec("INSERT INTO meli_items VALUES (6,1,'LINK-RACE','Vínculo concurrente','RACE')");
+$linkCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' --product-link-child 6';
+$linkEnv = array_merge($_ENV, [
+    'INVENTORY_TEST_DSN'=>$dsn,'INVENTORY_TEST_USER'=>$user,'INVENTORY_TEST_PASSWORD'=>$password,
+]);
+$linkProcesses = []; $linkPipes = [];
+for ($linkRace=0; $linkRace<2; $linkRace++) {
+    $pipes = [];
+    $process = proc_open($linkCommand, [['pipe','r'],['pipe','w'],['pipe','w']], $pipes, dirname(__DIR__), $linkEnv);
+    if (!is_resource($process)) {
+        throw new RuntimeException('Could not start product-link race child.');
+    }
+    fclose($pipes[0]);
+    $linkProcesses[] = $process;
+    $linkPipes[] = $pipes;
+}
+$linkOutputs = [];
+foreach ($linkProcesses as $index=>$process) {
+    $stdout = stream_get_contents($linkPipes[$index][1]); fclose($linkPipes[$index][1]);
+    $stderr = stream_get_contents($linkPipes[$index][2]); fclose($linkPipes[$index][2]);
+    $code = proc_close($process);
+    $assert($code===0, 'product_link_race_child_' . $index . ':' . trim((string)$stdout . ' ' . (string)$stderr));
+    $linkOutputs[] = trim((string)$stdout);
+}
+sort($linkOutputs);
+$assert($linkOutputs===['CHILD_LINKED','CHILD_LINK_REJECTED'], 'product_link_race_one_winner');
+$assert((int)$pdo->query("SELECT COUNT(*) FROM product_meli_links WHERE meli_account_id=1 AND meli_item_id=6 AND meli_variation_id=0 AND status='active'")->fetchColumn()===1, 'product_link_race_single_active');
 
 // Venta real: 2 unidades ML x factor 3 = 6 unidades de bodega, una sola vez.
 $pdo->exec("INSERT INTO meli_orders VALUES (10,1,'ORDER-1','PACK-1','paid','paid')");
@@ -273,6 +374,41 @@ $ambiguous = $projection->project(1,1,15);
 $assert($ambiguous['outcome']==='review' && $ambiguous['movements']===0, 'ambiguous_link_review');
 $assert((int)$pdo->query('SELECT COUNT(*) FROM inventory_movements')->fetchColumn()===$beforeAmbiguous, 'ambiguous_link_zero_delta');
 
+// Retry y dismiss reales esperan el mismo mutex de orden; al liberarlo
+// terminalizan sin stale apply ni deadlock.
+$raceReviewId = (int) $pdo->query(
+    "SELECT id FROM inventory_reviews WHERE meli_order_id=15 AND company_id=1 AND meli_account_id=1 AND state='open'"
+)->fetchColumn();
+$pdo->beginTransaction();
+$pdo->query('SELECT id FROM meli_orders WHERE id=15 AND meli_account_id=1 FOR UPDATE')->fetchColumn();
+$retryCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__)
+    . ' --review-retry-child ' . escapeshellarg((string) $raceReviewId);
+$dismissCommand = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__)
+    . ' --review-dismiss-child ' . escapeshellarg((string) $raceReviewId);
+$raceEnv = array_merge($_ENV, [
+    'INVENTORY_TEST_DSN'=>$dsn,'INVENTORY_TEST_USER'=>$user,'INVENTORY_TEST_PASSWORD'=>$password,
+]);
+$retryPipes = []; $dismissPipes = [];
+$retryProcess = proc_open($retryCommand, [['pipe','r'],['pipe','w'],['pipe','w']], $retryPipes, dirname(__DIR__), $raceEnv);
+$dismissProcess = proc_open($dismissCommand, [['pipe','r'],['pipe','w'],['pipe','w']], $dismissPipes, dirname(__DIR__), $raceEnv);
+if (!is_resource($retryProcess) || !is_resource($dismissProcess)) {
+    throw new RuntimeException('Could not start review race children.');
+}
+fclose($retryPipes[0]); fclose($dismissPipes[0]);
+usleep(300000);
+$pdo->commit();
+$retryOut = stream_get_contents($retryPipes[1]); fclose($retryPipes[1]);
+$retryErr = stream_get_contents($retryPipes[2]); fclose($retryPipes[2]);
+$dismissOut = stream_get_contents($dismissPipes[1]); fclose($dismissPipes[1]);
+$dismissErr = stream_get_contents($dismissPipes[2]); fclose($dismissPipes[2]);
+$retryCode = proc_close($retryProcess); $dismissCode = proc_close($dismissProcess);
+$assert($retryCode===0 && $dismissCode===0, 'review_retry_dismiss_no_deadlock:retry=' . $retryCode
+    . ':' . trim((string)$retryOut . ' ' . (string)$retryErr) . ':dismiss=' . $dismissCode
+    . ':' . trim((string)$dismissOut . ' ' . (string)$dismissErr));
+$assert(str_contains((string)$retryOut, '"ok":true') || str_contains((string)$retryOut, 'CHILD_ERROR:App\\Core\\HttpException'), 'review_retry_terminal');
+$assert(str_contains((string)$dismissOut, 'CHILD_DISMISSED') || str_contains((string)$dismissOut, 'CHILD_ALREADY_TERMINAL'), 'review_dismiss_terminal');
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE reference_id='ORDER-A'")->fetchColumn()===0, 'review_race_zero_delta');
+
 // Una orden mixta nunca se aplica parcialmente: una línea sin autoridad bloquea el lote completo.
 $pdo->exec("INSERT INTO meli_orders VALUES (16,1,'ORDER-MIX-U',NULL,'paid','paid'),(17,1,'ORDER-MIX-A',NULL,'paid','paid')");
 $pdo->exec("INSERT INTO meli_order_items(meli_order_id,meli_account_id,external_item_id,external_variation_id,title,seller_sku,quantity) VALUES
@@ -305,19 +441,86 @@ $projection->project(1,1,18); $projection->project(1,1,18);
 $assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()===$beforeSameProduct, 'same_product_cancel_restores_total');
 $assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE reference_id='ORDER-SAME-PRODUCT' AND movement_type='sale_reversal'")->fetchColumn()===1, 'same_product_reversal_once');
 
+// Una orden pagada ya capturada conserva su snapshot aunque cambien default, vínculo o factor.
+$pdo->exec("INSERT INTO meli_orders VALUES (19,1,'ORDER-SNAPSHOT',NULL,'paid','paid')");
+$pdo->exec("INSERT INTO meli_order_items(meli_order_id,meli_account_id,external_item_id,external_variation_id,title,seller_sku,quantity) VALUES (19,1,'MLA1',NULL,'S','MLSKU',1)");
+$snapshotBefore = $pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn();
+$snapshotFirst = $projection->project(1,1,19);
+$snapshotAfter = $pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn();
+$warehouseService->setStatus($auxWarehouse, 'active');
+$warehouseService->setDefault($auxWarehouse);
+$pdo->exec("UPDATE product_meli_links SET internal_product_id=2,conversion_factor=9.0000 WHERE id=1 AND meli_account_id=1");
+$snapshotReplay = $projection->project(1,1,19);
+$assert($snapshotFirst['movements']===1 && $snapshotReplay['movements']===1, 'paid_snapshot_replay_authority');
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE reference_id='ORDER-SNAPSHOT' AND movement_type='sale_issue'")->fetchColumn()===1, 'paid_snapshot_never_double_applies');
+$assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()===$snapshotAfter, 'paid_snapshot_product_one_stable');
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE reference_id='ORDER-SNAPSHOT' AND internal_product_id=2")->fetchColumn()===0, 'paid_snapshot_relink_zero_delta');
+$pdo->exec("UPDATE meli_orders SET status='cancelled' WHERE id=19 AND meli_account_id=1");
+$projection->project(1,1,19);
+$assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()===$snapshotBefore, 'paid_snapshot_cancel_restores_original');
+$pdo->exec("UPDATE product_meli_links SET internal_product_id=1,conversion_factor=3.0000 WHERE id=1 AND meli_account_id=1");
+$warehouseService->setDefault(1);
+$warehouseService->setStatus($auxWarehouse, 'inactive');
+
+// Producto inactivo: revisión visible, cero salida y retry aplicable al reactivarlo.
+$pdo->exec("INSERT INTO meli_orders VALUES (40,1,'ORDER-INACTIVE-PRODUCT',NULL,'paid','paid')");
+$pdo->exec("INSERT INTO meli_order_items(meli_order_id,meli_account_id,external_item_id,external_variation_id,title,seller_sku,quantity) VALUES (40,1,'MLA1',NULL,'I','MLSKU',1)");
+$pdo->exec("UPDATE internal_products SET status='inactive' WHERE id=1 AND company_id=1");
+$inactiveProjection = $projection->project(1,1,40);
+$inactiveReviewId = (int)$pdo->query("SELECT id FROM inventory_reviews WHERE meli_order_id=40 AND company_id=1 AND meli_account_id=1 AND state='open'")->fetchColumn();
+$assert($inactiveProjection['outcome']==='review' && $inactiveReviewId>0, 'inactive_product_review_visible');
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE reference_id='ORDER-INACTIVE-PRODUCT'")->fetchColumn()===0, 'inactive_product_projection_zero_delta');
+$pdo->exec("UPDATE internal_products SET status='active' WHERE id=1 AND company_id=1");
+$inactiveRetry = $manual->retryReview($inactiveReviewId);
+$assert($inactiveRetry['outcome']==='applied' && $inactiveRetry['movements']===1, 'inactive_product_retry_after_reactivation');
+
+// Dos links activos siguen siendo ambiguos aunque sólo uno de sus productos esté activo.
+$pdo->exec("INSERT INTO meli_items VALUES (5,1,'MIXED-LINK-STATUS','Links mixtos','MX')");
+$pdo->exec("UPDATE internal_products SET status='inactive' WHERE id=2 AND company_id=1");
+$pdo->exec("INSERT INTO product_meli_links(internal_product_id,meli_account_id,meli_item_id,meli_variation_id,conversion_factor,status) VALUES (1,1,5,0,1.0000,'active'),(2,1,5,0,1.0000,'active')");
+$pdo->exec("INSERT INTO meli_orders VALUES (41,1,'ORDER-MIXED-LINK-STATUS',NULL,'paid','paid')");
+$pdo->exec("INSERT INTO meli_order_items(meli_order_id,meli_account_id,external_item_id,external_variation_id,title,seller_sku,quantity) VALUES (41,1,'MIXED-LINK-STATUS',NULL,'MX','MX',1)");
+$mixedStatusProjection = $projection->project(1,1,41);
+$assert($mixedStatusProjection['outcome']==='review' && $mixedStatusProjection['movements']===0, 'active_inactive_link_pair_remains_ambiguous');
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE reference_id='ORDER-MIXED-LINK-STATUS'")->fetchColumn()===0, 'mixed_status_links_zero_delta');
+$pdo->exec("UPDATE internal_products SET status='active' WHERE id=2 AND company_id=1");
+
 // Compensaciones autorizadas siguen disponibles si la bodega original se inactiva.
 $ledger->applyBatch([$base('reserve','1','0','inactive-warehouse-reserve')]);
 $warehouseService->setStatus($auxWarehouse, 'active');
 $warehouseService->setDefault($auxWarehouse);
-$warehouseService->setStatus(1, 'inactive');
+$blockedInactivation = false;
+try {
+    $warehouseService->setStatus(1, 'inactive');
+} catch (RuntimeException) {
+    $blockedInactivation = true;
+}
+$assert($blockedInactivation && $pdo->query('SELECT status FROM inventory_warehouses WHERE id=1')->fetchColumn()==='active', 'warehouse_with_balance_cannot_hide');
+// Simula una preimagen legacy ya inactiva para certificar compensaciones fail-safe.
+$pdo->exec("UPDATE inventory_warehouses SET status='inactive' WHERE id=1 AND company_id=1");
+$pdo->exec("UPDATE internal_products SET status='inactive' WHERE id=1 AND company_id=1");
 $ledger->applyBatch([$base('release','1','0','inactive-warehouse-release')]);
 $pdo->exec("UPDATE meli_orders SET status='cancelled' WHERE id=11 AND meli_account_id=1");
 $inactiveReversal = $projection->project(1,1,11);
 $assert($inactiveReversal['outcome']==='reversed' && $inactiveReversal['movements']===1, 'inactive_warehouse_reversal_allowed');
 $assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE idempotency_key='inactive-warehouse-release'")->fetchColumn()===1, 'inactive_warehouse_release_allowed');
-$warehouseService->setStatus(1, 'active');
+$pdo->exec("UPDATE internal_products SET status='active' WHERE id=1 AND company_id=1");
+$pdo->exec("UPDATE inventory_warehouses SET status='active' WHERE id=1 AND company_id=1");
 $warehouseService->setDefault(1);
 $warehouseService->setStatus($auxWarehouse, 'inactive');
+
+// Un producto inactivo no acepta ventas/entradas nuevas y deja saldo/movimientos intactos.
+$pdo->exec("UPDATE internal_products SET status='inactive' WHERE id=1 AND company_id=1");
+$inactiveProductStock = $pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn();
+try {
+    $ledger->applyBatch([$base('sale_issue','1','0','inactive-product-sale')]);
+    $assert(false, 'inactive_product_sale_must_throw');
+} catch (RuntimeException) {
+    $assert(true, 'inactive_product_sale_blocked');
+}
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE idempotency_key='inactive-product-sale'")->fetchColumn()===0, 'inactive_product_zero_movement');
+$assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()===$inactiveProductStock, 'inactive_product_zero_stock_delta');
+$pdo->exec("UPDATE internal_products SET status='active' WHERE id=1 AND company_id=1");
 
 // Cancelar una orden sin movimiento cierra sus revisiones y no inventa stock.
 $pdo->exec("UPDATE meli_orders SET status='cancelled' WHERE id=16 AND meli_account_id=1");
@@ -407,6 +610,48 @@ for ($refreshRun=0; $refreshRun<2; $refreshRun++) {
 $assert((string)$pdo->query("SELECT state FROM queue_v4_clean_jobs WHERE id={$refreshId}")->fetchColumn()==='completed', 'queue_paid_order_completed');
 $pdo->exec("INSERT INTO queue_v4_clean_readiness_runs(id,state,expected_accounts,passed_accounts,started_by,finished_at) VALUES (1,'CERTIFIED',3,3,1,UTC_TIMESTAMP(3))");
 $pdo->exec("INSERT INTO queue_v4_clean_readiness_accounts(readiness_run_id,company_id,meli_account_id,outcome) VALUES (1,1,1,'PASS'),(1,2,2,'PASS'),(1,3,3,'PASS')");
+$pdo->exec("INSERT INTO meli_orders VALUES (50,1,'90050',NULL,'paid','paid')");
+$pdo->exec((string) file_get_contents(dirname(__DIR__) . '/database/migrations/295_inventory_warehouse_v1_2_38_0.sql'));
+$cutoverAuthority = $pdo->query(
+    "SELECT producer_key,last_job_id FROM queue_v4_clean_checkpoints
+     WHERE company_id=1 AND meli_account_id=1
+       AND producer_key IN ('inventory_pending_floor','inventory_pending_cursor')
+     ORDER BY producer_key"
+)->fetchAll(PDO::FETCH_KEY_PAIR);
+$cutoverAuthority = array_map('intval', $cutoverAuthority);
+$assert($cutoverAuthority === ['inventory_pending_cursor'=>50,'inventory_pending_floor'=>50], 'migration_cutover_floor_cursor_exact');
+$pdo->exec("INSERT INTO meli_orders VALUES (53,1,'90053',NULL,'created','created')");
+$pdo->exec((string) file_get_contents(dirname(__DIR__) . '/database/migrations/295_inventory_warehouse_v1_2_38_0.sql'));
+$cutoverAfterReapply = array_map('intval', $pdo->query(
+    "SELECT producer_key,last_job_id FROM queue_v4_clean_checkpoints
+     WHERE company_id=1 AND meli_account_id=1
+       AND producer_key IN ('inventory_pending_floor','inventory_pending_cursor')
+     ORDER BY producer_key"
+)->fetchAll(PDO::FETCH_KEY_PAIR));
+$assert($cutoverAfterReapply === $cutoverAuthority, 'migration_reapply_never_moves_cutover_floor');
+$pdo->exec("DELETE FROM meli_orders WHERE id=53 AND meli_account_id=1");
+$assert((int)$pdo->query(
+    "SELECT COUNT(*) FROM queue_v4_clean_checkpoints
+     WHERE company_id=1 AND meli_account_id=1
+       AND producer_key IN ('inventory_pending_floor','inventory_pending_cursor')"
+)->fetchColumn()===2, 'migration_cutover_authority_idempotent');
+$pdo->exec("DELETE FROM queue_v4_clean_checkpoints WHERE producer_key='inventory_pending_cursor' AND company_id=2 AND meli_account_id=2");
+$pdo->exec((string) file_get_contents(dirname(__DIR__) . '/database/migrations/295_inventory_warehouse_v1_2_38_0.sql'));
+$assert((int)$pdo->query(
+    "SELECT COUNT(*) FROM queue_v4_clean_checkpoints
+     WHERE company_id=2 AND meli_account_id=2
+       AND producer_key IN ('inventory_pending_floor','inventory_pending_cursor')"
+)->fetchColumn()===1, 'migration_partial_pair_not_silently_repaired');
+try {
+    (new QueueV4CleanProducer($pdo,$queue))->produce();
+    $assert(false, 'runtime_partial_pending_authority_must_throw');
+} catch (RuntimeException $error) {
+    $assert($error->getMessage()==='queue_v4_clean_inventory_pending_authority_incomplete', 'runtime_partial_pending_authority_fail_closed');
+}
+$pdo->exec("INSERT INTO queue_v4_clean_checkpoints(producer_key,company_id,meli_account_id,last_job_id,next_due_at)
+    SELECT 'inventory_pending_cursor',company_id,meli_account_id,last_job_id,UTC_TIMESTAMP(3)
+    FROM queue_v4_clean_checkpoints
+    WHERE producer_key='inventory_pending_floor' AND company_id=2 AND meli_account_id=2");
 $pdo->exec("INSERT INTO queue_v4_clean_checkpoints(producer_key,company_id,meli_account_id,last_job_id,next_due_at) VALUES ('inventory_order_refresh',1,1,29,UTC_TIMESTAMP(3))");
 $refreshProduction = (new QueueV4CleanProducer($pdo,$queue))->produce();
 $assert($refreshProduction['inventory_refresh_created']===1, 'queue_late_lifecycle_source_bounded');
@@ -418,6 +663,44 @@ for ($refreshRun=0; $refreshRun<2; $refreshRun++) {
 $assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE reference_id='90030' AND movement_type='sale_issue'")->fetchColumn()===1, 'queue_paid_issue_once');
 $assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE reference_id='90030' AND movement_type='sale_reversal'")->fetchColumn()===1, 'queue_cancel_reversal_once');
 $assert((string)$pdo->query("SELECT state FROM queue_v4_clean_jobs WHERE id={$refreshId}")->fetchColumn()==='completed', 'queue_cancel_refresh_completed');
+
+// El pending projector fija un piso histórico, no importa órdenes antiguas y
+// recupera con wrap una orden post-piso que se vuelve paid después.
+$pdo->exec("UPDATE queue_v4_clean_checkpoints SET next_due_at=UTC_TIMESTAMP(3),last_job_id=9999 WHERE producer_key='inventory_order_refresh' AND company_id=1 AND meli_account_id=1");
+$pdo->exec("DELETE FROM queue_v4_clean_checkpoints WHERE producer_key='inventory_refresh_turn'");
+$pdo->exec("INSERT INTO queue_v4_clean_checkpoints(producer_key,company_id,meli_account_id,last_job_id,next_due_at) VALUES ('inventory_refresh_turn',1,1,1,UTC_TIMESTAMP(3))");
+$pendingFloorRun = (new QueueV4CleanProducer($pdo,$queue))->produce();
+$assert($pendingFloorRun['inventory_refresh_created']<=3, 'inventory_refresh_budget_one_per_tenant');
+$assert((int)$pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id='90050'")->fetchColumn()===0, 'historical_paid_not_backfilled');
+$pdo->exec("INSERT INTO meli_orders VALUES (51,1,'90051',NULL,'created','created'),(52,1,'90052',NULL,'paid','paid')");
+$pdo->exec("UPDATE queue_v4_clean_checkpoints SET next_due_at=UTC_TIMESTAMP(3),last_job_id=1 WHERE producer_key='inventory_order_refresh' AND company_id=1 AND meli_account_id=1");
+$pdo->exec("UPDATE queue_v4_clean_checkpoints SET last_job_id=1 WHERE producer_key='inventory_refresh_turn' AND company_id=1 AND meli_account_id=1");
+$pdo->exec("UPDATE queue_v4_clean_checkpoints SET next_due_at=UTC_TIMESTAMP(3) WHERE producer_key='fresh_orders' AND company_id IN (1,2,3)");
+$pendingAfterFloor = (new QueueV4CleanProducer($pdo,$queue))->produce();
+$assert((int)$pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id='90052'")->fetchColumn()===1, 'post_cutover_paid_before_scheduler_recovered');
+$pdo->exec("UPDATE meli_orders SET status='paid',status_detail='paid' WHERE id=51 AND meli_account_id=1");
+$pdo->exec("UPDATE queue_v4_clean_checkpoints SET next_due_at=UTC_TIMESTAMP(3),last_job_id=1 WHERE producer_key='inventory_order_refresh' AND company_id=1 AND meli_account_id=1");
+$pdo->exec("UPDATE queue_v4_clean_checkpoints SET last_job_id=1 WHERE producer_key='inventory_refresh_turn' AND company_id=1 AND meli_account_id=1");
+$pdo->exec("UPDATE queue_v4_clean_checkpoints SET next_due_at=UTC_TIMESTAMP(3) WHERE producer_key='fresh_orders' AND company_id IN (1,2,3)");
+(new QueueV4CleanProducer($pdo,$queue))->produce();
+$assert((int)$pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id='90051'")->fetchColumn()===1, 'pending_cursor_wrap_recovers_delayed_paid');
+$assert((int)$pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id='90050'")->fetchColumn()===0, 'historical_floor_remains_excluded');
+
+// Kardex aplica siempre ACL de cuenta, incluso cuando el filtro visible dice "todas".
+$pdo->exec("INSERT INTO meli_accounts VALUES (4,1,'Cuenta no autorizada','1004','connected')");
+$ledger->applyBatch([$base('receipt','1','6','acl-account-four') + ['meli_account_id'=>4]]);
+$kardex = (new InventoryQueryService())->movements(['company_id'=>1], 1, 100);
+$kardexAccountIds = array_values(array_unique(array_filter(array_map(
+    static fn(array $row): int => (int)($row['meli_account_id'] ?? 0),
+    $kardex['items']
+))));
+$assert(!in_array(4, $kardexAccountIds, true) && in_array(1, $kardexAccountIds, true), 'kardex_account_acl_enforced');
+try {
+    (new InventoryQueryService())->movements(['company_id'=>1,'account_id'=>4], 1, 100);
+    $assert(false, 'kardex_unauthorized_account_must_throw');
+} catch (App\Core\HttpException) {
+    $assert(true, 'kardex_unauthorized_account_blocked');
+}
 
 echo json_encode([
     'ok'=>true,'checks'=>$checks,'schema'=>295,'ml_http_calls'=>0,'business_tables_mutated'=>0,

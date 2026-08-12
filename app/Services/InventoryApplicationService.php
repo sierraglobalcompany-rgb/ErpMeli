@@ -81,24 +81,15 @@ final class InventoryApplicationService
         if ($companyIds === [] || $accountIds === []) {
             throw new HttpException(404, 'No se encontró la revisión solicitada.');
         }
-        $params = [$reviewId];
         $companySlots = implode(',', array_fill(0, count($companyIds), '?'));
         $accountSlots = implode(',', array_fill(0, count($accountIds), '?'));
-        $params = array_merge($params, $companyIds, $accountIds);
-        $stmt = Database::connection()->prepare(
-            'SELECT id,company_id,meli_account_id,meli_order_id
-             FROM inventory_reviews
-             WHERE id=? AND company_id IN (' . $companySlots . ')
-               AND meli_account_id IN (' . $accountSlots . ') AND state="open" LIMIT 1'
-        );
-        $stmt->execute($params);
-        $review = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!is_array($review)) {
-            throw new HttpException(404, 'No se encontró la revisión solicitada.');
-        }
         $pdo = Database::connection();
+        $pdo->exec('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
         $pdo->beginTransaction();
         try {
+            $review = $this->lockReviewOrder(
+                $pdo, $reviewId, $companyIds, $accountIds, $companySlots, $accountSlots
+            );
             $result = (new OrderInventoryService($pdo))->project(
                 (int) $review['company_id'], (int) $review['meli_account_id'], (int) $review['meli_order_id']
             );
@@ -128,20 +119,12 @@ final class InventoryApplicationService
         $companySlots = implode(',', array_fill(0, count($companyIds), '?'));
         $accountSlots = implode(',', array_fill(0, count($accountIds), '?'));
         $pdo = Database::connection();
+        $pdo->exec('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
         $pdo->beginTransaction();
         try {
-            $select = $pdo->prepare(
-                'SELECT id,company_id,meli_account_id,reason_code
-                 FROM inventory_reviews
-                 WHERE id=? AND company_id IN (' . $companySlots . ')
-                   AND meli_account_id IN (' . $accountSlots . ') AND state="open"
-                 FOR UPDATE'
+            $review = $this->lockReviewOrder(
+                $pdo, $reviewId, $companyIds, $accountIds, $companySlots, $accountSlots
             );
-            $select->execute(array_merge([$reviewId], $companyIds, $accountIds));
-            $review = $select->fetch(PDO::FETCH_ASSOC);
-            if (!is_array($review)) {
-                throw new HttpException(404, 'No se encontró la revisión solicitada.');
-            }
             $update = $pdo->prepare(
                 'UPDATE inventory_reviews
                  SET state="dismissed",resolution=?,resolved_by=?,resolved_at=UTC_TIMESTAMP(3)
@@ -167,6 +150,66 @@ final class InventoryApplicationService
             }
             throw $e;
         }
+    }
+
+    /**
+     * Every review operation uses the same mutex order: order first, then all
+     * open reviews ordered by id. This prevents stale retry/dismiss races and
+     * deadlocks between two reviews for one order.
+     *
+     * @param list<int> $companyIds @param list<int> $accountIds
+     * @return array<string,mixed>
+     */
+    private function lockReviewOrder(
+        PDO $pdo,
+        int $reviewId,
+        array $companyIds,
+        array $accountIds,
+        string $companySlots,
+        string $accountSlots
+    ): array {
+        $identity = $pdo->prepare(
+            'SELECT id,company_id,meli_account_id,meli_order_id
+             FROM inventory_reviews
+             WHERE id=? AND company_id IN (' . $companySlots . ')
+               AND meli_account_id IN (' . $accountSlots . ') LIMIT 1'
+        );
+        $identity->execute(array_merge([$reviewId], $companyIds, $accountIds));
+        $candidate = $identity->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($candidate)) {
+            throw new HttpException(404, 'No se encontró la revisión solicitada.');
+        }
+        $order = $pdo->prepare(
+            'SELECT o.id
+             FROM meli_orders o
+             JOIN meli_accounts a ON a.id=o.meli_account_id AND a.company_id=?
+             WHERE o.id=? AND o.meli_account_id=? FOR UPDATE'
+        );
+        $order->execute([
+            (int) $candidate['company_id'],
+            (int) $candidate['meli_order_id'],
+            (int) $candidate['meli_account_id'],
+        ]);
+        if ($order->fetchColumn() === false) {
+            throw new HttpException(404, 'No se encontró la orden de la revisión.');
+        }
+        $reviews = $pdo->prepare(
+            'SELECT id,company_id,meli_account_id,meli_order_id,reason_code
+             FROM inventory_reviews
+             WHERE company_id=? AND meli_account_id=? AND meli_order_id=? AND state="open"
+             ORDER BY id FOR UPDATE'
+        );
+        $reviews->execute([
+            (int) $candidate['company_id'],
+            (int) $candidate['meli_account_id'],
+            (int) $candidate['meli_order_id'],
+        ]);
+        foreach ($reviews->fetchAll(PDO::FETCH_ASSOC) as $review) {
+            if ((int) $review['id'] === $reviewId) {
+                return $review;
+            }
+        }
+        throw new HttpException(404, 'No se encontró la revisión solicitada.');
     }
 
     private function assertProduct(int $companyId, int $productId): void

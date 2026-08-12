@@ -1,6 +1,8 @@
+.gitattributes text eol=lf
 *.php text eol=lf
 *.js text eol=lf
 *.json text eol=lf
+*.sql text eol=lf
 *.ps1 text eol=lf
 VERSION text eol=lf
 database/migrations/288_queue_core_readiness_authority_b2_1.sql whitespace=-blank-at-eof

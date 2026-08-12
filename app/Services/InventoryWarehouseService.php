@@ -133,6 +133,17 @@ final class InventoryWarehouseService
             if ($status === 'inactive' && (int) $warehouse['is_default'] === 1) {
                 throw new RuntimeException('Seleccione otra bodega predeterminada antes de inactivar ésta.');
             }
+            if ($status === 'inactive') {
+                $balance = $pdo->prepare(
+                    'SELECT internal_product_id FROM inventory_balances
+                     WHERE company_id=? AND warehouse_id=? AND (on_hand<>0 OR reserved<>0)
+                     ORDER BY internal_product_id LIMIT 1 FOR UPDATE'
+                );
+                $balance->execute([$companyId, $warehouseId]);
+                if ($balance->fetchColumn() !== false) {
+                    throw new RuntimeException('No se puede inactivar una bodega con existencias o reservas.');
+                }
+            }
             $update = $pdo->prepare(
                 'UPDATE inventory_warehouses SET status=? WHERE id=? AND company_id=?'
             );

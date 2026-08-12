@@ -1,31 +1,17 @@
 {
-    "product": "erp-meli",
-    "version": "2.36.11",
-    "build_id": "erp-meli-2.36.11-v4-readiness-classifier-hotfix-rc1-20260812",
+    "build_id": "erp-meli-2.36.12-v4-bootstrap-typeerror-hotfix-rc1-20260812",
     "built_at": "2026-08-12T10:00:00Z",
-    "minimum_migration": "293_queue_core_runtime_profile_defaults_b2_1.sql",
-    "publication_policy": {
-        "base_commit": "75997f864b917c829d19f14e21cd7303d2685776",
-        "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 835,
-        "component_count": 834,
-        "paths_sha256": "29cf6e1f2b2f3f9c8414c40895395b052871a6fd394960b749d457a2054c19fc",
-        "dependency_registry_sha256": "39f300398bfba8d2db3f20677eaf0f10d05ece3abeec5cda5d6c2f07d85615b9",
-        "raw_git_blobs": true,
-        "protected_external_state_excluded": true,
-        "build_only_excluded": true
-    },
     "components": {
-        "runtime_htaccess": {
-            "path": ".htaccess",
-            "sha256": "3a6208ec504c40b8ccae5c9fa00ca2cb07c5f9f9353d01e2e993c17df6fb943d",
-            "sha256_lf": "3a6208ec504c40b8ccae5c9fa00ca2cb07c5f9f9353d01e2e993c17df6fb943d",
+        "cron_probe": {
+            "path": "jobs/cron_probe.php",
+            "sha256": "73031dd029984375812d5200ff3cb020a2719842d4bd6193dacaec694d82e720",
+            "sha256_lf": "73031dd029984375812d5200ff3cb020a2719842d4bd6193dacaec694d82e720",
             "text": true
         },
-        "runtime_version": {
-            "path": "VERSION",
-            "sha256": "94fc764ba70570373c786acc454b7102abe24db4b09a26a81b6c360c03b4ea71",
-            "sha256_lf": "94fc764ba70570373c786acc454b7102abe24db4b09a26a81b6c360c03b4ea71",
+        "process_sync_queue": {
+            "path": "jobs/process_sync_queue.php",
+            "sha256": "3642153837228d0b19c845769adef94440e58ce4d75187e8324305968e0ac889",
+            "sha256_lf": "3642153837228d0b19c845769adef94440e58ce4d75187e8324305968e0ac889",
             "text": true
         },
         "runtime_actualizar_php": {
@@ -904,16 +890,16 @@
             "sha256_lf": "2daf6669cf4e11934c2ef4d3af9c17289ebc019f9add6ccf93d0bc351089446b",
             "text": true
         },
-        "runtime_app_queuecore_queuecorepreremoteblockedexception_php": {
-            "path": "app/QueueCore/QueueCorePreRemoteBlockedException.php",
-            "sha256": "ca091ee4b0f358df7d0304ed645ac1bf9441429b00d0b09346a8f040197224bf",
-            "sha256_lf": "ca091ee4b0f358df7d0304ed645ac1bf9441429b00d0b09346a8f040197224bf",
-            "text": true
-        },
         "runtime_app_queuecore_queuecorepreflightservice_php": {
             "path": "app/QueueCore/QueueCorePreflightService.php",
             "sha256": "5b0d23b15d186f0a96d32b8de7e90a321d48b774c7283eec0d62e52cc0995de7",
             "sha256_lf": "5b0d23b15d186f0a96d32b8de7e90a321d48b774c7283eec0d62e52cc0995de7",
+            "text": true
+        },
+        "runtime_app_queuecore_queuecorepreremoteblockedexception_php": {
+            "path": "app/QueueCore/QueueCorePreRemoteBlockedException.php",
+            "sha256": "ca091ee4b0f358df7d0304ed645ac1bf9441429b00d0b09346a8f040197224bf",
+            "sha256_lf": "ca091ee4b0f358df7d0304ed645ac1bf9441429b00d0b09346a8f040197224bf",
             "text": true
         },
         "runtime_app_queuecore_queuecorereadinessoperationlock_php": {
@@ -1018,16 +1004,16 @@
             "sha256_lf": "62831d0e35234453304460329ec6c6f5a8c0310eca9fa435201ae4ab0c3a2604",
             "text": true
         },
-        "runtime_app_queuecore_queuerunrequest_php": {
-            "path": "app/QueueCore/QueueRunRequest.php",
-            "sha256": "de5c65c130e867a0af02e784f0673953f7e10aa307cab1df9440528425283a13",
-            "sha256_lf": "de5c65c130e867a0af02e784f0673953f7e10aa307cab1df9440528425283a13",
-            "text": true
-        },
         "runtime_app_queuecore_queuerunner_php": {
             "path": "app/QueueCore/QueueRunner.php",
             "sha256": "7fef805a7641a8cd69e782944da948f77ec1516ac18d1de51134ec6d14607553",
             "sha256_lf": "7fef805a7641a8cd69e782944da948f77ec1516ac18d1de51134ec6d14607553",
+            "text": true
+        },
+        "runtime_app_queuecore_queuerunrequest_php": {
+            "path": "app/QueueCore/QueueRunRequest.php",
+            "sha256": "de5c65c130e867a0af02e784f0673953f7e10aa307cab1df9440528425283a13",
+            "sha256_lf": "de5c65c130e867a0af02e784f0673953f7e10aa307cab1df9440528425283a13",
             "text": true
         },
         "runtime_app_queuecore_queuescheduler_php": {
@@ -2236,16 +2222,16 @@
             "sha256_lf": "4bfbcbcdb4be8154ca9bf6bf0e4b8d6069ed4450d891fbeddc8f604e16412df8",
             "text": true
         },
-        "runtime_app_services_logqueryservice_php": {
-            "path": "app/Services/LogQueryService.php",
-            "sha256": "9db2c990318e372a5a4c6911d005809b0b7ce035a0bda1fd441a439f248f2f14",
-            "sha256_lf": "9db2c990318e372a5a4c6911d005809b0b7ce035a0bda1fd441a439f248f2f14",
-            "text": true
-        },
         "runtime_app_services_logger_php": {
             "path": "app/Services/Logger.php",
             "sha256": "b9042dd2911bace75dee101347832bb5ea30c8956f273dd66e1a5bb7b49f460e",
             "sha256_lf": "b9042dd2911bace75dee101347832bb5ea30c8956f273dd66e1a5bb7b49f460e",
+            "text": true
+        },
+        "runtime_app_services_logqueryservice_php": {
+            "path": "app/Services/LogQueryService.php",
+            "sha256": "9db2c990318e372a5a4c6911d005809b0b7ce035a0bda1fd441a439f248f2f14",
+            "sha256_lf": "9db2c990318e372a5a4c6911d005809b0b7ce035a0bda1fd441a439f248f2f14",
             "text": true
         },
         "runtime_app_services_maintenanceexecutionlock_php": {
@@ -2268,8 +2254,8 @@
         },
         "runtime_app_services_managedruntimepublicationpolicy_php": {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "eacc96f9aaeded6f97a24d608a95eb5db62807a9bf688843db832091722b7d9c",
-            "sha256_lf": "eacc96f9aaeded6f97a24d608a95eb5db62807a9bf688843db832091722b7d9c",
+            "sha256": "16e3c1b8e1f1a1450dde7893950f64124a5d3d91fd2179bdda1642904e3f9f73",
+            "sha256_lf": "16e3c1b8e1f1a1450dde7893950f64124a5d3d91fd2179bdda1642904e3f9f73",
             "text": true
         },
         "runtime_app_services_manualcampaignadapter_php": {
@@ -2578,16 +2564,16 @@
             "sha256_lf": "ec064fbdd7df158c6251ed0f6b093a7c55b896a95a32de9afe6c1a0be9c9a6d4",
             "text": true
         },
-        "runtime_app_services_notificationworkitemservice_php": {
-            "path": "app/Services/NotificationWorkItemService.php",
-            "sha256": "49c2b32aefba18ff71987b79e5b49dc52f99b0daedaaa6abf3599dca537b50e4",
-            "sha256_lf": "49c2b32aefba18ff71987b79e5b49dc52f99b0daedaaa6abf3599dca537b50e4",
-            "text": true
-        },
         "runtime_app_services_notificationworkerrecoveryservice_php": {
             "path": "app/Services/NotificationWorkerRecoveryService.php",
             "sha256": "caf2e015de865fa1c2dd92d810ecdf827efe52d09ee32a84cbf8382bdf628a58",
             "sha256_lf": "caf2e015de865fa1c2dd92d810ecdf827efe52d09ee32a84cbf8382bdf628a58",
+            "text": true
+        },
+        "runtime_app_services_notificationworkitemservice_php": {
+            "path": "app/Services/NotificationWorkItemService.php",
+            "sha256": "49c2b32aefba18ff71987b79e5b49dc52f99b0daedaaa6abf3599dca537b50e4",
+            "sha256_lf": "49c2b32aefba18ff71987b79e5b49dc52f99b0daedaaa6abf3599dca537b50e4",
             "text": true
         },
         "runtime_app_services_oauthrefreshbusyexception_php": {
@@ -3198,8 +3184,8 @@
         },
         "runtime_app_services_v4readinessbootstrapservice_php": {
             "path": "app/Services/V4ReadinessBootstrapService.php",
-            "sha256": "9d2fbae5c37e8ae74f82885bae5b0df91fb1a9f4f8f53dafa15b08e803a34eb1",
-            "sha256_lf": "9d2fbae5c37e8ae74f82885bae5b0df91fb1a9f4f8f53dafa15b08e803a34eb1",
+            "sha256": "bca0b35d9dd581b4d2b3c87b75cbecfad7ebbb7e19bb6d01f68993adca2dedaa",
+            "sha256_lf": "bca0b35d9dd581b4d2b3c87b75cbecfad7ebbb7e19bb6d01f68993adca2dedaa",
             "text": true
         },
         "runtime_app_services_verifiedsalescaptureservice_php": {
@@ -3370,12 +3356,6 @@
             "sha256_lf": "2effeac0ce6e35b04e9d3d8a4f781c2a146c88a317e8736b5c0c6d007361db2e",
             "text": true
         },
-        "runtime_app_views_billing_tabs_php": {
-            "path": "app/Views/billing/_tabs.php",
-            "sha256": "851cdca373a60614cfb970744fd4b18946a0f5b0921a9f5fd6ccbbe6cd2b7242",
-            "sha256_lf": "851cdca373a60614cfb970744fd4b18946a0f5b0921a9f5fd6ccbbe6cd2b7242",
-            "text": true
-        },
         "runtime_app_views_billing_date_index_php": {
             "path": "app/Views/billing/date/index.php",
             "sha256": "adaff3705cf2a3f267845af0f730945784ef5543a2e1c106e4fe9ca3cbab3526",
@@ -3406,10 +3386,10 @@
             "sha256_lf": "c3ea117084d98200e8a18d62276962518e954fb37c8939bdecba11ed9bccaebe",
             "text": true
         },
-        "runtime_app_views_catalogs_items_php": {
-            "path": "app/Views/catalogs/_items.php",
-            "sha256": "718b2dd79be0d0c6e62f3907ad1f17b5be2cb95e52020e2cbed4a73dbb7cd371",
-            "sha256_lf": "718b2dd79be0d0c6e62f3907ad1f17b5be2cb95e52020e2cbed4a73dbb7cd371",
+        "runtime_app_views_billing_tabs_php": {
+            "path": "app/Views/billing/_tabs.php",
+            "sha256": "851cdca373a60614cfb970744fd4b18946a0f5b0921a9f5fd6ccbbe6cd2b7242",
+            "sha256_lf": "851cdca373a60614cfb970744fd4b18946a0f5b0921a9f5fd6ccbbe6cd2b7242",
             "text": true
         },
         "runtime_app_views_catalogs_categories_php": {
@@ -3440,6 +3420,12 @@
             "path": "app/Views/catalogs/index.php",
             "sha256": "dec62718d6c0468a684c400bd743078dd7ffc708823ad7c204c896e45b0c8743",
             "sha256_lf": "dec62718d6c0468a684c400bd743078dd7ffc708823ad7c204c896e45b0c8743",
+            "text": true
+        },
+        "runtime_app_views_catalogs_items_php": {
+            "path": "app/Views/catalogs/_items.php",
+            "sha256": "718b2dd79be0d0c6e62f3907ad1f17b5be2cb95e52020e2cbed4a73dbb7cd371",
+            "sha256_lf": "718b2dd79be0d0c6e62f3907ad1f17b5be2cb95e52020e2cbed4a73dbb7cd371",
             "text": true
         },
         "runtime_app_views_catalogs_print_php": {
@@ -3478,6 +3464,12 @@
             "sha256_lf": "aa084d14a44fb62a4a6021ce545c8397f4e9b781e621db4da25bfed0924d5826",
             "text": true
         },
+        "runtime_app_views_dashboard_index_php": {
+            "path": "app/Views/dashboard/index.php",
+            "sha256": "68232923af1e3effd84613fe61684295a4bcd83809dfb0270882058aa9c560a7",
+            "sha256_lf": "68232923af1e3effd84613fe61684295a4bcd83809dfb0270882058aa9c560a7",
+            "text": true
+        },
         "runtime_app_views_dashboard_operations_php": {
             "path": "app/Views/dashboard/_operations.php",
             "sha256": "5f1f9bc294051afbc611bfde8b8963042c5807547b46a5ceb2350b864457e600",
@@ -3488,12 +3480,6 @@
             "path": "app/Views/dashboard/_summary.php",
             "sha256": "f37a71bad126484893060af8703184c73db3752892a707d497ed2baa8eb448cf",
             "sha256_lf": "f37a71bad126484893060af8703184c73db3752892a707d497ed2baa8eb448cf",
-            "text": true
-        },
-        "runtime_app_views_dashboard_index_php": {
-            "path": "app/Views/dashboard/index.php",
-            "sha256": "68232923af1e3effd84613fe61684295a4bcd83809dfb0270882058aa9c560a7",
-            "sha256_lf": "68232923af1e3effd84613fe61684295a4bcd83809dfb0270882058aa9c560a7",
             "text": true
         },
         "runtime_app_views_errors_404_php": {
@@ -3586,12 +3572,6 @@
             "sha256_lf": "2f38e72487e1df1698797b7701811d204cf6fc21c0417c51c55d3f1788996f26",
             "text": true
         },
-        "runtime_app_views_orders_table_php": {
-            "path": "app/Views/orders/_table.php",
-            "sha256": "b24998cea3c6a35f1f58ab57e663834f26e846ad27fc6404d2d7e6030d519946",
-            "sha256_lf": "b24998cea3c6a35f1f58ab57e663834f26e846ad27fc6404d2d7e6030d519946",
-            "text": true
-        },
         "runtime_app_views_orders_index_php": {
             "path": "app/Views/orders/index.php",
             "sha256": "5b5d9973692f914216d6655573c8dc4a292e76ecb1458b15b961fcbcab7350f2",
@@ -3602,6 +3582,12 @@
             "path": "app/Views/orders/show.php",
             "sha256": "0d9b3407c91c8cd77337a4c7d92bb583b6dca04e724bcb240e62d898af50204d",
             "sha256_lf": "0d9b3407c91c8cd77337a4c7d92bb583b6dca04e724bcb240e62d898af50204d",
+            "text": true
+        },
+        "runtime_app_views_orders_table_php": {
+            "path": "app/Views/orders/_table.php",
+            "sha256": "b24998cea3c6a35f1f58ab57e663834f26e846ad27fc6404d2d7e6030d519946",
+            "sha256_lf": "b24998cea3c6a35f1f58ab57e663834f26e846ad27fc6404d2d7e6030d519946",
             "text": true
         },
         "runtime_app_views_products_imports_index_php": {
@@ -3620,12 +3606,6 @@
             "path": "app/Views/products/links/index.php",
             "sha256": "89d7f8034c850f23c9306360bd766d8c0a4253135971b19c58f0cad77cb474ab",
             "sha256_lf": "89d7f8034c850f23c9306360bd766d8c0a4253135971b19c58f0cad77cb474ab",
-            "text": true
-        },
-        "runtime_app_views_products_meli_table_php": {
-            "path": "app/Views/products/meli/_table.php",
-            "sha256": "b1207d9250923e1231b779bd30e9e9ec18893c7b2b6bedd6d60e48ea030fe063",
-            "sha256_lf": "b1207d9250923e1231b779bd30e9e9ec18893c7b2b6bedd6d60e48ea030fe063",
             "text": true
         },
         "runtime_app_views_products_meli_index_php": {
@@ -3650,6 +3630,12 @@
             "path": "app/Views/products/meli/show.php",
             "sha256": "e4ed5382f6ba34049807c76b5a4901fbeff01d7d45d8aff2e2f0e815eae012ce",
             "sha256_lf": "e4ed5382f6ba34049807c76b5a4901fbeff01d7d45d8aff2e2f0e815eae012ce",
+            "text": true
+        },
+        "runtime_app_views_products_meli_table_php": {
+            "path": "app/Views/products/meli/_table.php",
+            "sha256": "b1207d9250923e1231b779bd30e9e9ec18893c7b2b6bedd6d60e48ea030fe063",
+            "sha256_lf": "b1207d9250923e1231b779bd30e9e9ec18893c7b2b6bedd6d60e48ea030fe063",
             "text": true
         },
         "runtime_app_views_products_unlinked_index_php": {
@@ -3688,12 +3674,6 @@
             "sha256_lf": "5b77ee77a1e10754f6aa16395dc0d28788630e84daefc3ae265aa05a5d16e077",
             "text": true
         },
-        "runtime_app_views_reports_tabs_php": {
-            "path": "app/Views/reports/_tabs.php",
-            "sha256": "bde7475d264334b36525bf45d02b003be5b9dd52fcddd2670c5f2b4c165b5ac1",
-            "sha256_lf": "bde7475d264334b36525bf45d02b003be5b9dd52fcddd2670c5f2b4c165b5ac1",
-            "text": true
-        },
         "runtime_app_views_reports_date_index_php": {
             "path": "app/Views/reports/date/index.php",
             "sha256": "20a9f5b49f12ac95aea69caa46c8855eabc94531e1df2c9dd4d8853442375d09",
@@ -3724,16 +3704,58 @@
             "sha256_lf": "ef6279ee39f0bea9d655ee4c83923a9649fd96c628390345b7ab193f51cf7018",
             "text": true
         },
-        "runtime_app_views_sales_import_status_php": {
-            "path": "app/Views/sales/_import_status.php",
-            "sha256": "81db30d19b60c322485c07d307114e3044d7b07fac35952710116f604e50acbd",
-            "sha256_lf": "81db30d19b60c322485c07d307114e3044d7b07fac35952710116f604e50acbd",
+        "runtime_app_views_reports_tabs_php": {
+            "path": "app/Views/reports/_tabs.php",
+            "sha256": "bde7475d264334b36525bf45d02b003be5b9dd52fcddd2670c5f2b4c165b5ac1",
+            "sha256_lf": "bde7475d264334b36525bf45d02b003be5b9dd52fcddd2670c5f2b4c165b5ac1",
             "text": true
         },
         "runtime_app_views_sales_claims_index_php": {
             "path": "app/Views/sales/claims/index.php",
             "sha256": "528fec387b2ad1735910fc6055d5ebc44ef5e341ff2ab3aaa4627a45e65b6aa8",
             "sha256_lf": "528fec387b2ad1735910fc6055d5ebc44ef5e341ff2ab3aaa4627a45e65b6aa8",
+            "text": true
+        },
+        "runtime_app_views_sales_control_closes_php": {
+            "path": "app/Views/sales_control/closes.php",
+            "sha256": "31f4f361828da8c29bf062a0d4cde6ddae0a0de10eb3bc5e87b6bec83091eaad",
+            "sha256_lf": "31f4f361828da8c29bf062a0d4cde6ddae0a0de10eb3bc5e87b6bec83091eaad",
+            "text": true
+        },
+        "runtime_app_views_sales_control_fiscal_php": {
+            "path": "app/Views/sales_control/fiscal.php",
+            "sha256": "270d2ab68f92d6061b18109d63e7e69251c542ddce7051f7b9c3aeda0ccf6870",
+            "sha256_lf": "270d2ab68f92d6061b18109d63e7e69251c542ddce7051f7b9c3aeda0ccf6870",
+            "text": true
+        },
+        "runtime_app_views_sales_control_index_php": {
+            "path": "app/Views/sales_control/index.php",
+            "sha256": "55591297969cf894dd62d08bd775c1bca340e2f3a731a6f44efdc5a20988e0d6",
+            "sha256_lf": "55591297969cf894dd62d08bd775c1bca340e2f3a731a6f44efdc5a20988e0d6",
+            "text": true
+        },
+        "runtime_app_views_sales_control_issues_php": {
+            "path": "app/Views/sales_control/issues.php",
+            "sha256": "1404735d89278c05dfe1f1b237c82a9a74755baa1bf818c4fe7bda017d7cc38d",
+            "sha256_lf": "1404735d89278c05dfe1f1b237c82a9a74755baa1bf818c4fe7bda017d7cc38d",
+            "text": true
+        },
+        "runtime_app_views_sales_control_month_php": {
+            "path": "app/Views/sales_control/month.php",
+            "sha256": "1fc421609c54f8c9bcc3125e4812702757dc495323273d38f940ec2015c3d153",
+            "sha256_lf": "1fc421609c54f8c9bcc3125e4812702757dc495323273d38f940ec2015c3d153",
+            "text": true
+        },
+        "runtime_app_views_sales_control_nav_php": {
+            "path": "app/Views/sales_control/_nav.php",
+            "sha256": "1fcd798bff1a948d04b78899aeaddbebc8855be84e0da1359116d00b9d98dec1",
+            "sha256_lf": "1fcd798bff1a948d04b78899aeaddbebc8855be84e0da1359116d00b9d98dec1",
+            "text": true
+        },
+        "runtime_app_views_sales_import_status_php": {
+            "path": "app/Views/sales/_import_status.php",
+            "sha256": "81db30d19b60c322485c07d307114e3044d7b07fac35952710116f604e50acbd",
+            "sha256_lf": "81db30d19b60c322485c07d307114e3044d7b07fac35952710116f604e50acbd",
             "text": true
         },
         "runtime_app_views_sales_index_php": {
@@ -3772,16 +3794,16 @@
             "sha256_lf": "8616716996341188720ccbfa9e875e6d276c841d50148260773ee503731128f1",
             "text": true
         },
-        "runtime_app_views_sales_shipments_table_php": {
-            "path": "app/Views/sales/shipments/_table.php",
-            "sha256": "e6532f9a99bce130328a964a3de561b91f55b1081a9ad979a20d4121ebf3c85e",
-            "sha256_lf": "e6532f9a99bce130328a964a3de561b91f55b1081a9ad979a20d4121ebf3c85e",
-            "text": true
-        },
         "runtime_app_views_sales_shipments_index_php": {
             "path": "app/Views/sales/shipments/index.php",
             "sha256": "24969e4450d9c458c7ba40a766af6850a119d567dc8eb9af8eb947db999c90e2",
             "sha256_lf": "24969e4450d9c458c7ba40a766af6850a119d567dc8eb9af8eb947db999c90e2",
+            "text": true
+        },
+        "runtime_app_views_sales_shipments_table_php": {
+            "path": "app/Views/sales/shipments/_table.php",
+            "sha256": "e6532f9a99bce130328a964a3de561b91f55b1081a9ad979a20d4121ebf3c85e",
+            "sha256_lf": "e6532f9a99bce130328a964a3de561b91f55b1081a9ad979a20d4121ebf3c85e",
             "text": true
         },
         "runtime_app_views_sales_show_php": {
@@ -3790,40 +3812,16 @@
             "sha256_lf": "f18261b234db0533c825deac9618a11cb4bfa6db37eba4ed0f2d2e651a434a71",
             "text": true
         },
-        "runtime_app_views_sales_control_nav_php": {
-            "path": "app/Views/sales_control/_nav.php",
-            "sha256": "1fcd798bff1a948d04b78899aeaddbebc8855be84e0da1359116d00b9d98dec1",
-            "sha256_lf": "1fcd798bff1a948d04b78899aeaddbebc8855be84e0da1359116d00b9d98dec1",
+        "runtime_app_views_settings_api_docs_endpoint_php": {
+            "path": "app/Views/settings/api_docs_endpoint.php",
+            "sha256": "22050cff69a44bfc5b0766d17d7aef283c1c95de2e63183f7ac842a7d9fa57ad",
+            "sha256_lf": "22050cff69a44bfc5b0766d17d7aef283c1c95de2e63183f7ac842a7d9fa57ad",
             "text": true
         },
-        "runtime_app_views_sales_control_closes_php": {
-            "path": "app/Views/sales_control/closes.php",
-            "sha256": "31f4f361828da8c29bf062a0d4cde6ddae0a0de10eb3bc5e87b6bec83091eaad",
-            "sha256_lf": "31f4f361828da8c29bf062a0d4cde6ddae0a0de10eb3bc5e87b6bec83091eaad",
-            "text": true
-        },
-        "runtime_app_views_sales_control_fiscal_php": {
-            "path": "app/Views/sales_control/fiscal.php",
-            "sha256": "270d2ab68f92d6061b18109d63e7e69251c542ddce7051f7b9c3aeda0ccf6870",
-            "sha256_lf": "270d2ab68f92d6061b18109d63e7e69251c542ddce7051f7b9c3aeda0ccf6870",
-            "text": true
-        },
-        "runtime_app_views_sales_control_index_php": {
-            "path": "app/Views/sales_control/index.php",
-            "sha256": "55591297969cf894dd62d08bd775c1bca340e2f3a731a6f44efdc5a20988e0d6",
-            "sha256_lf": "55591297969cf894dd62d08bd775c1bca340e2f3a731a6f44efdc5a20988e0d6",
-            "text": true
-        },
-        "runtime_app_views_sales_control_issues_php": {
-            "path": "app/Views/sales_control/issues.php",
-            "sha256": "1404735d89278c05dfe1f1b237c82a9a74755baa1bf818c4fe7bda017d7cc38d",
-            "sha256_lf": "1404735d89278c05dfe1f1b237c82a9a74755baa1bf818c4fe7bda017d7cc38d",
-            "text": true
-        },
-        "runtime_app_views_sales_control_month_php": {
-            "path": "app/Views/sales_control/month.php",
-            "sha256": "1fc421609c54f8c9bcc3125e4812702757dc495323273d38f940ec2015c3d153",
-            "sha256_lf": "1fc421609c54f8c9bcc3125e4812702757dc495323273d38f940ec2015c3d153",
+        "runtime_app_views_settings_api_docs_php": {
+            "path": "app/Views/settings/api_docs.php",
+            "sha256": "4ce34d1589aeb67a9ff0313dba316d5fcab763c126530aff861d57dec5d85ca1",
+            "sha256_lf": "4ce34d1589aeb67a9ff0313dba316d5fcab763c126530aff861d57dec5d85ca1",
             "text": true
         },
         "runtime_app_views_settings_api_emergency_controls_php": {
@@ -3832,10 +3830,28 @@
             "sha256_lf": "be4366d5e5316df3df9e2cdb90d61ba2dc6c291d783d8a71e32f73ffa6e9deff",
             "text": true
         },
+        "runtime_app_views_settings_api_health_accounts_php": {
+            "path": "app/Views/settings/api_health_accounts.php",
+            "sha256": "256f19928e250ccca2449e9cdcc304dc7aff83d9bccda29b62c9cc89767a02c0",
+            "sha256_lf": "256f19928e250ccca2449e9cdcc304dc7aff83d9bccda29b62c9cc89767a02c0",
+            "text": true
+        },
         "runtime_app_views_settings_api_health_header_php": {
             "path": "app/Views/settings/_api_health_header.php",
             "sha256": "74e6db055042926bfe0d267b0cf438c9334262b74f6a7bd0f98e7ff2eb9b222c",
             "sha256_lf": "74e6db055042926bfe0d267b0cf438c9334262b74f6a7bd0f98e7ff2eb9b222c",
+            "text": true
+        },
+        "runtime_app_views_settings_api_health_incident_show_php": {
+            "path": "app/Views/settings/api_health_incident_show.php",
+            "sha256": "94198c1c3abf8b4685a091650b52734738a1bcb8ea7a26bafe8b773d7ff9557a",
+            "sha256_lf": "94198c1c3abf8b4685a091650b52734738a1bcb8ea7a26bafe8b773d7ff9557a",
+            "text": true
+        },
+        "runtime_app_views_settings_api_health_incidents_php": {
+            "path": "app/Views/settings/api_health_incidents.php",
+            "sha256": "cf550687f7a6e513d9bef5e4b69965f007e8f6c34635b619f361331ec96ec139",
+            "sha256_lf": "cf550687f7a6e513d9bef5e4b69965f007e8f6c34635b619f361331ec96ec139",
             "text": true
         },
         "runtime_app_views_settings_api_health_nav_php": {
@@ -3850,46 +3866,10 @@
             "sha256_lf": "1e7419a8f24307f06293986b8ca671e5fe25fd217893c9bf8a89406f7fc7fc94",
             "text": true
         },
-        "runtime_app_views_settings_automation_nav_php": {
-            "path": "app/Views/settings/_automation_nav.php",
-            "sha256": "3f61eca682687d423bd308bbe778dd4e8a2cca61c09108cd1c4a24925ce20d61",
-            "sha256_lf": "3f61eca682687d423bd308bbe778dd4e8a2cca61c09108cd1c4a24925ce20d61",
-            "text": true
-        },
-        "runtime_app_views_settings_api_docs_php": {
-            "path": "app/Views/settings/api_docs.php",
-            "sha256": "4ce34d1589aeb67a9ff0313dba316d5fcab763c126530aff861d57dec5d85ca1",
-            "sha256_lf": "4ce34d1589aeb67a9ff0313dba316d5fcab763c126530aff861d57dec5d85ca1",
-            "text": true
-        },
-        "runtime_app_views_settings_api_docs_endpoint_php": {
-            "path": "app/Views/settings/api_docs_endpoint.php",
-            "sha256": "22050cff69a44bfc5b0766d17d7aef283c1c95de2e63183f7ac842a7d9fa57ad",
-            "sha256_lf": "22050cff69a44bfc5b0766d17d7aef283c1c95de2e63183f7ac842a7d9fa57ad",
-            "text": true
-        },
         "runtime_app_views_settings_api_health_php": {
             "path": "app/Views/settings/api_health.php",
             "sha256": "5b750473252fdbed035ee8de1f33d1b0afdc9000cf30141f26d67edb5099f6b6",
             "sha256_lf": "5b750473252fdbed035ee8de1f33d1b0afdc9000cf30141f26d67edb5099f6b6",
-            "text": true
-        },
-        "runtime_app_views_settings_api_health_accounts_php": {
-            "path": "app/Views/settings/api_health_accounts.php",
-            "sha256": "256f19928e250ccca2449e9cdcc304dc7aff83d9bccda29b62c9cc89767a02c0",
-            "sha256_lf": "256f19928e250ccca2449e9cdcc304dc7aff83d9bccda29b62c9cc89767a02c0",
-            "text": true
-        },
-        "runtime_app_views_settings_api_health_incident_show_php": {
-            "path": "app/Views/settings/api_health_incident_show.php",
-            "sha256": "94198c1c3abf8b4685a091650b52734738a1bcb8ea7a26bafe8b773d7ff9557a",
-            "sha256_lf": "94198c1c3abf8b4685a091650b52734738a1bcb8ea7a26bafe8b773d7ff9557a",
-            "text": true
-        },
-        "runtime_app_views_settings_api_health_incidents_php": {
-            "path": "app/Views/settings/api_health_incidents.php",
-            "sha256": "cf550687f7a6e513d9bef5e4b69965f007e8f6c34635b619f361331ec96ec139",
-            "sha256_lf": "cf550687f7a6e513d9bef5e4b69965f007e8f6c34635b619f361331ec96ec139",
             "text": true
         },
         "runtime_app_views_settings_api_health_protection_php": {
@@ -3938,6 +3918,12 @@
             "path": "app/Views/settings/automation_history.php",
             "sha256": "d3bc9c6d5e708bbb4f5894a243e87b0ff6c0c1ab4a8be6982539507ea6334cfb",
             "sha256_lf": "d3bc9c6d5e708bbb4f5894a243e87b0ff6c0c1ab4a8be6982539507ea6334cfb",
+            "text": true
+        },
+        "runtime_app_views_settings_automation_nav_php": {
+            "path": "app/Views/settings/_automation_nav.php",
+            "sha256": "3f61eca682687d423bd308bbe778dd4e8a2cca61c09108cd1c4a24925ce20d61",
+            "sha256_lf": "3f61eca682687d423bd308bbe778dd4e8a2cca61c09108cd1c4a24925ce20d61",
             "text": true
         },
         "runtime_app_views_settings_automation_next_php": {
@@ -4030,28 +4016,28 @@
             "sha256_lf": "7acfe61d697efa938c72a8ce3f2bfe348cf5822e8e0bcef48078b79e098faa65",
             "text": true
         },
-        "runtime_app_views_settings_manual_processing_php": {
-            "path": "app/Views/settings/manual_processing.php",
-            "sha256": "adbd1c3640020a705a7feda37e559c91e28826af7ee51ce39e7540fb9c915b16",
-            "sha256_lf": "adbd1c3640020a705a7feda37e559c91e28826af7ee51ce39e7540fb9c915b16",
-            "text": true
-        },
         "runtime_app_views_settings_manual_processing_excluded_php": {
             "path": "app/Views/settings/manual_processing_excluded.php",
             "sha256": "0457725d19e541e4315a7e50df7108202614e8e4bcb2b7782706e242e7c9083e",
             "sha256_lf": "0457725d19e541e4315a7e50df7108202614e8e4bcb2b7782706e242e7c9083e",
             "text": true
         },
-        "runtime_app_views_settings_manual_processing_session_php": {
-            "path": "app/Views/settings/manual_processing_session.php",
-            "sha256": "35a3cb7812e5f426bb5a977146ad2231721ef507a4a1784f052e773bf7120e62",
-            "sha256_lf": "35a3cb7812e5f426bb5a977146ad2231721ef507a4a1784f052e773bf7120e62",
+        "runtime_app_views_settings_manual_processing_php": {
+            "path": "app/Views/settings/manual_processing.php",
+            "sha256": "adbd1c3640020a705a7feda37e559c91e28826af7ee51ce39e7540fb9c915b16",
+            "sha256_lf": "adbd1c3640020a705a7feda37e559c91e28826af7ee51ce39e7540fb9c915b16",
             "text": true
         },
         "runtime_app_views_settings_manual_processing_session_list_php": {
             "path": "app/Views/settings/manual_processing_session_list.php",
             "sha256": "faf7373482200cd5f1470f5ec56b0249da62dce7ca49e7fc27145e9600ecad6b",
             "sha256_lf": "faf7373482200cd5f1470f5ec56b0249da62dce7ca49e7fc27145e9600ecad6b",
+            "text": true
+        },
+        "runtime_app_views_settings_manual_processing_session_php": {
+            "path": "app/Views/settings/manual_processing_session.php",
+            "sha256": "35a3cb7812e5f426bb5a977146ad2231721ef507a4a1784f052e773bf7120e62",
+            "sha256_lf": "35a3cb7812e5f426bb5a977146ad2231721ef507a4a1784f052e773bf7120e62",
             "text": true
         },
         "runtime_app_views_settings_manual_processing_setup_php": {
@@ -4330,6 +4316,12 @@
             "sha256_lf": "63418ad78a46d2326eb2c34661a13665e9ee0b310abca16215cba51b61fed1dd",
             "text": true
         },
+        "runtime_htaccess": {
+            "path": ".htaccess",
+            "sha256": "3a6208ec504c40b8ccae5c9fa00ca2cb07c5f9f9353d01e2e993c17df6fb943d",
+            "sha256_lf": "3a6208ec504c40b8ccae5c9fa00ca2cb07c5f9f9353d01e2e993c17df6fb943d",
+            "text": true
+        },
         "runtime_index_php": {
             "path": "index.php",
             "sha256": "befdf35b69a17f2e3b61606ecfb35c90f84e8bc0cc30ee39549a6c6270fcf7e4",
@@ -4348,40 +4340,16 @@
             "sha256_lf": "9459083a8e5d84b997954a96f3d973f232a281647ecbee6a5bfebe4a69d64b49",
             "text": true
         },
-        "runtime_jobs_cron_entry_state_php": {
-            "path": "jobs/_cron_entry_state.php",
-            "sha256": "7d12075020f0c8a2576eb43deab8ebbdd5757c1d4f2246a2c32e01109152cf27",
-            "sha256_lf": "7d12075020f0c8a2576eb43deab8ebbdd5757c1d4f2246a2c32e01109152cf27",
-            "text": true
-        },
-        "runtime_jobs_meli_emergency_stop_php": {
-            "path": "jobs/_meli_emergency_stop.php",
-            "sha256": "5806d91a3d88f22b163b558dc6605da279d0d4dc2136d711c366c3046d804c09",
-            "sha256_lf": "5806d91a3d88f22b163b558dc6605da279d0d4dc2136d711c366c3046d804c09",
-            "text": true
-        },
-        "runtime_jobs_prebootstrap_runtime_paths_php": {
-            "path": "jobs/_prebootstrap_runtime_paths.php",
-            "sha256": "e5596bc9963fabd6bd0697fbe78e6ed3bca3e51d811c1199477be0994085a69c",
-            "sha256_lf": "e5596bc9963fabd6bd0697fbe78e6ed3bca3e51d811c1199477be0994085a69c",
-            "text": true
-        },
-        "runtime_jobs_retired_job_php": {
-            "path": "jobs/_retired_job.php",
-            "sha256": "7ca234ddcbb0defd2ef8077c5a22de6f2d069c389a7e80f072cfec64bc7beeea",
-            "sha256_lf": "7ca234ddcbb0defd2ef8077c5a22de6f2d069c389a7e80f072cfec64bc7beeea",
-            "text": true
-        },
         "runtime_jobs_cleanup_raw_php": {
             "path": "jobs/cleanup_raw.php",
             "sha256": "1b08de86e4b94c559c778849d1e36609fc708e38c597ce26144496762f212260",
             "sha256_lf": "1b08de86e4b94c559c778849d1e36609fc708e38c597ce26144496762f212260",
             "text": true
         },
-        "cron_probe": {
-            "path": "jobs/cron_probe.php",
-            "sha256": "73031dd029984375812d5200ff3cb020a2719842d4bd6193dacaec694d82e720",
-            "sha256_lf": "73031dd029984375812d5200ff3cb020a2719842d4bd6193dacaec694d82e720",
+        "runtime_jobs_cron_entry_state_php": {
+            "path": "jobs/_cron_entry_state.php",
+            "sha256": "7d12075020f0c8a2576eb43deab8ebbdd5757c1d4f2246a2c32e01109152cf27",
+            "sha256_lf": "7d12075020f0c8a2576eb43deab8ebbdd5757c1d4f2246a2c32e01109152cf27",
             "text": true
         },
         "runtime_jobs_cron_v3_backlog_snapshot_php": {
@@ -4438,6 +4406,18 @@
             "sha256_lf": "df71a9b175162f9c8d1f7200732773abc59e47b07f3b5f064822d45f22ee0d36",
             "text": true
         },
+        "runtime_jobs_meli_emergency_stop_php": {
+            "path": "jobs/_meli_emergency_stop.php",
+            "sha256": "5806d91a3d88f22b163b558dc6605da279d0d4dc2136d711c366c3046d804c09",
+            "sha256_lf": "5806d91a3d88f22b163b558dc6605da279d0d4dc2136d711c366c3046d804c09",
+            "text": true
+        },
+        "runtime_jobs_prebootstrap_runtime_paths_php": {
+            "path": "jobs/_prebootstrap_runtime_paths.php",
+            "sha256": "e5596bc9963fabd6bd0697fbe78e6ed3bca3e51d811c1199477be0994085a69c",
+            "sha256_lf": "e5596bc9963fabd6bd0697fbe78e6ed3bca3e51d811c1199477be0994085a69c",
+            "text": true
+        },
         "runtime_jobs_process_database_maintenance_php": {
             "path": "jobs/process_database_maintenance.php",
             "sha256": "ac96d861185a4220b39938496a8f5f6cdba637b76c8954686355f01dbc9947be",
@@ -4466,12 +4446,6 @@
             "path": "jobs/process_order_financials.php",
             "sha256": "f309c3eadd4177874ea351b1b76ec1747ed8adb85fd6fb44771f9e1858333eed",
             "sha256_lf": "f309c3eadd4177874ea351b1b76ec1747ed8adb85fd6fb44771f9e1858333eed",
-            "text": true
-        },
-        "process_sync_queue": {
-            "path": "jobs/process_sync_queue.php",
-            "sha256": "3642153837228d0b19c845769adef94440e58ce4d75187e8324305968e0ac889",
-            "sha256_lf": "3642153837228d0b19c845769adef94440e58ce4d75187e8324305968e0ac889",
             "text": true
         },
         "runtime_jobs_process_updates_php": {
@@ -4552,6 +4526,12 @@
             "sha256_lf": "b389c717216959ce5c4e534ef5b7f69f5cce9729a4f02d2f9c5b6fd992929764",
             "text": true
         },
+        "runtime_jobs_retired_job_php": {
+            "path": "jobs/_retired_job.php",
+            "sha256": "7ca234ddcbb0defd2ef8077c5a22de6f2d069c389a7e80f072cfec64bc7beeea",
+            "sha256_lf": "7ca234ddcbb0defd2ef8077c5a22de6f2d069c389a7e80f072cfec64bc7beeea",
+            "text": true
+        },
         "runtime_jobs_sync_monthly_report_php": {
             "path": "jobs/sync_monthly_report.php",
             "sha256": "cdbc9d7e4c42e6ba94a4f1425b1aad5323e697664e54134d5ae8a8f54c0e16a3",
@@ -4624,12 +4604,6 @@
             "sha256_lf": "dbcb2c6f23062d9b7f302c6ea9e69a2272aa7c6ad761f5f61213d1a6bb7088c9",
             "text": true
         },
-        "runtime_public_htaccess": {
-            "path": "public/.htaccess",
-            "sha256": "6737e9da51d830872bcb5f10a97488e7ebb364a57650f58255e918e0138c48a3",
-            "sha256_lf": "6737e9da51d830872bcb5f10a97488e7ebb364a57650f58255e918e0138c48a3",
-            "text": true
-        },
         "runtime_public_assets_api_health_js": {
             "path": "public/assets/api-health.js",
             "sha256": "63a33ac87d7aa122b0c0fb1d0e07746ddc35fb169413cce52b77ede526d9d59e",
@@ -4672,12 +4646,6 @@
             "sha256_lf": "d39a77499331a036a14993c87dd71a9f29e880b7a238a19c0b86e19a0238be7c",
             "text": true
         },
-        "runtime_public_assets_installer_responsive_css": {
-            "path": "public/assets/installer-responsive.css",
-            "sha256": "caca64c81875133060b996943b897da704fea366e2abdbe24fb89021a9b6b44a",
-            "sha256_lf": "caca64c81875133060b996943b897da704fea366e2abdbe24fb89021a9b6b44a",
-            "text": true
-        },
         "runtime_public_assets_installer_css": {
             "path": "public/assets/installer.css",
             "sha256": "a0e259848d10f605b1e27bb81542f4a6314ecac208664ca11da2fb66edb36311",
@@ -4688,6 +4656,12 @@
             "path": "public/assets/installer.js",
             "sha256": "16dd449ec224a4aca0fcf6fca53df47a7315926b0064e2093382f6b15924e607",
             "sha256_lf": "16dd449ec224a4aca0fcf6fca53df47a7315926b0064e2093382f6b15924e607",
+            "text": true
+        },
+        "runtime_public_assets_installer_responsive_css": {
+            "path": "public/assets/installer-responsive.css",
+            "sha256": "caca64c81875133060b996943b897da704fea366e2abdbe24fb89021a9b6b44a",
+            "sha256_lf": "caca64c81875133060b996943b897da704fea366e2abdbe24fb89021a9b6b44a",
             "text": true
         },
         "runtime_public_assets_modules_modules_css": {
@@ -4736,6 +4710,12 @@
             "path": "public/assets/ux.js",
             "sha256": "a06abab4c5574185d2a37537e788770fd88bc50b6dc65e66e4a0ad41b830cea7",
             "sha256_lf": "a06abab4c5574185d2a37537e788770fd88bc50b6dc65e66e4a0ad41b830cea7",
+            "text": true
+        },
+        "runtime_public_htaccess": {
+            "path": "public/.htaccess",
+            "sha256": "6737e9da51d830872bcb5f10a97488e7ebb364a57650f58255e918e0138c48a3",
+            "sha256_lf": "6737e9da51d830872bcb5f10a97488e7ebb364a57650f58255e918e0138c48a3",
             "text": true
         },
         "runtime_public_index_php": {
@@ -4864,12 +4844,6 @@
             "sha256_lf": "343690824180eb680809779b321b29e1d7a47d79041cae555e47230ee6e31d7b",
             "text": true
         },
-        "runtime_resources_release_managed_runtime_dependencies_2_36_1_json": {
-            "path": "resources/release/managed-runtime-dependencies-2.36.1.json",
-            "sha256": "6e29f979fff99ea13603ab77bd339c54faeeaa4fec562673426854c00054c45f",
-            "sha256_lf": "6e29f979fff99ea13603ab77bd339c54faeeaa4fec562673426854c00054c45f",
-            "text": true
-        },
         "runtime_resources_release_managed_runtime_dependencies_2_36_10_json": {
             "path": "resources/release/managed-runtime-dependencies-2.36.10.json",
             "sha256": "96a068e18ea618d36faadc1e8e2f4792fc796b7542cf67aa9532dc925e2cccd1",
@@ -4880,6 +4854,18 @@
             "path": "resources/release/managed-runtime-dependencies-2.36.11.json",
             "sha256": "39f300398bfba8d2db3f20677eaf0f10d05ece3abeec5cda5d6c2f07d85615b9",
             "sha256_lf": "39f300398bfba8d2db3f20677eaf0f10d05ece3abeec5cda5d6c2f07d85615b9",
+            "text": true
+        },
+        "runtime_resources_release_managed_runtime_dependencies_2_36_12_json": {
+            "path": "resources/release/managed-runtime-dependencies-2.36.12.json",
+            "sha256": "f39a802ef26b3a0a255a166839f46022e7a44057f3a1ac49e308ddc502af31a1",
+            "sha256_lf": "f39a802ef26b3a0a255a166839f46022e7a44057f3a1ac49e308ddc502af31a1",
+            "text": true
+        },
+        "runtime_resources_release_managed_runtime_dependencies_2_36_1_json": {
+            "path": "resources/release/managed-runtime-dependencies-2.36.1.json",
+            "sha256": "6e29f979fff99ea13603ab77bd339c54faeeaa4fec562673426854c00054c45f",
+            "sha256_lf": "6e29f979fff99ea13603ab77bd339c54faeeaa4fec562673426854c00054c45f",
             "text": true
         },
         "runtime_resources_release_managed_runtime_dependencies_2_36_2_json": {
@@ -4960,6 +4946,12 @@
             "sha256_lf": "aa0ea7015345f01c00e0b884ae5bee4ca61726c4fc754a2c6af4dabaa5ee1419",
             "text": true
         },
+        "runtime_resources_release_updater_authority_2_36_12_json": {
+            "path": "resources/release/updater-authority-2.36.12.json",
+            "sha256": "fd8f56701efea5a08a1531e566d34f47abb851a812c3af1666f053e67b6b7c39",
+            "sha256_lf": "fd8f56701efea5a08a1531e566d34f47abb851a812c3af1666f053e67b6b7c39",
+            "text": true
+        },
         "runtime_resources_release_updater_authority_2_36_3_json": {
             "path": "resources/release/updater-authority-2.36.3.json",
             "sha256": "0e798e280ab8949b3919fa461cb2823343737d7f8846a44562dd6806a134adbd",
@@ -5008,17 +5000,37 @@
             "sha256_lf": "7b90dab866e6b49d785ce8c706f3ea7ce7db6846fdd1678e6a953a6bf4e31fd5",
             "text": true
         },
+        "runtime_stop_index_php": {
+            "path": "stop/index.php",
+            "sha256": "df0a07f5dcbd2b047f996434dd3092512cc9daa2962519be1b44fa499f06b51e",
+            "sha256_lf": "df0a07f5dcbd2b047f996434dd3092512cc9daa2962519be1b44fa499f06b51e",
+            "text": true
+        },
         "runtime_stop_php": {
             "path": "stop.php",
             "sha256": "ed615c5e5e51edb11bda15083a2d8e0ec9d4725613f40e863987daf2728f0305",
             "sha256_lf": "ed615c5e5e51edb11bda15083a2d8e0ec9d4725613f40e863987daf2728f0305",
             "text": true
         },
-        "runtime_stop_index_php": {
-            "path": "stop/index.php",
-            "sha256": "df0a07f5dcbd2b047f996434dd3092512cc9daa2962519be1b44fa499f06b51e",
-            "sha256_lf": "df0a07f5dcbd2b047f996434dd3092512cc9daa2962519be1b44fa499f06b51e",
+        "runtime_version": {
+            "path": "VERSION",
+            "sha256": "729b9e49bf08b47ee8fdb334d6908bbc7b822cd571bdc7b5f10c3c33e949e99c",
+            "sha256_lf": "729b9e49bf08b47ee8fdb334d6908bbc7b822cd571bdc7b5f10c3c33e949e99c",
             "text": true
         }
-    }
+    },
+    "minimum_migration": "293_queue_core_runtime_profile_defaults_b2_1.sql",
+    "product": "erp-meli",
+    "publication_policy": {
+        "authority_model": "FULL_MANAGED_RUNTIME",
+        "base_commit": "75997f864b917c829d19f14e21cd7303d2685776",
+        "build_only_excluded": true,
+        "component_count": 836,
+        "dependency_registry_sha256": "f39a802ef26b3a0a255a166839f46022e7a44057f3a1ac49e308ddc502af31a1",
+        "package_file_count": 837,
+        "paths_sha256": "e9649abeda1b6f1fd02d2a528d7aded7a0e0790f975b3d8af79d5eacc6be73d4",
+        "protected_external_state_excluded": true,
+        "raw_git_blobs": true
+    },
+    "version": "2.36.12"
 }

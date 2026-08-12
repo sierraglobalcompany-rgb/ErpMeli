@@ -53,7 +53,7 @@ try {
     $assert(str_contains($js, "credentials: 'same-origin'"), 'same_origin_fetch_missing');
     $assert(str_contains($controller, 'V4ReadinessBootstrapService())->advance((int) Auth::id())'), 'password_only_advance_dispatch_missing');
 
-    $assert(str_contains($service, "public const REQUIRED_VERSION = '2.36.11'"), 'version_gate_missing');
+    $assert(str_contains($service, "public const REQUIRED_VERSION = '2.36.12'"), 'version_gate_missing');
     $assert(str_contains($service, "public const LAST_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql'"), 'schema_gate_missing');
     $assert(str_contains($service, 'COUNT(*) AS total'), 'schema_count_gate_missing');
     $assert(str_contains($service, 'AS max_version'), 'schema_max_gate_missing');
@@ -81,7 +81,7 @@ try {
     $assert(!str_contains($service, '$flags === self::FLAGS_DISABLED'), 'order_sensitive_disabled_comparison_present');
     $assert(str_contains($service, "if (\$state === 'recovery_required')"), 'partial_recovery_dispatch_missing');
     $assert(str_contains($service, "'state' => 'recovered_fail_closed'"), 'partial_recovery_result_missing');
-    $assert(str_contains($service, "'partial_arm_recovery_23611'"), 'partial_recovery_reason_missing');
+    $assert(str_contains($service, "'partial_arm_recovery_23612'"), 'partial_recovery_reason_missing');
     $assert(str_contains($service, 'private static function isRecoverablePartialArm'), 'partial_recovery_classifier_missing');
     $assert(str_contains($service, "'feature_generation_authority' => \$featureGenerationAuthority"), 'structured_feature_generation_authority_missing');
     $assert(str_contains($service, "'feature_generation_authority' => \$pre['feature_generation_authority'] ?? []"), 'snapshot_generation_authority_missing');
@@ -144,8 +144,8 @@ try {
     $assert(substr_count($flags, 'UPDATE queue_core_feature_flags') === 1, 'feature_update_surface_count_invalid');
     $assert(str_contains($flags, 'FOR UPDATE'), 'feature_row_lock_missing');
 } catch (Throwable $error) {
-    fwrite(STDERR, 'FAIL v4_readiness_bootstrap_admin_23611 ' . $error->getMessage() . PHP_EOL);
+    fwrite(STDERR, 'FAIL v4_readiness_bootstrap_admin_23612 ' . $error->getMessage() . PHP_EOL);
     exit(1);
 }
 
-echo 'PASS v4_readiness_bootstrap_admin_23611 checks=' . $checks . PHP_EOL;
+echo 'PASS v4_readiness_bootstrap_admin_23612 checks=' . $checks . PHP_EOL;

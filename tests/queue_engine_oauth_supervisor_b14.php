@@ -12,6 +12,7 @@ set_exception_handler(static function (Throwable $error): void {
 use App\Core\Crypto;
 use App\Core\Database;
 use App\Core\AppPaths;
+use App\Core\Env;
 use App\QueueCore\QueueCapabilityRegistry;
 use App\QueueCore\QueueCoreOAuthRefreshHandler;
 use App\QueueCore\QueueCoreOAuthSupervisor;
@@ -36,6 +37,7 @@ use App\Services\OAuthRefreshBusyException;
 use App\Services\OAuthTokenRefreshService;
 use App\Services\QueueOAuthDurableRecoveryStore;
 use App\Services\RotatedCredentialRecoveryUnavailableException;
+use App\Services\V4ReadinessBootstrapService;
 
 $dsn = (string) (getenv('QUEUE_CORE_TEST_DSN') ?: '');
 $user = (string) (getenv('QUEUE_CORE_TEST_USER') ?: '');
@@ -269,6 +271,131 @@ $pdo->exec("INSERT INTO app_settings(setting_key,setting_value,is_encrypted,sett
             '{\"status\":\"absent\",\"authority\":\"fixture\",\"actor_user_id\":1,\"confirmed_at\":\"2026-08-11T00:00:00Z\"}',
             0,'queue_core')
     ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),is_encrypted=0,setting_group='queue_core'");
+
+// Complete V4 operational-readiness path with no backup environment and no
+// backup file. The canary transport is a local fixture, but every state
+// transition, context hash, receipt, convergence, capacity and final
+// canActivateV4 gate is the real service implementation.
+unlink($backupFixture);
+foreach(['QUEUE_CORE_APPROVED_BACKUP_PATH','QUEUE_CORE_APPROVED_BACKUP_SHA256'] as $backupEnvKey){
+    putenv($backupEnvKey);
+    unset($_ENV[$backupEnvKey],$_SERVER[$backupEnvKey]);
+}
+$migrationSeed=$pdo->prepare('INSERT IGNORE INTO schema_migrations(version) VALUES (?)');
+for($migrationNumber=1;$migrationNumber<=279;$migrationNumber++){
+    $migrationSeed->execute([sprintf('%03d_fixture_authority.sql',$migrationNumber)]);
+}
+$pdo->exec("INSERT INTO app_settings(setting_key,setting_value,is_encrypted,setting_group) VALUES
+    ('app.version','2.36.14',0,'system'),
+    ('cron_v3.operational_phase','retired_for_v4',0,'cron_v3'),
+    ('cron_v3.certified_cutover.phase','retired_for_v4',0,'cron_v3')
+    ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),is_encrypted=0,setting_group=VALUES(setting_group)");
+$pdo->exec("CREATE TABLE IF NOT EXISTS cron_v3_queue_ownership (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    owner_engine VARCHAR(20) NOT NULL DEFAULT 'disabled',
+    enabled TINYINT(1) NOT NULL DEFAULT 0
+) ENGINE=InnoDB");
+$pdo->exec("UPDATE app_settings SET setting_value='{
+    \"status\":\"absent\",\"authority\":\"permanent_admin_explicit_confirmation\",
+    \"actor_user_id\":1,\"confirmed_at\":\"2026-08-12T00:00:00Z\"}'
+    WHERE setting_key='queue_core.v4.scheduler_authority'");
+$pdo->exec("UPDATE cron_v3_queue_ownership SET enabled=0,owner_engine='disabled'");
+$pdo->exec("UPDATE queue_engine_control SET active_engine='disabled',readiness_mode='idle',
+    readiness_context_hash=NULL,generation=0,changed_by='v4_no_backup_e2e'");
+$pdo->exec('UPDATE queue_core_feature_flags SET enabled=0,generation=0');
+$v4Config=$private.'/v4-readiness-config.env';
+file_put_contents($v4Config,"CRON_V4_ENABLED=false\nCRON_V3_ENABLED=false\nCRON_V3_SHADOW_ENABLED=false\nML_WRITE_ENABLED=false\n");
+file_put_contents($root.'/PAUSE_MELI_API',"test\n");
+foreach(['CRON_V4_ENABLED','CRON_V3_ENABLED','CRON_V3_SHADOW_ENABLED','ML_WRITE_ENABLED'] as $runtimeKey){
+    putenv($runtimeKey);
+    unset($_ENV[$runtimeKey],$_SERVER[$runtimeKey]);
+}
+Env::load($v4Config);
+$businessRowsBefore=(int)$pdo->query('SELECT COUNT(*) FROM meli_orders')->fetchColumn();
+$canaryFixture=static function(PDO $canaryPdo,int $accountId): array{
+    $account=$canaryPdo->prepare("SELECT company_id FROM meli_accounts WHERE id=? AND status IN ('conectado','connected')");
+    $account->execute([$accountId]);$companyId=(int)$account->fetchColumn();
+    $engine=(new QueueEngineControlService($canaryPdo))->snapshot();
+    $from=gmdate('Y-m-d H:i:s',time()-600);$to=gmdate('Y-m-d H:i:s',time()-300);
+    $job=(new QueueCoreRepository($canaryPdo))->enqueue(new QueueJob(
+        $companyId,$accountId,'order_exact','order','capacity-'.$accountId,'normal',100,
+        'v4-no-backup-capacity-'.$accountId,'v1','canary_v4','fixture:'.$accountId,
+        [],[],5,
+    ));
+    $capture=$canaryPdo->prepare("INSERT INTO queue_core_readiness_captures
+        (engine_generation,readiness_context_hash,company_id,meli_account_id,discovery_job_id,
+         window_from,window_to,page_offset,response_count,capture_hash,complete)
+        VALUES (?,?,?,?,?,?,?,0,0,?,1)");
+    $capture->execute([$engine['generation'],$engine['readiness_context_hash'],$companyId,$accountId,$job,$from,$to,hash('sha256','')]);
+    (new QueueCoreReadinessReceiptService($canaryPdo))->record(
+        (int)$engine['generation'],'canary',true,
+        ['fixture'=>'local_transport','http'=>1,'known'=>1,'persisted'=>2,'empty_window'=>1],
+        3600,$companyId,$accountId,
+    );
+    $canaryPdo->prepare("UPDATE queue_core_jobs SET state='completed',dispatch_state='DISPATCHED_RESULT_KNOWN',
+        completed_at=UTC_TIMESTAMP(3),last_http_status=200 WHERE id=?")->execute([$job]);
+    $canaryPdo->prepare("INSERT INTO queue_core_attempts
+        (job_id,company_id,meli_account_id,lease_owner,lease_generation,launcher,outcome,dispatch_state,
+         physical_http_calls,resources_discovered,resources_persisted,http_status,response_known_at,
+         source_closed_at,finished_at)
+        VALUES (?,?,?,'v4-no-backup',1,'canary_v4','completed','DISPATCHED_RESULT_KNOWN',1,2,2,200,
+                UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),UTC_TIMESTAMP(3))")->execute([$job,$companyId,$accountId]);
+    return ['ok'=>true,'physical_http_calls'=>0,'fixture_transport'=>true];
+};
+$v4=new V4ReadinessBootstrapService(static fn():PDO=>$pdo,$v4Config,$canaryFixture);
+$advanceV4=static function(V4ReadinessBootstrapService $service,string $label):array{
+    try{return $service->advance(1);}catch(Throwable $error){
+        $chain=[];for($current=$error;$current instanceof Throwable;$current=$current->getPrevious()){$chain[]=$current->getMessage();}
+        throw new RuntimeException($label.':'.implode(' <- ',$chain),0,$error);
+    }
+};
+$e2eGet1=$v4->snapshot();
+$check(($e2eGet1['state']??'')==='ready_to_arm','V4 no-backup GET1 was not ready_to_arm: '.json_encode($e2eGet1));
+$e2ePost1=$advanceV4($v4,'POST1');
+$check(($e2ePost1['state']??'')==='environment_armed','V4 no-backup POST1 did not arm environment');
+$e2eGet2=$v4->snapshot();
+$check(($e2eGet2['state']??'')==='ready_for_context','V4 no-backup GET2 was not ready_for_context');
+$e2ePost2=$advanceV4($v4,'POST2');
+$check(($e2ePost2['state']??'')==='preparing','V4 no-backup POST2 did not enter preparing');
+$e2eAuthority=(new QueueEngineControlService($pdo))->snapshot();
+(new QueueCoreReleaseEvidenceService($pdo))->record(
+    (int)$e2eAuthority['generation'],'backup',false,(string)$e2eAuthority['readiness_context_hash'],
+    ['legacy_pre_b2'=>'rolled_back'],3600,
+);
+for($stage=0;$stage<6;$stage++){
+    $stageResult=$advanceV4($v4,'ACCOUNT_STAGE_'.$stage);
+    $check(($stageResult['state']??'')==='preparing','V4 bounded account stage failed: '.json_encode($stageResult));
+}
+$e2eFinal=$advanceV4($v4,'FINAL_CERTIFY');
+$check(($e2eFinal['state']??'')==='certified','V4 no-backup final state was not certified: '.json_encode($e2eFinal));
+$e2eActivation=(new QueueCoreReadinessReceiptService($pdo))->canActivateV4(1);
+$check($e2eActivation['ok'],'V4 no-backup activation authority failed: '.json_encode($e2eActivation));
+$check(!is_file($backupFixture)&&getenv('QUEUE_CORE_APPROVED_BACKUP_PATH')===false,
+    'V4 no-backup E2E recreated or required a backup artifact');
+$check((int)$pdo->query('SELECT COUNT(*) FROM meli_orders')->fetchColumn()===$businessRowsBefore,
+    'V4 no-backup E2E mutated business order rows');
+
+// Restore the pre-existing broad B1.4 fixture state; subsequent assertions are
+// independent compatibility/negative coverage, not part of the 2.36.14 E2E.
+$pdo->exec('SET FOREIGN_KEY_CHECKS=0');
+foreach(['queue_core_attempts','queue_core_jobs','queue_core_readiness_capture_items',
+    'queue_core_readiness_captures','queue_core_readiness_receipts','queue_core_release_evidence'] as $table){
+    $pdo->exec('DELETE FROM `'.$table.'`');
+}
+$pdo->exec('SET FOREIGN_KEY_CHECKS=1');
+$pdo->exec("DELETE FROM schema_migrations WHERE CAST(SUBSTRING_INDEX(version,'_',1) AS UNSIGNED)<280");
+$pdo->exec("UPDATE queue_engine_control SET active_engine='disabled',readiness_mode='idle',
+    readiness_context_hash=NULL,generation=0,changed_by='test-reset'");
+$pdo->exec("UPDATE queue_core_feature_flags SET
+    enabled=CASE WHEN feature_key IN ('fresh_producer','webhook_producer','pack_shipment_followups') THEN 1 ELSE 0 END,
+    generation=1");
+file_put_contents($backupFixture,$backupSql);
+foreach(['QUEUE_CORE_APPROVED_BACKUP_PATH'=>$backupFixture,'QUEUE_CORE_APPROVED_BACKUP_SHA256'=>$backupFixtureSha,
+    'CRON_V4_ENABLED'=>'true','CRON_V3_ENABLED'=>'false','CRON_V3_SHADOW_ENABLED'=>'false','ML_WRITE_ENABLED'=>'false'] as $restoreKey=>$restoreValue){
+    putenv($restoreKey.'='.$restoreValue);$_ENV[$restoreKey]=$restoreValue;$_SERVER[$restoreKey]=$restoreValue;
+}
+file_put_contents($automationMarker,"test\n");
+@unlink($root.'/PAUSE_MELI_API');
 $recordReadiness = static function (int $generation, array $accountIds) use ($pdo): void {
     $receipts = new QueueCoreReadinessReceiptService($pdo);
     $receipts->record($generation, 'preflight', true, ['fixture' => 'b14'], 3600);
@@ -278,7 +405,7 @@ $recordReadiness = static function (int $generation, array $accountIds) use ($pd
     }
     $contextHash=$receipts->currentContextHash($generation);
     $release=new QueueCoreReleaseEvidenceService($pdo);
-    foreach(['backup','capacity','manifest'] as $type){
+    foreach(['capacity','manifest'] as $type){
         $release->record($generation,$type,true,$contextHash,['fixture'=>'b14'],3600);
     }
 };
@@ -381,17 +508,13 @@ $busyReadiness=$control->compareAndSwap('v4',1,'concurrent-evidence');
 $check(!$busyReadiness['ok']&&$busyReadiness['reason']==='readiness_authority_busy',
     'Activation crossed a concurrent readiness evidence operation.');
 $authorityConnection->query("SELECT RELEASE_LOCK('erp_meli_queue_readiness_authority')")->fetchColumn();
-$backupBytes=(string)file_get_contents($backupFixture);unlink($backupFixture);
-$missingBackup=$control->compareAndSwap('v4',1,'missing-backup');
-$check(!$missingBackup['ok']&&$missingBackup['reason']==='backup_artifact_unavailable',
-    'Activation accepted a certified backup artifact that no longer exists.');
-file_put_contents($backupFixture,$backupBytes);
-$restoredBackupVerification=(new QueueCoreReleaseEvidenceService($pdo))->verifyBackup(
-    $backupFixture,
-    (string)getenv('QUEUE_CORE_APPROVED_BACKUP_SHA256'),
-    true,
-);
-$check($restoredBackupVerification['ok'],'restored certified backup failed static re-verification: '.json_encode($restoredBackupVerification));
+unlink($backupFixture);
+foreach(['QUEUE_CORE_APPROVED_BACKUP_PATH','QUEUE_CORE_APPROVED_BACKUP_SHA256'] as $backupEnvKey){
+    putenv($backupEnvKey);
+    unset($_ENV[$backupEnvKey],$_SERVER[$backupEnvKey]);
+}
+$withoutBackup=$readinessReceipts->canActivateV4(1);
+$check($withoutBackup['ok'],'operational readiness still requires pre-B2 backup evidence: '.json_encode($withoutBackup));
 $toV4 = $control->compareAndSwap('v4', 1, 'test');
 $check($toV4['ok'] && $toV4['generation'] === 2, 'v4 CAS failed: ' . json_encode($toV4));
 $permitResult = $control->acquireRuntime('v4', 'operational');

@@ -65,7 +65,7 @@ try {
     $assert(str_contains($service, 'QueueCorePreflightService'), 'preflight_service_missing');
     $assert(str_contains($service, 'QueueCoreCanaryService'), 'real_canary_missing');
     $assert(str_contains($service, 'QueueCoreConvergenceService'), 'convergence_missing');
-    $assert(str_contains($service, 'certifyBackup'), 'backup_evidence_missing');
+    $assert(!str_contains($service, 'certifyBackup'), 'operational_backup_gate_remains');
     $assert(str_contains($service, 'certifyManifest'), 'manifest_evidence_missing');
     $assert(str_contains($service, 'certifyCapacity'), 'capacity_evidence_missing');
     $assert(str_contains($service, 'canActivateV4'), 'real_activation_contract_missing');

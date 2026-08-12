@@ -53,7 +53,7 @@ try {
     $assert(str_contains($js, "credentials: 'same-origin'"), 'same_origin_fetch_missing');
     $assert(str_contains($controller, 'V4ReadinessBootstrapService())->advance((int) Auth::id())'), 'password_only_advance_dispatch_missing');
 
-    $assert(str_contains($service, "public const REQUIRED_VERSION = '2.36.13'"), 'version_gate_missing');
+    $assert(str_contains($service, "public const REQUIRED_VERSION = '2.36.14'"), 'version_gate_missing');
     $assert(str_contains($service, "public const LAST_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql'"), 'schema_gate_missing');
     $assert(str_contains($service, 'COUNT(*) AS total'), 'schema_count_gate_missing');
     $assert(str_contains($service, 'AS max_version'), 'schema_max_gate_missing');
@@ -65,7 +65,7 @@ try {
     $assert(str_contains($service, 'QueueCorePreflightService'), 'preflight_service_missing');
     $assert(str_contains($service, 'QueueCoreCanaryService'), 'real_canary_missing');
     $assert(str_contains($service, 'QueueCoreConvergenceService'), 'convergence_missing');
-    $assert(str_contains($service, 'certifyBackup'), 'backup_evidence_missing');
+    $assert(!str_contains($service, 'certifyBackup'), 'operational_backup_gate_remains');
     $assert(str_contains($service, 'certifyManifest'), 'manifest_evidence_missing');
     $assert(str_contains($service, 'certifyCapacity'), 'capacity_evidence_missing');
     $assert(str_contains($service, 'canActivateV4'), 'real_activation_contract_missing');
@@ -81,7 +81,7 @@ try {
     $assert(!str_contains($service, '$flags === self::FLAGS_DISABLED'), 'order_sensitive_disabled_comparison_present');
     $assert(str_contains($service, "if (\$state === 'recovery_required')"), 'partial_recovery_dispatch_missing');
     $assert(str_contains($service, "'state' => 'recovered_fail_closed'"), 'partial_recovery_result_missing');
-    $assert(str_contains($service, "'partial_arm_recovery_23613'"), 'partial_recovery_reason_missing');
+    $assert(str_contains($service, "'partial_arm_recovery_23614'"), 'partial_recovery_reason_missing');
     $assert(str_contains($service, 'private static function isRecoverablePartialArm'), 'partial_recovery_classifier_missing');
     $assert(str_contains($service, "'feature_generation_authority' => \$featureGenerationAuthority"), 'structured_feature_generation_authority_missing');
     $assert(str_contains($service, "'feature_generation_authority' => \$pre['feature_generation_authority'] ?? []"), 'snapshot_generation_authority_missing');

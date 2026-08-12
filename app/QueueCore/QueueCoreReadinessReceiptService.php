@@ -133,7 +133,7 @@ final class QueueCoreReadinessReceiptService
             }
         }
         $releaseEvidence = new QueueCoreReleaseEvidenceService($this->pdo);
-        foreach (['backup', 'capacity', 'manifest'] as $type) {
+        foreach (['capacity', 'manifest'] as $type) {
             $evidence = $releaseEvidence->requireLatest(
                 $engineGeneration,
                 $type,
@@ -142,14 +142,6 @@ final class QueueCoreReadinessReceiptService
             if (!$evidence['ok']) {
                 return ['ok' => false, 'reason' => $evidence['reason']];
             }
-        }
-        $backupPath=trim((string)Env::get('QUEUE_CORE_APPROVED_BACKUP_PATH',''));
-        $backupSha=trim((string)Env::get('QUEUE_CORE_APPROVED_BACKUP_SHA256',''));
-        // La certificación ya ligó el dump a los conteos vivos previos. En el CAS se
-        // vuelve a abrir y verificar el mismo artefacto/hash sin rechazar crecimiento
-        // legítimo producido por el canario de solo lectura.
-        if(!(new QueueCoreReleaseEvidenceService($this->pdo))->verifyBackup($backupPath,$backupSha,true)['ok']){
-            return ['ok'=>false,'reason'=>'backup_artifact_unavailable'];
         }
         $manifest = (new \App\Services\QueueCoreDeploymentGateService($this->pdo))->runtimeManifestCheck();
         if (!$manifest['ok']) {
@@ -224,8 +216,6 @@ final class QueueCoreReadinessReceiptService
                 'profile' => $profile,
             ],
             'release_manifest_hash' => is_string($manifestHash) ? $manifestHash : 'missing',
-            'approved_backup_sha256' => strtolower(trim((string) Env::get('QUEUE_CORE_APPROVED_BACKUP_SHA256', ''))),
-            'approved_backup_path_hash' => hash('sha256',str_replace('\\','/',trim((string)Env::get('QUEUE_CORE_APPROVED_BACKUP_PATH','')))),
             'capability_registry_hash' => (new QueueCapabilityRegistry())->authorityHash(),
             'safety' => [
                 'api' => (string) ($safety['api'] ?? 'unknown'),

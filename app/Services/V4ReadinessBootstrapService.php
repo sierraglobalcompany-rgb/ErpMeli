@@ -28,7 +28,7 @@ use Throwable;
 final class V4ReadinessBootstrapService
 {
     public const CONFIRMATION_PHRASE = 'PREPARAR_Y_CERTIFICAR_V4_SIN_SCHEDULER';
-    public const REQUIRED_VERSION = '2.36.13';
+    public const REQUIRED_VERSION = '2.36.14';
     public const LAST_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
     public const LOCK_NAME = 'erp_meli_v4_readiness_bootstrap_2366';
     public const SCHEDULER_AUTHORITY_KEY = 'queue_core.v4.scheduler_authority';
@@ -102,7 +102,7 @@ final class V4ReadinessBootstrapService
                 $recovery = $this->rollbackAuthorities(
                     $pdo,
                     $actorUserId,
-                    'partial_arm_recovery_23613',
+                    'partial_arm_recovery_23614',
                 );
                 return [
                     'ok' => $recovery['state'] === 'rolled_back',
@@ -187,7 +187,7 @@ final class V4ReadinessBootstrapService
         $nextGeneration = (int) $pre['engine']['generation'] + 1;
         $flags->compareAndSwapReadinessFlags(self::FLAGS_DISABLED, self::FLAGS_READY, $nextGeneration);
         (new EmergencyControlService())->startApiWithoutCanary(
-            'v4_readiness_bootstrap_23613',
+            'v4_readiness_bootstrap_23614',
             'Lecturas habilitadas para readiness V4 acotado; automatización permanece detenida.',
         );
         (new CronV3SetupAssistantService($pdo, $this->configPath()))
@@ -225,7 +225,7 @@ final class V4ReadinessBootstrapService
         $transition = $engineService->compareAndSwapReadiness(
             'preparing',
             $expectedGeneration,
-            'admin:' . $actorUserId . ':v4_readiness_bootstrap_23613',
+            'admin:' . $actorUserId . ':v4_readiness_bootstrap_23614',
         );
         if (empty($transition['ok'])
             || (int) ($transition['generation'] ?? -1) !== $expectedGeneration + 1) {
@@ -252,16 +252,6 @@ final class V4ReadinessBootstrapService
             ], 3600);
 
             $release = new QueueCoreReleaseEvidenceService($pdo);
-            $backup = $release->certifyBackup(
-                $generation,
-                $contextHash,
-                trim((string) Env::get('QUEUE_CORE_APPROVED_BACKUP_PATH', '')),
-                trim((string) Env::get('QUEUE_CORE_APPROVED_BACKUP_SHA256', '')),
-                3600,
-            );
-            if (empty($backup['ok'])) {
-                throw new RuntimeException('v4_bootstrap_backup_evidence_failed');
-            }
             $manifest = $release->certifyManifest($generation, $contextHash, 3600);
             if (empty($manifest['ok'])) {
                 throw new RuntimeException('v4_bootstrap_manifest_evidence_failed');
@@ -402,7 +392,7 @@ final class V4ReadinessBootstrapService
                 throw new RuntimeException('v4_bootstrap_activation_gate:' . (string) ($activation['reason'] ?? 'unknown'));
             }
             $receipt = [
-                'operation' => 'v4_readiness_bootstrap_23613',
+                'operation' => 'v4_readiness_bootstrap_23614',
                 'result' => 'PASS',
                 'generation' => $generation,
                 'readiness_context_hash' => $contextHash,
@@ -497,7 +487,7 @@ final class V4ReadinessBootstrapService
             "SELECT setting_value FROM app_settings WHERE setting_key='app.version' LIMIT 1"
         )->fetchColumn();
         if ($fileVersion !== self::REQUIRED_VERSION || $appVersion !== self::REQUIRED_VERSION) {
-            $issues[] = 'version_not_23613';
+            $issues[] = 'version_not_23614';
         }
         $schemaAuthority = $pdo->query(
             "SELECT COUNT(*) AS total,
@@ -739,7 +729,7 @@ final class V4ReadinessBootstrapService
     {
         $generation = max(0, (int) ($engine['generation'] ?? 0));
         $context = (string) ($engine['readiness_context_hash'] ?? '');
-        $required = ['preflight', 'canary:3', 'convergence:3', 'backup', 'capacity', 'manifest'];
+        $required = ['preflight', 'canary:3', 'convergence:3', 'capacity', 'manifest'];
         if ($context === '') {
             return ['required' => $required, 'present' => [], 'missing' => $required];
         }
@@ -808,7 +798,7 @@ final class V4ReadinessBootstrapService
         // Estas dos autoridades cortan ejecución remota aun cuando un CAS DB
         // esté contendido. Ningún fallo posterior puede impedir intentarlas.
         $attempt('api', fn (): null => (new EmergencyControlService())->stopApi(
-            'v4_readiness_rollback_23613',
+            'v4_readiness_rollback_23614',
             'Rollback fail-closed: ' . mb_substr($reason, 0, 120),
         ));
         $attempt('config', function () use ($pdo, $actorUserId): array {
@@ -830,7 +820,7 @@ final class V4ReadinessBootstrapService
             $transition = $service->compareAndSwapReadiness(
                 'idle',
                 (int) $current['generation'],
-                'admin:' . $actorUserId . ':v4_readiness_rollback_23613',
+                'admin:' . $actorUserId . ':v4_readiness_rollback_23614',
             );
             if (empty($transition['ok'])) {
                 throw new RuntimeException('v4_bootstrap_rollback_engine_cas_failed');

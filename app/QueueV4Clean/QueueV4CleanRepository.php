@@ -65,7 +65,13 @@ final class QueueV4CleanRepository
             'INSERT INTO queue_v4_clean_jobs
              (company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,max_attempts)
              VALUES (?,?,?,?,?,?,?)
-             ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)'
+             ON DUPLICATE KEY UPDATE
+               id=LAST_INSERT_ID(id),
+               completed_at=IF(state="completed",NULL,completed_at),
+               available_at=IF(state="completed",UTC_TIMESTAMP(3),available_at),
+               attempt_count=IF(state="completed",0,attempt_count),
+               last_error_class=IF(state="completed",NULL,last_error_class),
+               state=IF(state="completed","ready",state)'
         );
         $statement->execute([
             $companyId,

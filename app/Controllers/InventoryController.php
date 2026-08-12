@@ -122,6 +122,21 @@ final class InventoryController
         $this->redirect('/inventory');
     }
 
+    public function dismissReview(): void
+    {
+        $this->authorizeMutation();
+        try {
+            (new InventoryApplicationService())->dismissReview(
+                (int) ($_POST['review_id'] ?? 0),
+                (string) ($_POST['resolution'] ?? '')
+            );
+            Session::flash('success', 'La revisión fue cerrada sin alterar existencias.');
+        } catch (\Throwable $e) {
+            Session::flash('error', SafeErrorPresenter::message($e));
+        }
+        $this->redirect('/inventory');
+    }
+
     private function authorizeMutation(): void
     {
         Auth::requireRole('admin', 'operador');

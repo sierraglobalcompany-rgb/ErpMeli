@@ -75,6 +75,9 @@ $assert(str_contains($worker, "'source' => 'queue_v4_clean'"), 'worker source au
 $assert(!str_contains($worker, 'historical'), 'worker contains historical importer');
 $assert(str_contains($producer, 'queue_v4_clean_readiness_accounts'), 'producer is not bound to certified accounts');
 $assert(str_contains($producer, 'queue_v4_clean_certified_account_set_invalid'), 'producer exact certified account cardinality gate missing');
+$assert(str_contains($producer, "producer_key='inventory_order_refresh'"), 'inventory lifecycle refresh checkpoint missing');
+$assert(str_contains($producer, 'INTERVAL 15 MINUTE'), 'inventory lifecycle refresh is not bounded');
+$assert(str_contains($producer, 'reversal.reversal_of_movement_id=issue.id'), 'inventory lifecycle refresh does not stop after reversal');
 $assert(str_contains($control, "engine_state='ACTIVE',scheduler_enabled=1"), 'activation does not enable internal scheduler atomically');
 $assert(str_contains($control, 'activationIssues()'), 'activation does not revalidate current readiness authority');
 $assert(str_contains($appJs, "(snapshot?.issues || []).length === 0"), 'activation UI ignores current readiness issues');

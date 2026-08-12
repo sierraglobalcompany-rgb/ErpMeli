@@ -12,6 +12,7 @@ use App\Core\Database;
 use App\Core\Session;
 use App\QueueV4Clean\QueueV4CleanRepository;
 use App\QueueV4Clean\QueueV4CleanWorker;
+use App\QueueV4Clean\QueueV4CleanProducer;
 
 spl_autoload_register(static function (string $class): void {
     if (str_starts_with($class, 'App\\')) {
@@ -61,7 +62,7 @@ $assert = static function (bool $condition, string $label) use (&$checks): void 
     }
 };
 
-$tables = ['queue_v4_clean_attempts','queue_v4_clean_readiness_accounts','queue_v4_clean_jobs','queue_v4_clean_runs','queue_v4_clean_checkpoints','queue_v4_clean_leases','queue_v4_clean_readiness_runs','queue_v4_clean_control','app_settings',
+$tables = ['queue_v4_clean_attempts','queue_v4_clean_readiness_accounts','queue_v4_clean_jobs','queue_v4_clean_runs','queue_v4_clean_checkpoints','queue_v4_clean_leases','queue_v4_clean_readiness_runs','queue_v4_clean_control','app_settings','meli_tokens',
     'audit_logs','user_company_access','users','inventory_reviews','inventory_movements','inventory_balances','inventory_warehouses',
     'product_meli_links','meli_order_items','meli_orders','meli_items','internal_products','meli_accounts','companies'];
 foreach ($tables as $table) {
@@ -71,7 +72,8 @@ $pdo->exec('CREATE TABLE companies(id BIGINT UNSIGNED PRIMARY KEY,name VARCHAR(1
 $pdo->exec('CREATE TABLE users(id BIGINT UNSIGNED PRIMARY KEY,name VARCHAR(160),email VARCHAR(190),role VARCHAR(40),status TINYINT,is_temporary TINYINT DEFAULT 0) ENGINE=InnoDB');
 $pdo->exec('CREATE TABLE user_company_access(user_id BIGINT UNSIGNED NOT NULL,company_id BIGINT UNSIGNED NOT NULL,PRIMARY KEY(user_id,company_id),FOREIGN KEY(user_id) REFERENCES users(id),FOREIGN KEY(company_id) REFERENCES companies(id)) ENGINE=InnoDB');
 $pdo->exec('CREATE TABLE audit_logs(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,user_id BIGINT UNSIGNED NULL,action VARCHAR(80),module VARCHAR(80),entity_type VARCHAR(80),entity_id BIGINT UNSIGNED NULL,meli_account_id BIGINT UNSIGNED NULL,ip_hash CHAR(64),before_json LONGTEXT NULL,after_json LONGTEXT NULL,created_at DATETIME DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB');
-$pdo->exec('CREATE TABLE meli_accounts(id BIGINT UNSIGNED PRIMARY KEY,company_id BIGINT UNSIGNED NOT NULL,account_name VARCHAR(160),meli_user_id VARCHAR(80) NULL DEFAULT NULL,FOREIGN KEY(company_id) REFERENCES companies(id)) ENGINE=InnoDB');
+$pdo->exec('CREATE TABLE meli_accounts(id BIGINT UNSIGNED PRIMARY KEY,company_id BIGINT UNSIGNED NOT NULL,account_name VARCHAR(160),meli_user_id VARCHAR(80) NULL DEFAULT NULL,status VARCHAR(20) NOT NULL DEFAULT "connected",FOREIGN KEY(company_id) REFERENCES companies(id)) ENGINE=InnoDB');
+$pdo->exec('CREATE TABLE meli_tokens(meli_account_id BIGINT UNSIGNED PRIMARY KEY,FOREIGN KEY(meli_account_id) REFERENCES meli_accounts(id)) ENGINE=InnoDB');
 $pdo->exec('CREATE TABLE app_settings(setting_key VARCHAR(120) PRIMARY KEY,setting_value TEXT NULL,is_encrypted TINYINT NOT NULL DEFAULT 0,setting_group VARCHAR(80) NULL) ENGINE=InnoDB');
 $pdo->exec('CREATE TABLE internal_products(id BIGINT UNSIGNED PRIMARY KEY,company_id BIGINT UNSIGNED NOT NULL,internal_sku VARCHAR(80),name VARCHAR(160),unit VARCHAR(40),status VARCHAR(20) NOT NULL DEFAULT "active",deleted_at DATETIME NULL,FOREIGN KEY(company_id) REFERENCES companies(id)) ENGINE=InnoDB');
 $pdo->exec('CREATE TABLE meli_items(id BIGINT UNSIGNED PRIMARY KEY,meli_account_id BIGINT UNSIGNED NOT NULL,external_item_id VARCHAR(80) NOT NULL,title VARCHAR(160),seller_sku VARCHAR(80),UNIQUE KEY uq_item(meli_account_id,external_item_id),FOREIGN KEY(meli_account_id) REFERENCES meli_accounts(id)) ENGINE=InnoDB');
@@ -81,8 +83,9 @@ $pdo->exec('CREATE TABLE product_meli_links(id BIGINT UNSIGNED AUTO_INCREMENT PR
 $pdo->exec((string) file_get_contents(dirname(__DIR__) . '/database/migrations/294_queue_v4_clean_greenfield_2_37_0.sql'));
 $pdo->exec((string) file_get_contents(dirname(__DIR__) . '/database/migrations/295_inventory_warehouse_v1_2_38_0.sql'));
 
-$pdo->exec("INSERT INTO companies VALUES (1,'Empresa A',1,NULL),(2,'Empresa B',1,NULL)");
-$pdo->exec("INSERT INTO meli_accounts VALUES (1,1,'Cuenta A','1001'),(2,2,'Cuenta B','1002')");
+$pdo->exec("INSERT INTO companies VALUES (1,'Empresa A',1,NULL),(2,'Empresa B',1,NULL),(3,'Empresa C',1,NULL)");
+$pdo->exec("INSERT INTO meli_accounts VALUES (1,1,'Cuenta A','1001','connected'),(2,2,'Cuenta B','1002','connected'),(3,3,'Cuenta C','1003','connected')");
+$pdo->exec('INSERT INTO meli_tokens VALUES (1),(2),(3)');
 $pdo->exec("INSERT INTO users VALUES (1,'Admin local','admin@local.invalid','admin',1,0)");
 $pdo->exec("INSERT INTO user_company_access VALUES (1,1),(1,2)");
 $pdo->exec("INSERT INTO internal_products VALUES (1,1,'SKU-1','Producto 1','unidad','active',NULL),(2,1,'SKU-2','Producto 2','unidad','active',NULL),(3,1,'SKU-3','Concurrencia','unidad','active',NULL),(4,2,'SKU-B','Producto B','unidad','active',NULL),(5,1,'SKU-N','Caso numérico','unidad','active',NULL),(6,1,'SKU-M','Operación manual','unidad','active',NULL)");
@@ -121,6 +124,15 @@ $manualBalance = $pdo->query('SELECT on_hand,reserved,available FROM inventory_b
 $assert($manualBalance['on_hand']==='16.000000' && $manualBalance['reserved']==='1.000000' && $manualBalance['available']==='15.000000', 'manual_movement_service');
 $assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE internal_product_id=6 AND source='manual'")->fetchColumn()===6, 'manual_movement_types');
 $assert((int)$pdo->query("SELECT COUNT(*) FROM audit_logs WHERE module='inventory'")->fetchColumn()>=8, 'inventory_audit_written');
+try {
+    $manual->manualMovement(array_replace(
+        $manualInput('receipt','1','1','00000000000000000000000000000007'),
+        ['reason'=>'']
+    ));
+    $assert(false, 'manual_reason_required_must_throw');
+} catch (RuntimeException) {
+    $assert(true, 'manual_reason_required');
+}
 
 $ledger = new InventoryLedgerService($pdo);
 $base = static fn(string $type,string $qty,string $cost,string $key,int $product=1): array => [
@@ -145,8 +157,10 @@ $ledger->applyBatch([$base('sale_reversal','4','6','reverse') + ['reversal_of_mo
 $ledger->applyBatch([$base('reserve','3','0','reserve')]);
 $ledger->applyBatch([$base('release','2','0','release')]);
 $ledger->applyBatch([$base('adjustment_out','1','0','adjust-out')]);
+$adjustmentCost = $ledger->applyBatch([$base('adjustment_out','1','999','adjust-out-cost-authority')])[0];
+$assert($adjustmentCost['unit_cost']==='6.000000' && $adjustmentCost['total_cost']==='6.000000', 'adjustment_out_uses_locked_average');
 $balance = $pdo->query('SELECT * FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetch();
-$assert($balance['on_hand']==='19.000000' && $balance['reserved']==='1.000000' && $balance['available']==='18.000000', 'reserve_release_adjustment');
+$assert($balance['on_hand']==='18.000000' && $balance['reserved']==='1.000000' && $balance['available']==='17.000000', 'reserve_release_adjustment');
 $beforeCount = (int) $pdo->query('SELECT COUNT(*) FROM inventory_movements')->fetchColumn();
 $ledger->applyBatch([$base('receipt','10','7','receipt')]);
 $assert((int)$pdo->query('SELECT COUNT(*) FROM inventory_movements')->fetchColumn()===$beforeCount, 'idempotent_repeat');
@@ -162,7 +176,7 @@ try {
 } catch (InventoryInsufficientStock) {
     $assert(true, 'insufficient_blocked');
 }
-$assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()==='19.000000', 'insufficient_zero_delta');
+$assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()==='18.000000', 'insufficient_zero_delta');
 
 // Casos numéricos obligatorios: 100@10 + 50@16 = 150@12; venta 10 = 120.
 $ledger->applyBatch([$base('opening','100','10','numeric-opening',5)]);
@@ -203,13 +217,13 @@ $pdo->exec("INSERT INTO meli_order_items(meli_order_id,meli_account_id,external_
 $projection = new OrderInventoryService($pdo);
 $result = $projection->project(1,1,10);
 $assert($result['outcome']==='applied' && $result['movements']===1, 'paid_order_applied');
-$assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()==='13.000000', 'conversion_factor_applied');
+$assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()==='12.000000', 'conversion_factor_applied');
 $projection->project(1,1,10);
 $assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE reference_id='ORDER-1' AND movement_type='sale_issue'")->fetchColumn()===1, 'sale_idempotent');
 $pdo->exec("UPDATE meli_orders SET status='cancelled' WHERE id=10 AND meli_account_id=1");
 $projection->project(1,1,10);
 $projection->project(1,1,10);
-$assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()==='19.000000', 'cancellation_exact_reversal');
+$assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()==='18.000000', 'cancellation_exact_reversal');
 $assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE reference_id='ORDER-1' AND movement_type='sale_reversal'")->fetchColumn()===1, 'reversal_idempotent');
 
 // Pack: dos órdenes descuentan por sus líneas; no existe movimiento de pack.
@@ -234,6 +248,12 @@ $beforeRefund = $pdo->query('SELECT on_hand FROM inventory_balances WHERE compan
 $refund = $projection->project(1,1,14);
 $assert($refund['outcome']==='review' && $refund['movements']===0, 'partial_refund_review_only');
 $assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()===$beforeRefund, 'partial_refund_zero_delta');
+$partialReviewId = (int) $pdo->query(
+    "SELECT id FROM inventory_reviews WHERE meli_order_id=14 AND reason_code='PARTIAL_RETURN_AUTHORITY_REQUIRED'"
+)->fetchColumn();
+$manual->dismissReview($partialReviewId, 'Devolución revisada externamente; no existe autoridad de cantidad para mover inventario.');
+$assert((string)$pdo->query("SELECT state FROM inventory_reviews WHERE id={$partialReviewId}")->fetchColumn()==='dismissed', 'partial_review_admin_dismissed');
+$assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()===$beforeRefund, 'partial_review_dismiss_zero_delta');
 
 // Una revisión por vínculo faltante se puede reintentar con seguridad después de crear la autoridad.
 $pdo->exec("INSERT INTO meli_items VALUES (2,1,'UNLINKED','Producto enlazado','U')");
@@ -372,6 +392,32 @@ $assert($freshResult['completed']===1 && (int)$freshId<(int)$orderJob['id'], 'qu
 $assert($mockCalls===1 && $orderJob['state']==='ready', 'queue_fresh_mock_created_order_exact');
 $assert($orderResult['completed']===1 && $seen===[['id'=>(int)$orderJob['id'],'type'=>'order_exact']], 'queue_order_exact_completed');
 $assert((int)$pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state<>'completed'")->fetchColumn()===0, 'queue_regression_clean_idle');
+
+// Una venta anterior a la ventana fresh se refresca en forma acotada y su cancelación tardía revierte.
+$pdo->exec("INSERT INTO meli_orders VALUES (30,1,'90030',NULL,'paid','paid')");
+$pdo->exec("INSERT INTO meli_order_items(meli_order_id,meli_account_id,external_item_id,external_variation_id,title,seller_sku,quantity) VALUES (30,1,'MLA1',NULL,'Q','MLSKU',1)");
+$refreshId = $queue->enqueue(1,1,'order_exact','90030','order:90030',['order_id'=>'90030']);
+$queueProjection = new OrderInventoryService($pdo);
+$queueWorker = new QueueV4CleanWorker($pdo,$queue,null,null,static function(array $job) use ($queueProjection): void {
+    $queueProjection->project((int)$job['company_id'],(int)$job['meli_account_id'],30);
+});
+for ($refreshRun=0; $refreshRun<2; $refreshRun++) {
+    $queueWorker->run('test',3,10);
+}
+$assert((string)$pdo->query("SELECT state FROM queue_v4_clean_jobs WHERE id={$refreshId}")->fetchColumn()==='completed', 'queue_paid_order_completed');
+$pdo->exec("INSERT INTO queue_v4_clean_readiness_runs(id,state,expected_accounts,passed_accounts,started_by,finished_at) VALUES (1,'CERTIFIED',3,3,1,UTC_TIMESTAMP(3))");
+$pdo->exec("INSERT INTO queue_v4_clean_readiness_accounts(readiness_run_id,company_id,meli_account_id,outcome) VALUES (1,1,1,'PASS'),(1,2,2,'PASS'),(1,3,3,'PASS')");
+$pdo->exec("INSERT INTO queue_v4_clean_checkpoints(producer_key,company_id,meli_account_id,last_job_id,next_due_at) VALUES ('inventory_order_refresh',1,1,29,UTC_TIMESTAMP(3))");
+$refreshProduction = (new QueueV4CleanProducer($pdo,$queue))->produce();
+$assert($refreshProduction['inventory_refresh_created']===1, 'queue_late_lifecycle_source_bounded');
+$assert((string)$pdo->query("SELECT state FROM queue_v4_clean_jobs WHERE id={$refreshId}")->fetchColumn()==='ready', 'queue_completed_job_revived_by_source');
+$pdo->exec("UPDATE meli_orders SET status='cancelled' WHERE id=30 AND meli_account_id=1");
+for ($refreshRun=0; $refreshRun<2; $refreshRun++) {
+    $queueWorker->run('test',3,10);
+}
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE reference_id='90030' AND movement_type='sale_issue'")->fetchColumn()===1, 'queue_paid_issue_once');
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE reference_id='90030' AND movement_type='sale_reversal'")->fetchColumn()===1, 'queue_cancel_reversal_once');
+$assert((string)$pdo->query("SELECT state FROM queue_v4_clean_jobs WHERE id={$refreshId}")->fetchColumn()==='completed', 'queue_cancel_refresh_completed');
 
 echo json_encode([
     'ok'=>true,'checks'=>$checks,'schema'=>295,'ml_http_calls'=>0,'business_tables_mutated'=>0,

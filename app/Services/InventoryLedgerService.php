@@ -139,9 +139,8 @@ final class InventoryLedgerService
             $onHandDelta = $quantity;
         } elseif (in_array($type, ['sale_issue', 'adjustment_out'], true)) {
             $effectiveCost = (string) $before['average_unit_cost'];
-            if ($type === 'sale_issue' || $unitCost === '0.000000') {
-                $unitCost = $this->decimal($effectiveCost, true);
-            }
+            // Every physical exit is valued at the locked moving average.
+            $unitCost = $this->decimal($effectiveCost, true);
             $update = $this->pdo->prepare(
                 'UPDATE inventory_balances
                  SET on_hand=on_hand-CAST(:qty AS DECIMAL(20,6)),
@@ -341,8 +340,7 @@ final class InventoryLedgerService
         $reversal = $spec['reversal_of_movement_id'];
         $movementReversal = $movement['reversal_of_movement_id'] === null
             ? null : (int) $movement['reversal_of_movement_id'];
-        $costMustMatch = in_array($type, ['opening', 'receipt', 'adjustment_in', 'sale_reversal'], true)
-            || ($type === 'adjustment_out' && $spec['unit_cost'] !== '0.000000');
+        $costMustMatch = in_array($type, ['opening', 'receipt', 'adjustment_in', 'sale_reversal'], true);
         if ((int) $movement['warehouse_id'] !== (int) $spec['warehouse_id']
             || (int) $movement['internal_product_id'] !== (int) $spec['internal_product_id']
             || $movementAccount !== $account

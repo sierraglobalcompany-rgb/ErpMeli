@@ -42,6 +42,7 @@ try {
     $assert(str_contains($ledger, 'FOR UPDATE'), 'balance_row_lock');
     $assert(str_contains($ledger, 'DECIMAL(20,6)'), 'db_decimal_math');
     $assert(!preg_match('/\(float\)|floatval\s*\(/i', $ledger), 'no_float_business_math');
+    $assert(str_contains($ledger, 'Every physical exit is valued at the locked moving average'), 'outflow_cost_authority');
 
     $controller = $read('app/Controllers/InventoryController.php');
     $assert(str_contains($controller, 'SameOriginGuard::assertRequest(true)'), 'same_origin');
@@ -52,15 +53,18 @@ try {
     $assert(str_contains($application, 'Auth::isTemporary()'), 'manual_no_temporary');
     $assert(str_contains($warehouse, 'Auth::isTemporary()'), 'warehouse_no_temporary');
     $assert(str_contains($application, 'AuditService::record'), 'movement_audit');
+    $assert(str_contains($application, 'dismissReview'), 'review_dismiss_authority');
+    $assert(str_contains($application, 'El motivo del movimiento es obligatorio.'), 'manual_reason_backend_gate');
     $assert(str_contains($warehouse, 'AuditService::record'), 'warehouse_audit');
 
     $routes = $read('public/index.php');
-    foreach (['/inventory', '/inventory/kardex', '/inventory/movements', '/inventory/reviews/retry'] as $route) {
+    foreach (['/inventory', '/inventory/kardex', '/inventory/movements', '/inventory/reviews/retry', '/inventory/reviews/dismiss'] as $route) {
         $assert(str_contains($routes, "'" . $route . "'"), 'route:' . $route);
     }
     $view = $read('app/Views/inventory/index.php');
     $assert(str_contains($view, 'name="request_id"'), 'manual_idempotency_field');
     $assert(str_contains($view, 'name="_token"'), 'inventory_form_csrf');
+    $assert(str_contains($view, 'Cerrar sin movimiento'), 'review_dismiss_ui');
 
     $all = $migration . $sync . $ledger . $application . $warehouse . $controller;
     $assert(!str_contains(strtolower($all), 'storage/raw'), 'raw_storage_not_referenced');

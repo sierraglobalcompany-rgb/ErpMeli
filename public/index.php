@@ -252,6 +252,7 @@ $router->post('/inventory/warehouses/default', [InventoryController::class, 'def
 $router->post('/inventory/warehouses/status', [InventoryController::class, 'warehouseStatus']);
 $router->post('/inventory/movements', [InventoryController::class, 'movement']);
 $router->post('/inventory/reviews/retry', [InventoryController::class, 'retryReview']);
+$router->post('/inventory/reviews/dismiss', [InventoryController::class, 'dismissReview']);
 $router->get('/products/links', [ProductLinkController::class, 'index']);
 $router->post('/products/links', [ProductLinkController::class, 'store']);
 $router->post('/products/links/factor', [ProductLinkController::class, 'updateFactor']);

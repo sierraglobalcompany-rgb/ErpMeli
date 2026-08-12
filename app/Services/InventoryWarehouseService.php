@@ -57,6 +57,9 @@ final class InventoryWarehouseService
             );
             $stmt->execute([$companyId, $code, mb_substr($name, 0, 160), $default ? 1 : 0, Auth::id()]);
             $id = (int) $pdo->lastInsertId();
+            AuditService::record('create', 'inventory', 'inventory_warehouse', $id, null, null, [
+                'company_id' => $companyId, 'code' => $code, 'is_default' => $default,
+            ]);
             $pdo->commit();
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {
@@ -64,9 +67,6 @@ final class InventoryWarehouseService
             }
             throw $e;
         }
-        AuditService::record('create', 'inventory', 'inventory_warehouse', $id, null, null, [
-            'company_id' => $companyId, 'code' => $code, 'is_default' => $default,
-        ]);
         return $id;
     }
 
@@ -97,6 +97,9 @@ final class InventoryWarehouseService
             if ($target->rowCount() !== 1) {
                 throw new RuntimeException('No se pudo fijar la bodega predeterminada.');
             }
+            AuditService::record('set_default', 'inventory', 'inventory_warehouse', $warehouseId, null, [
+                'is_default' => (bool) $warehouse['is_default'],
+            ], ['is_default' => true]);
             $pdo->commit();
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {
@@ -104,9 +107,6 @@ final class InventoryWarehouseService
             }
             throw $e;
         }
-        AuditService::record('set_default', 'inventory', 'inventory_warehouse', $warehouseId, null, [
-            'is_default' => (bool) $warehouse['is_default'],
-        ], ['is_default' => true]);
     }
 
     public function setStatus(int $warehouseId, string $status): void
@@ -140,6 +140,9 @@ final class InventoryWarehouseService
             if ($update->rowCount() !== 1 && $warehouse['status'] !== $status) {
                 throw new RuntimeException('No se pudo actualizar el estado de la bodega.');
             }
+            AuditService::record('status', 'inventory', 'inventory_warehouse', $warehouseId, null, [
+                'status' => $warehouse['status'],
+            ], ['status' => $status]);
             $pdo->commit();
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {
@@ -147,9 +150,6 @@ final class InventoryWarehouseService
             }
             throw $e;
         }
-        AuditService::record('status', 'inventory', 'inventory_warehouse', $warehouseId, null, [
-            'status' => $warehouse['status'],
-        ], ['status' => $status]);
     }
 
     /** @return array<string,mixed> */

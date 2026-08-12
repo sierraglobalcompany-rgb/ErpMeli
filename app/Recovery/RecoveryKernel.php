@@ -263,7 +263,21 @@ final class RecoveryKernel
                             !$metadataOnlyCompletion,
                             false
                         );
-                        if (!(bool) ($integrity['ok'] ?? false)) {
+                        $integrityErrors = array_values((array) ($integrity['errors'] ?? []));
+                        $nonTransitionErrors = array_values(array_filter(
+                            $integrityErrors,
+                            static fn (array $issue): bool => (string) ($issue['code'] ?? '') !== 'database_version_mismatch'
+                        ));
+                        $transitionVersion = trim((string) ($before['installed_version'] ?? ''));
+                        $schemaVersion = trim((string) ($integrity['schema']['version'] ?? ''));
+                        $expectedVersionTransition = !$metadataOnlyCompletion
+                            && $transitionVersion !== ''
+                            && $schemaVersion !== ''
+                            && hash_equals($transitionVersion, $schemaVersion)
+                            && !empty($integrity['schema']['migration_applied'])
+                            && count($integrityErrors) === 1
+                            && $nonTransitionErrors === [];
+                        if (!(bool) ($integrity['ok'] ?? false) && !$expectedVersionTransition) {
                             throw new \RuntimeException('release_schema_inconsistent');
                         }
                         (new DirectUpdateMetadataPromotionService())->promote(
@@ -272,11 +286,19 @@ final class RecoveryKernel
                             (string) ($state['last_applied'] ?? ''),
                             'Actualización completada desde el actualizador directo.'
                         );
+                        $promotedIntegrity = (new ReleaseIntegrityService())->inspectDirectory(
+                            $this->root,
+                            true,
+                            false
+                        );
+                        if (!(bool) ($promotedIntegrity['ok'] ?? false)) {
+                            throw new \RuntimeException('release_post_promotion_inconsistent');
+                        }
                         if (!$metadataOnlyCompletion) {
                             CacheInvalidationService::invalidateKnown('direct_update_completed', AppVersionService::fileVersion());
                         }
                         $fileVersion = AppVersionService::fileVersion();
-                        if (!$metadataOnlyCompletion) {
+                        if (!$metadataOnlyCompletion && version_compare($fileVersion, '2.37.0', '<')) {
                             if (version_compare($fileVersion, '2.30.0', '>=')) {
                                 (new CronV3SetupAssistantService($this->pdo, null, $this->root))
                                     ->prepareOperationalConfig((int) Auth::id());
@@ -293,9 +315,11 @@ final class RecoveryKernel
                         $safety = (new SystemSafetyStatusService())->status();
                         $notice = $metadataOnlyCompletion
                             ? 'Actualización completada. Solo se confirmó la metadata de la release; el esquema y la configuración operativa no cambiaron. '
-                            : (version_compare(AppVersionService::fileVersion(), '2.30.0', '>=')
+                            : (version_compare(AppVersionService::fileVersion(), '2.37.0', '>=')
+                                ? 'Actualización completada. Queue V4 Clean y su configuración operativa conservaron el estado previo. '
+                                : (version_compare(AppVersionService::fileVersion(), '2.30.0', '>=')
                                 ? 'Actualización completada. Cron V3 quedó preparado como motor operativo y V2 se saltará solo. '
-                                : 'Actualización completada. Cron V3 quedó preparado en modo seguro. ');
+                                : 'Actualización completada. Cron V3 quedó preparado en modo seguro. '));
                         $notice .= ((string) ($safety['api'] ?? '') === 'stopped'
                             ? 'La salida hacia Mercado Libre continúa detenida.'
                             : 'Revise el freno de mano antes de habilitar consultas.');

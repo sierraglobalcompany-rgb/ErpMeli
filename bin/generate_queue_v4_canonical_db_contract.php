@@ -6,12 +6,26 @@ use App\Core\Database;
 require dirname(__DIR__) . '/bootstrap.php';
 
 $output = $argv[1] ?? dirname(__DIR__) . '/docs/queue-v4/QUEUE_V4_CANONICAL_DB_CONTRACT.json';
+$baseContractPath = trim((string) (getenv('QUEUE_V4_BASE_CONTRACT') ?: ''));
+$extensionTables = array_values(array_filter(array_map(
+    'trim',
+    explode(',', (string) (getenv('QUEUE_V4_EXTENSION_TABLES') ?: ''))
+)));
+$baseContract = null;
+if ($baseContractPath !== '') {
+    $baseContract = json_decode((string) file_get_contents($baseContractPath), true, 64, JSON_THROW_ON_ERROR);
+    if (!is_array($baseContract) || !is_array($baseContract['tables'] ?? null)) {
+        throw new RuntimeException('canonical_base_contract_invalid');
+    }
+}
 $tables = [
     'schema_migrations', 'app_settings', 'meli_accounts', 'meli_tokens',
     'queue_v4_clean_control', 'queue_v4_clean_readiness_runs',
     'queue_v4_clean_readiness_accounts', 'queue_v4_clean_jobs',
     'queue_v4_clean_attempts', 'queue_v4_clean_runs',
     'queue_v4_clean_leases', 'queue_v4_clean_checkpoints',
+    'inventory_warehouses', 'inventory_balances',
+    'inventory_movements', 'inventory_reviews',
 ];
 
 $pdo = Database::connectionFresh();
@@ -32,6 +46,13 @@ $result = [
 ];
 
 foreach ($tables as $table) {
+    if ($baseContract !== null && $extensionTables !== [] && !in_array($table, $extensionTables, true)) {
+        if (!is_array($baseContract['tables'][$table] ?? null)) {
+            throw new RuntimeException('canonical_base_table_missing:' . $table);
+        }
+        $result['tables'][$table] = $baseContract['tables'][$table];
+        continue;
+    }
     $tableStatement = $pdo->prepare(
         'SELECT ENGINE,TABLE_COLLATION FROM information_schema.TABLES
          WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND TABLE_TYPE="BASE TABLE"'

@@ -49,6 +49,7 @@ $documentTitle = match (true) {
     str_starts_with($routePath, '/sales') => 'Ventas',
     str_starts_with($routePath, '/orders') => 'Órdenes',
     str_starts_with($routePath, '/products/meli') => 'Productos Mercado Libre',
+    str_starts_with($routePath, '/inventory') => 'Inventario',
     str_starts_with($routePath, '/products') => 'Productos',
     str_starts_with($routePath, '/financial-recalc') => 'Recálculo financiero',
     str_starts_with($routePath, '/reports/profitability') => 'Rentabilidad',

@@ -166,7 +166,14 @@ final class OrderSyncService
             [],
             $meta,
         );
-        return $this->persistOrder($order, false, $beforePersist, false, false);
+        $orderId = $this->persistOrder($order, false, $beforePersist, false, false);
+        $companyId = (int) ($meta['company_id'] ?? 0);
+        $accountId = (int) ($meta['account_id'] ?? $this->accountId);
+        if ($companyId < 1 || $accountId !== $this->accountId) {
+            throw new \RuntimeException('Queue V4 no entregó una autoridad tenant válida para inventario.');
+        }
+        (new OrderInventoryService(Database::connection()))->project($companyId, $accountId, $orderId);
+        return $orderId;
     }
 
     /** Un paso web exacto: persiste la orden y no crea trabajo posterior. */

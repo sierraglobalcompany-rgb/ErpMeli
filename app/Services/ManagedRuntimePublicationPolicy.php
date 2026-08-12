@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.37.2.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.38.0.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -39,12 +39,13 @@ final class ManagedRuntimePublicationPolicy
         'bin/queue_core_dependency_check.php',
         'bin/runtime_process_audit.php',
     ];
-    public const BASE_COMMIT = '1dc31993f7a5f7840b905abcc97bb730c6f1e8bd';
-    public const INSTALLED_BASE_COMMIT = 'f91cd534d271b964db1ad9e682260475eca96820';
-    public const VERSION = '2.37.2';
-    public const BUILD_ID = 'erp-meli-2.37.2-queue-v4-snapshot-timeout-rc1-20260812';
-    public const BUILT_AT = '2026-08-13T00:30:00Z';
-    public const MINIMUM_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';
+    public const BASE_COMMIT = 'c40d073705833c94911c254ec633bf8eb231375e';
+    public const INSTALLED_BASE_COMMIT = 'f4ec61cd1099c2d4b8a1275ba2aa446eeb213a53';
+    public const VERSION = '2.38.0';
+    public const BUILD_ID = 'erp-meli-2.38.0-inventory-warehouse-v1-rc1-20260812';
+    public const BUILT_AT = '2026-08-13T03:00:00Z';
+    public const MINIMUM_MIGRATION = '295_inventory_warehouse_v1_2_38_0.sql';
+    private const QUEUE_V4_MINIMUM_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';
     private const LEGACY_MINIMUM_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
     /** @var array<string,array{build_id:string,minimum_migration:string,dependency_registry:string}> */
     private const INSTALLED_PROFILES = [
@@ -120,13 +121,18 @@ final class ManagedRuntimePublicationPolicy
         ],
         '2.37.0' => [
             'build_id' => 'erp-meli-2.37.0-queue-v4-clean-greenfield-rc1-20260812',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => self::QUEUE_V4_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.37.0.json',
         ],
         '2.37.1' => [
             'build_id' => 'erp-meli-2.37.1-queue-v4-clean-stabilized-rc1-20260812',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => self::QUEUE_V4_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.37.1.json',
+        ],
+        '2.37.2' => [
+            'build_id' => 'erp-meli-2.37.2-queue-v4-snapshot-timeout-rc1-20260812',
+            'minimum_migration' => self::QUEUE_V4_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.37.2.json',
         ],
         self::VERSION => [
             'build_id' => self::BUILD_ID,

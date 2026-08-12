@@ -27,7 +27,8 @@ final class NavigationRepository
                 'icon' => 'building',
                 'items' => [
                     $this->item('/products/meli', 'cart', 'Productos Mercado Libre'),
-                    $this->item('/products/internal', 'building', 'Bodega', ['/products/internal', '/products/imports']),
+                    $this->item('/products/internal', 'building', 'Productos internos', ['/products/internal', '/products/imports']),
+                    $this->item('/inventory', 'building', 'Inventario', ['/inventory']),
                     $this->item('/products/links', 'link', 'Vinculación', ['/products/links', '/products/unlinked']),
                     $this->item('/catalogs', 'file', 'Catálogos'),
                 ],
@@ -123,6 +124,10 @@ final class NavigationRepository
             [
                 ['href' => '/billing', 'label' => 'Mensual', 'matches' => ['/billing']],
                 ['href' => '/billing/date', 'label' => 'Por fechas', 'matches' => ['/billing/date']],
+            ],
+            [
+                ['href' => '/inventory', 'label' => 'Existencias', 'matches' => ['=/inventory']],
+                ['href' => '/inventory/kardex', 'label' => 'Kardex', 'matches' => ['/inventory/kardex']],
             ],
             [
                 ['href' => '/catalogs', 'label' => 'Catálogos', 'matches' => ['=/catalogs', '/catalogs/create']],

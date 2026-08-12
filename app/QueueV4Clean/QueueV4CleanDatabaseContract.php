@@ -43,39 +43,42 @@ final class QueueV4CleanDatabaseContract
         $parameters = array_merge([$database], $tableNames);
         $tables = $this->group(
             $this->metadata(
-                'SELECT TABLE_NAME,ENGINE,TABLE_COLLATION
+                'SELECT TABLE_SCHEMA,TABLE_NAME,ENGINE,TABLE_COLLATION
                  FROM information_schema.TABLES
                  WHERE TABLE_SCHEMA=? AND TABLE_NAME IN (' . $placeholders . ')
                    AND TABLE_TYPE="BASE TABLE"
                  ORDER BY TABLE_NAME',
                 $parameters
             ),
-            'TABLE_NAME'
+            'TABLE_NAME',
+            $database
         );
         $columns = $this->group(
             $this->metadata(
-                'SELECT TABLE_NAME,ORDINAL_POSITION,COLUMN_NAME,DATA_TYPE,COLUMN_TYPE,IS_NULLABLE,
+                'SELECT TABLE_SCHEMA,TABLE_NAME,ORDINAL_POSITION,COLUMN_NAME,DATA_TYPE,COLUMN_TYPE,IS_NULLABLE,
                         COLUMN_DEFAULT,EXTRA,CHARACTER_SET_NAME,COLLATION_NAME
                  FROM information_schema.COLUMNS
                  WHERE TABLE_SCHEMA=? AND TABLE_NAME IN (' . $placeholders . ')
                  ORDER BY TABLE_NAME,ORDINAL_POSITION',
                 $parameters
             ),
-            'TABLE_NAME'
+            'TABLE_NAME',
+            $database
         );
         $indexes = $this->group(
             $this->metadata(
-                'SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,COLLATION,INDEX_TYPE
+                'SELECT TABLE_SCHEMA,TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,COLLATION,INDEX_TYPE
                  FROM information_schema.STATISTICS
                  WHERE TABLE_SCHEMA=? AND TABLE_NAME IN (' . $placeholders . ')
                  ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX',
                 $parameters
             ),
-            'TABLE_NAME'
+            'TABLE_NAME',
+            $database
         );
         $foreignKeys = $this->group(
             $this->metadata(
-                'SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.ORDINAL_POSITION,k.COLUMN_NAME,
+                'SELECT k.CONSTRAINT_SCHEMA AS TABLE_SCHEMA,k.TABLE_NAME,k.CONSTRAINT_NAME,k.ORDINAL_POSITION,k.COLUMN_NAME,
                         k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,
                         r.MATCH_OPTION,r.UPDATE_RULE,r.DELETE_RULE
                  FROM information_schema.KEY_COLUMN_USAGE k
@@ -88,7 +91,8 @@ final class QueueV4CleanDatabaseContract
                  ORDER BY k.TABLE_NAME,k.CONSTRAINT_NAME,k.ORDINAL_POSITION',
                 $parameters
             ),
-            'TABLE_NAME'
+            'TABLE_NAME',
+            $database
         );
 
         foreach ($expectedTables as $table => $expected) {
@@ -136,10 +140,15 @@ final class QueueV4CleanDatabaseContract
     }
 
     /** @param list<array<string,mixed>> $rows @return array<string,list<array<string,mixed>>> */
-    private function group(array $rows, string $key): array
+    private function group(array $rows, string $key, string $database): array
     {
         $grouped = [];
         foreach ($rows as $row) {
+            $schema = (string) ($row['TABLE_SCHEMA'] ?? '');
+            unset($row['TABLE_SCHEMA']);
+            if (!hash_equals($database, $schema)) {
+                continue;
+            }
             $name = (string) ($row[$key] ?? '');
             unset($row[$key]);
             if ($name !== '') {

@@ -178,6 +178,32 @@ try {
             $pdo->exec('DROP DATABASE IF EXISTS `' . $decoyPrefix . '_' . $decoy . '`');
         }
     }
+    $databaseName = (string) $pdo->query('SELECT DATABASE()')->fetchColumn();
+    $caseVariant = strtoupper($databaseName);
+    if (!hash_equals($databaseName, $caseVariant)) {
+        $pdo->exec('CREATE DATABASE `' . $caseVariant . '` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+        try {
+            $pdo->exec(
+                'CREATE TABLE `' . $caseVariant . '`.queue_v4_clean_control '
+                . 'LIKE `' . $databaseName . '`.queue_v4_clean_control'
+            );
+            $pdo->exec(
+                'RENAME TABLE `' . $databaseName . '`.queue_v4_clean_control '
+                . 'TO `' . $databaseName . '`.queue_v4_clean_control_missing'
+            );
+            $assert(
+                in_array('db_contract_table_missing:queue_v4_clean_control', (new QueueV4CleanDatabaseContract($pdo))->issues(), true),
+                'case-variant schema masked a missing canonical table'
+            );
+            $pdo->exec(
+                'RENAME TABLE `' . $databaseName . '`.queue_v4_clean_control_missing '
+                . 'TO `' . $databaseName . '`.queue_v4_clean_control'
+            );
+        } finally {
+            $pdo->exec('DROP DATABASE IF EXISTS `' . $caseVariant . '`');
+        }
+        $assert((new QueueV4CleanDatabaseContract($pdo))->issues() === [], 'case-variant schema test did not restore contract');
+    }
     $assert((int) $pdo->query("SELECT COUNT(*) FROM queue_core_jobs WHERE dispatch_state='DISPATCHED_RESULT_UNCERTAIN'")->fetchColumn() === 1, 'legacy uncertain fixture absent');
 
     $outsideBlocked = false;

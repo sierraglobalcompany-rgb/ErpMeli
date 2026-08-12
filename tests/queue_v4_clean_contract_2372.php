@@ -56,6 +56,7 @@ $assert(str_contains($databaseContract, 'database_version_family') && str_contai
 $assert(substr_count($databaseContract, '$this->metadata(') === 4, 'database contract metadata queries are not exactly four');
 $assert(!str_contains($databaseContract, 'BINARY TABLE_SCHEMA') && !str_contains($databaseContract, 'BINARY TABLE_NAME'), 'database contract retained unindexed BINARY filters');
 $assert(str_contains($databaseContract, 'TABLE_NAME IN ('), 'database contract is not batched by exact table set');
+$assert(str_contains($databaseContract, 'hash_equals($database, $schema)'), 'database contract does not enforce exact schema identity in PHP');
 $assert(str_contains($appJs, 'El backend Queue V4 agotó el tiempo de respuesta.'), 'Queue V4 timeout feedback missing');
 $assert(str_contains($appJs, "includes('application/json')"), 'Queue V4 content-type gate missing');
 $assert(str_contains($readiness, "failure_class='interrupted'"), 'interrupted readiness restart missing');

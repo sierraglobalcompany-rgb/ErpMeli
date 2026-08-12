@@ -8,6 +8,7 @@ use App\Core\AppPaths;
 use App\Core\Database;
 use App\Core\Env;
 use App\QueueCore\QueueCoreCanaryService;
+use App\QueueCore\QueueCoreCanaryUncertainRecoveryService;
 use App\QueueCore\QueueCoreConvergenceService;
 use App\QueueCore\QueueCoreFeatureFlagService;
 use App\QueueCore\QueueCorePreflightService;
@@ -28,7 +29,7 @@ use Throwable;
 final class V4ReadinessBootstrapService
 {
     public const CONFIRMATION_PHRASE = 'PREPARAR_Y_CERTIFICAR_V4_SIN_SCHEDULER';
-    public const REQUIRED_VERSION = '2.36.14';
+    public const REQUIRED_VERSION = '2.36.15';
     public const LAST_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
     public const LOCK_NAME = 'erp_meli_v4_readiness_bootstrap_2366';
     public const SCHEDULER_AUTHORITY_KEY = 'queue_core.v4.scheduler_authority';
@@ -102,12 +103,28 @@ final class V4ReadinessBootstrapService
                 $recovery = $this->rollbackAuthorities(
                     $pdo,
                     $actorUserId,
-                    'partial_arm_recovery_23614',
+                    'partial_arm_recovery_23615',
                 );
                 return [
                     'ok' => $recovery['state'] === 'rolled_back',
                     'state' => 'recovered_fail_closed',
                     'message' => 'El armado parcial fue restaurado a fail-closed. Vuelva a pulsar para iniciar una preparación nueva.',
+                    'requires_next_request' => true,
+                    'next_single_action' => 'USER_PRESS_PREPARE_AND_CERTIFY_V4_AGAIN',
+                    'scheduler_created' => false,
+                    'engine_activated' => false,
+                ];
+            }
+            if ($state === 'canary_uncertain_recovery_required') {
+                $recovery = (new QueueCoreCanaryUncertainRecoveryService($pdo))->recover($actorUserId);
+                if (empty($recovery['ok'])) {
+                    throw new RuntimeException('v4_bootstrap_canary_uncertain_recovery_blocked');
+                }
+                return [
+                    'ok' => true,
+                    'state' => 'recovered_canary_uncertain',
+                    'message' => 'El GET canario incierto conservó su evidencia y volvió a una cola reintentable segura.',
+                    'recovered_jobs' => (int) ($recovery['recovered'] ?? 0),
                     'requires_next_request' => true,
                     'next_single_action' => 'USER_PRESS_PREPARE_AND_CERTIFY_V4_AGAIN',
                     'scheduler_created' => false,
@@ -187,7 +204,7 @@ final class V4ReadinessBootstrapService
         $nextGeneration = (int) $pre['engine']['generation'] + 1;
         $flags->compareAndSwapReadinessFlags(self::FLAGS_DISABLED, self::FLAGS_READY, $nextGeneration);
         (new EmergencyControlService())->startApiWithoutCanary(
-            'v4_readiness_bootstrap_23614',
+            'v4_readiness_bootstrap_23615',
             'Lecturas habilitadas para readiness V4 acotado; automatización permanece detenida.',
         );
         (new CronV3SetupAssistantService($pdo, $this->configPath()))
@@ -225,7 +242,7 @@ final class V4ReadinessBootstrapService
         $transition = $engineService->compareAndSwapReadiness(
             'preparing',
             $expectedGeneration,
-            'admin:' . $actorUserId . ':v4_readiness_bootstrap_23614',
+            'admin:' . $actorUserId . ':v4_readiness_bootstrap_23615',
         );
         if (empty($transition['ok'])
             || (int) ($transition['generation'] ?? -1) !== $expectedGeneration + 1) {
@@ -392,7 +409,7 @@ final class V4ReadinessBootstrapService
                 throw new RuntimeException('v4_bootstrap_activation_gate:' . (string) ($activation['reason'] ?? 'unknown'));
             }
             $receipt = [
-                'operation' => 'v4_readiness_bootstrap_23614',
+                'operation' => 'v4_readiness_bootstrap_23615',
                 'result' => 'PASS',
                 'generation' => $generation,
                 'readiness_context_hash' => $contextHash,
@@ -458,7 +475,14 @@ final class V4ReadinessBootstrapService
         return [
             'ok' => in_array(
                 $state,
-                ['recovery_required', 'ready_to_arm', 'ready_for_context', 'preparing', 'certified'],
+                [
+                    'recovery_required',
+                    'canary_uncertain_recovery_required',
+                    'ready_to_arm',
+                    'ready_for_context',
+                    'preparing',
+                    'certified',
+                ],
                 true,
             ),
             'state' => $state,
@@ -487,7 +511,7 @@ final class V4ReadinessBootstrapService
             "SELECT setting_value FROM app_settings WHERE setting_key='app.version' LIMIT 1"
         )->fetchColumn();
         if ($fileVersion !== self::REQUIRED_VERSION || $appVersion !== self::REQUIRED_VERSION) {
-            $issues[] = 'version_not_23614';
+            $issues[] = 'version_not_23615';
         }
         $schemaAuthority = $pdo->query(
             "SELECT COUNT(*) AS total,
@@ -536,9 +560,8 @@ final class V4ReadinessBootstrapService
         if ($leases !== 0) {
             $issues[] = 'active_execution_lease';
         }
-        $uncertain = (int) $pdo->query(
-            "SELECT COUNT(*) FROM queue_core_jobs WHERE dispatch_state='DISPATCHED_RESULT_UNCERTAIN'"
-        )->fetchColumn();
+        $canaryUncertainRecovery = (new QueueCoreCanaryUncertainRecoveryService($pdo))->inspect();
+        $uncertain = (int) ($canaryUncertainRecovery['total_uncertain'] ?? 0);
         if ($uncertain !== 0) {
             $issues[] = 'uncertain_execution_present';
         }
@@ -614,6 +637,10 @@ final class V4ReadinessBootstrapService
         $baseIssues = array_values(array_filter($issues, static fn (string $issue): bool =>
             $issue !== 'readiness_runtime_not_stable'
         ));
+        $canaryRecoveryBaseIssues = array_values(array_filter(
+            $baseIssues,
+            static fn (string $issue): bool => $issue !== 'uncertain_execution_present',
+        ));
         return [
             'ok' => $issues === [],
             'base_ok' => $baseIssues === [],
@@ -629,6 +656,8 @@ final class V4ReadinessBootstrapService
             'v3_retired' => !in_array('v3_retirement_evidence_missing', $issues, true),
             'active_leases' => $leases,
             'uncertain_executions' => $uncertain,
+            'canary_uncertain_recovery' => $canaryUncertainRecovery,
+            'canary_uncertain_recovery_base_ok' => $canaryRecoveryBaseIssues === [],
             'active_runs' => $activeRuns,
             'historical_importer' => $historical,
             'feature_generations' => $featureGenerations,
@@ -775,7 +804,7 @@ final class V4ReadinessBootstrapService
                 return ['attempted' => false, 'state' => 'not_armed'];
             }
             $result = $this->rollbackAuthorities($pdo, $actorUserId, $this->safeReason($error));
-            return ['attempted' => true, 'state' => $result['state']];
+            return ['attempted' => true, 'state' => (string) $result['state']];
         } catch (Throwable) {
             return ['attempted' => true, 'state' => 'rollback_blocked'];
         }
@@ -798,7 +827,7 @@ final class V4ReadinessBootstrapService
         // Estas dos autoridades cortan ejecución remota aun cuando un CAS DB
         // esté contendido. Ningún fallo posterior puede impedir intentarlas.
         $attempt('api', fn (): null => (new EmergencyControlService())->stopApi(
-            'v4_readiness_rollback_23614',
+            'v4_readiness_rollback_23615',
             'Rollback fail-closed: ' . mb_substr($reason, 0, 120),
         ));
         $attempt('config', function () use ($pdo, $actorUserId): array {
@@ -820,7 +849,7 @@ final class V4ReadinessBootstrapService
             $transition = $service->compareAndSwapReadiness(
                 'idle',
                 (int) $current['generation'],
-                'admin:' . $actorUserId . ':v4_readiness_rollback_23614',
+                'admin:' . $actorUserId . ':v4_readiness_rollback_23615',
             );
             if (empty($transition['ok'])) {
                 throw new RuntimeException('v4_bootstrap_rollback_engine_cas_failed');
@@ -1022,6 +1051,29 @@ final class V4ReadinessBootstrapService
                 ),
             ))),
         ];
+
+        $canaryRecovery = (array) ($pre['canary_uncertain_recovery'] ?? []);
+        $canaryRecoveryProfileSafe = (
+            $engineProfile === 'idle'
+            && $featureProfile === 'fail_closed'
+            && $runtimeProfile === 'fail_closed'
+        ) || (
+            $engineProfile === 'preparing'
+            && $featureProfile === 'preparing'
+            && $runtimeProfile === 'armed'
+            && $contextStable
+        );
+        if (!empty($pre['canary_uncertain_recovery_base_ok'])
+            && !empty($canaryRecovery['recoverable'])
+            && $canaryRecoveryProfileSafe
+            && $certified === null
+            && !empty($pre['scheduler_absent_recorded'])) {
+            return [
+                'state' => 'canary_uncertain_recovery_required',
+                'reason' => 'safe_canary_get_uncertain_recovery_available',
+                'authority' => $authority + ['canary_uncertain_recovery' => $canaryRecovery],
+            ];
+        }
 
         if (empty($pre['base_ok'])) {
             return [

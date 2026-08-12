@@ -18,9 +18,11 @@ use App\QueueCore\QueueCoreOAuthRefreshHandler;
 use App\QueueCore\QueueCoreOAuthSupervisor;
 use App\QueueCore\QueueCoreConvergenceService;
 use App\QueueCore\QueueCoreCanaryService;
+use App\QueueCore\QueueCoreCanaryUncertainRecoveryService;
 use App\QueueCore\QueueCoreRepository;
 use App\QueueCore\QueueCoreReadinessReceiptService;
 use App\QueueCore\QueueCoreReleaseEvidenceService;
+use App\QueueCore\QueueCoreRunLedger;
 use App\QueueCore\QueueEngineControlService;
 use App\QueueCore\QueueEngineRuntimePermit;
 use App\QueueCore\QueueExecutionContext;
@@ -286,7 +288,7 @@ for($migrationNumber=1;$migrationNumber<=279;$migrationNumber++){
     $migrationSeed->execute([sprintf('%03d_fixture_authority.sql',$migrationNumber)]);
 }
 $pdo->exec("INSERT INTO app_settings(setting_key,setting_value,is_encrypted,setting_group) VALUES
-    ('app.version','2.36.14',0,'system'),
+    ('app.version','2.36.15',0,'system'),
     ('cron_v3.operational_phase','retired_for_v4',0,'cron_v3'),
     ('cron_v3.certified_cutover.phase','retired_for_v4',0,'cron_v3')
     ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),is_encrypted=0,setting_group=VALUES(setting_group)");
@@ -815,5 +817,103 @@ $invalid = $invalidHandler->handle($claim, new QueueExecutionContext(1, microtim
 $statuses = $pdo->query('SELECT id,status FROM meli_accounts ORDER BY id')->fetchAll(PDO::FETCH_KEY_PAIR);
 $check($invalid->outcome === 'review' && $invalid->errorClass === 'oauth_invalid_grant', 'invalid_grant was not isolated for review');
 $check(($statuses[1] ?? '') === 'vencido' && ($statuses[2] ?? '') === 'conectado', 'invalid_grant contaminated another account');
+
+// A canary GET whose response remained physically uncertain can be retried
+// without duplicating a remote mutation. Its immutable attempt and dispatch
+// journal remain uncertain; only the current job projection is requeued.
+$pdo->exec('SET FOREIGN_KEY_CHECKS=0');
+foreach (['queue_core_dispatch_journal', 'queue_core_attempts', 'queue_core_events', 'queue_core_jobs', 'queue_core_runs'] as $table) {
+    $pdo->exec("TRUNCATE TABLE `$table`");
+}
+$pdo->exec('SET FOREIGN_KEY_CHECKS=1');
+$pdo->exec("UPDATE queue_engine_control
+            SET active_engine='disabled',readiness_mode='idle',readiness_context_hash=NULL,generation=10");
+$repository = new QueueCoreRepository($pdo);
+$uncertainFixture = static function (string $method, string $launcher = 'canary_v4') use ($pdo, $repository): int {
+    $suffix = bin2hex(random_bytes(4));
+    $worker = 'worker-' . $suffix;
+    $jobId = $repository->enqueue(new QueueJob(
+        1, 1, 'fresh_orders_discovery', 'orders_window', null, 'fresh_orders', 0,
+        'uncertain-' . $suffix, 'v1', 'v4_readiness', null, [], [], 5, null, 'operational'
+    ));
+    $runId = (new QueueCoreRunLedger($pdo))->begin(9, $launcher, $worker);
+    $claim = $repository->claimNext(new QueueRunRequest(
+        $launcher, $worker, 1, microtime(true) + 20, 30, [],
+        ['fresh_orders_discovery'], 1, null, 'operational', $jobId, $runId
+    ), ['fresh_orders_discovery']);
+    if (!$claim instanceof \App\QueueCore\QueueClaim) {
+        throw new RuntimeException('uncertain fixture could not claim its exact job');
+    }
+    $attemptId = $repository->beginAttempt($claim, $launcher, $runId);
+    if (!$repository->physicalTransportStarted($claim, $attemptId, $method, '/orders/search')
+        || !$repository->finish($claim, $attemptId, QueueResult::review('remote_result_uncertain'))) {
+        throw new RuntimeException('uncertain fixture could not persist its exact postimage');
+    }
+    (new QueueCoreRunLedger($pdo))->finish($runId, 'stopped', 'remote_result_uncertain', [
+        'claimed' => 1,
+        'physical_http_calls' => 1,
+    ]);
+    return $jobId;
+};
+
+$getJob = $uncertainFixture('GET');
+$recovery = new QueueCoreCanaryUncertainRecoveryService($pdo);
+$inspection = $recovery->inspect();
+$attemptBefore = $pdo->query("SELECT * FROM queue_core_attempts WHERE job_id=$getJob")->fetch(PDO::FETCH_ASSOC);
+$journalBefore = $pdo->query("SELECT * FROM queue_core_dispatch_journal WHERE job_id=$getJob")->fetch(PDO::FETCH_ASSOC);
+$result = $recovery->recover(1);
+$attemptAfter = $pdo->query("SELECT * FROM queue_core_attempts WHERE job_id=$getJob")->fetch(PDO::FETCH_ASSOC);
+$journalAfter = $pdo->query("SELECT * FROM queue_core_dispatch_journal WHERE job_id=$getJob")->fetch(PDO::FETCH_ASSOC);
+$jobAfter = $repository->job($getJob);
+$check(
+    !empty($inspection['recoverable']) && !empty($result['ok']) && (int) ($result['recovered'] ?? 0) === 1
+        && ($jobAfter['state'] ?? '') === 'retry_wait'
+        && ($jobAfter['dispatch_state'] ?? '') === 'NOT_DISPATCHED'
+        && ($jobAfter['last_error_class'] ?? '') === 'canary_get_result_uncertain_requeued'
+        && $attemptBefore === $attemptAfter && $journalBefore === $journalAfter
+        && (int) $pdo->query("SELECT COUNT(*) FROM queue_core_events WHERE job_id=$getJob AND event_type='recovered'")->fetchColumn() === 1,
+    'canary GET uncertain recovery did not preserve immutable evidence and requeue only the current projection'
+);
+$secondRecovery = $recovery->recover(1);
+$check(
+    empty($secondRecovery['ok']) && ($secondRecovery['state'] ?? '') === 'nothing_to_recover',
+    'canary GET uncertain recovery was not idempotent'
+);
+
+// A mutating or mixed uncertain set remains human-review only. The entire
+// transaction blocks before changing even an otherwise eligible GET.
+$pdo->exec('SET FOREIGN_KEY_CHECKS=0');
+foreach (['queue_core_dispatch_journal', 'queue_core_attempts', 'queue_core_events', 'queue_core_jobs', 'queue_core_runs'] as $table) {
+    $pdo->exec("TRUNCATE TABLE `$table`");
+}
+$pdo->exec('SET FOREIGN_KEY_CHECKS=1');
+$eligibleGet = $uncertainFixture('GET');
+$unsafePost = $uncertainFixture('POST');
+$mixedInspection = $recovery->inspect();
+$mixedRecovery = $recovery->recover(1);
+$check(
+    empty($mixedInspection['recoverable']) && count((array) ($mixedInspection['blockers'] ?? [])) === 1
+        && empty($mixedRecovery['ok']) && ($mixedRecovery['state'] ?? '') === 'blocked'
+        && ($repository->job($eligibleGet)['state'] ?? '') === 'review'
+        && ($repository->job($unsafePost)['state'] ?? '') === 'review'
+        && (int) $pdo->query("SELECT COUNT(*) FROM queue_core_events WHERE event_type='recovered'")->fetchColumn() === 0,
+    'mixed GET/POST uncertainty did not block all-or-nothing before mutation'
+);
+
+$pdo->exec('SET FOREIGN_KEY_CHECKS=0');
+foreach (['queue_core_dispatch_journal', 'queue_core_attempts', 'queue_core_events', 'queue_core_jobs', 'queue_core_runs'] as $table) {
+    $pdo->exec("TRUNCATE TABLE `$table`");
+}
+$pdo->exec('SET FOREIGN_KEY_CHECKS=1');
+$firstGet = $uncertainFixture('GET');
+$secondGet = $uncertainFixture('GET');
+$multipleGet = $recovery->recover(1);
+$check(
+    empty($multipleGet['ok']) && ($multipleGet['state'] ?? '') === 'blocked'
+        && ($repository->job($firstGet)['state'] ?? '') === 'review'
+        && ($repository->job($secondGet)['state'] ?? '') === 'review'
+        && (int) $pdo->query("SELECT COUNT(*) FROM queue_core_events WHERE event_type='recovered'")->fetchColumn() === 0,
+    'one bounded recovery request accepted more than one uncertain canary GET'
+);
 
 echo 'PASS queue_engine_oauth_supervisor_b14 ' . $passed . '/' . $total . PHP_EOL;

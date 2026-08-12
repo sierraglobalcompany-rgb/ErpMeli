@@ -66,8 +66,8 @@ $pre = static function (
         'feature_generation_authority' => $featureAuthority,
         'runtime_authority' => $runtimeAuthority,
         'scheduler_absent_recorded' => $baseOk,
-        'file_version' => '2.36.14',
-        'app_version' => '2.36.14',
+        'file_version' => '2.36.15',
+        'app_version' => '2.36.15',
         'schema' => 293,
         'schema_count' => 293,
         'migration_293_count' => 1,
@@ -75,6 +75,13 @@ $pre = static function (
         'v3_retired' => true,
         'active_leases' => 0,
         'uncertain_executions' => 0,
+        'canary_uncertain_recovery' => [
+            'total_uncertain' => 0,
+            'eligible_canary_get' => 0,
+            'recoverable' => false,
+            'blockers' => [],
+        ],
+        'canary_uncertain_recovery_base_ok' => false,
         'active_runs' => 0,
         'historical_importer' => false,
         'queue_core_preflight_ok' => true,
@@ -203,8 +210,62 @@ try {
     $assert($blocked['state'] === 'blocked', 'foreign_profile_not_blocked');
     $assert(str_starts_with($blocked['reason'], 'readiness_state_unclassified:'), 'unclassified_reason_missing');
 
-    echo 'V4 readiness state classifier 2.36.14: PASS checks=' . $checks . PHP_EOL;
+    $uncertainIdle = $pre(
+        $engine('idle', 10),
+        $disabled,
+        $generations(10),
+        $runtimeObserved(false, 'stopped'),
+    );
+    $uncertainIdle['base_ok'] = false;
+    $uncertainIdle['ok'] = false;
+    $uncertainIdle['reason'] = 'uncertain_execution_present';
+    $uncertainIdle['uncertain_executions'] = 1;
+    $uncertainIdle['canary_uncertain_recovery_base_ok'] = true;
+    $uncertainIdle['canary_uncertain_recovery'] = [
+        'total_uncertain' => 1,
+        'eligible_canary_get' => 1,
+        'recoverable' => true,
+        'blockers' => [],
+    ];
+    $result = $classify($engine('idle', 10), $disabled, $uncertainIdle);
+    $assert(
+        $result['state'] === 'canary_uncertain_recovery_required'
+            && $result['reason'] === 'safe_canary_get_uncertain_recovery_available',
+        'idle_fail_closed_canary_get_uncertainty_not_actionable',
+    );
+
+    $preparingEngine = $engine('preparing', 9);
+    $uncertainPreparing = $pre(
+        $preparingEngine,
+        $armed,
+        $generations(9),
+        $runtimeObserved(true, 'enabled'),
+    );
+    $uncertainPreparing['base_ok'] = false;
+    $uncertainPreparing['ok'] = false;
+    $uncertainPreparing['reason'] = 'uncertain_execution_present';
+    $uncertainPreparing['uncertain_executions'] = 1;
+    $uncertainPreparing['canary_uncertain_recovery_base_ok'] = true;
+    $uncertainPreparing['canary_uncertain_recovery'] = $uncertainIdle['canary_uncertain_recovery'];
+    $result = $classify($preparingEngine, $armed, $uncertainPreparing, true);
+    $assert($result['state'] === 'canary_uncertain_recovery_required', 'preparing_canary_get_uncertainty_not_actionable');
+    $assert(
+        $classify($preparingEngine, $armed, $uncertainPreparing, false)['state'] === 'blocked',
+        'context_drift_canary_uncertainty_was_recovered',
+    );
+    $result = $classifier->invoke(
+        null,
+        $preparingEngine,
+        $armed,
+        $uncertainPreparing,
+        true,
+        ['generation' => 9],
+        ['ok' => true],
+    );
+    $assert($result['state'] === 'blocked', 'certified_authority_allowed_canary_uncertain_recovery');
+
+    echo 'V4 readiness state classifier 2.36.15: PASS checks=' . $checks . PHP_EOL;
 } catch (Throwable $error) {
-    fwrite(STDERR, 'V4 readiness state classifier 2.36.14: FAIL ' . $error->getMessage() . PHP_EOL);
+    fwrite(STDERR, 'V4 readiness state classifier 2.36.15: FAIL ' . $error->getMessage() . PHP_EOL);
     exit(1);
 }

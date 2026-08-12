@@ -95,7 +95,14 @@ final class QueueCoreCanaryService
                 if((int)$head['meli_account_id']!==$accountId){$reason='fifo_head_other_account';break;}
                 $definition=$core['capabilities']->definition((string)$head['work_type']);
                 $method=strtoupper((string)($definition['method']??''));
-                if($method==='POST' || (int)($definition['max_remote_calls']??0)>1){$reason='fifo_head_not_canary_safe';break;}
+                if($method!=='GET'
+                    || (int)($definition['max_remote_calls']??0)!==1
+                    || (string)($definition['retry']??'')!=='safe_read'
+                    || (string)($definition['domain']??'')!=='operational'
+                    || !in_array('canary_v4',(array)($definition['launchers']??[]),true)
+                    || !in_array((string)$head['lane'],(array)($definition['lanes']??[]),true)){
+                    $reason='fifo_head_not_canary_safe';break;
+                }
                 $run=$core['runner']->run(new QueueRunRequest(
                     'canary_v4',$worker,1,$deadline,max(5,$deadlineSeconds+5),[],[(string)$head['work_type']],
                     null,$lease,'operational',(int)$head['id'],$runId

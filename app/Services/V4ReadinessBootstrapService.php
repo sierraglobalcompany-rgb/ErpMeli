@@ -1012,22 +1012,29 @@ final class V4ReadinessBootstrapService
             ))),
         ];
 
-        if ($certified !== null) {
-            if ($contextStable && !empty($certificationGate['ok'])) {
-                return ['state' => 'certified', 'reason' => 'ready', 'authority' => $authority];
-            }
-            return [
-                'state' => 'blocked',
-                'reason' => 'certified_authority_not_current',
-                'authority' => $authority,
-            ];
-        }
         if (empty($pre['base_ok'])) {
             return [
                 'state' => 'blocked',
                 'reason' => (string) (($pre['reason'] ?? '') === 'ready'
                     ? 'base_authority_not_ready'
                     : ($pre['reason'] ?? 'base_authority_not_ready')),
+                'authority' => $authority,
+            ];
+        }
+        if ($certified !== null) {
+            $certifiedAuthorityCurrent = $engineProfile === 'preparing'
+                && $featureProfile === 'preparing'
+                && $runtimeProfile === 'armed'
+                && $contextStable
+                && !empty($pre['ok'])
+                && !empty($pre['scheduler_absent_recorded'])
+                && !empty($certificationGate['ok']);
+            if ($certifiedAuthorityCurrent) {
+                return ['state' => 'certified', 'reason' => 'ready', 'authority' => $authority];
+            }
+            return [
+                'state' => 'blocked',
+                'reason' => 'certified_authority_not_current',
                 'authority' => $authority,
             ];
         }

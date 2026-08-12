@@ -145,6 +145,36 @@ try {
             $classify($preparingEngine, $armed, $preparingPartial)['state'] === 'recovery_required',
             'preparing_partial_not_recoverable:' . $g,
         );
+
+        $certifiedResult = $classifier->invoke(
+            null,
+            $preparingEngine,
+            $armed,
+            $preparingPre,
+            true,
+            ['generation' => $g + 1],
+            ['ok' => true],
+        );
+        $assert($certifiedResult['state'] === 'certified', 'certified_current_not_recognized:' . $g);
+
+        $certifiedDrift = $preparingPre;
+        $certifiedDrift['base_ok'] = false;
+        $certifiedDrift['ok'] = false;
+        $certifiedDrift['reason'] = 'app_version_invalid';
+        $certifiedResult = $classifier->invoke(
+            null,
+            $preparingEngine,
+            $armed,
+            $certifiedDrift,
+            true,
+            ['generation' => $g + 1],
+            ['ok' => true],
+        );
+        $assert(
+            $certifiedResult['state'] === 'blocked'
+                && $certifiedResult['reason'] === 'app_version_invalid',
+            'certified_base_drift_not_blocked:' . $g,
+        );
     }
 
     $invalidRuntime = $runtimeObserved(false, 'stopped');

@@ -18,4 +18,3 @@ if (!is_file($applicationRoot . '/index.php')) {
 }
 
 require $applicationRoot . '/index.php';
-

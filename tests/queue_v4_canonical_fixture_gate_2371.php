@@ -42,4 +42,3 @@ foreach ([
 }
 
 fwrite(STDOUT, 'Queue V4 canonical fixture gate: PASS checks=' . $checks . PHP_EOL);
-

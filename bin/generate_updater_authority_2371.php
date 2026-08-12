@@ -49,4 +49,3 @@ if (file_put_contents($root . '/' . $target, $json, LOCK_EX) !== strlen($json)) 
     throw new RuntimeException('updater_authority_publish_failed');
 }
 fwrite(STDOUT, 'UPDATER_AUTHORITY_2371=' . count($dependencies) . PHP_EOL);
-

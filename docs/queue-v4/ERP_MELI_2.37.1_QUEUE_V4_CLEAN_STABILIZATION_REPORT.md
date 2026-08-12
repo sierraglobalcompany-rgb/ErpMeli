@@ -33,4 +33,3 @@ La auditoría integral también encontró dos bloqueos de operación: la activac
 - Acceso a `storage/raw`: 0.
 
 Los hashes y conteos finales se publican en `ERP_MELI_2.37.1_ARTIFACT_MANIFEST.json` y `ERP_MELI_2.37.1_SHA256SUMS.txt` para evitar duplicar autoridades dentro del código fuente.
-

@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.36.12.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.36.13.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -41,8 +41,8 @@ final class ManagedRuntimePublicationPolicy
     ];
     public const BASE_COMMIT = '75997f864b917c829d19f14e21cd7303d2685776';
     public const INSTALLED_BASE_COMMIT = 'f91cd534d271b964db1ad9e682260475eca96820';
-    public const VERSION = '2.36.12';
-    public const BUILD_ID = 'erp-meli-2.36.12-v4-bootstrap-typeerror-hotfix-rc1-20260812';
+    public const VERSION = '2.36.13';
+    public const BUILD_ID = 'erp-meli-2.36.13-v4-config-authority-postimage-hotfix-rc1-20260812';
     public const BUILT_AT = '2026-08-12T10:00:00Z';
     public const MINIMUM_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
     /** @var array<string,array{build_id:string,minimum_migration:string,dependency_registry:string}> */
@@ -96,6 +96,11 @@ final class ManagedRuntimePublicationPolicy
             'build_id' => 'erp-meli-2.36.11-v4-readiness-classifier-hotfix-rc1-20260812',
             'minimum_migration' => self::MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.11.json',
+        ],
+        '2.36.12' => [
+            'build_id' => 'erp-meli-2.36.12-v4-bootstrap-typeerror-hotfix-rc1-20260812',
+            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.12.json',
         ],
         self::VERSION => [
             'build_id' => self::BUILD_ID,

@@ -1,0 +1,806 @@
+{
+    "schema_version": 1,
+    "scope": "app/QueueV4Clean/*.php",
+    "statement_count": 45,
+    "unknown_tables": [],
+    "canonical_contract": "docs/queue-v4/QUEUE_V4_CANONICAL_DB_CONTRACT.json",
+    "canonical_contract_sha256": "a93cc05534332c971a6a7841893f994bbbb2e916a4a3284719bfe91f0cc73cc1",
+    "execution_authority": "tests/queue_v4_clean_full_flow_2371.php",
+    "statements": [
+        {
+            "id": "d309cc71ed56c9955bb18f35b44420b2215cf460c64428c0d2c559e9b6a97e11",
+            "source": "app/QueueV4Clean/QueueV4CleanControlService.php",
+            "method": "activate",
+            "line": 28,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_control"
+            ],
+            "columns": [
+                "queue_v4_clean_control.activated_at",
+                "queue_v4_clean_control.control_key",
+                "queue_v4_clean_control.engine_state",
+                "queue_v4_clean_control.readiness_passed_accounts",
+                "queue_v4_clean_control.readiness_state",
+                "queue_v4_clean_control.scheduler_enabled",
+                "queue_v4_clean_control.updated_by"
+            ],
+            "sql_sha256": "7ba9b713e680427b2a6fae735c8827a9f3a1fc26a1c4e601a29c79e08c183310",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "e2d45202d4f99bedbfdbac2392ca62c7ea8a5dc37660367a3832b44b6853bbac",
+            "source": "app/QueueV4Clean/QueueV4CleanControlService.php",
+            "method": "stop",
+            "line": 54,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_control"
+            ],
+            "columns": [
+                "queue_v4_clean_control.control_key",
+                "queue_v4_clean_control.engine_state",
+                "queue_v4_clean_control.scheduler_enabled",
+                "queue_v4_clean_control.stopped_at",
+                "queue_v4_clean_control.updated_by"
+            ],
+            "sql_sha256": "3456ddcd9218ac07a86b451f484779938928ea811d8dfa6bce320446174be4d0",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "17335de3bd9d5436b9a58e0fd735161fddeb97e720cc5478d464a68204bec593",
+            "source": "app/QueueV4Clean/QueueV4CleanDatabaseContract.php",
+            "method": "issues",
+            "line": 22,
+            "verb": "SELECT",
+            "tables": [],
+            "columns": [],
+            "sql_sha256": "8b5c82312feee69497f5d4078c8f21412122034550c78bed72c2009dfc7fde4c",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "9bff14daadb5cb9c998a35d459a351d2df90b0e08ad98bac08791f3dfdcf47f4",
+            "source": "app/QueueV4Clean/QueueV4CleanDatabaseContract.php",
+            "method": "issues",
+            "line": 39,
+            "verb": "SELECT",
+            "tables": [
+                "information_schema"
+            ],
+            "columns": [],
+            "sql_sha256": "34a098f2b6659967987a9921470dfd862f87f9ef28566a45b85bfbec2268e21d",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "75ccd289f4fd13da156eb15346bf1d5d48d372920e5a1dae36a68aea89018599",
+            "source": "app/QueueV4Clean/QueueV4CleanDatabaseContract.php",
+            "method": "columns",
+            "line": 72,
+            "verb": "SELECT",
+            "tables": [
+                "information_schema"
+            ],
+            "columns": [],
+            "sql_sha256": "c9e6562ebe9673503570371347452e01d374b1b417c9904cdc801f09206cfaaa",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "b88642552b0d16976e865f73e2c6b3a5c7b57ff6e021d50cfbc495eaeff8fc9c",
+            "source": "app/QueueV4Clean/QueueV4CleanDatabaseContract.php",
+            "method": "indexes",
+            "line": 86,
+            "verb": "SELECT",
+            "tables": [
+                "information_schema"
+            ],
+            "columns": [],
+            "sql_sha256": "e8e9bb816b5143aa61613d309e6d1b3235a12b2c0505dee9137428020291443e",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "5f308d8c5df685127914300442b588c8ad96563ffde298d23e21a36c36ad5603",
+            "source": "app/QueueV4Clean/QueueV4CleanDatabaseContract.php",
+            "method": "foreignKeys",
+            "line": 99,
+            "verb": "SELECT",
+            "tables": [
+                "information_schema"
+            ],
+            "columns": [],
+            "sql_sha256": "c70a9e4cfa6fd7a8ae2bdfa366fe9294f64e1605f6f4d79b7152bc0dfa926b73",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "fcfb3808dec8140d4fcbb248e9a1a77110c5c876b7ed9ab49eba1c1b663d1dc2",
+            "source": "app/QueueV4Clean/QueueV4CleanProducer.php",
+            "method": "produce",
+            "line": 27,
+            "verb": "SELECT",
+            "tables": [
+                "meli_accounts",
+                "meli_tokens",
+                "queue_v4_clean_readiness_accounts",
+                "queue_v4_clean_readiness_runs"
+            ],
+            "columns": [
+                "meli_accounts.company_id",
+                "meli_accounts.id",
+                "meli_accounts.status",
+                "meli_tokens.id",
+                "meli_tokens.meli_account_id",
+                "queue_v4_clean_readiness_accounts.company_id",
+                "queue_v4_clean_readiness_accounts.meli_account_id",
+                "queue_v4_clean_readiness_accounts.outcome",
+                "queue_v4_clean_readiness_accounts.readiness_run_id",
+                "queue_v4_clean_readiness_runs.id",
+                "queue_v4_clean_readiness_runs.state"
+            ],
+            "sql_sha256": "9f8cd805a4cd1ac54be6354a00f0d814f3725dfe8fe77c9e537c01e702b1d0c1",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "3dac2dd3d9a900a35d14270e0e8062661b191d9ebf22a88b31c1058d7161462d",
+            "source": "app/QueueV4Clean/QueueV4CleanProducer.php",
+            "method": "produce",
+            "line": 51,
+            "verb": "SELECT",
+            "tables": [
+                "queue_v4_clean_checkpoints"
+            ],
+            "columns": [
+                "queue_v4_clean_checkpoints.company_id",
+                "queue_v4_clean_checkpoints.meli_account_id",
+                "queue_v4_clean_checkpoints.next_due_at",
+                "queue_v4_clean_checkpoints.producer_key",
+                "queue_v4_clean_checkpoints.watermark_at"
+            ],
+            "sql_sha256": "e6e1ca4ffaecb7a152ba8002ef59c1002e3a0502641dd4aa02410a789e2e29ad",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "b917ff3f536922ffa6907c02ac21061e5c85da2e871ec4cdc47e9f6c37c4d0b1",
+            "source": "app/QueueV4Clean/QueueV4CleanProducer.php",
+            "method": "produce",
+            "line": 58,
+            "verb": "INSERT",
+            "tables": [
+                "queue_v4_clean_checkpoints"
+            ],
+            "columns": [
+                "queue_v4_clean_checkpoints.company_id",
+                "queue_v4_clean_checkpoints.meli_account_id",
+                "queue_v4_clean_checkpoints.next_due_at",
+                "queue_v4_clean_checkpoints.producer_key",
+                "queue_v4_clean_checkpoints.watermark_at"
+            ],
+            "sql_sha256": "4a820505bc0ffd5cf172e25c67c84ef3b453e953926e9a8aa21e20ae778040d8",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "11882dc757202fd27632f0f90146b17bc8dc4ec176a61f19ad9a5dee4bf6ad3a",
+            "source": "app/QueueV4Clean/QueueV4CleanProducer.php",
+            "method": "produce",
+            "line": 85,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_checkpoints"
+            ],
+            "columns": [
+                "queue_v4_clean_checkpoints.company_id",
+                "queue_v4_clean_checkpoints.last_job_id",
+                "queue_v4_clean_checkpoints.meli_account_id",
+                "queue_v4_clean_checkpoints.next_due_at",
+                "queue_v4_clean_checkpoints.producer_key"
+            ],
+            "sql_sha256": "0a406dde5ce43fa98d736acde3fec1a6934af9fa51c44640d3a3e1e5f3974bf0",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "3a6a1e90771a5af15e5aeac92f78a169d0ca7d2d7be21a2df6975fd67a293d60",
+            "source": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
+            "method": "certify",
+            "line": 68,
+            "verb": "SELECT",
+            "tables": [],
+            "columns": [],
+            "sql_sha256": "51f7bd2e62b0b33fa699941fcc520a8eda7e9a0e02c08f006e7d2e96dc63f8aa",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "8470a759db0f1d1d37466fef5a1c598f0e5ad3d250a58f9aa648f3008ad90b32",
+            "source": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
+            "method": "certify",
+            "line": 76,
+            "verb": "SELECT",
+            "tables": [],
+            "columns": [],
+            "sql_sha256": "fb78f4e35db89f44c989209a769c8b0e578404e87c995b4483a1dc3fdabb16a5",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "71c26462e490dbba918cd274231d4a4d955420956d66c7c14bdbce419e5792c2",
+            "source": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
+            "method": "certifyLocked",
+            "line": 95,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_readiness_runs"
+            ],
+            "columns": [
+                "queue_v4_clean_readiness_runs.failure_class",
+                "queue_v4_clean_readiness_runs.finished_at",
+                "queue_v4_clean_readiness_runs.state"
+            ],
+            "sql_sha256": "88db8ca9a57f0a5bcb667a679b19cba44cc1c05a732081a507550683e3a05e58",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "2e1ddd32af7122819608ba422456d2bd2a54f6deaa925586ae83c076c61c6f61",
+            "source": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
+            "method": "certifyLocked",
+            "line": 100,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_control"
+            ],
+            "columns": [
+                "queue_v4_clean_control.certified_at",
+                "queue_v4_clean_control.control_key",
+                "queue_v4_clean_control.engine_state",
+                "queue_v4_clean_control.readiness_error_class",
+                "queue_v4_clean_control.readiness_passed_accounts",
+                "queue_v4_clean_control.readiness_state"
+            ],
+            "sql_sha256": "204024ed198faf1996adfbfe8d8176c70f548cba9fd95af33c3f0a10b94a32f5",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "b4b131ce2bee9a0f3508eba3be09c5fb1d88d238787cb160d9c4724223b8f80b",
+            "source": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
+            "method": "certifyLocked",
+            "line": 107,
+            "verb": "INSERT",
+            "tables": [
+                "queue_v4_clean_readiness_runs"
+            ],
+            "columns": [
+                "queue_v4_clean_readiness_runs.started_by",
+                "queue_v4_clean_readiness_runs.state"
+            ],
+            "sql_sha256": "c5a85fb88bf7c27f49bb9043eeca99dd8067faf0b811cb08796131015b1b1d69",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "518c950e2da073b8693b091a3c8538d91a4443dbeaba0dc3bda2dad0740acc43",
+            "source": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
+            "method": "certifyLocked",
+            "line": 112,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_control"
+            ],
+            "columns": [
+                "queue_v4_clean_control.control_key",
+                "queue_v4_clean_control.engine_state",
+                "queue_v4_clean_control.readiness_error_class",
+                "queue_v4_clean_control.readiness_passed_accounts",
+                "queue_v4_clean_control.readiness_state",
+                "queue_v4_clean_control.scheduler_enabled",
+                "queue_v4_clean_control.updated_by"
+            ],
+            "sql_sha256": "3d61ef98c0ada99dd2ed0038a8bd22dfbee88a773d3ca0af4a251ad322e6054c",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "9edcfe37566b7220ba3377b35ea1a1fd70da4c99f311191a2c605ccd19879df3",
+            "source": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
+            "method": "certifyLocked",
+            "line": 165,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_readiness_runs"
+            ],
+            "columns": [
+                "queue_v4_clean_readiness_runs.failure_class",
+                "queue_v4_clean_readiness_runs.finished_at",
+                "queue_v4_clean_readiness_runs.id",
+                "queue_v4_clean_readiness_runs.passed_accounts",
+                "queue_v4_clean_readiness_runs.state"
+            ],
+            "sql_sha256": "657befc1d3b6055f53d58861b1d7b755e3a4246d7d4009860f0f640ad5369edb",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "7d12a1b9a5da70db830e1fbb92abaed3cb49e590ec598145f9561952f312b13b",
+            "source": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
+            "method": "certifyLocked",
+            "line": 174,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_control"
+            ],
+            "columns": [
+                "queue_v4_clean_control.certified_at",
+                "queue_v4_clean_control.control_key",
+                "queue_v4_clean_control.engine_state",
+                "queue_v4_clean_control.readiness_error_class",
+                "queue_v4_clean_control.readiness_passed_accounts",
+                "queue_v4_clean_control.readiness_state",
+                "queue_v4_clean_control.scheduler_enabled",
+                "queue_v4_clean_control.updated_by"
+            ],
+            "sql_sha256": "2be995b7f65afb784894868d5e7089f182f015011a74e25caab9d2c07fcb851e",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "691ed51d85dd28dde17bcf8caeeceeeef62f2be28faa37e9ac376aa9c35c3d53",
+            "source": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
+            "method": "preconditions",
+            "line": 213,
+            "verb": "SELECT",
+            "tables": [
+                "app_settings"
+            ],
+            "columns": [
+                "app_settings.setting_key",
+                "app_settings.setting_value"
+            ],
+            "sql_sha256": "06c63d43b6c961dc408eb3c97d312c7d28d33b744b94da84b29a4a5ca9f02a90",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "8d887c101347b3adfc8ef4db7e9d4a7f58d2ce7a5d0ce3548d518ba640a226c4",
+            "source": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
+            "method": "preconditions",
+            "line": 220,
+            "verb": "SELECT",
+            "tables": [
+                "schema_migrations"
+            ],
+            "columns": [
+                "schema_migrations.version"
+            ],
+            "sql_sha256": "5249ac1b46ae91cbbfdb17bf8e43db6470822b85cfe6e43fdcc0b5d470aedc2b",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "6b1f416b6d468d2c6c1e6cdfe8faaeb2e6f56c8854adec8967718500d1162500",
+            "source": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
+            "method": "preconditions",
+            "line": 254,
+            "verb": "SELECT",
+            "tables": [
+                "meli_accounts",
+                "meli_tokens"
+            ],
+            "columns": [
+                "meli_accounts.company_id",
+                "meli_accounts.id",
+                "meli_accounts.meli_user_id",
+                "meli_accounts.status",
+                "meli_tokens.access_token_encrypted",
+                "meli_tokens.expires_at",
+                "meli_tokens.id",
+                "meli_tokens.meli_account_id",
+                "meli_tokens.refresh_token_encrypted"
+            ],
+            "sql_sha256": "5285283f8ab5e3d42e9e511e55d93e2adc8fef0f9762efce7bbbb06fabe3cf07",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "5e36a34c90d4cc574384331c687e7558047214f9f950ff375f5fdb3f2762ce43",
+            "source": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
+            "method": "recordAccountResult",
+            "line": 297,
+            "verb": "INSERT",
+            "tables": [
+                "queue_v4_clean_readiness_accounts"
+            ],
+            "columns": [
+                "queue_v4_clean_readiness_accounts.company_id",
+                "queue_v4_clean_readiness_accounts.failure_class",
+                "queue_v4_clean_readiness_accounts.meli_account_id",
+                "queue_v4_clean_readiness_accounts.outcome",
+                "queue_v4_clean_readiness_accounts.readiness_run_id"
+            ],
+            "sql_sha256": "4fa804cc61cfc292c98287baa18c268cfddb796f74990966e68adb7efc87935b",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "51b23963f8274e3380295505dae368145350e0cc37d05f41eae304a4c95556a6",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "control",
+            "line": 20,
+            "verb": "SELECT",
+            "tables": [
+                "queue_v4_clean_control"
+            ],
+            "columns": [
+                "queue_v4_clean_control.control_key"
+            ],
+            "sql_sha256": "37688cf55406d673a678b4d5ffa2f1c4fb42c2d429209d41156008c3629a3a9d",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "c7a55e45a20b76b58014cdee5f26f068e696f4f78e905dee0a4f7cd198585db8",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "counts",
+            "line": 36,
+            "verb": "SELECT",
+            "tables": [
+                "queue_v4_clean_jobs"
+            ],
+            "columns": [
+                "queue_v4_clean_jobs.state"
+            ],
+            "sql_sha256": "98d3030b9b93a52ebe1dd5e4890873ee04e70c767301fcad96d335a172836050",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "1c1caafcc97b2d4243546ad80f933b38e7801401a19abb4bfbebaa12f9a74630",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "enqueue",
+            "line": 65,
+            "verb": "INSERT",
+            "tables": [
+                "queue_v4_clean_jobs"
+            ],
+            "columns": [
+                "queue_v4_clean_jobs.company_id",
+                "queue_v4_clean_jobs.id",
+                "queue_v4_clean_jobs.idempotency_key",
+                "queue_v4_clean_jobs.job_type",
+                "queue_v4_clean_jobs.max_attempts",
+                "queue_v4_clean_jobs.meli_account_id",
+                "queue_v4_clean_jobs.payload_json",
+                "queue_v4_clean_jobs.resource_id"
+            ],
+            "sql_sha256": "0e0a5277b1ea78ea9d4e4b7f9197892bfa201ab67bcdf4ab4028e712375cdb9d",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "4c5fc81a33028bcefc69d523a2dbf95f8f8558cbd03fd31d8072a4647f58a3e6",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "claim",
+            "line": 88,
+            "verb": "SELECT",
+            "tables": [
+                "queue_v4_clean_jobs"
+            ],
+            "columns": [
+                "queue_v4_clean_jobs.available_at",
+                "queue_v4_clean_jobs.id",
+                "queue_v4_clean_jobs.state"
+            ],
+            "sql_sha256": "227bb1f3ac61516a16df51f81f3dc734fbe700e87e8d28fb4336a777de8cc2f6",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "083f486424ff2f4d217abaf658277683f3749e7e98379af6a07f1c9846df6912",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "claim",
+            "line": 100,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_jobs"
+            ],
+            "columns": [
+                "queue_v4_clean_jobs.attempt_count",
+                "queue_v4_clean_jobs.company_id",
+                "queue_v4_clean_jobs.id",
+                "queue_v4_clean_jobs.lease_expires_at",
+                "queue_v4_clean_jobs.lease_owner",
+                "queue_v4_clean_jobs.meli_account_id",
+                "queue_v4_clean_jobs.state"
+            ],
+            "sql_sha256": "f5c6f07991f0a8bf0c6bbcb267d86729db70192405c75b2b33ea175ad6282fa0",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "39aa4b535a78da1459cdcbe40736de9c6baf7cf248492fbdc6618869de2d93a6",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "claim",
+            "line": 110,
+            "verb": "INSERT",
+            "tables": [
+                "queue_v4_clean_attempts"
+            ],
+            "columns": [
+                "queue_v4_clean_attempts.company_id",
+                "queue_v4_clean_attempts.job_id",
+                "queue_v4_clean_attempts.lease_owner",
+                "queue_v4_clean_attempts.meli_account_id",
+                "queue_v4_clean_attempts.run_id"
+            ],
+            "sql_sha256": "e9515ba7ad5cb50cf2dbcb03cb18f9c923d38bc2f93682a2039b387c59a47fc4",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "8880d21b8d004544a73586d59025459344a4b3be9dfc7d2f9f0dbc18097c9f60",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "claim",
+            "line": 117,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_runs"
+            ],
+            "columns": [
+                "queue_v4_clean_runs.id",
+                "queue_v4_clean_runs.jobs_claimed",
+                "queue_v4_clean_runs.status"
+            ],
+            "sql_sha256": "b8113f451ff18bdb4c8be9112c6cacc989975df301f25eeb3764c07cb8527e6d",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "f97276cac153b66dab21c66e8393109152dda1148d49427d9ff3e3b14916545e",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "releaseDueWaiting",
+            "line": 161,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_jobs"
+            ],
+            "columns": [
+                "queue_v4_clean_jobs.available_at",
+                "queue_v4_clean_jobs.last_error_class",
+                "queue_v4_clean_jobs.state"
+            ],
+            "sql_sha256": "9d52d33a270f853ba3c397410702aa5f843dab38dcf2874db12b1d4f14b0c085",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "89304eeb5d8df9a93da2fd5566c0fd92228c2c21fc62112587b73180bc74849f",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "expireLeases",
+            "line": 171,
+            "verb": "SELECT",
+            "tables": [
+                "queue_v4_clean_jobs"
+            ],
+            "columns": [
+                "queue_v4_clean_jobs.company_id",
+                "queue_v4_clean_jobs.id",
+                "queue_v4_clean_jobs.lease_expires_at",
+                "queue_v4_clean_jobs.lease_owner",
+                "queue_v4_clean_jobs.meli_account_id",
+                "queue_v4_clean_jobs.state"
+            ],
+            "sql_sha256": "5c4b7f4daa41b3163edcd21ad25f845c7895d7a8ada679c8c4b78425f1caf2b1",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "eb75bf6c719e85a5050e7ce83ea4f7a694f467c08e9b7580e8b87981477cd4ca",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "expireLeases",
+            "line": 178,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_attempts"
+            ],
+            "columns": [
+                "queue_v4_clean_attempts.company_id",
+                "queue_v4_clean_attempts.finished_at",
+                "queue_v4_clean_attempts.job_id",
+                "queue_v4_clean_attempts.lease_owner",
+                "queue_v4_clean_attempts.meli_account_id",
+                "queue_v4_clean_attempts.outcome"
+            ],
+            "sql_sha256": "c58c1bf094d9514c3dfc1e59368e3f5aec678aa83e3d50dda1f117290539e260",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "9cfbc2c5cf0fe2f117c833dcf54048458130e8b30609640379eaaeb70eb32963",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "expireLeases",
+            "line": 183,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_jobs"
+            ],
+            "columns": [
+                "queue_v4_clean_jobs.attempt_count",
+                "queue_v4_clean_jobs.company_id",
+                "queue_v4_clean_jobs.id",
+                "queue_v4_clean_jobs.last_error_class",
+                "queue_v4_clean_jobs.lease_expires_at",
+                "queue_v4_clean_jobs.lease_owner",
+                "queue_v4_clean_jobs.max_attempts",
+                "queue_v4_clean_jobs.meli_account_id",
+                "queue_v4_clean_jobs.state"
+            ],
+            "sql_sha256": "b1c1467456e7fa5bc534464f9fca2b72654c6ef08997857f07fa05e21db25e87",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "218ece5778029941b42887b6645ee00035c19812756487bd1f843a4ba05ea466",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "beginRun",
+            "line": 206,
+            "verb": "INSERT",
+            "tables": [
+                "queue_v4_clean_runs"
+            ],
+            "columns": [
+                "queue_v4_clean_runs.launcher",
+                "queue_v4_clean_runs.worker_ref"
+            ],
+            "sql_sha256": "71b2af8361af027ff06d316cfbbae150163f1140a158c66febd0a967bcacf66c",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "2214a590d22b26f0fdf2a9bbb14be2582faf49fead179a31af841ecde928bc13",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "finishRun",
+            "line": 218,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_runs"
+            ],
+            "columns": [
+                "queue_v4_clean_runs.finished_at",
+                "queue_v4_clean_runs.id",
+                "queue_v4_clean_runs.status"
+            ],
+            "sql_sha256": "2f175b00824023c3d8c8fd6205b7ba0ed8da18ae741587d4364d93b9fd679d34",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "790ae3017a892df32dc3f39f1e114c95e83f92b3a5f98f04be7c3957ab068df5",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "finish",
+            "line": 241,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_jobs"
+            ],
+            "columns": [
+                "queue_v4_clean_jobs.available_at",
+                "queue_v4_clean_jobs.state"
+            ],
+            "sql_sha256": "393d0df8d69fd4c53b6bbd254cb8e3c8b056dec31f22361aa8dc13b8304471e6",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "b6bcee65258d665fde7687b0a9aaf98b2e7fdd7dd1821e319be794f8960bc6de",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "finish",
+            "line": 251,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_attempts"
+            ],
+            "columns": [
+                "queue_v4_clean_attempts.company_id",
+                "queue_v4_clean_attempts.error_class",
+                "queue_v4_clean_attempts.finished_at",
+                "queue_v4_clean_attempts.id",
+                "queue_v4_clean_attempts.job_id",
+                "queue_v4_clean_attempts.lease_owner",
+                "queue_v4_clean_attempts.meli_account_id",
+                "queue_v4_clean_attempts.outcome"
+            ],
+            "sql_sha256": "253daa6733f847bc6a83ec97808bc38e59c9c8d55db96663b377b8e853367995",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "88b485b095777fae9c9bfaf73dc7f6fe51572581177e34ac487df272aa906e37",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "finish",
+            "line": 260,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_runs"
+            ],
+            "columns": [],
+            "sql_sha256": "bc2717c04cfdeb746106384d4839fe18e629a6de18546dbfc7cb82def50e4518",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "feb99b7b41a06eeff0c95e216271e9e4e732dc4a67ce434732ffcccd2e93c895",
+            "source": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "method": "assertTenant",
+            "line": 278,
+            "verb": "SELECT",
+            "tables": [
+                "meli_accounts"
+            ],
+            "columns": [
+                "meli_accounts.company_id",
+                "meli_accounts.id"
+            ],
+            "sql_sha256": "d36f7b5582d1d102e455eacfdc3a443a23cbe19275d189a5015bc58375d474c0",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "64334cbcc2948037fe7982420e60c523312350f94dad48b5a244723353bc3c24",
+            "source": "app/QueueV4Clean/QueueV4CleanScheduler.php",
+            "method": "run",
+            "line": 30,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_leases"
+            ],
+            "columns": [
+                "queue_v4_clean_leases.acquired_at",
+                "queue_v4_clean_leases.expires_at",
+                "queue_v4_clean_leases.heartbeat_at",
+                "queue_v4_clean_leases.lease_key",
+                "queue_v4_clean_leases.owner_ref"
+            ],
+            "sql_sha256": "ec58db49d667c2c04f4de11ad346326808b5cd2a496b6d5e8afefdebd679c27f",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "98d6619cbcdf71acecdf5cd2fee3f680b8c8b8b653b5334ac39225da3fc67702",
+            "source": "app/QueueV4Clean/QueueV4CleanScheduler.php",
+            "method": "run",
+            "line": 43,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_control"
+            ],
+            "columns": [
+                "queue_v4_clean_control.control_key",
+                "queue_v4_clean_control.last_scheduler_at"
+            ],
+            "sql_sha256": "0b0fbf7ab94aaf25283d23f5791df388272320d74362990742426a2981c928e4",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "bda07653820aa97f44125b4402e8723511107561c20aaef4e150b62d189310ea",
+            "source": "app/QueueV4Clean/QueueV4CleanScheduler.php",
+            "method": "run",
+            "line": 48,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_leases"
+            ],
+            "columns": [
+                "queue_v4_clean_leases.acquired_at",
+                "queue_v4_clean_leases.expires_at",
+                "queue_v4_clean_leases.heartbeat_at",
+                "queue_v4_clean_leases.lease_key",
+                "queue_v4_clean_leases.owner_ref"
+            ],
+            "sql_sha256": "53cea6ad850b47bc93370b600bd86b0c9e991dfd68f5ab23220525b03d0cf17b",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "8e4a6638ef6323eaa0ede6f90b5f11471db9e7ca3d0020196bac57850a2e10f5",
+            "source": "app/QueueV4Clean/QueueV4CleanWorker.php",
+            "method": "handle",
+            "line": 103,
+            "verb": "SELECT",
+            "tables": [
+                "meli_accounts"
+            ],
+            "columns": [
+                "meli_accounts.company_id",
+                "meli_accounts.id",
+                "meli_accounts.meli_user_id"
+            ],
+            "sql_sha256": "6c45031355cb57778d2ca6bf25ba971c0bb09a035f35850586f9c3089e3a6983",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        },
+        {
+            "id": "81378c1ff16878a49ff6d8c5c25fbc0c53aa6b2ff9db827036e59dfb10abdf92",
+            "source": "app/QueueV4Clean/QueueV4CleanWorker.php",
+            "method": "handle",
+            "line": 173,
+            "verb": "UPDATE",
+            "tables": [
+                "queue_v4_clean_checkpoints"
+            ],
+            "columns": [
+                "queue_v4_clean_checkpoints.company_id",
+                "queue_v4_clean_checkpoints.meli_account_id",
+                "queue_v4_clean_checkpoints.next_due_at",
+                "queue_v4_clean_checkpoints.producer_key",
+                "queue_v4_clean_checkpoints.watermark_at"
+            ],
+            "sql_sha256": "cd0379ef3f02354ff2548b6f62c0fc8fca4c314875ba1e9cd59ffc487bbbf5ae",
+            "execution_test": "tests/queue_v4_clean_full_flow_2371.php"
+        }
+    ]
+}

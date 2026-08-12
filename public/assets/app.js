@@ -530,7 +530,7 @@
       const enabled = action === 'readiness'
         ? snapshot?.state === 'READY_TO_TEST'
         : action === 'activate'
-          ? snapshot?.state === 'CERTIFIED' && snapshot?.engine === 'CERTIFIED'
+          ? snapshot?.state === 'CERTIFIED' && ['CERTIFIED', 'STOPPED'].includes(snapshot?.engine)
           : snapshot?.engine === 'ACTIVE';
       if (button) button.disabled = !(hasPassword && enabled);
     });

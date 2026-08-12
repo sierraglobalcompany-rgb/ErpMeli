@@ -26,7 +26,7 @@ final class QueueV4CleanControlService
         }
         $statement = $this->pdo->prepare(
             "UPDATE queue_v4_clean_control
-             SET engine_state='ACTIVE',activated_at=UTC_TIMESTAMP(3),updated_by=?
+             SET engine_state='ACTIVE',scheduler_enabled=1,activated_at=UTC_TIMESTAMP(3),updated_by=?
              WHERE control_key='primary' AND engine_state IN ('CERTIFIED','STOPPED')
                AND readiness_state='CERTIFIED' AND readiness_passed_accounts=3
                AND scheduler_enabled=0"
@@ -39,7 +39,7 @@ final class QueueV4CleanControlService
             'ok' => true,
             'state' => 'ACTIVE',
             'scheduler_created' => false,
-            'scheduler_enabled' => false,
+            'scheduler_enabled' => true,
             'automation_still_stopped' => true,
         ];
     }

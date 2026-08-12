@@ -7,16 +7,19 @@ namespace App\QueueV4Clean;
 use App\Core\Crypto;
 use App\Core\Env;
 use App\Services\ApiExecutionMetadataContext;
+use App\Services\AppVersionService;
 use App\Services\EmergencyControlService;
+use App\Services\InstalledVersionMarkerService;
 use App\Services\MeliApiClient;
 use App\Services\MeliReadClientInterface;
+use App\Services\Migrator;
 use PDO;
 use RuntimeException;
 use Throwable;
 
 final class QueueV4CleanReadinessService
 {
-    public const VERSION = '2.37.0';
+    private const REQUIRED_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';
     /** @var \Closure(int):MeliReadClientInterface */
     private \Closure $clientFactory;
 
@@ -202,30 +205,32 @@ final class QueueV4CleanReadinessService
     private function preconditions(): array
     {
         $issues = [];
-        $version = trim((string) @file_get_contents(dirname(__DIR__, 2) . '/VERSION'));
-        if ($version !== self::VERSION) {
+        $version = AppVersionService::fileVersion();
+        if (preg_match('/^\d+\.\d+\.\d+$/D', $version) !== 1) {
             $issues[] = 'version_invalid';
         }
         $appVersion = $this->pdo->prepare(
             "SELECT setting_value FROM app_settings WHERE setting_key='app.version' LIMIT 1"
         );
         $appVersion->execute();
-        if ((string) $appVersion->fetchColumn() !== self::VERSION) {
+        if ((string) $appVersion->fetchColumn() !== $version) {
             $issues[] = 'app_version_invalid';
         }
         $migration = $this->pdo->prepare(
-            "SELECT COUNT(*) FROM schema_migrations WHERE migration='294_queue_v4_clean_greenfield_2_37_0.sql'"
+            'SELECT COUNT(*) FROM schema_migrations WHERE version=?'
         );
-        $migration->execute();
+        $migration->execute([self::REQUIRED_MIGRATION]);
         if ((int) $migration->fetchColumn() !== 1) {
             $issues[] = 'migration_294_missing';
         }
-        $schema = (int) $this->pdo->query(
-            "SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(migration,'_',1) AS UNSIGNED)),0)
-             FROM schema_migrations"
-        )->fetchColumn();
-        if ($schema !== 294) {
-            $issues[] = 'schema_not_294';
+        $pending = (new Migrator($this->pdo, dirname(__DIR__, 2) . '/database/migrations'))->pendingCount();
+        if ($pending !== 0) {
+            $issues[] = 'pending_migrations';
+        }
+        array_push($issues, ...(new QueueV4CleanDatabaseContract($this->pdo))->issues());
+        $marker = (new InstalledVersionMarkerService())->read();
+        if (!$marker['valid'] || !hash_equals($version, $marker['version'])) {
+            $issues[] = 'marker_version_invalid';
         }
         if (Env::bool('ML_WRITE_ENABLED', false)) {
             $issues[] = 'ml_write_enabled';

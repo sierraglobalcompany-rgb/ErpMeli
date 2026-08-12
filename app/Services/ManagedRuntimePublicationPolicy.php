@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.37.0.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.37.1.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -41,9 +41,9 @@ final class ManagedRuntimePublicationPolicy
     ];
     public const BASE_COMMIT = '1dc31993f7a5f7840b905abcc97bb730c6f1e8bd';
     public const INSTALLED_BASE_COMMIT = 'f91cd534d271b964db1ad9e682260475eca96820';
-    public const VERSION = '2.37.0';
-    public const BUILD_ID = 'erp-meli-2.37.0-queue-v4-clean-greenfield-rc1-20260812';
-    public const BUILT_AT = '2026-08-12T18:00:00Z';
+    public const VERSION = '2.37.1';
+    public const BUILD_ID = 'erp-meli-2.37.1-queue-v4-clean-stabilized-rc1-20260812';
+    public const BUILT_AT = '2026-08-12T23:30:00Z';
     public const MINIMUM_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';
     private const LEGACY_MINIMUM_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
     /** @var array<string,array{build_id:string,minimum_migration:string,dependency_registry:string}> */
@@ -117,6 +117,11 @@ final class ManagedRuntimePublicationPolicy
             'build_id' => 'erp-meli-2.36.15-v4-canary-uncertain-get-recovery-hotfix-rc1-20260812',
             'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.15.json',
+        ],
+        '2.37.0' => [
+            'build_id' => 'erp-meli-2.37.0-queue-v4-clean-greenfield-rc1-20260812',
+            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.37.0.json',
         ],
         self::VERSION => [
             'build_id' => self::BUILD_ID,

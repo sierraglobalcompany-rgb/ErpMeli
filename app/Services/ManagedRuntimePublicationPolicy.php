@@ -39,7 +39,7 @@ final class ManagedRuntimePublicationPolicy
         'bin/queue_core_dependency_check.php',
         'bin/runtime_process_audit.php',
     ];
-    public const BASE_COMMIT = '75997f864b917c829d19f14e21cd7303d2685776';
+    public const BASE_COMMIT = '1dc31993f7a5f7840b905abcc97bb730c6f1e8bd';
     public const INSTALLED_BASE_COMMIT = 'f91cd534d271b964db1ad9e682260475eca96820';
     public const VERSION = '2.37.0';
     public const BUILD_ID = 'erp-meli-2.37.0-queue-v4-clean-greenfield-rc1-20260812';

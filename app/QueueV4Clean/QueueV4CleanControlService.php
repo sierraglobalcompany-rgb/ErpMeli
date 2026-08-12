@@ -24,6 +24,10 @@ final class QueueV4CleanControlService
         if (!(new EmergencyControlService())->automationStopped()) {
             throw new RuntimeException('queue_v4_clean_activation_requires_automation_stop');
         }
+        $issues = (new QueueV4CleanReadinessService($this->pdo))->activationIssues();
+        if ($issues !== []) {
+            throw new RuntimeException('queue_v4_clean_activation_preconditions_invalid:' . implode(',', $issues));
+        }
         $statement = $this->pdo->prepare(
             "UPDATE queue_v4_clean_control
              SET engine_state='ACTIVE',scheduler_enabled=1,activated_at=UTC_TIMESTAMP(3),updated_by=?

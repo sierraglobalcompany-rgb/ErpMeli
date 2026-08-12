@@ -21,6 +21,7 @@ $readiness = $read('app/QueueV4Clean/QueueV4CleanReadinessService.php');
 $repository = $read('app/QueueV4Clean/QueueV4CleanRepository.php');
 $control = $read('app/QueueV4Clean/QueueV4CleanControlService.php');
 $databaseContract = $read('app/QueueV4Clean/QueueV4CleanDatabaseContract.php');
+$appJs = $read('public/assets/app.js');
 
 $assert(trim($read('VERSION')) === '2.37.1', 'VERSION is not 2.37.1');
 $assert(str_contains($architecture, '## REUSE') && str_contains($architecture, '## REPLACE') && str_contains($architecture, '## LEGACY_IGNORE'), 'architecture classification incomplete');
@@ -62,6 +63,8 @@ $assert(!str_contains($worker, 'historical'), 'worker contains historical import
 $assert(str_contains($producer, 'queue_v4_clean_readiness_accounts'), 'producer is not bound to certified accounts');
 $assert(str_contains($producer, 'queue_v4_clean_certified_account_set_invalid'), 'producer exact certified account cardinality gate missing');
 $assert(str_contains($control, "engine_state='ACTIVE',scheduler_enabled=1"), 'activation does not enable internal scheduler atomically');
+$assert(str_contains($control, 'activationIssues()'), 'activation does not revalidate current readiness authority');
+$assert(str_contains($appJs, "(snapshot?.issues || []).length === 0"), 'activation UI ignores current readiness issues');
 
 foreach (['Comprobar y certificar', 'Activar', 'Detener'] as $button) {
     $assert(substr_count($view, '>' . $button . '</button>') === 1, 'UI action missing/duplicated: ' . $button);

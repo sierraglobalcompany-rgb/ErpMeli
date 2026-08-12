@@ -58,6 +58,12 @@ final class QueueV4CleanReadinessService
         ];
     }
 
+    /** @return list<string> */
+    public function activationIssues(): array
+    {
+        return $this->preconditions()['issues'];
+    }
+
     /** @return array<string,mixed> */
     public function certify(int $actorId): array
     {

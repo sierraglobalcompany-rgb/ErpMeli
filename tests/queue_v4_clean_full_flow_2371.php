@@ -279,6 +279,8 @@ try {
         (int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_checkpoints WHERE meli_account_id=4')->fetchColumn() === 0,
         'uncertified account received a producer checkpoint'
     );
+    $pdo->exec('DELETE FROM meli_tokens WHERE meli_account_id=4');
+    $pdo->exec('DELETE FROM meli_accounts WHERE id=4 AND company_id=6');
 
     $seen = [];
     $worker = new QueueV4CleanWorker(
@@ -333,6 +335,18 @@ try {
     $control->stop(1);
     $assert((int) $repository->control()['scheduler_enabled'] === 0, 'stop did not disable scheduler');
     $assert((new QueueV4CleanWorker($pdo, $repository, null, null, static fn () => null))->run('test')['claimed'] === 0, 'stopped engine claimed work');
+    $pdo->exec("UPDATE app_settings SET setting_value='2.37.0' WHERE setting_key='app.version'");
+    $reactivationDriftBlocked = false;
+    try {
+        $control->activate(1);
+    } catch (RuntimeException $error) {
+        $reactivationDriftBlocked = str_contains(
+            $error->getMessage(),
+            'queue_v4_clean_activation_preconditions_invalid:app_version_invalid'
+        );
+    }
+    $assert($reactivationDriftBlocked, 'stale readiness certification allowed reactivation');
+    $pdo->exec("UPDATE app_settings SET setting_value='2.37.1' WHERE setting_key='app.version'");
     $control->activate(1);
     $assert(
         $repository->control()['engine_state'] === 'ACTIVE'

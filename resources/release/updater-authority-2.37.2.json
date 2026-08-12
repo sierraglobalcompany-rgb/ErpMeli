@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
     "target_version": "2.37.2",
-    "contract": "The 2.37.0 to 2.37.2 update stabilizes Queue V4 Clean against the canonical MariaDB 11.8.8 schema, preserves legacy engines inert, creates no Hostinger scheduler, activates no engine, performs no readiness automatically and preserves the frozen updater write-set.",
+    "contract": "The 2.37.1 to 2.37.2 update batches the Queue V4 Clean information_schema contract into four exact metadata queries and hardens snapshot timeout handling, preserves legacy engines inert, creates no Hostinger scheduler, activates no engine, performs no readiness automatically and preserves the frozen updater write-set.",
     "supersedes_inventory": {
         "path": "resources/release/updater-locked-file-inventory-2.36.1.json",
         "sha256": "7b90dab866e6b49d785ce8c706f3ea7ce7db6846fdd1678e6a953a6bf4e31fd5",
@@ -21,42 +21,30 @@
         {
             "path": "app/Recovery/RecoveryKernel.php",
             "previous_sha256": "4e3e02463c7271b0ad31792e64419ee1ff78e8a0054274c469ead73e22b91cf4",
-            "target_sha256": "219db6ee360e9fa20b1c21a0bfeb7b44355e403d9ef7676e72372d3c48daa668",
+            "target_sha256": "219db6ee360e9fa20b1c21a0bfeb7b44355e403d9ef7676e72371d3c48daa668",
             "reason": "Permit authenticated metadata-only completion while preserving the narrow updater write-set."
         }
     ],
     "new_runtime_dependencies": [
         {
             "path": "VERSION",
-            "sha256": "d4a09a60dfa08a691fb414ee5b72710f5624b7aaa6b582f7225e460fcf6ad0f1"
-        },
-        {
-            "path": "app/QueueV4Clean/QueueV4CleanControlService.php",
-            "sha256": "cd942fc0f8ee4aa5a839cd85ea1128aaedb401e155cbc4fd125e430696ae956d"
+            "sha256": "27a16368444fe1abd38916edc34d006efa3ffc8f24d5f3a44270148227c9f87d"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanDatabaseContract.php",
-            "sha256": "be1b69e3565d3a3c599e69f9d7fac75e07421ebffd2563ddcc61653954e55c25"
-        },
-        {
-            "path": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
-            "sha256": "ec74d5ef0369624c55da4d5906c5d60cae469ad08c00a0274a7c361aa4f68796"
+            "sha256": "4c48c903ab2ec710b8ed89be1801faaa479ff5adf2276c71ed7b93a3929e0e00"
         },
         {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "15ebd4bfe5355c4c75853e80b74a6bec34b2716b785e2d6ff3efe7b76ae0faed"
-        },
-        {
-            "path": "app/Services/Migrator.php",
-            "sha256": "b61e5d0cf0c5b924a35d4120480a8655fc7afdc0c9d4d85e4f724edf10f6a2cb"
+            "sha256": "ed5dc18caabfac70de50fe644b7bf645a36a38eec631a6cf5a889ab8be2e7877"
         },
         {
             "path": "public/assets/app.js",
-            "sha256": "8bfe1aff6d2c6966bab776231088a1cd43a34886f0fe3d137d835a7428033b5e"
+            "sha256": "1f0b0533bee6de738137f5bda6bad19ff6da7abde2bd09b1ff29f6ea6b6eb857"
         },
         {
             "path": "resources/release/managed-runtime-dependencies-2.37.2.json",
-            "sha256": "fdb9fd600ce6b4597c9a9e336ddd600148b70deb9f948696dc6a5da99e8c909c"
+            "sha256": "c726ce224fab947e049e0a6e5b1ae52f83001d04332e1f2eb42c8262e212fa22"
         },
         {
             "path": "resources/release/queue-v4-canonical-db-contract-2.37.2.json",

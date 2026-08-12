@@ -1110,8 +1110,8 @@
         },
         "runtime_app_queuev4clean_queuev4cleancontrolservice_php": {
             "path": "app/QueueV4Clean/QueueV4CleanControlService.php",
-            "sha256": "cd942fc0f8ee4aa5a839cd85ea1128aaedb401e155cbc4fd125e430696ae956d",
-            "sha256_lf": "cd942fc0f8ee4aa5a839cd85ea1128aaedb401e155cbc4fd125e430696ae956d",
+            "sha256": "19d5083dbbb4c1a9d41d184bf378f3ef5ecd4f85e6c0d404f8bdf5b64640efee",
+            "sha256_lf": "19d5083dbbb4c1a9d41d184bf378f3ef5ecd4f85e6c0d404f8bdf5b64640efee",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleandatabasecontract_php": {
@@ -1122,8 +1122,8 @@
         },
         "runtime_app_queuev4clean_queuev4cleanproducer_php": {
             "path": "app/QueueV4Clean/QueueV4CleanProducer.php",
-            "sha256": "10f4378302eebc2ffc68ca40436b59ac36b2059526f106116534d7c70425b6ef",
-            "sha256_lf": "10f4378302eebc2ffc68ca40436b59ac36b2059526f106116534d7c70425b6ef",
+            "sha256": "7971fb607dd9473aa7518d5ad9e6bec6cd62c8c944214c4377f54969ba208126",
+            "sha256_lf": "7971fb607dd9473aa7518d5ad9e6bec6cd62c8c944214c4377f54969ba208126",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleanreadinessservice_php": {
@@ -1134,8 +1134,8 @@
         },
         "runtime_app_queuev4clean_queuev4cleanrepository_php": {
             "path": "app/QueueV4Clean/QueueV4CleanRepository.php",
-            "sha256": "b6099b23b875aea11acd10fa14987d2b5e83159a365bc0f95faa4527b72f7728",
-            "sha256_lf": "b6099b23b875aea11acd10fa14987d2b5e83159a365bc0f95faa4527b72f7728",
+            "sha256": "2d3ca099195573dcae374fc9499bc64f6abad52493df2feaf719b64f4bcb8a9c",
+            "sha256_lf": "2d3ca099195573dcae374fc9499bc64f6abad52493df2feaf719b64f4bcb8a9c",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleanscheduler_php": {
@@ -2286,8 +2286,8 @@
         },
         "runtime_app_services_inventoryapplicationservice_php": {
             "path": "app/Services/InventoryApplicationService.php",
-            "sha256": "096938226522934e93a42c2b2740e22eb6b7bef454cfe084867e9cbb481fc04c",
-            "sha256_lf": "096938226522934e93a42c2b2740e22eb6b7bef454cfe084867e9cbb481fc04c",
+            "sha256": "a35ce04241d576060f8f17028dae669f4273940e4fc00543f2abfba7d058520f",
+            "sha256_lf": "a35ce04241d576060f8f17028dae669f4273940e4fc00543f2abfba7d058520f",
             "text": true
         },
         "runtime_app_services_inventoryinsufficientstock_php": {
@@ -2298,20 +2298,20 @@
         },
         "runtime_app_services_inventoryledgerservice_php": {
             "path": "app/Services/InventoryLedgerService.php",
-            "sha256": "a4fb849cd6b461f908c9213ffbdcc8dfd0c213910ae73d8a307d9d80dacc2d00",
-            "sha256_lf": "a4fb849cd6b461f908c9213ffbdcc8dfd0c213910ae73d8a307d9d80dacc2d00",
+            "sha256": "bbf89e68ca77d848ecf9c878752e863361a96dd9067b48110856993e80758cc4",
+            "sha256_lf": "bbf89e68ca77d848ecf9c878752e863361a96dd9067b48110856993e80758cc4",
             "text": true
         },
         "runtime_app_services_inventoryqueryservice_php": {
             "path": "app/Services/InventoryQueryService.php",
-            "sha256": "d2fa9087f9a66906efd98f84a35c1983754f8508d6332631016e0dda1b50a4ac",
-            "sha256_lf": "d2fa9087f9a66906efd98f84a35c1983754f8508d6332631016e0dda1b50a4ac",
+            "sha256": "189701062b54093070abb046224329004313a6e285590f927baf2455a540f0d7",
+            "sha256_lf": "189701062b54093070abb046224329004313a6e285590f927baf2455a540f0d7",
             "text": true
         },
         "runtime_app_services_inventorywarehouseservice_php": {
             "path": "app/Services/InventoryWarehouseService.php",
-            "sha256": "c6783dcad0f6d980308eac9d2a3094bb5f744e1b3bc4fc81d1633598b4b56d62",
-            "sha256_lf": "c6783dcad0f6d980308eac9d2a3094bb5f744e1b3bc4fc81d1633598b4b56d62",
+            "sha256": "4de15cee0db06401588008a758cc825ca06f53eab0322c86955154f152de0a59",
+            "sha256_lf": "4de15cee0db06401588008a758cc825ca06f53eab0322c86955154f152de0a59",
             "text": true
         },
         "runtime_app_services_largestremainderallocator_php": {
@@ -2748,8 +2748,8 @@
         },
         "runtime_app_services_orderinventoryservice_php": {
             "path": "app/Services/OrderInventoryService.php",
-            "sha256": "9b8bee5780a647511d882b0d1214aa7fec046b4dd4e8b6a0ca5f76c5c74f7b28",
-            "sha256_lf": "9b8bee5780a647511d882b0d1214aa7fec046b4dd4e8b6a0ca5f76c5c74f7b28",
+            "sha256": "2ad9af866ec10db2a26c4af6d8a2a02914dad2aff6cee6cdd9e7033e6213bf72",
+            "sha256_lf": "2ad9af866ec10db2a26c4af6d8a2a02914dad2aff6cee6cdd9e7033e6213bf72",
             "text": true
         },
         "runtime_app_services_ordersyncservice_php": {
@@ -2808,8 +2808,8 @@
         },
         "runtime_app_services_productlinkservice_php": {
             "path": "app/Services/ProductLinkService.php",
-            "sha256": "b83e02905748c65bc58dd7a4acc23e7d06b0627a63e0b31d099621963e9be46a",
-            "sha256_lf": "b83e02905748c65bc58dd7a4acc23e7d06b0627a63e0b31d099621963e9be46a",
+            "sha256": "3117602a3c47c09f523c18f566ed7498034f40cdf016e4ea99e38e08807cff32",
+            "sha256_lf": "3117602a3c47c09f523c18f566ed7498034f40cdf016e4ea99e38e08807cff32",
             "text": true
         },
         "runtime_app_services_productmatchsuggestionservice_php": {
@@ -4446,8 +4446,8 @@
         },
         "runtime_database_migrations_295_inventory_warehouse_v1_2_38_0_sql": {
             "path": "database/migrations/295_inventory_warehouse_v1_2_38_0.sql",
-            "sha256": "b840a7cebb90287465bb9ad25cd08b03422bec46c687dd2aa701493f83ce273d",
-            "sha256_lf": "b840a7cebb90287465bb9ad25cd08b03422bec46c687dd2aa701493f83ce273d",
+            "sha256": "cd665eb3b1367ea002d7740fd756bc245e76a1fa99a648f9c60aba5736675f20",
+            "sha256_lf": "cd665eb3b1367ea002d7740fd756bc245e76a1fa99a648f9c60aba5736675f20",
             "text": true
         },
         "runtime_index_php": {
@@ -5238,8 +5238,8 @@
         },
         "runtime_resources_release_updater_authority_2_38_0_json": {
             "path": "resources/release/updater-authority-2.38.0.json",
-            "sha256": "d14326d58ce46b9b592cfb7364c56910da7b29a11e0c3b79fdb9c2741b68a35e",
-            "sha256_lf": "d14326d58ce46b9b592cfb7364c56910da7b29a11e0c3b79fdb9c2741b68a35e",
+            "sha256": "94a8a4a5c50bcece63613053a26361caa8f44b5178ebb6add1fa6374cdf5a2b5",
+            "sha256_lf": "94a8a4a5c50bcece63613053a26361caa8f44b5178ebb6add1fa6374cdf5a2b5",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

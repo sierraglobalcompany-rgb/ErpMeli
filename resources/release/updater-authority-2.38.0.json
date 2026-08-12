@@ -21,8 +21,8 @@
     {
       "path": "app/Recovery/RecoveryKernel.php",
       "previous_sha256": "4e3e02463c7271b0ad31792e64419ee1ff78e8a0054274c469ead73e22b91cf4",
-      "target_sha256": "219db6ee360e9fa20b1c21a0bfeb7b44355e403d9ef7676e72371d3c48daa668",
-      "reason": "Permit authenticated metadata-only completion while preserving the narrow updater write-set."
+      "target_sha256": "f5bc008eec1c2cf9d1959a40d9f6f8c3f9fda907fe16cdc027e8508f3cf42e59",
+      "reason": "Permit the authenticated 2.37.2 to 2.38.0 schema transition, recertify after metadata promotion, and preserve Queue V4 without invoking legacy Cron V3 setup."
     }
   ],
   "new_runtime_dependencies": [

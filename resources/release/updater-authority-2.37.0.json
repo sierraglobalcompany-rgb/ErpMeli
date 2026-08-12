@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "target_version": "2.37.0",
-  "contract": "The 2.37.0 hotfix preserves the locked updater write-set and transitions 2.36.14 to 2.37.0 without migration. It recovers exactly one uncertain Queue Core canary GET only when its tenant, capability, endpoint, dispatch, attempt and run authorities are exact; mutating, mixed or multiple uncertain work remains blocked. It creates no scheduler, activates no engine and does not run readiness automatically.",
+  "contract": "Queue V4 Clean is an independent greenfield FIFO runtime. The 2.36.15 to 2.37.0 update adds only migration 294 and new Queue V4 Clean authorities; it imports no legacy queue state, creates no production scheduler, activates no engine, performs no readiness automatically and preserves the frozen updater write-set.",
   "supersedes_inventory": {
     "path": "resources/release/updater-locked-file-inventory-2.36.1.json",
     "sha256": "7b90dab866e6b49d785ce8c706f3ea7ce7db6846fdd1678e6a953a6bf4e31fd5",
@@ -26,65 +26,27 @@
     }
   ],
   "new_runtime_dependencies": [
-    {
-      "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-      "sha256": "7bc5546207cdfcde73aa51cc73ab830bd0ec85eed8323d9e5ed09dca9bfc1e09"
-    },
-    {
-      "path": "app/Services/DirectUpdateMetadataPromotionService.php",
-      "sha256": "78218b1519cfe8221a86be93953d8f4fb3bbf46cd75a43f6edffafb69a767dce"
-    },
-    {
-      "path": "app/Services/DirectUpdateTransitionPolicy.php",
-      "sha256": "5f67ad44b8ee9f2c6ce59a050a79ca0e0597b78ae97b79cb37e0ab1aaefe4187"
-    },
-    {
-      "path": "app/Services/CronV3RetirementForV4Service.php",
-      "sha256": "8fedd197a8ca43954fd639604b8defce8225f4e3a17ce1113cb5a1d466007422"
-    },
-    {
-      "path": "app/Services/CronV3SetupAssistantService.php",
-      "sha256": "3b6bfdfb0fb474c76dfcae8ccb643c0c1c80a62c230495e31e0980109a8dd4ea"
-    },
-    {
-      "path": "app/Services/V4ReadinessBootstrapService.php",
-      "sha256": "901ed3b9e4be487767c80ecec24d1065b7d930e2dade3739af70292dc3a36585"
-    },
-    {
-      "path": "app/Controllers/SettingsController.php",
-      "sha256": "49f80f4c3ce44424b5834e6504a165cc10db0e71879f4894facc123bf5b3219a"
-    },
-    {
-      "path": "app/Views/settings/cron_shell.php",
-      "sha256": "b780a0041a2a1b9f1687d067be47658ae28fb895204624fa0ab6c9066932fcd2"
-    },
-    {
-      "path": "public/assets/app.js",
-      "sha256": "95c7c9826219ec556bd3f27582d4649e37b296d507bfde4b8ff966e8c5f73ca9"
-    },
-    {
-      "path": "app/QueueCore/QueueCoreFeatureFlagService.php",
-      "sha256": "25e785f44f409f60a3cc1a594a39f6aab7ddf8108d6fee7cdf87487bb6bcdf89"
-    },
-    {
-      "path": "app/QueueCore/QueueCoreReadinessReceiptService.php",
-      "sha256": "732a1c78980dcdb774ebe887eddadb19634725278f5e78648a7ef71817acc312"
-    },
-    {
-      "path": "app/QueueCore/QueueCoreHealthService.php",
-      "sha256": "9d444a6ffa9ddacefc29d99c34b7b8072f98b055f17583c9e791f93bea18e288"
-    },
-    {
-      "path": "app/QueueCore/QueueCoreCanaryService.php",
-      "sha256": "0010dfdb14f25717242abd9081d7ce878af7e258a4e1f727a96f393d11bb87d5"
-    },
-    {
-      "path": "resources/release/managed-runtime-dependencies-2.37.0.json",
-      "sha256": "3c607ce1d486e11c5e95a50ff3d3bc0917483df7994d34aa18e64ce801ace973"
-    },
-    {
-      "path": "app/QueueCore/QueueCoreCanaryUncertainRecoveryService.php",
-      "sha256": "e8332fd6d4ea5401705dcdce0e6fbf924708a57c370aa6729a339a132a38fc88"
-    }
+    {"path":"VERSION","sha256":"462fd9d3cfe0c592fae358d924cf44fe06a969c196e4f9fe079a21ebb6288c78"},
+    {"path":"app/Controllers/SettingsController.php","sha256":"60b7a4ff28a0d6333aea7d3dfe919897e5361076478abcbbfdac3b46b3c30b90"},
+    {"path":"app/QueueCore/QueueCoreOwnershipGuard.php","sha256":"6a9afbaa6ddfd1f4f9e9ec719347934cd26c52ff49025703adf5d47580d25622"},
+    {"path":"app/QueueV4Clean/QueueV4CleanControlService.php","sha256":"fbdae6c9fd68f024bd10ef89eb0e1323db54dd3d0b96aefe25cfb0f9a6909a41"},
+    {"path":"app/QueueV4Clean/QueueV4CleanProducer.php","sha256":"621dec67fa75d0da74b8e9085c85b51404f160166976f1cf3f4c97fa0997720d"},
+    {"path":"app/QueueV4Clean/QueueV4CleanReadinessService.php","sha256":"4564f0145a560ebbdf69785758cf8eb8c7dc548cbced97fa5b4acfc1642e81a6"},
+    {"path":"app/QueueV4Clean/QueueV4CleanRepository.php","sha256":"73ab114a028c9663ca3be0c7f2bf80ede64665ef289ff01f32829506a147aa59"},
+    {"path":"app/QueueV4Clean/QueueV4CleanScheduler.php","sha256":"21e727a23cc881331fbc72709669ef6cf80c134543d44ae4c00400dfcce08df3"},
+    {"path":"app/QueueV4Clean/QueueV4CleanTransportContext.php","sha256":"473bcbccca23e325ad805985d56e705c4fa38449728ae89bc644b2204e387bf9"},
+    {"path":"app/QueueV4Clean/QueueV4CleanWorker.php","sha256":"958ebb88642a7cac951e27c030b7602941df78620bb6b62c71eccdf2c048e9e8"},
+    {"path":"app/Services/ApiExecutionMetadataContext.php","sha256":"b8a915dddd0a8f18b5aa2492ada4db2dbeae56702d2c76e7718c6ec62b32f8b7"},
+    {"path":"app/Services/CurlMeliHttpTransport.php","sha256":"d0607123b2dbee247afd5c6ba6bb2a3c3a8fb23efcb614c333ddf8dd6be28264"},
+    {"path":"app/Services/ManagedRuntimePublicationPolicy.php","sha256":"94ab04d8e28bec36fa792bdc001fd1a6dacefa7b3ea547be63d4575140f4b1c2"},
+    {"path":"app/Services/MeliApiClient.php","sha256":"4f3f469b0988e7bf4896c564cef2a20f258c44bfff04417d0e7d888c1825cbdd"},
+    {"path":"app/Services/MeliEmergencyStopService.php","sha256":"ba80559ef2567ab867cf268f1e0c59a88964949c99bbbb151858423ef8b5e688"},
+    {"path":"app/Services/OrderSyncService.php","sha256":"2b96854df5a0999941a0eb84aafe7047390258b2996d80e8fc7f29e5239b5151"},
+    {"path":"app/Views/settings/cron_shell.php","sha256":"b6e34b1aee7c6212fef63b8fd392b9cb0ac0607d5f59a5da66f2881e884bfa3a"},
+    {"path":"database/migrations/294_queue_v4_clean_greenfield_2_37_0.sql","sha256":"34b4bad427015595037e4159252739c4e795e9f794f4af7f8f0bb6dd2d483409"},
+    {"path":"jobs/queue_v4_clean.php","sha256":"cc91be8a6dec351111aad231d72b68e275c74ed51cb79cb4d7da5a12ea31ffe0"},
+    {"path":"public/assets/app.js","sha256":"aba7a0f311ec40f4b0b7b29ac4c39f9501c111b41d3031ce2ee13a3cf9ff2571"},
+    {"path":"public/index.php","sha256":"1c9fdc9cbf63bd187902518c5291e4b72c7c2e5217435fb4bda077720ae8984c"},
+    {"path":"resources/release/managed-runtime-dependencies-2.37.0.json","sha256":"a13c2166e143a40f2ee74c6aef328f5423b2621db7a4fe1485af124226187f22"}
   ]
 }

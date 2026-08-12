@@ -3654,8 +3654,8 @@
         },
         "runtime_app_views_inventory_kardex_php": {
             "path": "app/Views/inventory/kardex.php",
-            "sha256": "e9f3e66c947c8961ca5707509f320c62c862c4875dbec02abd5be8a27ccd3751",
-            "sha256_lf": "e9f3e66c947c8961ca5707509f320c62c862c4875dbec02abd5be8a27ccd3751",
+            "sha256": "0dbd8a79d145bd57835348e457b006464d2fd851fc3169fbcf736925ebf17d17",
+            "sha256_lf": "0dbd8a79d145bd57835348e457b006464d2fd851fc3169fbcf736925ebf17d17",
             "text": true
         },
         "runtime_app_views_layouts_app_php": {
@@ -5238,8 +5238,8 @@
         },
         "runtime_resources_release_updater_authority_2_38_0_json": {
             "path": "resources/release/updater-authority-2.38.0.json",
-            "sha256": "f481dfea30e247e6588abf8d406511fb4e698baca099c1895cd66d579e31f8f1",
-            "sha256_lf": "f481dfea30e247e6588abf8d406511fb4e698baca099c1895cd66d579e31f8f1",
+            "sha256": "8f1fa63498c3b10c1b318ae815ab4f0acb4f5fee90b7896421de908fa1507dc4",
+            "sha256_lf": "8f1fa63498c3b10c1b318ae815ab4f0acb4f5fee90b7896421de908fa1507dc4",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

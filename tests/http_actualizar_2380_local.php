@@ -125,7 +125,11 @@ function qa2380StorageSnapshot(string $root): array
             continue;
         }
         $relative = str_replace('\\', '/', substr($entry->getPathname(), strlen($root) + 1));
-        if ($relative === 'installed-release.json' || str_starts_with($relative, 'logs/')) {
+        if (
+            $relative === 'installed-release.json'
+            || $relative === 'web-cache-invalidation.json'
+            || str_starts_with($relative, 'logs/')
+        ) {
             continue;
         }
         $hash = hash_file('sha256', $entry->getPathname());

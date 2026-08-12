@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "inventory-warehouse-2.38.0-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "2561a003b1e81c5eef13a17ba624217fc4897861f69afcb264a2dfce62b462dc",
+  "runtime_manifest_paths_sha256": "9afc96160ab37f32e0adf5f86ed230bf3a25031594f545efbcb649bc45e68149",
   "coverage_base_commit": "c40d073705833c94911c254ec633bf8eb231375e",
   "blocked_rc_snapshot": {
     "commit": "4ecd154f0a219a07d6ce0dc152be59037e9ef98b",

@@ -162,8 +162,8 @@
         },
         "runtime_app_controllers_inventorycontroller_php": {
             "path": "app/Controllers/InventoryController.php",
-            "sha256": "61af6bc61078215b911dd5b815f8895a20ffd623092e7a873e6e3f910591c64c",
-            "sha256_lf": "61af6bc61078215b911dd5b815f8895a20ffd623092e7a873e6e3f910591c64c",
+            "sha256": "b71ab86ad102b98b01c60015afcc91c790d634fd67f081452be69993658246b5",
+            "sha256_lf": "b71ab86ad102b98b01c60015afcc91c790d634fd67f081452be69993658246b5",
             "text": true
         },
         "runtime_app_controllers_logcontroller_php": {
@@ -2298,14 +2298,14 @@
         },
         "runtime_app_services_inventoryledgerservice_php": {
             "path": "app/Services/InventoryLedgerService.php",
-            "sha256": "132d4530e517ff22a2feda22966e6a6aed497d368b83a3a419f59981e25df6b5",
-            "sha256_lf": "132d4530e517ff22a2feda22966e6a6aed497d368b83a3a419f59981e25df6b5",
+            "sha256": "7493be05106ef680fee45b4cd3cb2b77b246427014eb492db5bf8bf0dcf54a47",
+            "sha256_lf": "7493be05106ef680fee45b4cd3cb2b77b246427014eb492db5bf8bf0dcf54a47",
             "text": true
         },
         "runtime_app_services_inventoryqueryservice_php": {
             "path": "app/Services/InventoryQueryService.php",
-            "sha256": "b09b313227476d828788e544362e4300ecf0299462ea53e61e693c4690706b36",
-            "sha256_lf": "b09b313227476d828788e544362e4300ecf0299462ea53e61e693c4690706b36",
+            "sha256": "d2fa9087f9a66906efd98f84a35c1983754f8508d6332631016e0dda1b50a4ac",
+            "sha256_lf": "d2fa9087f9a66906efd98f84a35c1983754f8508d6332631016e0dda1b50a4ac",
             "text": true
         },
         "runtime_app_services_inventorywarehouseservice_php": {
@@ -2748,8 +2748,8 @@
         },
         "runtime_app_services_orderinventoryservice_php": {
             "path": "app/Services/OrderInventoryService.php",
-            "sha256": "68f69ccbe4f27f0198524c38367968de5939f0d1e48ded3b4806a242b64735ee",
-            "sha256_lf": "68f69ccbe4f27f0198524c38367968de5939f0d1e48ded3b4806a242b64735ee",
+            "sha256": "0e2bf2ebaa3dd7c770ef58dac58eb600949c7c781befbeb49eeffe7bfb070aae",
+            "sha256_lf": "0e2bf2ebaa3dd7c770ef58dac58eb600949c7c781befbeb49eeffe7bfb070aae",
             "text": true
         },
         "runtime_app_services_ordersyncservice_php": {
@@ -3654,8 +3654,8 @@
         },
         "runtime_app_views_inventory_kardex_php": {
             "path": "app/Views/inventory/kardex.php",
-            "sha256": "0dbd8a79d145bd57835348e457b006464d2fd851fc3169fbcf736925ebf17d17",
-            "sha256_lf": "0dbd8a79d145bd57835348e457b006464d2fd851fc3169fbcf736925ebf17d17",
+            "sha256": "4db80257bee50b81d16d14260bc1b1617e08c5345e758c8f088a61eda587ba01",
+            "sha256_lf": "4db80257bee50b81d16d14260bc1b1617e08c5345e758c8f088a61eda587ba01",
             "text": true
         },
         "runtime_app_views_layouts_app_php": {
@@ -5238,8 +5238,8 @@
         },
         "runtime_resources_release_updater_authority_2_38_0_json": {
             "path": "resources/release/updater-authority-2.38.0.json",
-            "sha256": "8f1fa63498c3b10c1b318ae815ab4f0acb4f5fee90b7896421de908fa1507dc4",
-            "sha256_lf": "8f1fa63498c3b10c1b318ae815ab4f0acb4f5fee90b7896421de908fa1507dc4",
+            "sha256": "d4d7373ffe1acede3bd7939abb08cc91a8eaa766f1ccd552b41b846082f44352",
+            "sha256_lf": "d4d7373ffe1acede3bd7939abb08cc91a8eaa766f1ccd552b41b846082f44352",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

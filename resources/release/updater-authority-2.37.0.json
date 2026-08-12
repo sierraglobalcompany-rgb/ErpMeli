@@ -30,7 +30,7 @@
     {"path":"app/Controllers/SettingsController.php","sha256":"60b7a4ff28a0d6333aea7d3dfe919897e5361076478abcbbfdac3b46b3c30b90"},
     {"path":"app/QueueCore/QueueCoreOwnershipGuard.php","sha256":"6a9afbaa6ddfd1f4f9e9ec719347934cd26c52ff49025703adf5d47580d25622"},
     {"path":"app/QueueV4Clean/QueueV4CleanControlService.php","sha256":"fbdae6c9fd68f024bd10ef89eb0e1323db54dd3d0b96aefe25cfb0f9a6909a41"},
-    {"path":"app/QueueV4Clean/QueueV4CleanProducer.php","sha256":"621dec67fa75d0da74b8e9085c85b51404f160166976f1cf3f4c97fa0997720d"},
+    {"path":"app/QueueV4Clean/QueueV4CleanProducer.php","sha256":"16eae8abcf1d6c793f2a56e62ce96aafa637f427073a136cb1478d3e434da2a8"},
     {"path":"app/QueueV4Clean/QueueV4CleanReadinessService.php","sha256":"574bf7c5e5b4143792f5a0623bf56fe7904923dc545496be3045b003916b4411"},
     {"path":"app/QueueV4Clean/QueueV4CleanRepository.php","sha256":"73ab114a028c9663ca3be0c7f2bf80ede64665ef289ff01f32829506a147aa59"},
     {"path":"app/QueueV4Clean/QueueV4CleanScheduler.php","sha256":"21e727a23cc881331fbc72709669ef6cf80c134543d44ae4c00400dfcce08df3"},

@@ -101,6 +101,7 @@ final class ProductLinkService
         if ($internalProductId < 1 || $meliItemId < 1) {
             throw new RuntimeException('Seleccione producto interno y publicación.');
         }
+        $variationId = max(0, $variationId);
         $factor = round($factor, 4);
         if ($factor < 0.0001) {
             throw new RuntimeException('La cantidad de bodega que descuenta cada venta debe ser mayor que cero.');
@@ -108,6 +109,7 @@ final class ProductLinkService
         $pdo = Database::connection();
         $ownsTransaction = !$pdo->inTransaction();
         if ($ownsTransaction) {
+            $pdo->exec('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
             $pdo->beginTransaction();
         }
         try {
@@ -147,7 +149,7 @@ final class ProductLinkService
                 'internal' => $internalProductId,
                 'account' => (int) $meli['meli_account_id'],
                 'item' => $meliItemId,
-                'variation' => max(0, $variationId),
+                'variation' => $variationId,
                 'variation_external' => $variationId > 0 ? $variationId : null,
                 'title' => $meli['title'],
                 'sku' => $meli['seller_sku'],

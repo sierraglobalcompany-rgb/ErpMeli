@@ -311,6 +311,12 @@ foreach ($linkProcesses as $index=>$process) {
 sort($linkOutputs);
 $assert($linkOutputs===['CHILD_LINKED','CHILD_LINK_REJECTED'], 'product_link_race_one_winner');
 $assert((int)$pdo->query("SELECT COUNT(*) FROM product_meli_links WHERE meli_account_id=1 AND meli_item_id=6 AND meli_variation_id=0 AND status='active'")->fetchColumn()===1, 'product_link_race_single_active');
+try {
+    (new ProductLinkService())->link(1, 6, -9, 1.0, 'manual');
+    $assert(false, 'negative_variation_must_share_zero_authority');
+} catch (RuntimeException $error) {
+    $assert(str_contains($error->getMessage(), 'ya tiene un vínculo activo'), 'negative_variation_normalized_before_lookup');
+}
 
 // Venta real: 2 unidades ML x factor 3 = 6 unidades de bodega, una sola vez.
 $pdo->exec("INSERT INTO meli_orders VALUES (10,1,'ORDER-1','PACK-1','paid','paid')");

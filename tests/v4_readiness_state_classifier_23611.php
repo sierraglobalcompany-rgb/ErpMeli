@@ -88,7 +88,7 @@ $pre = static function (
     ];
 };
 $classify = static function (array $engineState, array $flags, array $preState, bool $stable = true) use ($classifier): array {
-    return $classifier->invoke(null, $engineState, $flags, $preState, $stable, null, ['ok' => false]);
+    return $classifier->invoke(null, $engineState, $flags, $preState, $stable, null, null);
 };
 
 try {

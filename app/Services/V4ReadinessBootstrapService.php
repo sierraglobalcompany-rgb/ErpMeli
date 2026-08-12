@@ -960,7 +960,7 @@ final class V4ReadinessBootstrapService
      * @param array<string,bool> $flags
      * @param array<string,mixed> $pre
      * @param array<string,mixed>|null $certified
-     * @param array<string,mixed> $certificationGate
+     * @param array<string,mixed>|null $certificationGate
      * @return array{state:string,reason:string,authority:array<string,mixed>}
      */
     private static function classifyReadinessState(
@@ -969,7 +969,7 @@ final class V4ReadinessBootstrapService
         array $pre,
         bool $contextStable,
         ?array $certified,
-        array $certificationGate,
+        ?array $certificationGate,
     ): array {
         $engineProfile = 'invalid';
         $engineMismatches = [];

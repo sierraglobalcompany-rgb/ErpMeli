@@ -44,6 +44,8 @@ foreach (['partial_arm', 'recovery_required', 'uncertain_recovery_required', 're
 }
 $assert(str_contains($readiness, "get('/users/me')"), 'readiness direct identity GET missing');
 $assert(str_contains($readiness, "'queue_jobs_created' => 0"), 'readiness zero-job contract missing');
+$assert(str_contains($readiness, "GET_LOCK('erp_meli_queue_v4_clean_readiness',0)"), 'readiness concurrency lock missing');
+$assert(str_contains($readiness, "failure_class='interrupted'"), 'interrupted readiness restart missing');
 $assert(!str_contains($readiness, '/orders/search'), 'readiness uses operational search');
 $assert(str_contains($repository, "ORDER BY available_at ASC,id ASC"), 'FIFO order is not exact');
 $assert(str_contains($worker . $repository, "state='ready'"), 'ready FIFO state missing');

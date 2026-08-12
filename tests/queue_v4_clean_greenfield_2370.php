@@ -148,8 +148,16 @@ try {
     $before = $readiness->snapshot();
     $assert($before['state'] === 'READY_TO_TEST', 'readiness not ready despite isolated legacy dirt');
     $assert($before['legacy_state_consulted'] === false, 'legacy state reported consulted');
+
+    $pdo->exec("INSERT INTO queue_v4_clean_readiness_runs(state,started_by) VALUES ('TESTING',1)");
+    $interruptedRunId = (int) $pdo->lastInsertId();
+    $pdo->exec("UPDATE queue_v4_clean_control SET readiness_state='TESTING' WHERE control_key='primary'");
     $certified = $readiness->certify(1);
     $assert($certified['state'] === 'CERTIFIED' && $certified['readiness_get_passed'] === 3, 'readiness did not certify 3/3');
+    $assert(
+        (string) $pdo->query("SELECT state FROM queue_v4_clean_readiness_runs WHERE id={$interruptedRunId}")->fetchColumn() === 'FAILED',
+        'interrupted readiness was not closed before retry'
+    );
     $assert($remoteCalls === 3 && $certified['queue_jobs_created'] === 0, 'readiness must perform three GETs and zero queue jobs');
     $assert($repository->counts()['total'] === 0, 'readiness created operational work');
 

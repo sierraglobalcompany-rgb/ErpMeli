@@ -61,6 +61,22 @@ final class QueueV4CleanReadinessService
         if ($actorId < 1) {
             throw new RuntimeException('queue_v4_clean_actor_invalid');
         }
+        $locked = (int) $this->pdo->query(
+            "SELECT GET_LOCK('erp_meli_queue_v4_clean_readiness',0)"
+        )->fetchColumn();
+        if ($locked !== 1) {
+            throw new RuntimeException('queue_v4_clean_readiness_busy');
+        }
+        try {
+            return $this->certifyLocked($actorId);
+        } finally {
+            $this->pdo->query("SELECT RELEASE_LOCK('erp_meli_queue_v4_clean_readiness')");
+        }
+    }
+
+    /** @return array<string,mixed> */
+    private function certifyLocked(int $actorId): array
+    {
         $checks = $this->preconditions();
         if (!$checks['ok']) {
             throw new RuntimeException('queue_v4_clean_not_ready:' . implode(',', $checks['issues']));
@@ -70,6 +86,19 @@ final class QueueV4CleanReadinessService
             $control = (new QueueV4CleanRepository($this->pdo))->control(true);
             if ((string) $control['engine_state'] === 'ACTIVE' || (int) $control['scheduler_enabled'] !== 0) {
                 throw new RuntimeException('queue_v4_clean_readiness_runtime_active');
+            }
+            if ((string) $control['readiness_state'] === 'TESTING') {
+                $this->pdo->exec(
+                    "UPDATE queue_v4_clean_readiness_runs
+                     SET state='FAILED',failure_class='interrupted',finished_at=UTC_TIMESTAMP(3)
+                     WHERE state='TESTING'"
+                );
+                $this->pdo->exec(
+                    "UPDATE queue_v4_clean_control
+                     SET engine_state='STOPPED',readiness_state='FAILED',readiness_passed_accounts=0,
+                         readiness_error_class='interrupted',certified_at=NULL
+                     WHERE control_key='primary' AND readiness_state='TESTING'"
+                );
             }
             $run = $this->pdo->prepare(
                 "INSERT INTO queue_v4_clean_readiness_runs(state,started_by) VALUES ('TESTING',?)"

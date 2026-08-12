@@ -2748,8 +2748,8 @@
         },
         "runtime_app_services_orderinventoryservice_php": {
             "path": "app/Services/OrderInventoryService.php",
-            "sha256": "5f0a271053b886b57e1d3e80d1fdf46b1f40b816d100ac3576d488256ce4ece5",
-            "sha256_lf": "5f0a271053b886b57e1d3e80d1fdf46b1f40b816d100ac3576d488256ce4ece5",
+            "sha256": "68f69ccbe4f27f0198524c38367968de5939f0d1e48ded3b4806a242b64735ee",
+            "sha256_lf": "68f69ccbe4f27f0198524c38367968de5939f0d1e48ded3b4806a242b64735ee",
             "text": true
         },
         "runtime_app_services_ordersyncservice_php": {
@@ -3648,8 +3648,8 @@
         },
         "runtime_app_views_inventory_index_php": {
             "path": "app/Views/inventory/index.php",
-            "sha256": "8cd9f02fc92b07e2fdd98bb2814c5670adfad6ea2c1185a1b923addf0b967363",
-            "sha256_lf": "8cd9f02fc92b07e2fdd98bb2814c5670adfad6ea2c1185a1b923addf0b967363",
+            "sha256": "d3ff4a4b4946f8d33d00b7e989fda91f21feeb26d3d2218c81d0fdc0ea77da2d",
+            "sha256_lf": "d3ff4a4b4946f8d33d00b7e989fda91f21feeb26d3d2218c81d0fdc0ea77da2d",
             "text": true
         },
         "runtime_app_views_inventory_kardex_php": {
@@ -4446,8 +4446,8 @@
         },
         "runtime_database_migrations_295_inventory_warehouse_v1_2_38_0_sql": {
             "path": "database/migrations/295_inventory_warehouse_v1_2_38_0.sql",
-            "sha256": "9077d65ce477cab1b149963dd1605e6c324d9e84843692bedec934fa723c4203",
-            "sha256_lf": "9077d65ce477cab1b149963dd1605e6c324d9e84843692bedec934fa723c4203",
+            "sha256": "b840a7cebb90287465bb9ad25cd08b03422bec46c687dd2aa701493f83ce273d",
+            "sha256_lf": "b840a7cebb90287465bb9ad25cd08b03422bec46c687dd2aa701493f83ce273d",
             "text": true
         },
         "runtime_index_php": {
@@ -5136,8 +5136,8 @@
         },
         "runtime_resources_release_queue_v4_canonical_db_contract_2_38_0_json": {
             "path": "resources/release/queue-v4-canonical-db-contract-2.38.0.json",
-            "sha256": "369f6256c541d3f9609fc3513417eaf1af6aac009aaae3d491168beacbe00124",
-            "sha256_lf": "369f6256c541d3f9609fc3513417eaf1af6aac009aaae3d491168beacbe00124",
+            "sha256": "7aeea74f44b48111b9eb8bb229ac1fbfaff11ef593d24e836fdd8e56f08e5091",
+            "sha256_lf": "7aeea74f44b48111b9eb8bb229ac1fbfaff11ef593d24e836fdd8e56f08e5091",
             "text": true
         },
         "runtime_resources_release_updater_authority_2_36_10_json": {
@@ -5238,8 +5238,8 @@
         },
         "runtime_resources_release_updater_authority_2_38_0_json": {
             "path": "resources/release/updater-authority-2.38.0.json",
-            "sha256": "e11cc0b877ba573257f58e8b6701a010a6dd4a52b565b3c5192f4fc4accb1784",
-            "sha256_lf": "e11cc0b877ba573257f58e8b6701a010a6dd4a52b565b3c5192f4fc4accb1784",
+            "sha256": "f481dfea30e247e6588abf8d406511fb4e698baca099c1895cd66d579e31f8f1",
+            "sha256_lf": "f481dfea30e247e6588abf8d406511fb4e698baca099c1895cd66d579e31f8f1",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

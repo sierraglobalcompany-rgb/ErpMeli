@@ -31,7 +31,7 @@
     {"path": "app/Services/DirectUpdateTransitionPolicy.php", "sha256": "5f67ad44b8ee9f2c6ce59a050a79ca0e0597b78ae97b79cb37e0ab1aaefe4187"},
     {"path": "app/Services/CronV3RetirementForV4Service.php", "sha256": "8fedd197a8ca43954fd639604b8defce8225f4e3a17ce1113cb5a1d466007422"},
     {"path": "app/Services/CronV3SetupAssistantService.php", "sha256": "3b6bfdfb0fb474c76dfcae8ccb643c0c1c80a62c230495e31e0980109a8dd4ea"},
-    {"path": "app/Services/V4ReadinessBootstrapService.php", "sha256": "770398dfe7aa3aef9eedea6eec16ffe9ecc6af304329bed38487b9cdd705a5b0"},
+    {"path": "app/Services/V4ReadinessBootstrapService.php", "sha256": "9d2fbae5c37e8ae74f82885bae5b0df91fb1a9f4f8f53dafa15b08e803a34eb1"},
     {"path": "app/Controllers/SettingsController.php", "sha256": "49f80f4c3ce44424b5834e6504a165cc10db0e71879f4894facc123bf5b3219a"},
     {"path": "app/Views/settings/cron_shell.php", "sha256": "b780a0041a2a1b9f1687d067be47658ae28fb895204624fa0ab6c9066932fcd2"},
     {"path": "public/assets/app.js", "sha256": "95c7c9826219ec556bd3f27582d4649e37b296d507bfde4b8ff966e8c5f73ca9"},

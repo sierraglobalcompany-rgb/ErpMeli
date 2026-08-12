@@ -80,7 +80,7 @@
     },
     {
       "path": "resources/release/managed-runtime-dependencies-2.36.15.json",
-      "sha256": "2ec0e753e9d34ee481f59fafc6d36c17dd055e384567380b7a31413892ebc6ba"
+      "sha256": "3c607ce1d486e11c5e95a50ff3d3bc0917483df7994d34aa18e64ce801ace973"
     },
     {
       "path": "app/QueueCore/QueueCoreCanaryUncertainRecoveryService.php",

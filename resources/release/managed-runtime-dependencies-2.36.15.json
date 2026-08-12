@@ -75,6 +75,12 @@
       "value": "#^tests/.+\\.php$#D"
     },
     {
+      "id": "release-artifact-builders",
+      "classification": "DEVELOPMENT_TOOL",
+      "kind": "regex",
+      "value": "#^bin/build_release_[0-9]+_artifacts\\.php$#D"
+    },
+    {
       "id": "documentation",
       "classification": "DOCUMENTATION",
       "kind": "regex",

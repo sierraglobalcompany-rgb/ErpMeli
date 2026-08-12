@@ -66,8 +66,8 @@ $pre = static function (
         'feature_generation_authority' => $featureAuthority,
         'runtime_authority' => $runtimeAuthority,
         'scheduler_absent_recorded' => $baseOk,
-        'file_version' => '2.36.12',
-        'app_version' => '2.36.12',
+        'file_version' => '2.36.13',
+        'app_version' => '2.36.13',
         'schema' => 293,
         'schema_count' => 293,
         'migration_293_count' => 1,
@@ -203,8 +203,8 @@ try {
     $assert($blocked['state'] === 'blocked', 'foreign_profile_not_blocked');
     $assert(str_starts_with($blocked['reason'], 'readiness_state_unclassified:'), 'unclassified_reason_missing');
 
-    echo 'V4 readiness state classifier 2.36.12: PASS checks=' . $checks . PHP_EOL;
+    echo 'V4 readiness state classifier 2.36.13: PASS checks=' . $checks . PHP_EOL;
 } catch (Throwable $error) {
-    fwrite(STDERR, 'V4 readiness state classifier 2.36.12: FAIL ' . $error->getMessage() . PHP_EOL);
+    fwrite(STDERR, 'V4 readiness state classifier 2.36.13: FAIL ' . $error->getMessage() . PHP_EOL);
     exit(1);
 }

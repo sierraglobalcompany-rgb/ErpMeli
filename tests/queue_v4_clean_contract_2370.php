@@ -16,6 +16,7 @@ $view = $read('app/Views/settings/cron_shell.php');
 $routes = $read('public/index.php');
 $controller = $read('app/Controllers/SettingsController.php');
 $worker = $read('app/QueueV4Clean/QueueV4CleanWorker.php');
+$producer = $read('app/QueueV4Clean/QueueV4CleanProducer.php');
 $readiness = $read('app/QueueV4Clean/QueueV4CleanReadinessService.php');
 $repository = $read('app/QueueV4Clean/QueueV4CleanRepository.php');
 
@@ -52,6 +53,8 @@ $assert(str_contains($worker . $repository, "state='ready'"), 'ready FIFO state 
 $assert(str_contains($worker, "max(1, min(3, \$maxJobs))"), 'worker max-jobs bound missing');
 $assert(str_contains($worker, "'source' => 'queue_v4_clean'"), 'worker source authority missing');
 $assert(!str_contains($worker, 'historical'), 'worker contains historical importer');
+$assert(str_contains($producer, 'queue_v4_clean_readiness_accounts'), 'producer is not bound to certified accounts');
+$assert(str_contains($producer, 'queue_v4_clean_certified_account_set_invalid'), 'producer exact certified account cardinality gate missing');
 
 foreach (['Comprobar y certificar', 'Activar', 'Detener'] as $button) {
     $assert(substr_count($view, '>' . $button . '</button>') === 1, 'UI action missing/duplicated: ' . $button);

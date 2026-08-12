@@ -25,11 +25,20 @@ final class QueueV4CleanProducer
         }
         $accounts = $this->pdo->query(
             'SELECT a.company_id,a.id meli_account_id
-             FROM meli_accounts a
+             FROM queue_v4_clean_readiness_accounts ra
+             INNER JOIN queue_v4_clean_readiness_runs rr
+               ON rr.id=ra.readiness_run_id AND rr.state="CERTIFIED"
+             INNER JOIN meli_accounts a
+               ON a.company_id=ra.company_id AND a.id=ra.meli_account_id
              INNER JOIN meli_tokens t ON t.meli_account_id=a.id
-             WHERE a.status IN ("conectado","connected")
+             WHERE ra.readiness_run_id=(
+                 SELECT MAX(id) FROM queue_v4_clean_readiness_runs WHERE state="CERTIFIED"
+             ) AND ra.outcome="PASS" AND a.status IN ("conectado","connected")
              ORDER BY a.company_id,a.id'
         )->fetchAll(PDO::FETCH_ASSOC);
+        if (count($accounts) !== 3) {
+            throw new RuntimeException('queue_v4_clean_certified_account_set_invalid');
+        }
         $created = 0;
         $now = time();
         $windowSeconds = max(60, min(900, $windowSeconds));

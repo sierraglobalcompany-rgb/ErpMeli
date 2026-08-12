@@ -172,6 +172,14 @@ try {
     $assert($secondProduction['created'] === 0 && $repository->counts()['total'] === 3, 'fresh producer is not idempotent inside cadence');
     $assert($firstProduction['historical_used'] === false, 'historical importer was used');
 
+    $accountInsert->execute([4, 6, '1004']);
+    $tokenInsert->execute([4, $encryptedAccess, $encryptedRefresh]);
+    $assert($producer->produce()['created'] === 0, 'uncertified connected account changed the certified producer set');
+    $assert(
+        (int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_checkpoints WHERE meli_account_id=4')->fetchColumn() === 0,
+        'uncertified account received a producer checkpoint'
+    );
+
     $seen = [];
     $worker = new QueueV4CleanWorker(
         $pdo,

@@ -148,6 +148,24 @@ final class InventoryQueryService
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
+    /** @return list<array<string,mixed>> */
+    public function accounts(int $companyId = 0): array
+    {
+        $ids = $this->scope->accountIds(null, $companyId);
+        if ($ids === []) {
+            return [];
+        }
+        $stmt = Database::connection()->prepare(
+            'SELECT a.id,a.company_id,a.account_name,c.name company_name
+             FROM meli_accounts a
+             JOIN companies c ON c.id=a.company_id
+             WHERE a.id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')
+             ORDER BY c.name,a.account_name,a.id'
+        );
+        $stmt->execute($ids);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
     /** @return array{0:list<string>,1:array<string,mixed>} */
     private function balanceFilters(array $filters): array
     {

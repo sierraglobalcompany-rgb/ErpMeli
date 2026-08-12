@@ -65,7 +65,8 @@ final class InventoryLedgerService
         $companyId = (int) $spec['company_id'];
         $warehouseId = (int) $spec['warehouse_id'];
         $productId = (int) $spec['internal_product_id'];
-        $this->assertEntities($companyId, $warehouseId, $productId);
+        $this->assertEntities($companyId, $warehouseId, $productId, $spec['meli_account_id']);
+        $this->assertReversalAuthority($spec);
 
         $this->pdo->prepare(
             'INSERT IGNORE INTO inventory_balances
@@ -240,7 +241,7 @@ final class InventoryLedgerService
         return $movement;
     }
 
-    private function assertEntities(int $companyId, int $warehouseId, int $productId): void
+    private function assertEntities(int $companyId, int $warehouseId, int $productId, ?int $accountId): void
     {
         $stmt = $this->pdo->prepare(
             'SELECT w.id
@@ -251,6 +252,50 @@ final class InventoryLedgerService
         $stmt->execute([$productId, $warehouseId, $companyId]);
         if (!$stmt->fetchColumn()) {
             throw new RuntimeException('La bodega o el producto no pertenecen a la empresa indicada.');
+        }
+        if ($accountId !== null) {
+            $account = $this->pdo->prepare(
+                'SELECT 1 FROM meli_accounts WHERE id=? AND company_id=? LIMIT 1'
+            );
+            $account->execute([$accountId, $companyId]);
+            if ($account->fetchColumn() === false) {
+                throw new RuntimeException('La cuenta Mercado Libre no pertenece a la empresa indicada.');
+            }
+        }
+    }
+
+    /** @param array<string,mixed> $spec */
+    private function assertReversalAuthority(array $spec): void
+    {
+        $reversalId = $spec['reversal_of_movement_id'];
+        if ($spec['movement_type'] !== 'sale_reversal') {
+            if ($reversalId !== null) {
+                throw new RuntimeException('Sólo una reversión de venta puede referenciar otro movimiento.');
+            }
+            return;
+        }
+        if (!is_int($reversalId) || $reversalId < 1) {
+            throw new RuntimeException('La reversión requiere el movimiento de venta original.');
+        }
+        $stmt = $this->pdo->prepare(
+            'SELECT company_id,warehouse_id,internal_product_id,meli_account_id,
+                    movement_type,on_hand_delta,unit_cost
+             FROM inventory_movements WHERE id=? FOR UPDATE'
+        );
+        $stmt->execute([$reversalId]);
+        $original = $stmt->fetch(PDO::FETCH_ASSOC);
+        $originalAccount = is_array($original) && $original['meli_account_id'] !== null
+            ? (int) $original['meli_account_id'] : null;
+        if (!is_array($original)
+            || (string) $original['movement_type'] !== 'sale_issue'
+            || (int) $original['company_id'] !== (int) $spec['company_id']
+            || (int) $original['warehouse_id'] !== (int) $spec['warehouse_id']
+            || (int) $original['internal_product_id'] !== (int) $spec['internal_product_id']
+            || $originalAccount !== $spec['meli_account_id']
+            || !hash_equals(ltrim((string) $original['on_hand_delta'], '-'), (string) $spec['quantity'])
+            || !hash_equals((string) $original['unit_cost'], (string) $spec['unit_cost'])
+        ) {
+            throw new RuntimeException('La reversión no coincide exactamente con la venta original.');
         }
     }
 

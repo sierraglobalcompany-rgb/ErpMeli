@@ -54,7 +54,8 @@ final class InventoryController
         $companies = $query->companies();
         $warehouses = (new InventoryWarehouseService())->warehouses($filters['company_id']);
         $products = $filters['company_id'] > 0 ? $query->products($filters['company_id']) : [];
-        View::render('inventory/kardex', compact('filters', 'pageData', 'companies', 'warehouses', 'products'));
+        $accounts = $query->accounts($filters['company_id']);
+        View::render('inventory/kardex', compact('filters', 'pageData', 'companies', 'warehouses', 'products', 'accounts'));
     }
 
     public function createWarehouse(): void

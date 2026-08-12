@@ -128,6 +128,13 @@ $base = static fn(string $type,string $qty,string $cost,string $key,int $product
     'quantity'=>$qty,'unit_cost'=>$cost,'reference_type'=>'test','reference_id'=>$key,
     'idempotency_key'=>$key,'source'=>'system',
 ];
+try {
+    $ledger->applyBatch([$base('receipt','1','1','cross-account-ledger') + ['meli_account_id'=>2]]);
+    $assert(false, 'cross_account_ledger_must_throw');
+} catch (RuntimeException) {
+    $assert(true, 'cross_account_ledger_blocked');
+}
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE idempotency_key='cross-account-ledger'")->fetchColumn()===0, 'cross_account_ledger_zero_delta');
 $ledger->applyBatch([$base('opening','10','5','open')]);
 $ledger->applyBatch([$base('receipt','10','7','receipt')]);
 $sale = $ledger->applyBatch([$base('sale_issue','4','0','sale')])[0];
@@ -171,6 +178,20 @@ for ($repeat=0; $repeat<10; $repeat++) {
 $assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=5')->fetchColumn()==='140.000000', 'numeric_case_3_idempotent_stock');
 $assert($numericSale['unit_cost']==='12.000000' && $numericSale['total_cost']==='120.000000', 'numeric_case_3_sale_cost');
 $assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE internal_product_id=5 AND movement_type='sale_issue'")->fetchColumn()===1, 'numeric_case_4_sale_once');
+foreach ([
+    $base('sale_reversal','9','12','bad-reversal-qty',5) + ['reversal_of_movement_id'=>(int)$numericSale['id']],
+    $base('sale_reversal','10','11','bad-reversal-cost',5) + ['reversal_of_movement_id'=>(int)$numericSale['id']],
+    $base('sale_reversal','10','12','bad-reversal-product',1) + ['reversal_of_movement_id'=>(int)$numericSale['id']],
+    $base('receipt','1','1','bad-reversal-type',5) + ['reversal_of_movement_id'=>(int)$numericSale['id']],
+] as $invalidReversal) {
+    try {
+        $ledger->applyBatch([$invalidReversal]);
+        $assert(false, 'invalid_reversal_must_throw');
+    } catch (RuntimeException) {
+        $assert(true, 'invalid_reversal_blocked');
+    }
+}
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE idempotency_key LIKE 'bad-reversal-%'")->fetchColumn()===0, 'invalid_reversal_zero_delta');
 $ledger->applyBatch([$base('sale_reversal','10','12','numeric-reversal',5) + ['reversal_of_movement_id'=>(int)$numericSale['id']]]);
 $ledger->applyBatch([$base('sale_reversal','10','12','numeric-reversal',5) + ['reversal_of_movement_id'=>(int)$numericSale['id']]]);
 $assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=5')->fetchColumn()==='150.000000', 'numeric_case_5_reversal_stock');
@@ -231,6 +252,38 @@ $beforeAmbiguous = (int) $pdo->query('SELECT COUNT(*) FROM inventory_movements')
 $ambiguous = $projection->project(1,1,15);
 $assert($ambiguous['outcome']==='review' && $ambiguous['movements']===0, 'ambiguous_link_review');
 $assert((int)$pdo->query('SELECT COUNT(*) FROM inventory_movements')->fetchColumn()===$beforeAmbiguous, 'ambiguous_link_zero_delta');
+
+// Una orden mixta nunca se aplica parcialmente: una línea sin autoridad bloquea el lote completo.
+$pdo->exec("INSERT INTO meli_orders VALUES (16,1,'ORDER-MIX-U',NULL,'paid','paid'),(17,1,'ORDER-MIX-A',NULL,'paid','paid')");
+$pdo->exec("INSERT INTO meli_order_items(meli_order_id,meli_account_id,external_item_id,external_variation_id,title,seller_sku,quantity) VALUES
+    (16,1,'MLA1',NULL,'V','MLSKU',1),(16,1,'MISSING-MIX',NULL,'U','U',1),
+    (17,1,'MLA1',NULL,'V','MLSKU',1),(17,1,'AMBIGUOUS',NULL,'A','A',1)");
+$beforeMixedMovements = (int)$pdo->query('SELECT COUNT(*) FROM inventory_movements')->fetchColumn();
+$beforeMixedStock = $pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn();
+$mixedUnlinked = $projection->project(1,1,16);
+$mixedAmbiguous = $projection->project(1,1,17);
+$assert($mixedUnlinked['outcome']==='review' && $mixedUnlinked['movements']===0, 'mixed_unlinked_order_atomic');
+$assert($mixedAmbiguous['outcome']==='review' && $mixedAmbiguous['movements']===0, 'mixed_ambiguous_order_atomic');
+$assert((int)$pdo->query('SELECT COUNT(*) FROM inventory_movements')->fetchColumn()===$beforeMixedMovements, 'mixed_orders_zero_movements');
+$assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()===$beforeMixedStock, 'mixed_orders_zero_stock_delta');
+
+// Dos listings distintos ligados al mismo producto se agregan antes del ledger.
+$pdo->exec("INSERT INTO meli_items VALUES (4,1,'MLA2','Segundo listing','MLSKU2')");
+$pdo->exec("INSERT INTO product_meli_links(internal_product_id,meli_account_id,meli_item_id,meli_variation_id,conversion_factor,status) VALUES (1,1,4,0,3.0000,'active')");
+$pdo->exec("INSERT INTO meli_orders VALUES (18,1,'ORDER-SAME-PRODUCT',NULL,'paid','paid')");
+$pdo->exec("INSERT INTO meli_order_items(meli_order_id,meli_account_id,external_item_id,external_variation_id,title,seller_sku,quantity) VALUES
+    (18,1,'MLA1',NULL,'Uno','MLSKU',1),(18,1,'MLA2',NULL,'Dos','MLSKU2',1)");
+$beforeSameProduct = $pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn();
+$sameProduct = $projection->project(1,1,18);
+$afterSameProduct = $pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn();
+$assert($sameProduct['outcome']==='applied' && $sameProduct['movements']===1, 'same_product_lines_aggregated_once');
+$assert((string)$pdo->query("SELECT on_hand_delta FROM inventory_movements WHERE reference_id='ORDER-SAME-PRODUCT' AND movement_type='sale_issue'")->fetchColumn()==='-6.000000', 'same_product_total_quantity');
+$projection->project(1,1,18);
+$assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()===$afterSameProduct, 'same_product_retry_idempotent');
+$pdo->exec("UPDATE meli_orders SET status='cancelled' WHERE id=18 AND meli_account_id=1");
+$projection->project(1,1,18); $projection->project(1,1,18);
+$assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()===$beforeSameProduct, 'same_product_cancel_restores_total');
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE reference_id='ORDER-SAME-PRODUCT' AND movement_type='sale_reversal'")->fetchColumn()===1, 'same_product_reversal_once');
 
 // La empresa/cuenta no puede proyectar una orden ajena.
 try {

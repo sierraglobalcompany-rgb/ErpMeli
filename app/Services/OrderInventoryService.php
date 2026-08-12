@@ -41,7 +41,13 @@ final class OrderInventoryService
         $this->resolveReason($companyId, $accountId, $orderId, 'WAREHOUSE_NOT_CONFIGURED');
 
         $lines = $this->saleLines($companyId, $accountId, $orderId);
-        $specs = [];
+        if ($lines === []) {
+            $this->review($order, null, 'UNLINKED_PRODUCT', null, null, [
+                'order_items_present' => false,
+            ], 'no-order-items');
+            return ['outcome' => 'review', 'movements' => 0, 'reviews' => 1];
+        }
+        $specsByProduct = [];
         $reviews = 0;
         foreach ($lines as $line) {
             if ((int) ($line['internal_product_id'] ?? 0) < 1) {
@@ -55,7 +61,14 @@ final class OrderInventoryService
                 continue;
             }
             $productId = (int) $line['internal_product_id'];
-            $specs[] = [
+            if (isset($specsByProduct[$productId])) {
+                $specsByProduct[$productId]['quantity'] = $this->addDecimal(
+                    (string) $specsByProduct[$productId]['quantity'],
+                    (string) $line['warehouse_quantity']
+                );
+                continue;
+            }
+            $specsByProduct[$productId] = [
                 'company_id' => $companyId,
                 'warehouse_id' => (int) $warehouse['id'],
                 'internal_product_id' => $productId,
@@ -70,6 +83,14 @@ final class OrderInventoryService
                 'reason' => 'Salida automática por venta pagada.',
             ];
         }
+
+        // La orden es la unidad atómica de consumo. Una sola línea sin
+        // autoridad exacta impide descontar todas las demás líneas; así un
+        // retry posterior al enlace aplica la orden completa exactamente una vez.
+        if ($reviews > 0) {
+            return ['outcome' => 'review', 'movements' => 0, 'reviews' => $reviews];
+        }
+        $specs = array_values($specsByProduct);
 
         try {
             $movements = (new InventoryLedgerService($this->pdo))->applyBatch($specs);
@@ -247,5 +268,18 @@ final class OrderInventoryService
              WHERE company_id=? AND meli_account_id=? AND meli_order_id=?
                AND reason_code=? AND state="open"'
         )->execute([$companyId, $accountId, $orderId, $reason]);
+    }
+
+    private function addDecimal(string $left, string $right): string
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT CAST(CAST(? AS DECIMAL(20,6))+CAST(? AS DECIMAL(20,6)) AS CHAR)'
+        );
+        $stmt->execute([$left, $right]);
+        $sum = $stmt->fetchColumn();
+        if (!is_string($sum) || preg_match('/^\d{1,14}(?:\.\d{1,6})?$/', $sum) !== 1) {
+            throw new RuntimeException('La cantidad agregada de la orden no es válida.');
+        }
+        return $sum;
     }
 }

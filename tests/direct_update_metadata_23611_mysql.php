@@ -77,7 +77,7 @@ try {
     $service->promote($pdo, '2.36.11', '293_queue_core_runtime_profile_defaults_b2_1.sql', 'repeat');
     $assert((int) $pdo->query("SELECT COUNT(*) FROM app_versions WHERE version='2.36.11'")->fetchColumn() === 1, 'Idempotent retry duplicated history.');
 
-    $pdo->exec("UPDATE app_settings SET setting_value='2.36.11' WHERE setting_key='app.version'");
+    $pdo->exec("UPDATE app_settings SET setting_value='2.36.12' WHERE setting_key='app.version'");
     $markerBeforeDowngrade = file_get_contents($temporary . '/storage/installed-release.json');
     try {
         $service->promote($pdo, '2.36.11', '293_queue_core_runtime_profile_defaults_b2_1.sql');

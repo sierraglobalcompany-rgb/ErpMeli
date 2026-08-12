@@ -53,11 +53,11 @@ try {
     ]);
     $pdo->exec('CREATE TABLE app_settings(setting_key VARCHAR(191) PRIMARY KEY,setting_value TEXT NOT NULL) ENGINE=InnoDB');
     $pdo->exec('CREATE TABLE app_versions(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,version VARCHAR(32) NOT NULL UNIQUE,notes TEXT NULL,installed_at DATETIME NOT NULL) ENGINE=InnoDB');
-    $pdo->exec("INSERT INTO app_settings(setting_key,setting_value) VALUES('app.version','2.36.9')");
-    $pdo->exec("INSERT INTO app_versions(version,notes,installed_at) VALUES('2.36.9','baseline',CURRENT_TIMESTAMP)");
+    $pdo->exec("INSERT INTO app_settings(setting_key,setting_value) VALUES('app.version','2.36.10')");
+    $pdo->exec("INSERT INTO app_versions(version,notes,installed_at) VALUES('2.36.10','baseline',CURRENT_TIMESTAMP)");
 
     $marker = new InstalledVersionMarkerService();
-    $assert($marker->write('2.36.9', '293_queue_core_runtime_profile_defaults_b2_1.sql'), 'Baseline marker write failed.');
+    $assert($marker->write('2.36.10', '293_queue_core_runtime_profile_defaults_b2_1.sql'), 'Baseline marker write failed.');
     $baselineMarker = file_get_contents($temporary . '/storage/installed-release.json');
     $assert(is_string($baselineMarker), 'Baseline marker missing.');
 
@@ -68,7 +68,7 @@ try {
         '293_queue_core_runtime_profile_defaults_b2_1.sql',
         'local test'
     );
-    $assert($result['previous_version'] === '2.36.9', 'Previous version receipt mismatch.');
+    $assert($result['previous_version'] === '2.36.10', 'Previous version receipt mismatch.');
     $assert($pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === '2.36.11', 'app.version was not promoted.');
     $assert((int) $pdo->query("SELECT COUNT(*) FROM app_versions WHERE version='2.36.11'")->fetchColumn() === 1, 'Target history row missing.');
     $observed = $marker->read();
@@ -87,7 +87,7 @@ try {
     }
     $assert(file_get_contents($temporary . '/storage/installed-release.json') === $markerBeforeDowngrade, 'Downgrade changed marker.');
 
-    $pdo->exec("UPDATE app_settings SET setting_value='2.36.9' WHERE setting_key='app.version'");
+    $pdo->exec("UPDATE app_settings SET setting_value='2.36.10' WHERE setting_key='app.version'");
     $pdo->exec("DELETE FROM app_versions WHERE version='2.36.11'");
     file_put_contents($temporary . '/storage/installed-release.json', $baselineMarker);
     putenv('APP_KEY');
@@ -102,7 +102,7 @@ try {
             'Unexpected marker failure error: ' . $expected->getMessage()
         );
     }
-    $assert($pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === '2.36.9', 'DB rollback after marker failure failed.');
+    $assert($pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === '2.36.10', 'DB rollback after marker failure failed.');
     $assert((int) $pdo->query("SELECT COUNT(*) FROM app_versions WHERE version='2.36.11'")->fetchColumn() === 0, 'History rollback after marker failure failed.');
     $assert(file_get_contents($temporary . '/storage/installed-release.json') === $baselineMarker, 'Marker preimage changed on failed promotion.');
 
@@ -113,14 +113,14 @@ try {
     $absentTarget = $marker->read();
     $assert($absentTarget['valid'] && $absentTarget['version'] === '2.36.11', 'Absent marker was not promoted safely.');
 
-    $pdo->exec("UPDATE app_settings SET setting_value='2.36.9' WHERE setting_key='app.version'");
+    $pdo->exec("UPDATE app_settings SET setting_value='2.36.10' WHERE setting_key='app.version'");
     $pdo->exec("DELETE FROM app_versions WHERE version='2.36.11'");
     file_put_contents($temporary . '/storage/installed-release.json', '{"tampered":true}');
     $service->promote($pdo, '2.36.11', '293_queue_core_runtime_profile_defaults_b2_1.sql', 'tampered marker');
     $tamperedTarget = $marker->read();
     $assert($tamperedTarget['valid'] && $tamperedTarget['version'] === '2.36.11', 'Tampered marker was not replaced by exact target authority.');
 
-    $pdo->exec("UPDATE app_settings SET setting_value='2.36.9' WHERE setting_key='app.version'");
+    $pdo->exec("UPDATE app_settings SET setting_value='2.36.10' WHERE setting_key='app.version'");
     $pdo->exec("DELETE FROM app_versions WHERE version='2.36.11'");
     file_put_contents($temporary . '/storage/installed-release.json', $baselineMarker);
     $contender = new PDO($dsn . ';dbname=' . $database, $user, $password, [
@@ -139,7 +139,7 @@ try {
         $contender->query("SELECT RELEASE_LOCK('erp_meli_direct_update_metadata')");
         $contender = null;
     }
-    $assert($pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === '2.36.9', 'Lock contention changed app.version.');
+    $assert($pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === '2.36.10', 'Lock contention changed app.version.');
     $assert(file_get_contents($temporary . '/storage/installed-release.json') === $baselineMarker, 'Lock contention changed marker.');
 
     $stale = new PDO($dsn . ';dbname=' . $database, $user, $password, [

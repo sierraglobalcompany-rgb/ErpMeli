@@ -170,12 +170,12 @@ try {
          VALUES (?, ?, ?, "admin", 1, 0, 0)'
     );
     $insertUser->execute(['Administrador QA 2.36.11', $email, password_hash($password, PASSWORD_DEFAULT)]);
-    $pdo->exec("DELETE FROM app_versions WHERE version IN ('2.36.9','2.36.11')");
-    $pdo->exec("INSERT INTO app_versions(version,notes) VALUES('2.36.9','baseline sintético local')");
+    $pdo->exec("DELETE FROM app_versions WHERE version IN ('2.36.10','2.36.11')");
+    $pdo->exec("INSERT INTO app_versions(version,notes) VALUES('2.36.10','baseline sintético local')");
     $setting = $pdo->prepare(
         "INSERT INTO app_settings(setting_key,setting_value,is_encrypted,setting_group)
-         VALUES('app.version','2.36.9',0,'system')
-         ON DUPLICATE KEY UPDATE setting_value='2.36.9',is_encrypted=0,setting_group='system'"
+         VALUES('app.version','2.36.10',0,'system')
+         ON DUPLICATE KEY UPDATE setting_value='2.36.10',is_encrypted=0,setting_group='system'"
     );
     $setting->execute();
     $lastMigration = (string) $pdo->query(
@@ -183,7 +183,7 @@ try {
          ORDER BY CAST(SUBSTRING_INDEX(version,'_',1) AS UNSIGNED) DESC, BINARY version DESC LIMIT 1"
     )->fetchColumn();
     $check($lastMigration === '293_queue_core_runtime_profile_defaults_b2_1.sql', 'schema_293_missing');
-    $check((new InstalledVersionMarkerService())->write('2.36.9', $lastMigration), 'baseline_marker_write_failed');
+    $check((new InstalledVersionMarkerService())->write('2.36.10', $lastMigration), 'baseline_marker_write_failed');
 
     $stage = 'login_get';
     $login = qa23611Request($base . '/login.php', $cookie);
@@ -302,7 +302,7 @@ try {
         'status' => 'PASS',
         'checks' => $checks,
         'base_path' => '/erp-meli',
-        'before' => ['file_version' => '2.36.11', 'app_version' => '2.36.9', 'marker' => '2.36.9', 'schema' => 293],
+        'before' => ['file_version' => '2.36.11', 'app_version' => '2.36.10', 'marker' => '2.36.10', 'schema' => 293],
         'after' => ['file_version' => '2.36.11', 'app_version' => '2.36.11', 'marker' => '2.36.11', 'schema' => 293],
         'database_write_set' => ['app_settings:app.version', 'app_versions:2.36.11'],
         'filesystem_write_set' => ['storage/installed-release.json'],

@@ -165,7 +165,7 @@ final class MeliApiClient implements MeliReadClientInterface
         }
         $singleDispatchAttempt = in_array(
             (string) ($meta['source'] ?? ''),
-            ['queue_core', 'cron_v3_remote', 'manual_campaign', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'],
+            ['queue_core', 'queue_v4_clean', 'queue_v4_clean_readiness', 'cron_v3_remote', 'manual_campaign', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'],
             true
         );
         $manualEmergencyCanary = (string) ($meta['source'] ?? '') === 'manual_emergency_canary';

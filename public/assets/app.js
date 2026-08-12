@@ -511,6 +511,86 @@
   }
 })();
 
+(() => {
+  const root = document.querySelector('[data-queue-v4-clean]');
+  if (!root) return;
+  const password = root.querySelector('[data-qv4-password]');
+  const feedback = root.querySelector('[data-qv4-feedback]');
+  let snapshot = null;
+  const actions = [...root.querySelectorAll('[data-qv4-action]')];
+  const labels = {
+    NOT_READY: 'No preparado', READY_TO_TEST: 'Listo para comprobar', TESTING: 'Comprobando',
+    CERTIFIED: 'Certificado', FAILED: 'Falló la comprobación'
+  };
+  const syncButtons = () => {
+    const hasPassword = Boolean(password?.value);
+    actions.forEach((form) => {
+      const action = form.dataset.qv4Action;
+      const button = form.querySelector('button');
+      const enabled = action === 'readiness'
+        ? snapshot?.state === 'READY_TO_TEST'
+        : action === 'activate'
+          ? snapshot?.state === 'CERTIFIED' && snapshot?.engine === 'CERTIFIED'
+          : snapshot?.engine === 'ACTIVE';
+      if (button) button.disabled = !(hasPassword && enabled);
+    });
+  };
+  const render = (data) => {
+    snapshot = data;
+    root.querySelector('[data-qv4-state]').textContent = labels[data.state] || data.state || 'No preparado';
+    root.querySelector('[data-qv4-message]').textContent = (data.issues || []).length
+      ? `Bloqueado: ${(data.issues || []).join(', ')}.`
+      : 'La autoridad nueva está coherente y no depende del estado legacy.';
+    root.querySelector('[data-qv4-engine]').textContent = data.engine || 'STOPPED';
+    root.querySelector('[data-qv4-oauth]').textContent = `${Number(data.accounts_oauth || 0)}/3`;
+    root.querySelector('[data-qv4-readiness]').textContent = `${Number(data.readiness_get_passed || 0)}/3`;
+    root.querySelector('[data-qv4-scheduler]').textContent = data.scheduler === 'active' ? 'Activo' : 'Inactivo';
+    Object.entries(data.queue || {}).forEach(([key, value]) => {
+      const node = root.querySelector(`[data-qv4-count="${key}"]`);
+      if (node) node.textContent = String(value);
+    });
+    root.querySelector('[data-qv4-legacy]').textContent = data.legacy_state_consulted ? 'Error: legado consultado' : 'Legado no consultado';
+    syncButtons();
+  };
+  const refresh = async () => {
+    try {
+      const response = await fetch(root.dataset.statusUrl, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+      const data = await response.json();
+      if (!response.ok || data.ok === false) throw new Error(data.message || 'Queue V4 no disponible.');
+      render(data);
+      feedback.textContent = 'Estado actualizado sin mutaciones.';
+    } catch (error) {
+      feedback.textContent = error?.message || 'No se pudo leer Queue V4.';
+    }
+  };
+  password?.addEventListener('input', syncButtons);
+  actions.forEach((form) => form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('button');
+    if (!button || button.disabled) return;
+    form.querySelector('[name="admin_password"]').value = password.value;
+    const previous = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Procesando…';
+    try {
+      const response = await fetch(form.action, {
+        method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' }, body: new FormData(form)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) throw new Error(data.message || 'Operación bloqueada.');
+      password.value = '';
+      feedback.textContent = data.state ? `Queue V4: ${data.state}.` : 'Operación completada.';
+      await refresh();
+    } catch (error) {
+      feedback.textContent = error?.message || 'La operación se bloqueó sin cambiar el motor.';
+    } finally {
+      button.textContent = previous;
+      syncButtons();
+    }
+  }));
+  refresh();
+})();
+
 // Centro de Automatización 2.28.10: polling ligero, sin crear ni modificar trabajo.
 (() => {
   const root = document.querySelector('[data-cron-control]');

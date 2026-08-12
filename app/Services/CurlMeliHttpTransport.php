@@ -60,7 +60,7 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             },
         ];
         $emergencySource = (string) (ApiExecutionMetadataContext::current()['source'] ?? '');
-        if (in_array($emergencySource, ['queue_core', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'], true)) {
+        if (in_array($emergencySource, ['queue_core', 'queue_v4_clean', 'queue_v4_clean_readiness', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'], true)) {
             // Un redirect también sería otra solicitud física. El canario no
             // puede seguirlo, ni siquiera cuando el servidor responda 301/302.
             $options[CURLOPT_FOLLOWLOCATION] = false;

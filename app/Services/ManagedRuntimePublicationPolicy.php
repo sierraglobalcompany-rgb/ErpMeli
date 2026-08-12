@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.36.15.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.37.0.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -41,76 +41,82 @@ final class ManagedRuntimePublicationPolicy
     ];
     public const BASE_COMMIT = '75997f864b917c829d19f14e21cd7303d2685776';
     public const INSTALLED_BASE_COMMIT = 'f91cd534d271b964db1ad9e682260475eca96820';
-    public const VERSION = '2.36.15';
-    public const BUILD_ID = 'erp-meli-2.36.15-v4-canary-uncertain-get-recovery-hotfix-rc1-20260812';
-    public const BUILT_AT = '2026-08-12T10:00:00Z';
-    public const MINIMUM_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
+    public const VERSION = '2.37.0';
+    public const BUILD_ID = 'erp-meli-2.37.0-queue-v4-clean-greenfield-rc1-20260812';
+    public const BUILT_AT = '2026-08-12T18:00:00Z';
+    public const MINIMUM_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';
+    private const LEGACY_MINIMUM_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
     /** @var array<string,array{build_id:string,minimum_migration:string,dependency_registry:string}> */
     private const INSTALLED_PROFILES = [
         '2.36.2' => [
             'build_id' => 'erp-meli-2.36.2-managed-entrypoint-bootstrap-rc1-20260809',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.2.json',
         ],
         '2.36.3' => [
             'build_id' => 'erp-meli-2.36.3-direct-updater-authority-hotfix-rc1-20260810',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.3.json',
         ],
         '2.36.4' => [
             'build_id' => 'erp-meli-2.36.4-safe-config-retirement-hotfix-rc1-20260811',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.4.json',
         ],
         '2.36.5' => [
             'build_id' => 'erp-meli-2.36.5-v3-retirement-admin-hotfix-rc1-20260811',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.5.json',
         ],
         '2.36.6' => [
             'build_id' => 'erp-meli-2.36.6-v4-readiness-bootstrap-hotfix-rc1-20260811',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.6.json',
         ],
         '2.36.7' => [
             'build_id' => 'erp-meli-2.36.7-feature-flag-order-hotfix-rc1-20260811',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.7.json',
         ],
         '2.36.8' => [
             'build_id' => 'erp-meli-2.36.8-v4-partial-arm-recovery-hotfix-rc1-20260811',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.8.json',
         ],
         '2.36.9' => [
             'build_id' => 'erp-meli-2.36.9-v4-password-recovery-hotfix-rc1-20260812',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.9.json',
         ],
         '2.36.10' => [
             'build_id' => 'erp-meli-2.36.10-v4-generation-authority-hotfix-rc1-20260812',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.10.json',
         ],
         '2.36.11' => [
             'build_id' => 'erp-meli-2.36.11-v4-readiness-classifier-hotfix-rc1-20260812',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.11.json',
         ],
         '2.36.12' => [
             'build_id' => 'erp-meli-2.36.12-v4-bootstrap-typeerror-hotfix-rc1-20260812',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.12.json',
         ],
         '2.36.13' => [
             'build_id' => 'erp-meli-2.36.13-v4-config-authority-postimage-hotfix-rc1-20260812',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.13.json',
         ],
         '2.36.14' => [
             'build_id' => 'erp-meli-2.36.14-v4-operational-readiness-no-preb2-backup-hotfix-rc1-20260812',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.14.json',
+        ],
+        '2.36.15' => [
+            'build_id' => 'erp-meli-2.36.15-v4-canary-uncertain-get-recovery-hotfix-rc1-20260812',
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.15.json',
         ],
         self::VERSION => [
             'build_id' => self::BUILD_ID,

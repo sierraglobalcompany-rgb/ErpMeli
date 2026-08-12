@@ -14,6 +14,13 @@ final class MeliEmergencyStopService
             return;
         }
 
+        // Queue V4 Clean readiness has an in-memory, exact-account context.
+        // The physical transport repeats the method/path/account check before
+        // cURL, so this early exception cannot authorize operational traffic.
+        if (\App\QueueV4Clean\QueueV4CleanTransportContext::readinessActive()) {
+            return;
+        }
+
         // PAUSE_MELI_API continúa presente. La única excepción es una reserva
         // OAuth privada, exacta y todavía no consumida; la última barrera vuelve
         // a validar y consume ese permiso inmediatamente antes de cURL.
@@ -33,6 +40,15 @@ final class MeliEmergencyStopService
         $path = (string) (parse_url($url, PHP_URL_PATH) ?: '/');
         if ($this->active()) {
             $source = (string) (ApiExecutionMetadataContext::current()['source'] ?? '');
+            $transportAccount = (int) (ApiExecutionMetadataContext::current()['transport_meli_account_id'] ?? 0);
+            if ($source === 'queue_v4_clean_readiness'
+                && \App\QueueV4Clean\QueueV4CleanTransportContext::allowsReadinessGet(
+                    $method,
+                    $path,
+                    $transportAccount,
+                )) {
+                return;
+            }
             if ($source === 'manual_emergency_oauth_refresh') {
                 (new EmergencyControlService())->claimEmergencyOAuthRefreshTransport($method, $path);
                 return;

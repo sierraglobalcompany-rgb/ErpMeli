@@ -433,6 +433,70 @@ final class SettingsController
         View::render('settings/cron_shell', compact('safety', 'overview'));
     }
 
+    public function queueV4CleanStatus(): void
+    {
+        $this->requireAdminPermanent();
+        $this->releaseReadOnlySession();
+        try {
+            $this->json((new \App\QueueV4Clean\QueueV4CleanReadinessService(
+                Database::connectionFresh(),
+            ))->snapshot());
+        } catch (\Throwable) {
+            http_response_code(503);
+            $this->json([
+                'ok' => false,
+                'state' => 'NOT_READY',
+                'message' => 'Queue V4 no está disponible. No se modificó ninguna cola.',
+            ]);
+        }
+    }
+
+    public function queueV4CleanReadiness(): void
+    {
+        $this->queueV4CleanMutation('readiness');
+    }
+
+    public function queueV4CleanActivate(): void
+    {
+        $this->queueV4CleanMutation('activate');
+    }
+
+    public function queueV4CleanStop(): void
+    {
+        $this->queueV4CleanMutation('stop');
+    }
+
+    private function queueV4CleanMutation(string $action): void
+    {
+        $this->requireAdminPermanent();
+        $this->assertSameOrigin();
+        Csrf::validate($_POST['_token'] ?? null);
+        (new \App\Services\AdministrativeReauthenticationService())->requirePassword(
+            (string) ($_POST['admin_password'] ?? '')
+        );
+        try {
+            $pdo = Database::connectionFresh();
+            $actorId = (int) Auth::id();
+            $result = match ($action) {
+                'readiness' => (new \App\QueueV4Clean\QueueV4CleanReadinessService($pdo))->certify($actorId),
+                'activate' => (new \App\QueueV4Clean\QueueV4CleanControlService($pdo))->activate($actorId),
+                'stop' => (new \App\QueueV4Clean\QueueV4CleanControlService($pdo))->stop($actorId),
+                default => throw new \RuntimeException('queue_v4_clean_action_invalid'),
+            };
+            $this->json($result);
+        } catch (\Throwable $error) {
+            http_response_code(409);
+            $this->json([
+                'ok' => false,
+                'message' => \App\Services\SafeErrorPresenter::message(
+                    $error,
+                    'Queue V4 bloqueó la operación sin cambiar el motor.',
+                    ['module' => 'queue_v4_clean', 'action' => $action],
+                ),
+            ]);
+        }
+    }
+
     public function cronSection(): void
     {
         $this->requireAdminPermanent();
@@ -578,6 +642,7 @@ final class SettingsController
 
     public function prepareCronV3SafeConfig(): void
     {
+        $this->assertLegacyCronMutationDisabled();
         $this->requireAdminPermanent();
         $this->assertSameOrigin();
         Csrf::validate($_POST['_token'] ?? null);
@@ -599,6 +664,7 @@ final class SettingsController
 
     public function enableCronV3Shadow(): void
     {
+        $this->assertLegacyCronMutationDisabled();
         $this->requireAdminPermanent();
         $this->assertSameOrigin();
         Csrf::validate($_POST['_token'] ?? null);
@@ -651,6 +717,7 @@ final class SettingsController
 
     public function prepareCronV3Canary(): void
     {
+        $this->assertLegacyCronMutationDisabled();
         $this->requireAdminPermanent();
         $this->assertSameOrigin();
         Csrf::validate($_POST['_token'] ?? null);
@@ -659,6 +726,7 @@ final class SettingsController
 
     public function enableCronV3LocalCanary(): void
     {
+        $this->assertLegacyCronMutationDisabled();
         $this->requireAdminPermanent();
         $this->assertSameOrigin();
         Csrf::validate($_POST['_token'] ?? null);
@@ -667,6 +735,7 @@ final class SettingsController
 
     public function enableCronV3RemoteCanary(): void
     {
+        $this->assertLegacyCronMutationDisabled();
         $this->requireAdminPermanent();
         $this->assertSameOrigin();
         Csrf::validate($_POST['_token'] ?? null);
@@ -675,6 +744,7 @@ final class SettingsController
 
     public function rollbackCronV3Canary(): void
     {
+        $this->assertLegacyCronMutationDisabled();
         $this->requireAdminPermanent();
         $this->assertSameOrigin();
         Csrf::validate($_POST['_token'] ?? null);
@@ -2474,6 +2544,17 @@ final class SettingsController
         if (Auth::isTemporary()) {
             http_response_code(403);
             exit('Los accesos temporales no pueden entrar a Configuración.');
+        }
+    }
+
+    private function assertLegacyCronMutationDisabled(): void
+    {
+        $version = trim((string) @file_get_contents(dirname(__DIR__, 2) . '/VERSION'));
+        if ($version === '2.37.0') {
+            throw new \App\Core\HttpException(
+                410,
+                'Cron V2/V3 y el readiness heredado fueron retirados. Use Queue V4.',
+            );
         }
     }
 

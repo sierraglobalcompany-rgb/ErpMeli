@@ -392,6 +392,10 @@ $router->post('/settings/imported-data-reset/resume', [ImportedMeliDataResetCont
 $router->post('/settings/imported-data-reset/abandon', [ImportedMeliDataResetController::class, 'abandon']);
 $router->post('/settings', [SettingsController::class, 'save']);
 $router->get('/settings/cron', [SettingsController::class, 'cron']);
+$router->get('/settings/cron/queue-v4.json', [SettingsController::class, 'queueV4CleanStatus']);
+$router->post('/settings/cron/queue-v4/readiness', [SettingsController::class, 'queueV4CleanReadiness']);
+$router->post('/settings/cron/queue-v4/activate', [SettingsController::class, 'queueV4CleanActivate']);
+$router->post('/settings/cron/queue-v4/stop', [SettingsController::class, 'queueV4CleanStop']);
 $router->get('/settings/cron/section.json', [SettingsController::class, 'cronSection']);
 $router->get('/settings/cron/operational-snapshot.json', [SettingsController::class, 'cronOperationalSnapshot']);
 $router->get('/settings/cron/overview.json', [SettingsController::class, 'cronOverview']);

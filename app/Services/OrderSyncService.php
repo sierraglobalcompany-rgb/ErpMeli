@@ -145,6 +145,30 @@ final class OrderSyncService
         return $this->persistOrder($order, false, $beforePersist, false);
     }
 
+    /**
+     * Entrada exacta del motor greenfield. No publica trabajo legacy ni
+     * consulta Queue Core; persiste únicamente la orden solicitada.
+     *
+     * @param array<string,mixed> $meta
+     */
+    public function syncOrderByIdForQueueV4Clean(
+        int|string $externalOrderId,
+        array $meta = [],
+        ?callable $beforePersist = null,
+    ): int {
+        $meta = array_replace([
+            'job_type' => 'order_exact',
+            'source' => 'queue_v4_clean',
+            'bulk' => false,
+        ], $meta);
+        $order = $this->api->get(
+            '/orders/' . rawurlencode((string) $externalOrderId),
+            [],
+            $meta,
+        );
+        return $this->persistOrder($order, false, $beforePersist, false, false);
+    }
+
     /** Un paso web exacto: persiste la orden y no crea trabajo posterior. */
     public function syncOrderByIdForManual(
         int|string $externalOrderId,array $meta=[],?callable $beforePersist=null

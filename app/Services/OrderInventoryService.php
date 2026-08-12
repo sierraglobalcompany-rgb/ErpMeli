@@ -154,6 +154,15 @@ final class OrderInventoryService
             ];
         }
         $movements = (new InventoryLedgerService($this->pdo))->applyBatch($specs);
+        $this->pdo->prepare(
+            'UPDATE inventory_reviews
+             SET state="resolved",resolution="order_cancelled",resolved_at=UTC_TIMESTAMP(3)
+             WHERE company_id=? AND meli_account_id=? AND meli_order_id=? AND state="open"'
+        )->execute([
+            (int) $order['company_id'],
+            (int) $order['meli_account_id'],
+            (int) $order['id'],
+        ]);
         return ['outcome' => 'reversed', 'movements' => count($movements), 'reviews' => 0];
     }
 

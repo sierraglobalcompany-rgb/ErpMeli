@@ -73,17 +73,30 @@ final class InventoryWarehouseService
     public function setDefault(int $warehouseId): void
     {
         $this->assertCanWrite();
-        $warehouse = $this->authorizedWarehouse($warehouseId, true);
+        $warehouse = $this->authorizedWarehouse($warehouseId, false);
         $companyId = (int) $warehouse['company_id'];
         $pdo = Database::connection();
         $pdo->beginTransaction();
         try {
             $this->lockCompany($pdo, $companyId);
+            $current = $pdo->prepare(
+                'SELECT id,is_default,status FROM inventory_warehouses
+                 WHERE id=? AND company_id=? FOR UPDATE'
+            );
+            $current->execute([$warehouseId, $companyId]);
+            $warehouse = $current->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($warehouse) || $warehouse['status'] !== 'active') {
+                throw new RuntimeException('La bodega predeterminada debe estar activa.');
+            }
             $pdo->prepare('UPDATE inventory_warehouses SET is_default=0 WHERE company_id=?')->execute([$companyId]);
-            $pdo->prepare(
+            $target = $pdo->prepare(
                 'UPDATE inventory_warehouses SET is_default=1
                  WHERE id=? AND company_id=? AND status="active"'
-            )->execute([$warehouseId, $companyId]);
+            );
+            $target->execute([$warehouseId, $companyId]);
+            if ($target->rowCount() !== 1) {
+                throw new RuntimeException('No se pudo fijar la bodega predeterminada.');
+            }
             $pdo->commit();
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {
@@ -103,12 +116,37 @@ final class InventoryWarehouseService
             throw new RuntimeException('Estado de bodega inválido.');
         }
         $warehouse = $this->authorizedWarehouse($warehouseId, false);
-        if ($status === 'inactive' && (int) $warehouse['is_default'] === 1) {
-            throw new RuntimeException('Seleccione otra bodega predeterminada antes de inactivar ésta.');
+        $companyId = (int) $warehouse['company_id'];
+        $pdo = Database::connection();
+        $pdo->beginTransaction();
+        try {
+            $this->lockCompany($pdo, $companyId);
+            $current = $pdo->prepare(
+                'SELECT id,is_default,status FROM inventory_warehouses
+                 WHERE id=? AND company_id=? FOR UPDATE'
+            );
+            $current->execute([$warehouseId, $companyId]);
+            $warehouse = $current->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($warehouse)) {
+                throw new RuntimeException('La bodega ya no existe.');
+            }
+            if ($status === 'inactive' && (int) $warehouse['is_default'] === 1) {
+                throw new RuntimeException('Seleccione otra bodega predeterminada antes de inactivar ésta.');
+            }
+            $update = $pdo->prepare(
+                'UPDATE inventory_warehouses SET status=? WHERE id=? AND company_id=?'
+            );
+            $update->execute([$status, $warehouseId, $companyId]);
+            if ($update->rowCount() !== 1 && $warehouse['status'] !== $status) {
+                throw new RuntimeException('No se pudo actualizar el estado de la bodega.');
+            }
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
         }
-        Database::connection()->prepare(
-            'UPDATE inventory_warehouses SET status=? WHERE id=? AND company_id=?'
-        )->execute([$status, $warehouseId, (int) $warehouse['company_id']]);
         AuditService::record('status', 'inventory', 'inventory_warehouse', $warehouseId, null, [
             'status' => $warehouse['status'],
         ], ['status' => $status]);

@@ -48,11 +48,7 @@ $issues = ManagedRuntimePublicationPolicy::packageIssues($root, $manifest, $miss
 $assert($has($issues, 'package_required_missing:' . $topicsPath), 'Missing topics did not fail.');
 
 $stale = $files;
-$stale[$topicsPath] = ManagedRuntimePublicationPolicy::gitBlob(
-    $root,
-    ManagedRuntimePublicationPolicy::INSTALLED_BASE_COMMIT,
-    $topicsPath,
-);
+$stale[$topicsPath] = "{\"schema_version\":0,\"topics\":[]}\n";
 $issues = ManagedRuntimePublicationPolicy::packageIssues($root, $manifest, $stale);
 $assert($has($issues, 'package_git_blob_mismatch:' . $topicsPath), 'Stale topics did not fail raw identity.');
 $assert($has($issues, 'package_notification_topics_semantic_invalid'), 'Stale topics did not fail pack semantics.');

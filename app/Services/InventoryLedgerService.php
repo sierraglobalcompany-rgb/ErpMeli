@@ -65,7 +65,13 @@ final class InventoryLedgerService
         $companyId = (int) $spec['company_id'];
         $warehouseId = (int) $spec['warehouse_id'];
         $productId = (int) $spec['internal_product_id'];
-        $this->assertEntities($companyId, $warehouseId, $productId, $spec['meli_account_id']);
+        $this->assertEntities(
+            $companyId,
+            $warehouseId,
+            $productId,
+            $spec['meli_account_id'],
+            in_array($spec['movement_type'], ['sale_reversal', 'release'], true)
+        );
         $this->assertReversalAuthority($spec);
 
         $this->pdo->prepare(
@@ -88,9 +94,9 @@ final class InventoryLedgerService
 
         $existing = $this->pdo->prepare(
             'SELECT * FROM inventory_movements
-             WHERE company_id=? AND idempotency_key=? LIMIT 1'
+             WHERE company_id=? AND meli_account_id<=>? AND idempotency_key=? LIMIT 1'
         );
-        $existing->execute([$companyId, $spec['idempotency_key']]);
+        $existing->execute([$companyId, $spec['meli_account_id'], $spec['idempotency_key']]);
         $movement = $existing->fetch(PDO::FETCH_ASSOC);
         if (is_array($movement)) {
             $this->assertExistingEquivalent($movement, $spec);
@@ -231,9 +237,10 @@ final class InventoryLedgerService
         ]);
         $id = (int) $this->pdo->lastInsertId();
         $fetch = $this->pdo->prepare(
-            'SELECT * FROM inventory_movements WHERE id=? AND company_id=? LIMIT 1'
+            'SELECT * FROM inventory_movements
+             WHERE id=? AND company_id=? AND meli_account_id<=>? LIMIT 1'
         );
-        $fetch->execute([$id, $companyId]);
+        $fetch->execute([$id, $companyId, $spec['meli_account_id']]);
         $movement = $fetch->fetch(PDO::FETCH_ASSOC);
         if (!is_array($movement)) {
             throw new RuntimeException('No se pudo comprobar el movimiento de inventario.');
@@ -241,13 +248,19 @@ final class InventoryLedgerService
         return $movement;
     }
 
-    private function assertEntities(int $companyId, int $warehouseId, int $productId, ?int $accountId): void
+    private function assertEntities(
+        int $companyId,
+        int $warehouseId,
+        int $productId,
+        ?int $accountId,
+        bool $allowInactiveWarehouse
+    ): void
     {
         $stmt = $this->pdo->prepare(
             'SELECT w.id
              FROM inventory_warehouses w
              JOIN internal_products p ON p.id=? AND p.company_id=w.company_id AND p.deleted_at IS NULL
-             WHERE w.id=? AND w.company_id=? AND w.status="active" LIMIT 1'
+             WHERE w.id=? AND w.company_id=?' . ($allowInactiveWarehouse ? '' : ' AND w.status="active"') . ' LIMIT 1'
         );
         $stmt->execute([$productId, $warehouseId, $companyId]);
         if (!$stmt->fetchColumn()) {
@@ -280,9 +293,18 @@ final class InventoryLedgerService
         $stmt = $this->pdo->prepare(
             'SELECT company_id,warehouse_id,internal_product_id,meli_account_id,
                     movement_type,on_hand_delta,unit_cost
-             FROM inventory_movements WHERE id=? FOR UPDATE'
+             FROM inventory_movements
+             WHERE id=? AND company_id=? AND warehouse_id=? AND internal_product_id=?
+               AND meli_account_id<=>? AND movement_type="sale_issue"
+             FOR UPDATE'
         );
-        $stmt->execute([$reversalId]);
+        $stmt->execute([
+            $reversalId,
+            (int) $spec['company_id'],
+            (int) $spec['warehouse_id'],
+            (int) $spec['internal_product_id'],
+            $spec['meli_account_id'],
+        ]);
         $original = $stmt->fetch(PDO::FETCH_ASSOC);
         $originalAccount = is_array($original) && $original['meli_account_id'] !== null
             ? (int) $original['meli_account_id'] : null;

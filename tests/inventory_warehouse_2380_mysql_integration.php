@@ -285,6 +285,25 @@ $projection->project(1,1,18); $projection->project(1,1,18);
 $assert($pdo->query('SELECT on_hand FROM inventory_balances WHERE company_id=1 AND warehouse_id=1 AND internal_product_id=1')->fetchColumn()===$beforeSameProduct, 'same_product_cancel_restores_total');
 $assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE reference_id='ORDER-SAME-PRODUCT' AND movement_type='sale_reversal'")->fetchColumn()===1, 'same_product_reversal_once');
 
+// Compensaciones autorizadas siguen disponibles si la bodega original se inactiva.
+$ledger->applyBatch([$base('reserve','1','0','inactive-warehouse-reserve')]);
+$warehouseService->setStatus($auxWarehouse, 'active');
+$warehouseService->setDefault($auxWarehouse);
+$warehouseService->setStatus(1, 'inactive');
+$ledger->applyBatch([$base('release','1','0','inactive-warehouse-release')]);
+$pdo->exec("UPDATE meli_orders SET status='cancelled' WHERE id=11 AND meli_account_id=1");
+$inactiveReversal = $projection->project(1,1,11);
+$assert($inactiveReversal['outcome']==='reversed' && $inactiveReversal['movements']===1, 'inactive_warehouse_reversal_allowed');
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_movements WHERE idempotency_key='inactive-warehouse-release'")->fetchColumn()===1, 'inactive_warehouse_release_allowed');
+$warehouseService->setStatus(1, 'active');
+$warehouseService->setDefault(1);
+$warehouseService->setStatus($auxWarehouse, 'inactive');
+
+// Cancelar una orden sin movimiento cierra sus revisiones y no inventa stock.
+$pdo->exec("UPDATE meli_orders SET status='cancelled' WHERE id=16 AND meli_account_id=1");
+$projection->project(1,1,16);
+$assert((int)$pdo->query("SELECT COUNT(*) FROM inventory_reviews WHERE meli_order_id=16 AND state='open'")->fetchColumn()===0, 'cancelled_order_reviews_resolved');
+
 // La empresa/cuenta no puede proyectar una orden ajena.
 try {
     $projection->project(2,2,10);

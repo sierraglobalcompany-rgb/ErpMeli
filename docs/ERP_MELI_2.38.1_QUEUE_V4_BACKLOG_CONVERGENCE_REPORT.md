@@ -45,8 +45,10 @@ backlog 500 simulations.
 - Zero business traffic: `500 → 350` after 10 simulated minutes.
 - Moderate traffic (5 exact arrivals/min): `500 → 402` after 10 minutes
   (including two bounded inventory-refresh jobs).
-- Normal bounded load (up to 5 new orders/min total): estimated net drain is
-  about 6.8 jobs/min after discovery and inventory overhead.
+- Normal bounded load (5 exact arrivals/min total): the certified simulation
+  drains 98 jobs in 10 minutes, an observed net drain of 9.8 jobs/min. While a
+  tenant has pending operational work, fresh discovery remains backpressured
+  and therefore does not add another three root jobs per minute.
 - Worst bounded page burst: queue can temporarily grow by 20 per account, but
   the same tenant cannot open a new frontier until those children drain.
 - Sustained input above the protected API/service ceiling is correctly

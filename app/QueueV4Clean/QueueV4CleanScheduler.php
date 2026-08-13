@@ -37,12 +37,16 @@ final class QueueV4CleanScheduler
             return ['ok' => true, 'status' => 'busy', 'processed' => 0];
         }
         try {
+            $oauth = (new QueueV4CleanOAuthSupervisor(
+                $this->pdo,
+                new QueueV4CleanOAuthOperationRepository($this->pdo),
+            ))->run($owner);
             $producer = (new QueueV4CleanProducer($this->pdo, $repository))->produce();
             $worker = (new QueueV4CleanWorker($this->pdo, $repository))->run('scheduler', $maxJobs, $runtimeSeconds);
             $this->pdo->exec(
                 "UPDATE queue_v4_clean_control SET last_scheduler_at=UTC_TIMESTAMP(3) WHERE control_key='primary'"
             );
-            return ['ok' => true, 'status' => 'completed', 'producer' => $producer, 'worker' => $worker];
+            return ['ok' => true, 'status' => 'completed', 'oauth' => $oauth, 'producer' => $producer, 'worker' => $worker];
         } finally {
             $release = $this->pdo->prepare(
                 "UPDATE queue_v4_clean_leases

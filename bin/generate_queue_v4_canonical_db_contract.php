@@ -26,6 +26,7 @@ $tables = [
     'queue_v4_clean_leases', 'queue_v4_clean_checkpoints',
     'inventory_warehouses', 'inventory_balances',
     'inventory_movements', 'inventory_reviews',
+    'oauth_refresh_operations',
 ];
 
 $pdo = Database::connectionFresh();

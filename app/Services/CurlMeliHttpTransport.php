@@ -21,6 +21,7 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         $emergency = new MeliEmergencyStopService();
         $method = strtoupper($method);
         $executionSource=(string)(ApiExecutionMetadataContext::current()['source']??'');
+        MeliTransportSourcePolicy::assertAllowed($executionSource, $method, parse_url($url, PHP_URL_PATH) ?: '/');
         if($executionSource==='queue_core'){
             // Read the physical stop without consuming a canary yet. The
             // authoritative check/claim is repeated immediately before cURL.
@@ -60,7 +61,7 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             },
         ];
         $emergencySource = (string) (ApiExecutionMetadataContext::current()['source'] ?? '');
-        if (in_array($emergencySource, ['queue_core', 'queue_v4_clean', 'queue_v4_clean_readiness', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'], true)) {
+        if (MeliTransportSourcePolicy::blocksRedirects($emergencySource)) {
             // Un redirect también sería otra solicitud física. El canario no
             // puede seguirlo, ni siquiera cuando el servidor responda 301/302.
             $options[CURLOPT_FOLLOWLOCATION] = false;
@@ -92,6 +93,13 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
                 parse_url($url,PHP_URL_PATH)?:'/'
             );
         }
+        if (MeliTransportSourcePolicy::requiresCurrentOAuthFence($executionSource)) {
+            $emergency->assertTransportAllowed($method, $url);
+            \App\QueueV4Clean\QueueV4CleanOAuthDispatchFence::immediatelyBeforeCurl(
+                $method,
+                parse_url($url, PHP_URL_PATH) ?: '/'
+            );
+        }
         $started = microtime(true);
         $raw = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -100,6 +108,10 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             : (is_string($raw) ? strlen($raw) : 0);
         $curlError = curl_error($ch);
         unset($ch);
+        if (MeliTransportSourcePolicy::requiresCurrentOAuthFence($executionSource)
+            && $status > 0 && $curlError === '') {
+            \App\QueueV4Clean\QueueV4CleanOAuthDispatchFence::responseKnown($status);
+        }
         $decoded = is_string($raw) ? json_decode($raw, true) : null;
         if ($emergencySource === 'manual_emergency_canary') {
             (new EmergencyControlService())->completeCanaryTransport(

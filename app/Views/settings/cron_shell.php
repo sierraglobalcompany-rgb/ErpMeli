@@ -49,6 +49,16 @@ $csrfToken = Csrf::token();
     </section>
   </section>
 
+  <section class="cron-task-section" aria-labelledby="queue-v4-oauth-title">
+    <div class="section-heading"><div>
+      <h2 id="queue-v4-oauth-title">Renovación OAuth automática</h2>
+      <p>Control técnico fuera del FIFO comercial. Nunca muestra ni conserva tokens en esta superficie.</p>
+    </div></div>
+    <div class="cron-truth-grid" data-qv4-oauth-operations aria-live="polite">
+      <article><span>Autoridad</span><strong>Cargando…</strong><p>Sin realizar mutaciones.</p></article>
+    </div>
+  </section>
+
   <section class="cron-task-section" aria-labelledby="queue-v4-counts-title">
     <div class="section-heading">
       <div>

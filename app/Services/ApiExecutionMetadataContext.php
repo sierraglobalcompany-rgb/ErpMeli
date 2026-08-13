@@ -41,7 +41,7 @@ final class ApiExecutionMetadataContext
         $previous = self::$current;
         $previousCalls = self::$remoteCalls;
         self::$current = array_replace(self::$current, $metadata);
-        if (in_array((string) ($metadata['source'] ?? ''), ['queue_core', 'queue_v4_clean', 'queue_v4_clean_readiness', 'manual_campaign', 'cron_v3_remote', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'], true)) {
+        if (MeliTransportSourcePolicy::isSingleDispatch((string) ($metadata['source'] ?? ''))) {
             self::$remoteCalls = 0;
         }
         try {
@@ -76,7 +76,7 @@ final class ApiExecutionMetadataContext
 
     public static function claimRemoteCall(): void
     {
-        if (!in_array((string) (self::$current['source'] ?? ''), ['queue_core', 'queue_v4_clean', 'queue_v4_clean_readiness', 'manual_campaign', 'cron_v3_remote', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'], true)) {
+        if (!MeliTransportSourcePolicy::isSingleDispatch((string) (self::$current['source'] ?? ''))) {
             return;
         }
         $maximum = 1;

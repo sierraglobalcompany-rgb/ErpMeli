@@ -163,13 +163,12 @@ final class MeliApiClient implements MeliReadClientInterface
         if (Database::connection()->inTransaction()) {
             throw new RuntimeException('Una consulta externa no puede ejecutarse dentro de una transacción MySQL activa.');
         }
-        $singleDispatchAttempt = in_array(
-            (string) ($meta['source'] ?? ''),
-            ['queue_core', 'queue_v4_clean', 'queue_v4_clean_readiness', 'cron_v3_remote', 'manual_campaign', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'],
-            true
-        );
+        $source = (string) ($meta['source'] ?? '');
+        MeliTransportSourcePolicy::assertAllowed($source, $method, $path);
+        $singleDispatchAttempt = MeliTransportSourcePolicy::isSingleDispatch($source);
         $manualEmergencyCanary = (string) ($meta['source'] ?? '') === 'manual_emergency_canary';
         $manualEmergencyOAuthRefresh = (string) ($meta['source'] ?? '') === 'manual_emergency_oauth_refresh';
+        $oauthControlPlane = MeliTransportSourcePolicy::requiresCurrentOAuthFence($source);
         $cronV3RemoteContext = (string) ($meta['source'] ?? '') === 'cron_v3_remote';
         $queueCoreContext = (string) ($meta['source'] ?? '') === 'queue_core';
         $attempts = $singleDispatchAttempt ? 1 : $guard->maxAttempts($mutation, $method);
@@ -309,6 +308,7 @@ final class MeliApiClient implements MeliReadClientInterface
                         'transport_operation_key' => (string) $profile['key'],
                         'transport_method' => $method,
                         'transport_endpoint' => $path,
+                        'transport_request_id' => $requestId,
                     ],
                     fn (): array => $this->transport->request(
                         $method,
@@ -359,6 +359,19 @@ final class MeliApiClient implements MeliReadClientInterface
                         if ($compensationFailure !== null) {
                             throw $compensationFailure;
                         }
+                        throw $transportBlocked;
+                    }
+                }
+                if (MeliTransportSourcePolicy::requiresCurrentOAuthFence($source)) {
+                    $oauthFence = \App\QueueV4Clean\QueueV4CleanOAuthDispatchFence::state([
+                        'id' => (int) ($meta['oauth_operation_id'] ?? 0),
+                        'company_id' => (int) ($meta['company_id'] ?? 0),
+                        'meli_account_id' => (int) ($meta['account_id'] ?? 0),
+                    ]);
+                    if ($oauthFence['dispatch_state'] === 'NOT_DISPATCHED') {
+                        $budget->releaseReservation($budgetReservation, true);
+                        $rhythm->cancelBeforeTransport($rhythmPermit, true);
+                        ApiExecutionMetadataContext::markRemoteBlocked();
                         throw $transportBlocked;
                     }
                 }
@@ -484,12 +497,17 @@ final class MeliApiClient implements MeliReadClientInterface
                     'is_app_blocked_signal' => false,
                     'recommendation' => 'Mantenga Mercado Libre bloqueado y revise la referencia canaria local.',
                 ];
-            } elseif ($manualEmergencyOAuthRefresh) {
+            } elseif ($manualEmergencyOAuthRefresh || $oauthControlPlane) {
                 // La respuesta OAuth puede contener credenciales incluso en un
                 // error. Solo se conserva una clase segura y nunca el body.
+                $oauthError = isset($decoded['error'])
+                    ? mb_substr(Logger::redactString((string) $decoded['error']), 0, 100)
+                    : null;
                 $errorCode = $this->emergencyOAuthRefreshErrorCode($status, $curlError);
                 $safeMessage = $this->emergencyOAuthRefreshSafeMessage($errorCode);
-                $safeDecoded = [];
+                $safeDecoded = $oauthControlPlane && $oauthError !== null
+                    ? ['error' => $oauthError]
+                    : [];
                 $classification = [
                     'type' => strtolower($errorCode),
                     'is_retryable' => false,
@@ -540,10 +558,10 @@ final class MeliApiClient implements MeliReadClientInterface
                 $status,
                 $safeMessage,
                 $safeDecoded,
-                ($manualEmergencyCanary || $manualEmergencyOAuthRefresh) ? $errorCode : null,
-                $manualEmergencyCanary || $manualEmergencyOAuthRefresh
+                ($manualEmergencyCanary || $manualEmergencyOAuthRefresh || $oauthControlPlane) ? $errorCode : null,
+                $manualEmergencyCanary || $manualEmergencyOAuthRefresh || $oauthControlPlane
             );
-            if (($queueCoreContext || (string) ($meta['source'] ?? '') === 'queue_v4_clean')
+            if (($queueCoreContext || MeliTransportSourcePolicy::usesQueueRateLimitDeferral($source))
                 && ($status === 429 || $retryAfter !== null)) {
                 $nextSafeAt = $status === 429
                     ? $rhythm->rateLimitNextSafeAt($rhythmPermit, $retryAfter)

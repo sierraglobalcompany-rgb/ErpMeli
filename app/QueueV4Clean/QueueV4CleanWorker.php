@@ -13,6 +13,7 @@ use App\Services\CronDeadlineDeferredException;
 use App\Services\MeliApiClient;
 use App\Services\MeliApiException;
 use App\Services\MeliReadClientInterface;
+use App\Services\OAuthRefreshRequiredException;
 use App\Services\OrderSyncService;
 use PDO;
 use RuntimeException;
@@ -76,6 +77,18 @@ final class QueueV4CleanWorker
                 $claimed++;
                 try {
                     $this->handle($job);
+                } catch (OAuthRefreshRequiredException) {
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        'oauth_refresh_required',
+                        $this->repository->nextOAuthOpportunity(
+                            (int) $job['company_id'],
+                            (int) $job['meli_account_id'],
+                        ),
+                    );
+                    $deferred++;
+                    continue;
                 } catch (ApiRhythmDeferredException $error) {
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,

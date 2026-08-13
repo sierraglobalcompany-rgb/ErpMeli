@@ -78,6 +78,21 @@ final class QueueV4CleanRepository
         return (int) $statement->fetchColumn() === 1;
     }
 
+    public function nextOAuthOpportunity(int $companyId, int $accountId): string
+    {
+        $this->assertTenant($companyId, $accountId);
+        $statement = $this->pdo->prepare(
+            "SELECT next_attempt_at FROM oauth_refresh_operations
+             WHERE company_id=? AND meli_account_id=?
+               AND state IN ('SCHEDULED','RUNNING','WAITING')
+             ORDER BY next_attempt_at,id LIMIT 1"
+        );
+        $statement->execute([$companyId, $accountId]);
+        $value = $statement->fetchColumn();
+        $timestamp = $value === false ? false : strtotime((string) $value . ' UTC');
+        return gmdate('Y-m-d H:i:s', $timestamp === false ? time() + 60 : max(time() + 5, $timestamp));
+    }
+
     /**
      * @param array<string,mixed> $payload
      */

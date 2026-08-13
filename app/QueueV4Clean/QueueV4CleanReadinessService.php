@@ -19,7 +19,7 @@ use Throwable;
 
 final class QueueV4CleanReadinessService
 {
-    private const REQUIRED_MIGRATION = '295_inventory_warehouse_v1_2_38_0.sql';
+    private const REQUIRED_MIGRATION = '296_queue_v4_clean_oauth_control_plane_2_38_3.sql';
     /** @var \Closure(int):MeliReadClientInterface */
     private \Closure $clientFactory;
 
@@ -40,6 +40,7 @@ final class QueueV4CleanReadinessService
         $control = $repository->control();
         $observability = $repository->operationalObservability();
         $review = (new QueueV4CleanReviewService($this->pdo))->summary();
+        $oauth = (new QueueV4CleanOAuthOperationRepository($this->pdo))->observability();
         $checks = $this->preconditions();
         $stored = (string) $control['readiness_state'];
         $state = $stored;
@@ -58,6 +59,7 @@ final class QueueV4CleanReadinessService
             'physical_cron_observed' => $observability['physical_cron_observed'],
             'engine' => (string) $control['engine_state'],
             'review_forensics' => $review,
+            'oauth_control_plane' => $oauth,
             'issues' => $checks['issues'],
             'legacy_state_consulted' => false,
             'read_only' => true,
@@ -233,7 +235,7 @@ final class QueueV4CleanReadinessService
         );
         $migration->execute([self::REQUIRED_MIGRATION]);
         if ((int) $migration->fetchColumn() !== 1) {
-            $issues[] = 'migration_295_missing';
+            $issues[] = 'migration_296_missing';
         }
         $pending = (new Migrator($this->pdo, dirname(__DIR__, 2) . '/database/migrations'))->pendingCount();
         if ($pending !== 0) {

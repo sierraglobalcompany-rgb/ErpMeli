@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\QueueCore;
 
 use App\Core\Database;
+use App\Services\MeliTransportSourcePolicy;
 use PDO;
 use PDOException;
 use Throwable;
@@ -48,7 +49,8 @@ final class QueueCoreOwnershipGuard
         ?PDO $pdo = null,
     ): void {
         $source = (string) ($metadata['source'] ?? '');
-        if (in_array($source, ['queue_v4_clean', 'queue_v4_clean_readiness'], true)) {
+        if (in_array($source, ['queue_v4_clean', 'queue_v4_clean_readiness'], true)
+            || MeliTransportSourcePolicy::requiresCurrentOAuthFence($source)) {
             return;
         }
         if (!self::v4OwnsWebhook($pdo)) {

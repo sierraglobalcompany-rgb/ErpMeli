@@ -282,7 +282,10 @@ final class OAuthTokenRefreshService
     /** @param array<string,mixed> $token */
     private function expiresSoon(array $token): bool
     {
-        $skew = max(30, min(600, $this->settings->int('oauth.token_expiry_skew_seconds', 120)));
+        $source = (string) (ApiExecutionMetadataContext::current()['source'] ?? '');
+        $skew = $source === MeliTransportSourcePolicy::QUEUE_V4_OAUTH
+            ? max(300, min(7200, $this->settings->int('oauth.auto_refresh_lead_seconds', 3600)))
+            : max(30, min(600, $this->settings->int('oauth.token_expiry_skew_seconds', 120)));
         $rawExpiry = trim((string) ($token['expires_at'] ?? ''));
         if ($rawExpiry === '') {
             return true;
@@ -439,13 +442,16 @@ final class OAuthTokenRefreshService
         return $current;
     }
 
-    /** @return array{company_id:int,expected_meli_user_id:string,expected_refresh_version:int}|null */
+    /** @return array{company_id:int,expected_meli_user_id:string,expected_refresh_version:int,oauth_operation_id?:int,oauth_lease_owner?:string,oauth_lease_generation?:int}|null */
     private function queueRecoveryContext(): ?array
     {
         $metadata = ApiExecutionMetadataContext::current();
-        if ((string) ($metadata['source'] ?? '') !== 'queue_core'
-            || (string) ($metadata['queue_core_work_type'] ?? '') !== 'oauth_refresh'
-            || (int) ($metadata['queue_core_oauth_refresh'] ?? 0) !== 1) {
+        $source = (string) ($metadata['source'] ?? '');
+        $queueCore = $source === 'queue_core'
+            && (string) ($metadata['queue_core_work_type'] ?? '') === 'oauth_refresh'
+            && (int) ($metadata['queue_core_oauth_refresh'] ?? 0) === 1;
+        $current = $source === MeliTransportSourcePolicy::QUEUE_V4_OAUTH;
+        if (!$queueCore && !$current) {
             return null;
         }
         $accountId = (int) ($metadata['account_id'] ?? 0);
@@ -457,11 +463,25 @@ final class OAuthTokenRefreshService
             || $companyId < 1 || $expected === '' || $expectedVersion < 0) {
             throw new RuntimeException('Queue OAuth recovery context does not match its transport scope.');
         }
-        return [
+        $scope = [
             'company_id' => $companyId,
             'expected_meli_user_id' => $expected,
             'expected_refresh_version' => $expectedVersion,
         ];
+        if ($current) {
+            $operationId = (int) ($metadata['oauth_operation_id'] ?? 0);
+            $owner = (string) ($metadata['oauth_lease_owner'] ?? '');
+            $generation = (int) ($metadata['oauth_lease_generation'] ?? 0);
+            if ($operationId < 1 || $owner === '' || $generation < 1) {
+                throw new RuntimeException('Queue V4 OAuth operation authority is incomplete.');
+            }
+            $scope += [
+                'oauth_operation_id' => $operationId,
+                'oauth_lease_owner' => $owner,
+                'oauth_lease_generation' => $generation,
+            ];
+        }
+        return $scope;
     }
 
     /**

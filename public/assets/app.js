@@ -523,6 +523,7 @@
     NOT_READY: 'No preparado', READY_TO_TEST: 'Listo para comprobar', TESTING: 'Comprobando',
     CERTIFIED: 'Certificado', FAILED: 'Falló la comprobación'
   };
+  const safe = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
   const syncButtons = () => {
     const hasPassword = Boolean(password?.value);
     actions.forEach((form) => {
@@ -567,6 +568,19 @@
       const node = root.querySelector(`[data-qv4-count="${key}"]`);
       if (node) node.textContent = String(value);
     });
+    const oauthOperations = root.querySelector('[data-qv4-oauth-operations]');
+    if (oauthOperations) {
+      const rows = Array.isArray(data.oauth_control_plane) ? data.oauth_control_plane : [];
+      oauthOperations.innerHTML = rows.length
+        ? rows.map((row) => {
+            const state = row.automatic_refresh_state || 'IDLE';
+            const detail = state === 'RECONNECT_REQUIRED'
+              ? 'Requiere reconexión administrativa; no habrá reintento automático.'
+              : `Vence: ${safe(row.expires_at || '—')} · Próximo: ${safe(row.next_attempt_at || '—')}`;
+            return `<article><span>${safe(row.account_name || `Cuenta ${row.meli_account_id}`)}</span><strong>${safe(state)}</strong><p>${detail}</p></article>`;
+          }).join('')
+        : '<article><span>Autoridad</span><strong>Sin cuentas certificadas</strong><p>No se programó renovación.</p></article>';
+    }
     root.querySelector('[data-qv4-legacy]').textContent = data.legacy_state_consulted ? 'Error: legado consultado' : 'Legado no consultado';
     syncButtons();
   };

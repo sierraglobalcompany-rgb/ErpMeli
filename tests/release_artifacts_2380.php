@@ -89,7 +89,7 @@ try {
     $manifest = $manifestService->decode($manifestBytes);
     $assert(($manifest['source_trust'] ?? null) === 'local_admin', 'update_source_trust_invalid');
     $assert(($manifest['version'] ?? null) === '2.38.2', 'update_version_invalid');
-    $assert(($manifest['upgrade_from'] ?? null) === ['2.38.0'], 'update_source_version_invalid');
+    $assert(($manifest['upgrade_from'] ?? null) === ['2.38.1'], 'update_source_version_invalid');
     $assert(in_array('295_inventory_warehouse_v1_2_38_0.sql', (array) ($manifest['migrations'] ?? []), true), 'migration_295_missing');
     $assert(!array_filter((array) ($manifest['migrations'] ?? []), static fn (string $name): bool => str_starts_with($name, '296_')), 'migration_296_present');
     $assert(!isset($manifest['signature']), 'unexpected_update_signature');

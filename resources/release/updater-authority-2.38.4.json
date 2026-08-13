@@ -52,7 +52,7 @@
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanOAuthSupervisor.php",
-            "sha256": "63a83f5872ccc9267815c24cc9024e38b6ca21dfbb48abfc8e7a5b78347c8a34"
+            "sha256": "48e329dd05ec67218604230d5f23dd8ad3c6052945ce0424d4021e498f182229"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanReadinessService.php",

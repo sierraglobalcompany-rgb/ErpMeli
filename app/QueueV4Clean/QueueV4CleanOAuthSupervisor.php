@@ -124,7 +124,7 @@ final class QueueV4CleanOAuthSupervisor
         } catch (RuntimeException $error) {
             $fence = QueueV4CleanOAuthDispatchFence::state($operation);
             if ($fence['dispatch_state'] === 'RESPONSE_KNOWN'
-                && ($fence['http_status'] ?? 0) >= 200 && ($fence['http_status'] ?? 0) < 300
+                && $fence['http_status'] >= 200 && $fence['http_status'] < 300
                 && $this->reconcileKnownSuccess($operation, $summary)) {
                 // Known 2xx plus a durable local authority is recoverable with
                 // zero second POST. The helper already terminalized or queued

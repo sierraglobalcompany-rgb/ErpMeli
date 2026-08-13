@@ -33,6 +33,6 @@
     {"path":"app/QueueV4Clean/QueueV4CleanWorker.php","sha256":"3df776455480d75e8ef96f07410abdbaa02b4b8bc8e1df059454c8eb0ffe459d"},
     {"path":"app/Services/ManagedRuntimePublicationPolicy.php","sha256":"2657ba231af26a295e7a24d6793ff9304547fe61389c9bd15569dfd9375d3791"},
     {"path":"jobs/queue_v4_clean.php","sha256":"92853a1200d4376139c5f7f4a4959d29c8261ed3713c14d373ad52a34d8ac3ae"},
-    {"path":"resources/release/managed-runtime-dependencies-2.38.1.json","sha256":"ed14f7d0c49f52e14bbc85569bd136d276b422aadb699365f43d29f1083790c0"}
+    {"path":"resources/release/managed-runtime-dependencies-2.38.1.json","sha256":"78eb046de31de0aa71af8de2f9e990427f7f812e9f990adf12c5a2854db79d9d"}
   ]
 }

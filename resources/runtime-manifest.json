@@ -10,7 +10,7 @@
         "package_file_count": 907,
         "component_count": 906,
         "paths_sha256": "a0868cbca768d9aa803ef150eef4166cda332b6f2cd864a1341f77c6157f9661",
-        "dependency_registry_sha256": "d3e1e46f090f685c0cecce1aef8e9e0f036a7382402be43db8decd8374eb2bff",
+        "dependency_registry_sha256": "8612c6a6275491fff0952ff882890bb6cb8a8d482ec0ac19ad58ed6bf66d0f31",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -5244,8 +5244,8 @@
         },
         "runtime_resources_release_managed_runtime_dependencies_2_38_5_json": {
             "path": "resources/release/managed-runtime-dependencies-2.38.5.json",
-            "sha256": "d3e1e46f090f685c0cecce1aef8e9e0f036a7382402be43db8decd8374eb2bff",
-            "sha256_lf": "d3e1e46f090f685c0cecce1aef8e9e0f036a7382402be43db8decd8374eb2bff",
+            "sha256": "8612c6a6275491fff0952ff882890bb6cb8a8d482ec0ac19ad58ed6bf66d0f31",
+            "sha256_lf": "8612c6a6275491fff0952ff882890bb6cb8a8d482ec0ac19ad58ed6bf66d0f31",
             "text": true
         },
         "runtime_resources_release_production_legacy_quarantine_2_36_1_json": {
@@ -5430,8 +5430,8 @@
         },
         "runtime_resources_release_updater_authority_2_38_5_json": {
             "path": "resources/release/updater-authority-2.38.5.json",
-            "sha256": "9f57b28cc0d33d84ffaf46426a839d8bf2669407f254e81eab1644b78921a066",
-            "sha256_lf": "9f57b28cc0d33d84ffaf46426a839d8bf2669407f254e81eab1644b78921a066",
+            "sha256": "511c959f756726eb3aaff2e9e746fc6cd003374df6bbbfe79d55274efb089a31",
+            "sha256_lf": "511c959f756726eb3aaff2e9e746fc6cd003374df6bbbfe79d55274efb089a31",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

@@ -7,9 +7,9 @@
     "publication_policy": {
         "base_commit": "c40d073705833c94911c254ec633bf8eb231375e",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 895,
-        "component_count": 894,
-        "paths_sha256": "a72a9ec248b44cbf293f4156236a90db4c05c5d19b832b089ca9b06e453e21d6",
+        "package_file_count": 896,
+        "component_count": 895,
+        "paths_sha256": "9536fc7891dd08c35b54f0032dc70aede27b823cbbb230e38580bb03c902af53",
         "dependency_registry_sha256": "8c109ee04b2baf5c6e8fba30d56eb603e8f3779656435bae7cb43c04598c3741",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
@@ -5360,6 +5360,12 @@
             "path": "resources/release/updater-authority-2.38.3.json",
             "sha256": "e302aacf70de7343c3fef8b4115cba8d78cb3f0b81d3359bb1877bdcf99055be",
             "sha256_lf": "e302aacf70de7343c3fef8b4115cba8d78cb3f0b81d3359bb1877bdcf99055be",
+            "text": true
+        },
+        "runtime_resources_release_updater_authority_2_38_4_json": {
+            "path": "resources/release/updater-authority-2.38.4.json",
+            "sha256": "6aff58253dc8b252bcd6c413272e8d3d9e7591ce031a51a7c4d948ccbb6e744e",
+            "sha256_lf": "6aff58253dc8b252bcd6c413272e8d3d9e7591ce031a51a7c4d948ccbb6e744e",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

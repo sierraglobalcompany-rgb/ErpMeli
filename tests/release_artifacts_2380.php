@@ -107,9 +107,17 @@ try {
         $assert(!in_array($normalized, ['.env', 'config.env', 'shared/config.env', 'pause_meli_api', 'pause_erp_automation', 'shared/current-release.json'], true), 'protected_file_packaged:' . $path);
         $assert(!preg_match('#^(?:storage|shared/storage|logs|sessions|backups)/#', $normalized), 'protected_tree_packaged:' . $path);
     }
-    foreach (['VERSION', 'app/QueueV4Clean/QueueV4CleanProducer.php',
-        'app/QueueV4Clean/QueueV4CleanRepository.php', 'app/QueueV4Clean/QueueV4CleanWorker.php',
-        'jobs/queue_v4_clean.php'] as $requiredOverlay) {
+    foreach (['VERSION',
+        'app/QueueV4Clean/QueueV4CleanReadinessService.php',
+        'app/QueueV4Clean/QueueV4CleanRepository.php',
+        'app/QueueV4Clean/QueueV4CleanReviewService.php',
+        'app/QueueV4Clean/QueueV4CleanWorker.php',
+        'app/Services/ApiBudgetService.php',
+        'app/Services/ApiGuardService.php',
+        'app/Services/ApiRhythmPolicyService.php',
+        'app/Services/MeliApiClient.php',
+        'jobs/queue_v4_clean_review_recovery.php',
+        'public/assets/app.js'] as $requiredOverlay) {
         $assert(isset($overlay[$requiredOverlay]), 'required_overlay_path_missing:' . $requiredOverlay);
     }
 

@@ -1,16 +1,16 @@
 {
     "product": "erp-meli",
-    "version": "2.38.0",
-    "build_id": "erp-meli-2.38.0-inventory-warehouse-v1-rc1-20260812",
-    "built_at": "2026-08-13T03:00:00Z",
+    "version": "2.38.1",
+    "build_id": "erp-meli-2.38.1-queue-v4-backlog-convergence-rc1-20260813",
+    "built_at": "2026-08-13T05:30:00Z",
     "minimum_migration": "295_inventory_warehouse_v1_2_38_0.sql",
     "publication_policy": {
         "base_commit": "c40d073705833c94911c254ec633bf8eb231375e",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 875,
-        "component_count": 874,
-        "paths_sha256": "ca1897e8f19426747d3b8aab8323bff53d2e9b61fefa82f8c0687296bfe24177",
-        "dependency_registry_sha256": "cde734f9859a7090ae614e8451f7c5dea092356b45ae69b0f2c4ba7242094176",
+        "package_file_count": 877,
+        "component_count": 876,
+        "paths_sha256": "791f83138f727bba38bad117f037c4c679fde2d39043e9fc6ac8318d39da08b0",
+        "dependency_registry_sha256": "78eb046de31de0aa71af8de2f9e990427f7f812e9f990adf12c5a2854db79d9d",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -24,8 +24,8 @@
         },
         "runtime_version": {
             "path": "VERSION",
-            "sha256": "8d5265d7f8be7dfc0dba0212bf1b16d32e418171a7d9f9202c3ff1f16fc5a268",
-            "sha256_lf": "8d5265d7f8be7dfc0dba0212bf1b16d32e418171a7d9f9202c3ff1f16fc5a268",
+            "sha256": "ad3c625a18447e2344b226a95dd08b0592a493450f8ae76a2e2a4851f93e9cf5",
+            "sha256_lf": "ad3c625a18447e2344b226a95dd08b0592a493450f8ae76a2e2a4851f93e9cf5",
             "text": true
         },
         "runtime_actualizar_php": {
@@ -1122,8 +1122,8 @@
         },
         "runtime_app_queuev4clean_queuev4cleanproducer_php": {
             "path": "app/QueueV4Clean/QueueV4CleanProducer.php",
-            "sha256": "7971fb607dd9473aa7518d5ad9e6bec6cd62c8c944214c4377f54969ba208126",
-            "sha256_lf": "7971fb607dd9473aa7518d5ad9e6bec6cd62c8c944214c4377f54969ba208126",
+            "sha256": "f74e2c04e6de082141441006892f58b46e44fa19ed0b3bddefb8db24ef0b7479",
+            "sha256_lf": "f74e2c04e6de082141441006892f58b46e44fa19ed0b3bddefb8db24ef0b7479",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleanreadinessservice_php": {
@@ -1134,14 +1134,14 @@
         },
         "runtime_app_queuev4clean_queuev4cleanrepository_php": {
             "path": "app/QueueV4Clean/QueueV4CleanRepository.php",
-            "sha256": "2d3ca099195573dcae374fc9499bc64f6abad52493df2feaf719b64f4bcb8a9c",
-            "sha256_lf": "2d3ca099195573dcae374fc9499bc64f6abad52493df2feaf719b64f4bcb8a9c",
+            "sha256": "28195fa95baa527a301347e6b0ce18a64ded6d4fe63ca078e49394308d669f33",
+            "sha256_lf": "28195fa95baa527a301347e6b0ce18a64ded6d4fe63ca078e49394308d669f33",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleanscheduler_php": {
             "path": "app/QueueV4Clean/QueueV4CleanScheduler.php",
-            "sha256": "21e727a23cc881331fbc72709669ef6cf80c134543d44ae4c00400dfcce08df3",
-            "sha256_lf": "21e727a23cc881331fbc72709669ef6cf80c134543d44ae4c00400dfcce08df3",
+            "sha256": "f9bff7e83dc4be99411a7be6602b2b48c780e25394c67aba6825a596d14894db",
+            "sha256_lf": "f9bff7e83dc4be99411a7be6602b2b48c780e25394c67aba6825a596d14894db",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleantransportcontext_php": {
@@ -1152,8 +1152,8 @@
         },
         "runtime_app_queuev4clean_queuev4cleanworker_php": {
             "path": "app/QueueV4Clean/QueueV4CleanWorker.php",
-            "sha256": "958ebb88642a7cac951e27c030b7602941df78620bb6b62c71eccdf2c048e9e8",
-            "sha256_lf": "958ebb88642a7cac951e27c030b7602941df78620bb6b62c71eccdf2c048e9e8",
+            "sha256": "3df776455480d75e8ef96f07410abdbaa02b4b8bc8e1df059454c8eb0ffe459d",
+            "sha256_lf": "3df776455480d75e8ef96f07410abdbaa02b4b8bc8e1df059454c8eb0ffe459d",
             "text": true
         },
         "runtime_app_recovery_databasemaintenancerecoverykernel_php": {
@@ -2358,8 +2358,8 @@
         },
         "runtime_app_services_managedruntimepublicationpolicy_php": {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "563868155b5c9bbfd6f37b48da434970ce9c11d70690d0d3afdc9a4b3319b4bd",
-            "sha256_lf": "563868155b5c9bbfd6f37b48da434970ce9c11d70690d0d3afdc9a4b3319b4bd",
+            "sha256": "2657ba231af26a295e7a24d6793ff9304547fe61389c9bd15569dfd9375d3791",
+            "sha256_lf": "2657ba231af26a295e7a24d6793ff9304547fe61389c9bd15569dfd9375d3791",
             "text": true
         },
         "runtime_app_services_manualcampaignadapter_php": {
@@ -4338,8 +4338,8 @@
         },
         "runtime_composer_json": {
             "path": "composer.json",
-            "sha256": "2f09fdde133dd76a2c3a96170f1a996e6d7e0319bc331eacc64a7e8c107fb828",
-            "sha256_lf": "2f09fdde133dd76a2c3a96170f1a996e6d7e0319bc331eacc64a7e8c107fb828",
+            "sha256": "8db3cf6d5b434e2b9ae376f425ef4f87d43bb528659d623b7943bf96c94ca36f",
+            "sha256_lf": "8db3cf6d5b434e2b9ae376f425ef4f87d43bb528659d623b7943bf96c94ca36f",
             "text": true
         },
         "runtime_composer_lock": {
@@ -4662,8 +4662,8 @@
         },
         "runtime_jobs_queue_v4_clean_php": {
             "path": "jobs/queue_v4_clean.php",
-            "sha256": "cc91be8a6dec351111aad231d72b68e275c74ed51cb79cb4d7da5a12ea31ffe0",
-            "sha256_lf": "cc91be8a6dec351111aad231d72b68e275c74ed51cb79cb4d7da5a12ea31ffe0",
+            "sha256": "92853a1200d4376139c5f7f4a4959d29c8261ed3713c14d373ad52a34d8ac3ae",
+            "sha256_lf": "92853a1200d4376139c5f7f4a4959d29c8261ed3713c14d373ad52a34d8ac3ae",
             "text": true
         },
         "runtime_jobs_refresh_meli_tokens_php": {
@@ -5104,6 +5104,12 @@
             "sha256_lf": "cde734f9859a7090ae614e8451f7c5dea092356b45ae69b0f2c4ba7242094176",
             "text": true
         },
+        "runtime_resources_release_managed_runtime_dependencies_2_38_1_json": {
+            "path": "resources/release/managed-runtime-dependencies-2.38.1.json",
+            "sha256": "78eb046de31de0aa71af8de2f9e990427f7f812e9f990adf12c5a2854db79d9d",
+            "sha256_lf": "78eb046de31de0aa71af8de2f9e990427f7f812e9f990adf12c5a2854db79d9d",
+            "text": true
+        },
         "runtime_resources_release_production_legacy_quarantine_2_36_1_json": {
             "path": "resources/release/production-legacy-quarantine-2.36.1.json",
             "sha256": "b6adf206e3d3857807d44d3ec0b2929535c2e184cf8fac07b975987bcc642f25",
@@ -5240,6 +5246,12 @@
             "path": "resources/release/updater-authority-2.38.0.json",
             "sha256": "a8524d27911827fdef4b20c8ed98996acdb4e8d6fde3b00a87e0cf0f9e5200b7",
             "sha256_lf": "a8524d27911827fdef4b20c8ed98996acdb4e8d6fde3b00a87e0cf0f9e5200b7",
+            "text": true
+        },
+        "runtime_resources_release_updater_authority_2_38_1_json": {
+            "path": "resources/release/updater-authority-2.38.1.json",
+            "sha256": "ff527780923f70990d09e876907eb73308a18fd3e5575b7f34da1bc95e1b5085",
+            "sha256_lf": "ff527780923f70990d09e876907eb73308a18fd3e5575b7f34da1bc95e1b5085",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

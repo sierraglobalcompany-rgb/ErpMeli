@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "queue-v4-rate-limit-stability-2.38.2-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "PENDING",
+  "runtime_manifest_paths_sha256": "7600e8bc67b43da15bff1da60b84b854f69cce7973a413da0416577ae92bae88",
   "coverage_base_commit": "1eef380afc6ceb42d8955b2def1a439eb4d579fe",
   "classifications": {
     "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",
@@ -148,5 +148,4 @@
     }
   ]
 }
-
 

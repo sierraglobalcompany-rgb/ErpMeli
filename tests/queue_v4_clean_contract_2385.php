@@ -26,6 +26,10 @@ $oauthSupervisor = $read('app/QueueV4Clean/QueueV4CleanOAuthSupervisor.php');
 $oauthOperations = $read('app/QueueV4Clean/QueueV4CleanOAuthOperationRepository.php');
 $transportPolicy = $read('app/Services/MeliTransportSourcePolicy.php');
 $dispatchFence = $read('app/QueueV4Clean/QueueV4CleanOAuthDispatchFence.php');
+$readDispatchFence = $read('app/QueueV4Clean/QueueV4CleanDispatchFence.php');
+$transportJournal = $read('app/QueueV4Clean/QueueV4CleanTransportJournal.php');
+$healthSnapshot = $read('app/QueueV4Clean/QueueV4CleanHealthSnapshotService.php');
+$apiHealth = $read('app/Services/ApiHealthService.php');
 $runtimeCapabilities = $read('app/Services/MeliCliRuntimeCapabilityService.php');
 $stageContext = $read('app/QueueV4Clean/QueueV4CleanOAuthStageContext.php');
 $safeDiagnostics = $read('app/QueueV4Clean/QueueV4CleanSafeDiagnosticService.php');
@@ -72,12 +76,12 @@ $assert(str_contains($databaseContract, 'TABLE_NAME IN ('), 'database contract i
 $assert(str_contains($databaseContract, 'hash_equals($database, $schema)'), 'database contract does not enforce exact schema identity in PHP');
 $assert(str_contains($databaseContract, 'queue-v4-canonical-db-contract-2.38.5.json'), '2.38.5 database contract authority missing');
 $databaseAuthority = json_decode($read('resources/release/queue-v4-canonical-db-contract-2.38.5.json'), true, 64, JSON_THROW_ON_ERROR);
-$assert(count((array) ($databaseAuthority['tables'] ?? [])) === 22, 'database contract table count invalid');
+$assert(count((array) ($databaseAuthority['tables'] ?? [])) === 23, 'database contract table count invalid');
 foreach (['inventory_warehouses', 'inventory_balances', 'inventory_movements', 'inventory_reviews'] as $table) {
     $assert(isset($databaseAuthority['tables'][$table]), 'inventory table missing from database contract: ' . $table);
 }
 $assert(isset($databaseAuthority['tables']['oauth_refresh_operations']), 'OAuth operation table missing from database contract');
-foreach (['sync_sales_audit_runs','sync_sales_audit_jobs','queue_v4_clean_recovery_events','api_incident_groups','api_incident_materializer_state'] as $table) {
+foreach (['sync_sales_audit_runs','sync_sales_audit_jobs','queue_v4_clean_recovery_events','queue_v4_clean_transport_events','api_incident_groups','api_incident_materializer_state'] as $table) {
     $assert(isset($databaseAuthority['tables'][$table]), '2.38.5 authority table missing: ' . $table);
 }
 $assert(str_contains($appJs, 'El backend Queue V4 agotó el tiempo de respuesta.'), 'Queue V4 timeout feedback missing');
@@ -137,7 +141,22 @@ $assert(str_contains($oauthMigration, 'oauth_refresh_operations') && !preg_match
 $assert(str_contains($oauthMigration, "UNIQUE KEY uq_oauth_refresh_generation (company_id,meli_account_id,expected_refresh_version)"), 'OAuth operation generation uniqueness missing');
 $assert(str_contains($transportMigration, "ENUM('NOT_DISPATCHED','PHYSICAL_STARTED','RESPONSE_KNOWN')")
     && str_contains($transportMigration, 'queue_v4_clean_recovery_events')
+    && str_contains($transportMigration, 'queue_v4_clean_transport_events')
     && str_contains($transportMigration, 'api_incident_groups'), '2.38.5 transport/health schema incomplete');
+$assert(str_contains($dispatchFence . $readDispatchFence, 'QueueV4CleanTransportJournal::started')
+    && str_contains($dispatchFence . $readDispatchFence, 'QueueV4CleanTransportJournal::responseKnown'),
+    'unified physical transport journal integration missing');
+$assert(str_contains($transportJournal, 'company_id,meli_account_id,source_kind')
+    && str_contains($healthSnapshot, 'FROM queue_v4_clean_transport_events t')
+    && !str_contains($healthSnapshot, 'SUM(o.remote_attempt_count)'),
+    'API Health physical HTTP authority is not exact');
+$assert(str_contains($healthSnapshot, 'observabilityFor(')
+    && str_contains($oauthOperations, 'ra.company_id IN ({$companyTokens})')
+    && str_contains($oauthOperations, 'ra.meli_account_id IN ({$accountTokens})'),
+    'OAuth health observability is not tenant-fenced in SQL');
+$assert(str_contains($apiHealth, "if (PHP_SAPI !== 'cli')")
+    && str_contains($apiHealth, 'unavailableMaterializedSummary()'),
+    'web raw-health fallback remains enabled');
 $assert(str_contains($readiness, "'oauth_control_plane'"), 'OAuth observability missing from readiness snapshot');
 
 foreach (['Comprobar y certificar', 'Activar', 'Detener'] as $button) {

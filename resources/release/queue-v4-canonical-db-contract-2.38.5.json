@@ -5376,6 +5376,289 @@
                 }
             ]
         },
+        "queue_v4_clean_transport_events": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "auto_increment",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "company_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "meli_account_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "source_kind",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('queue','oauth','sales_audit')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "work_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 6,
+                    "COLUMN_NAME": "attempt_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 7,
+                    "COLUMN_NAME": "lease_generation",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 8,
+                    "COLUMN_NAME": "request_id",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(64)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 9,
+                    "COLUMN_NAME": "method",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(10)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 10,
+                    "COLUMN_NAME": "endpoint_key",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(100)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 11,
+                    "COLUMN_NAME": "dispatch_state",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('PHYSICAL_STARTED','RESPONSE_KNOWN')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "'PHYSICAL_STARTED'",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 12,
+                    "COLUMN_NAME": "physical_started_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 13,
+                    "COLUMN_NAME": "response_known_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 14,
+                    "COLUMN_NAME": "http_status",
+                    "DATA_TYPE": "smallint",
+                    "COLUMN_TYPE": "smallint(5) unsigned",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "idx_queue_v4_transport_tenant_time",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_queue_v4_transport_tenant_time",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "meli_account_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_queue_v4_transport_tenant_time",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "physical_started_at",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_queue_v4_transport_tenant_time",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 4,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_queue_v4_transport_work",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "source_kind",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_queue_v4_transport_work",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "work_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_queue_v4_transport_work",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "lease_generation",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_queue_v4_transport_work",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 4,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_queue_v4_transport_request",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "source_kind",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_queue_v4_transport_request",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "request_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": [
+                {
+                    "CONSTRAINT_NAME": "fk_queue_v4_transport_tenant",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "company_id",
+                    "REFERENCED_TABLE_NAME": "meli_accounts",
+                    "REFERENCED_COLUMN_NAME": "company_id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                },
+                {
+                    "CONSTRAINT_NAME": "fk_queue_v4_transport_tenant",
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "meli_account_id",
+                    "REFERENCED_TABLE_NAME": "meli_accounts",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                }
+            ]
+        },
         "api_incident_groups": {
             "engine": "InnoDB",
             "collation": "utf8mb4_unicode_ci",

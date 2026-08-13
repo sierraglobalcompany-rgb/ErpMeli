@@ -65,4 +65,3 @@ verificar la release se debe crear exactamente un Cron cada minuto:
 Observar tres ejecuciones antes de aumentar capacidad. Detener si aparece
 `QUEUE_V4_CLEAN_FAILED`, más de un POST OAuth por ciclo, `REMOTE_UNCERTAIN`,
 `RECONNECT_REQUIRED` o `FAILED`.
-

@@ -48,6 +48,32 @@ CREATE TABLE IF NOT EXISTS queue_v4_clean_recovery_events (
         REFERENCES queue_v4_clean_attempts(id,job_id,company_id,meli_account_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- One immutable row per physical transport boundary across OAuth, orders and
+-- sales audit. API Health reads this journal instead of inferring calls from
+-- mutable job/operation counters.
+CREATE TABLE IF NOT EXISTS queue_v4_clean_transport_events (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    company_id BIGINT UNSIGNED NOT NULL,
+    meli_account_id BIGINT UNSIGNED NOT NULL,
+    source_kind ENUM('queue','oauth','sales_audit') NOT NULL,
+    work_id BIGINT UNSIGNED NOT NULL,
+    attempt_id BIGINT UNSIGNED NULL,
+    lease_generation BIGINT UNSIGNED NOT NULL,
+    request_id VARCHAR(64) NOT NULL,
+    method VARCHAR(10) NOT NULL,
+    endpoint_key VARCHAR(100) NOT NULL,
+    dispatch_state ENUM('PHYSICAL_STARTED','RESPONSE_KNOWN') NOT NULL DEFAULT 'PHYSICAL_STARTED',
+    physical_started_at DATETIME(3) NOT NULL,
+    response_known_at DATETIME(3) NULL,
+    http_status SMALLINT UNSIGNED NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_queue_v4_transport_request (source_kind,request_id),
+    KEY idx_queue_v4_transport_tenant_time (company_id,meli_account_id,physical_started_at,id),
+    KEY idx_queue_v4_transport_work (source_kind,work_id,lease_generation,id),
+    CONSTRAINT fk_queue_v4_transport_tenant FOREIGN KEY (company_id,meli_account_id)
+        REFERENCES meli_accounts(company_id,id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- -------------------------------------------------------------------------
 -- Sales audit becomes a first-class tenant-scoped Queue V4 stage.
 -- -------------------------------------------------------------------------

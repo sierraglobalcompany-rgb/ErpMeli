@@ -42,6 +42,9 @@ final class ApiHealthService
             (new AuthorizedBusinessScope())->account($accountId);
         }
         if (!$this->supportsOutcomeClassification()) {
+            if (PHP_SAPI !== 'cli') {
+                return $this->unavailableMaterializedSummary();
+            }
             return $this->legacySummary($hours, $accountId);
         }
 
@@ -1107,6 +1110,37 @@ final class ApiHealthService
             'problem_endpoints' => [],
             'budget' => $this->scopedBudgetSummary($accountId),
             'classified' => false,
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function unavailableMaterializedSummary(): array
+    {
+        $this->dataAvailable = false;
+        return [
+            'risk' => 'unknown',
+            'data_available' => false,
+            'requests' => 0,
+            'errors' => 0,
+            'attempts' => 0,
+            'sent' => 0,
+            'successful' => 0,
+            'raw_successful' => 0,
+            'corrected_successful' => 0,
+            'remote_errors' => 0,
+            'local_failures' => 0,
+            'policy_delays' => 0,
+            'expected_absence' => 0,
+            'active_incident_count' => 0,
+            'recovered_incident_count' => 0,
+            'open_circuits' => [],
+            'stats' => [],
+            'incidents' => [],
+            'problem_endpoints' => [],
+            'budget' => ['available' => false],
+            'classified' => false,
+            'snapshot_state' => 'unavailable',
+            'safe_message' => 'El modelo materializado de Salud API no está disponible. No se consultaron logs crudos.',
         ];
     }
 

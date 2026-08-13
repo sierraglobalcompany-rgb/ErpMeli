@@ -179,6 +179,61 @@ final class QueueV4CleanOAuthOperationRepository
         )->fetchAll(PDO::FETCH_ASSOC);
     }
 
+    /**
+     * Web/read-model authority: business rows are fenced in SQL, never read
+     * globally and filtered afterwards.
+     *
+     * @param list<int> $companyIds
+     * @param list<int> $accountIds
+     * @return list<array<string,mixed>>
+     */
+    public function observabilityFor(array $companyIds, array $accountIds): array
+    {
+        $companyIds = array_values(array_unique(array_filter(
+            array_map('intval', $companyIds),
+            static fn (int $id): bool => $id > 0,
+        )));
+        $accountIds = array_values(array_unique(array_filter(
+            array_map('intval', $accountIds),
+            static fn (int $id): bool => $id > 0,
+        )));
+        if ($companyIds === [] || $accountIds === []) {
+            return [];
+        }
+        $companyTokens = implode(',', array_fill(0, count($companyIds), '?'));
+        $accountTokens = implode(',', array_fill(0, count($accountIds), '?'));
+        $statement = $this->pdo->prepare(
+            "SELECT ra.company_id,ra.meli_account_id,a.account_name,a.status current_status,
+                    t.expires_at,t.refresh_version,
+                    CASE
+                      WHEN a.status NOT IN ('conectado','connected') OR t.meli_account_id IS NULL
+                           OR a.meli_user_id='' OR t.refresh_token_encrypted='' OR t.expires_at IS NULL
+                        THEN 'RECONNECT_REQUIRED'
+                      ELSE COALESCE(o.state,'IDLE')
+                    END automatic_refresh_state,
+                    o.next_attempt_at,o.last_http_status,o.last_error_class,
+                    (SELECT MAX(done.completed_at) FROM oauth_refresh_operations done
+                     WHERE done.company_id=ra.company_id AND done.meli_account_id=ra.meli_account_id
+                       AND done.state='COMPLETED') last_completed_refresh_at
+             FROM queue_v4_clean_readiness_accounts ra
+             INNER JOIN queue_v4_clean_readiness_runs rr
+               ON rr.id=ra.readiness_run_id AND rr.state='CERTIFIED'
+             INNER JOIN meli_accounts a ON a.company_id=ra.company_id AND a.id=ra.meli_account_id
+             LEFT JOIN meli_tokens t ON t.meli_account_id=a.id
+             LEFT JOIN oauth_refresh_operations o ON o.id=(
+                 SELECT MAX(latest.id) FROM oauth_refresh_operations latest
+                 WHERE latest.company_id=ra.company_id AND latest.meli_account_id=ra.meli_account_id
+             )
+             WHERE ra.readiness_run_id=(SELECT MAX(id) FROM queue_v4_clean_readiness_runs WHERE state='CERTIFIED')
+               AND ra.outcome='PASS'
+               AND ra.company_id IN ({$companyTokens})
+               AND ra.meli_account_id IN ({$accountTokens})
+             ORDER BY ra.company_id,ra.meli_account_id"
+        );
+        $statement->execute(array_merge($companyIds, $accountIds));
+        return $statement->fetchAll(PDO::FETCH_ASSOC);
+    }
+
     private function finishRunning(array $operation, string $set, array $parameters): void
     {
         $statement = $this->pdo->prepare(

@@ -47,8 +47,14 @@ final class QueueV4CleanDispatchFence
         if (!MeliTransportSourcePolicy::requiresQueueV4ReadFence($source)) {
             return;
         }
+        $pdo = Database::connectionFresh();
+        $ownsTransaction = !$pdo->inTransaction();
+        if ($ownsTransaction) {
+            $pdo->beginTransaction();
+        }
+        try {
         if ($source === MeliTransportSourcePolicy::QUEUE_V4_SALES_AUDIT) {
-            $stmt = Database::connectionFresh()->prepare(
+            $stmt = $pdo->prepare(
                 "UPDATE sync_sales_audit_jobs
                  SET remote_dispatch_state='RESPONSE_KNOWN',response_known_at=UTC_TIMESTAMP(3),last_http_status=?
                  WHERE id=? AND company_id=? AND meli_account_id=? AND status='running'
@@ -63,7 +69,7 @@ final class QueueV4CleanDispatchFence
                 (string) ($meta['transport_request_id'] ?? ''),
             ]);
         } else {
-            $stmt = Database::connectionFresh()->prepare(
+            $stmt = $pdo->prepare(
                 "UPDATE queue_v4_clean_attempts a
                  INNER JOIN queue_v4_clean_jobs j
                    ON j.id=a.job_id AND j.company_id=a.company_id AND j.meli_account_id=a.meli_account_id
@@ -81,6 +87,23 @@ final class QueueV4CleanDispatchFence
         }
         if ($stmt->rowCount() !== 1) {
             throw new RuntimeException('queue_v4_clean_response_fence_lost');
+        }
+        QueueV4CleanTransportJournal::responseKnown(
+            $pdo,
+            (int) ($meta['company_id'] ?? 0),
+            (int) ($meta['account_id'] ?? 0),
+            $source === MeliTransportSourcePolicy::QUEUE_V4_SALES_AUDIT ? 'sales_audit' : 'queue',
+            (string) ($meta['transport_request_id'] ?? ''),
+            $status,
+        );
+        if ($ownsTransaction) {
+            $pdo->commit();
+        }
+        } catch (\Throwable $error) {
+            if ($ownsTransaction && $pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
         }
     }
 
@@ -127,7 +150,13 @@ final class QueueV4CleanDispatchFence
     /** @param array<string,mixed> $meta */
     private static function startQueueAttempt(array $meta, string $method, string $path): void
     {
-        $stmt = Database::connectionFresh()->prepare(
+        $pdo = Database::connectionFresh();
+        $ownsTransaction = !$pdo->inTransaction();
+        if ($ownsTransaction) {
+            $pdo->beginTransaction();
+        }
+        try {
+        $stmt = $pdo->prepare(
             "UPDATE queue_v4_clean_attempts a
              INNER JOIN queue_v4_clean_jobs j
                ON j.id=a.job_id AND j.company_id=a.company_id AND j.meli_account_id=a.meli_account_id
@@ -146,12 +175,39 @@ final class QueueV4CleanDispatchFence
         if ($stmt->rowCount() !== 1) {
             throw new RuntimeException('queue_v4_clean_dispatch_fence_lost');
         }
+        QueueV4CleanTransportJournal::started(
+            $pdo,
+            (int) ($meta['company_id'] ?? 0),
+            (int) ($meta['account_id'] ?? 0),
+            'queue',
+            (int) ($meta['queue_v4_job_id'] ?? 0),
+            (int) ($meta['queue_v4_attempt_id'] ?? 0),
+            (int) ($meta['queue_v4_lease_generation'] ?? 0),
+            (string) ($meta['transport_request_id'] ?? ''),
+            $method,
+            self::endpointKey($path),
+        );
+        if ($ownsTransaction) {
+            $pdo->commit();
+        }
+        } catch (\Throwable $error) {
+            if ($ownsTransaction && $pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
+        }
     }
 
     /** @param array<string,mixed> $meta */
     private static function startSalesAudit(array $meta): void
     {
-        $stmt = Database::connectionFresh()->prepare(
+        $pdo = Database::connectionFresh();
+        $ownsTransaction = !$pdo->inTransaction();
+        if ($ownsTransaction) {
+            $pdo->beginTransaction();
+        }
+        try {
+        $stmt = $pdo->prepare(
             "UPDATE sync_sales_audit_jobs
              SET remote_dispatch_state='PHYSICAL_STARTED',remote_dispatched_at=UTC_TIMESTAMP(3),last_request_id=?
              WHERE id=? AND company_id=? AND meli_account_id=? AND status='running'
@@ -166,6 +222,27 @@ final class QueueV4CleanDispatchFence
         ]);
         if ($stmt->rowCount() !== 1) {
             throw new RuntimeException('queue_v4_clean_sales_dispatch_fence_lost');
+        }
+        QueueV4CleanTransportJournal::started(
+            $pdo,
+            (int) ($meta['company_id'] ?? 0),
+            (int) ($meta['account_id'] ?? 0),
+            'sales_audit',
+            (int) ($meta['sales_audit_job_id'] ?? 0),
+            null,
+            (int) ($meta['sales_audit_lease_generation'] ?? 0),
+            (string) ($meta['transport_request_id'] ?? ''),
+            'GET',
+            'orders_search',
+        );
+        if ($ownsTransaction) {
+            $pdo->commit();
+        }
+        } catch (\Throwable $error) {
+            if ($ownsTransaction && $pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
         }
     }
 

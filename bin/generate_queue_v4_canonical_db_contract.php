@@ -28,7 +28,7 @@ $tables = [
     'inventory_movements', 'inventory_reviews',
     'oauth_refresh_operations',
     'sync_sales_audit_runs', 'sync_sales_audit_jobs',
-    'queue_v4_clean_recovery_events',
+    'queue_v4_clean_recovery_events', 'queue_v4_clean_transport_events',
     'api_incident_groups', 'api_incident_materializer_state',
 ];
 

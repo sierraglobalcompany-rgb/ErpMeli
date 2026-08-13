@@ -121,6 +121,7 @@ final class QueueV4SalesTransport2385 implements MeliHttpTransportInterface
 }
 
 $resetTransportState = static function () use ($pdo): void {
+    $pdo->exec('DELETE FROM queue_v4_clean_transport_events');
     foreach (['sync_sales_audit_run_days','sync_sales_audit_run_orders','sync_sales_audit_jobs','sync_sales_audit_runs'] as $table) {
         $pdo->exec('DELETE FROM `' . $table . '`');
     }
@@ -334,8 +335,13 @@ $assert($monthlyJobs === 13 && $monthlyClaimed === 13 && $monthlyCompleted === 1
 $started = microtime(true);
 $health = (new QueueV4CleanHealthSnapshotService($pdo))->snapshot(null, [$companyId], [$accountId]);
 $elapsed = microtime(true) - $started;
+$journalSales = (int) $pdo->query(
+    "SELECT COUNT(*) FROM queue_v4_clean_transport_events WHERE source_kind='sales_audit'"
+)->fetchColumn();
 $assert($elapsed < 1.0 && count($health['account_stats']) === 1
-    && (int) $health['oauth']['accounts'] <= 1,
+    && (int) $health['oauth']['accounts'] <= 1
+    && $journalSales === 13
+    && (int) ($health['totals']['http_last_hour'] ?? -1) === 13,
     'queue_v4_health_snapshot_slo_or_tenant_failed:' . json_encode(['elapsed' => $elapsed,'health' => $health]));
 
 $contract = file_get_contents($root . '/app/Services/ApiHealthService.php') ?: '';
@@ -344,6 +350,7 @@ $assert(substr_count($contract, "if (PHP_SAPI !== 'cli')") >= 4
     'web_health_materialized_gate_missing');
 
 $pdo->exec('DELETE FROM queue_v4_clean_recovery_events');
+$pdo->exec('DELETE FROM queue_v4_clean_transport_events');
 $pdo->exec('DELETE FROM queue_v4_clean_attempts');
 $pdo->exec('DELETE FROM queue_v4_clean_jobs');
 $pdo->exec('DELETE FROM sync_sales_audit_jobs');

@@ -311,6 +311,7 @@ final class QueueV4CleanWorker
             'queue_v4_job_id' => (int) ($job['id'] ?? 0),
             'queue_v4_attempt_id' => (int) ($job['attempt_id'] ?? 0),
             'queue_v4_lease_owner' => (string) ($job['lease_owner'] ?? ''),
+            'queue_v4_lease_generation' => (int) ($job['lease_generation'] ?? 0),
         ];
     }
 }

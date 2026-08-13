@@ -46,6 +46,11 @@ final class QueueV4CleanOAuthDispatchFence
         QueueV4CleanCycleBudget::claim();
         try {
             $pdo = Database::connectionFresh();
+            $ownsTransaction = !$pdo->inTransaction();
+            if ($ownsTransaction) {
+                $pdo->beginTransaction();
+            }
+            try {
             $scheduler = $pdo->prepare(
                 "UPDATE queue_v4_clean_leases SET heartbeat_at=UTC_TIMESTAMP(3),
                         expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 60 SECOND)
@@ -81,6 +86,27 @@ final class QueueV4CleanOAuthDispatchFence
             if ($dispatch->rowCount() !== 1) {
                 throw new RuntimeException('queue_v4_clean_oauth_dispatch_fence_lost');
             }
+            QueueV4CleanTransportJournal::started(
+                $pdo,
+                $companyId,
+                $accountId,
+                'oauth',
+                $operationId,
+                null,
+                $operationGeneration,
+                $requestId,
+                'POST',
+                'oauth_token',
+            );
+            if ($ownsTransaction) {
+                $pdo->commit();
+            }
+            } catch (\Throwable $error) {
+                if ($ownsTransaction && $pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                throw $error;
+            }
         } catch (\Throwable $error) {
             QueueV4CleanCycleBudget::releaseBeforeTransport();
             throw $error;
@@ -93,7 +119,13 @@ final class QueueV4CleanOAuthDispatchFence
         if ((string) ($metadata['source'] ?? '') !== 'queue_v4_clean_oauth') {
             return;
         }
-        $statement = Database::connectionFresh()->prepare(
+        $pdo = Database::connectionFresh();
+        $ownsTransaction = !$pdo->inTransaction();
+        if ($ownsTransaction) {
+            $pdo->beginTransaction();
+        }
+        try {
+        $statement = $pdo->prepare(
             "UPDATE oauth_refresh_operations
              SET remote_dispatch_state='RESPONSE_KNOWN',response_known_at=UTC_TIMESTAMP(3),last_http_status=?
              WHERE id=? AND company_id=? AND meli_account_id=? AND state='RUNNING'
@@ -111,6 +143,23 @@ final class QueueV4CleanOAuthDispatchFence
         ]);
         if ($statement->rowCount() !== 1) {
             throw new RuntimeException('queue_v4_clean_oauth_response_fence_lost');
+        }
+        QueueV4CleanTransportJournal::responseKnown(
+            $pdo,
+            (int) ($metadata['company_id'] ?? 0),
+            (int) ($metadata['account_id'] ?? 0),
+            'oauth',
+            (string) ($metadata['transport_request_id'] ?? ''),
+            $status,
+        );
+        if ($ownsTransaction) {
+            $pdo->commit();
+        }
+        } catch (\Throwable $error) {
+            if ($ownsTransaction && $pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
         }
     }
 

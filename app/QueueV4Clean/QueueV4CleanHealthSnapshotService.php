@@ -52,34 +52,34 @@ final class QueueV4CleanHealthSnapshotService
         $salesTotals = array_map('intval', $sales->fetch(PDO::FETCH_ASSOC) ?: []);
         $recent = $this->pdo->prepare(
             'SELECT
-               (SELECT COALESCE(SUM(a.physical_http_calls),0) FROM queue_v4_clean_attempts a
-                 WHERE a.started_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 HOUR)
-                   AND ' . $this->tenantPredicate('a', $companyIds, $accountIds)[0] . ')
-               +
-               (SELECT COALESCE(SUM(o.remote_attempt_count),0) FROM oauth_refresh_operations o
-                 WHERE o.updated_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 HOUR)
-                   AND ' . $this->tenantPredicate('o', $companyIds, $accountIds)[0] . ') http_last_hour,
+               (SELECT COUNT(*) FROM queue_v4_clean_transport_events t
+                 WHERE t.physical_started_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 HOUR)
+                   AND ' . $this->tenantPredicate('t', $companyIds, $accountIds)[0] . ') http_last_hour,
                (SELECT COUNT(*) FROM queue_v4_clean_jobs j
                  WHERE j.completed_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 HOUR)
                    AND ' . $tenantSql . ') completed_last_hour'
         );
-        $recent->execute(array_merge($tenantParams, $tenantParams, $tenantParams));
+        $recent->execute(array_merge($tenantParams, $tenantParams));
         $recentTotals = $recent->fetch(PDO::FETCH_ASSOC) ?: [];
         $accountStats = $this->pdo->prepare(
             'SELECT a.id meli_account_id,a.account_name,
-                    COALESCE(SUM(qa.physical_http_calls),0) sent,
-                    COALESCE(SUM(qa.dispatch_state="RESPONSE_KNOWN" AND qa.http_status BETWEEN 200 AND 299),0) successful,
-                    COALESCE(SUM(qa.dispatch_state="RESPONSE_KNOWN" AND qa.http_status>=400),0) remote_errors,
-                    COALESCE(SUM(qa.dispatch_state="NOT_DISPATCHED" AND qa.outcome IN ("review","dead")),0) local_failures,
-                    COALESCE(SUM(qa.dispatch_state="RESPONSE_KNOWN" AND qa.http_status=429),0) http_429,
-                    MAX(qa.physical_started_at) last_remote_attempt_at,
-                    MAX(CASE WHEN qa.dispatch_state="RESPONSE_KNOWN" AND qa.http_status BETWEEN 200 AND 299
-                             THEN qa.response_known_at END) last_remote_success_at,
-                    MAX(CASE WHEN qa.outcome="waiting" THEN qa.finished_at END) last_policy_delay_at
+                    COUNT(te.id) sent,
+                    COALESCE(SUM(te.dispatch_state="RESPONSE_KNOWN" AND te.http_status BETWEEN 200 AND 299),0) successful,
+                    COALESCE(SUM(te.dispatch_state="RESPONSE_KNOWN" AND te.http_status>=400),0) remote_errors,
+                    (SELECT COUNT(*) FROM queue_v4_clean_attempts local_attempt
+                     WHERE local_attempt.company_id=a.company_id AND local_attempt.meli_account_id=a.id
+                       AND local_attempt.started_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL ' . $hours . ' HOUR)
+                       AND local_attempt.dispatch_state="NOT_DISPATCHED"
+                       AND local_attempt.outcome IN ("review","dead")) local_failures,
+                    COALESCE(SUM(te.dispatch_state="RESPONSE_KNOWN" AND te.http_status=429),0) http_429,
+                    MAX(te.physical_started_at) last_remote_attempt_at,
+                    MAX(CASE WHEN te.dispatch_state="RESPONSE_KNOWN" AND te.http_status BETWEEN 200 AND 299
+                             THEN te.response_known_at END) last_remote_success_at,
+                    NULL last_policy_delay_at
              FROM meli_accounts a
-             LEFT JOIN queue_v4_clean_attempts qa
-               ON qa.company_id=a.company_id AND qa.meli_account_id=a.id
-              AND qa.started_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL ' . $hours . ' HOUR)
+             LEFT JOIN queue_v4_clean_transport_events te
+               ON te.company_id=a.company_id AND te.meli_account_id=a.id
+              AND te.physical_started_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL ' . $hours . ' HOUR)
              WHERE ' . $this->tenantPredicate('a', $companyIds, $accountIds, 'id')[0] . '
              GROUP BY a.company_id,a.id,a.account_name
              ORDER BY a.id'
@@ -98,23 +98,21 @@ final class QueueV4CleanHealthSnapshotService
         }
         unset($accountStat);
         $recentActivity = $this->pdo->prepare(
-            'SELECT qa.response_known_at created_at,qa.transport_method method,
-                    qa.endpoint_key endpoint_path,qa.meli_account_id,a.account_name
-             FROM queue_v4_clean_attempts qa
+            'SELECT te.response_known_at created_at,te.method,
+                    te.endpoint_key endpoint_path,te.meli_account_id,a.account_name
+             FROM queue_v4_clean_transport_events te
              INNER JOIN meli_accounts a
-               ON a.company_id=qa.company_id AND a.id=qa.meli_account_id
-             WHERE qa.dispatch_state="RESPONSE_KNOWN" AND qa.http_status BETWEEN 200 AND 299
-               AND ' . $this->tenantPredicate('qa', $companyIds, $accountIds)[0] . '
-             ORDER BY qa.response_known_at DESC,qa.id DESC LIMIT 20'
+               ON a.company_id=te.company_id AND a.id=te.meli_account_id
+             WHERE te.dispatch_state="RESPONSE_KNOWN" AND te.http_status BETWEEN 200 AND 299
+               AND ' . $this->tenantPredicate('te', $companyIds, $accountIds)[0] . '
+             ORDER BY te.response_known_at DESC,te.id DESC LIMIT 20'
         );
         $recentActivity->execute($tenantParams);
         $recentActivityRows = $recentActivity->fetchAll(PDO::FETCH_ASSOC);
-        $oauth = (new QueueV4CleanOAuthOperationRepository($this->pdo))->observability();
-        $oauth = array_values(array_filter(
-            $oauth,
-            static fn(array $row): bool => in_array((int) $row['company_id'], $companyIds, true)
-                && in_array((int) $row['meli_account_id'], $accountIds, true)
-        ));
+        $oauth = (new QueueV4CleanOAuthOperationRepository($this->pdo))->observabilityFor(
+            $companyIds,
+            $accountIds,
+        );
         $oauthStates = [];
         foreach ($oauth as $row) {
             $state = (string) ($row['automatic_refresh_state'] ?? 'UNKNOWN');

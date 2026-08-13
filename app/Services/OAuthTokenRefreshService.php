@@ -29,6 +29,9 @@ final class OAuthTokenRefreshService
      */
     public function refresh(callable $requestToken): array
     {
+        \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+            \App\QueueV4Clean\QueueV4CleanOAuthStageContext::OAUTH_REFRESH_SERVICE
+        );
         $pdo = Database::connectionFresh();
         if ($pdo->inTransaction()) {
             throw new RuntimeException('No se puede renovar OAuth dentro de una transacción activa.');
@@ -132,6 +135,9 @@ final class OAuthTokenRefreshService
                             $tokenForRecovery
                         );
                     } elseif (is_array($queueRecovery)) {
+                        \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+                            \App\QueueV4Clean\QueueV4CleanOAuthStageContext::TOKEN_ESCROW
+                        );
                         (new QueueOAuthDurableRecoveryStore())->stage(
                             $queueRecovery['company_id'],
                             $this->accountId,
@@ -151,6 +157,9 @@ final class OAuthTokenRefreshService
 
             $pdo = Database::connectionFresh();
             try {
+                \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+                    \App\QueueV4Clean\QueueV4CleanOAuthStageContext::TOKEN_DB_CAS
+                );
                 $pdo->beginTransaction();
                 $update = $pdo->prepare(is_array($queueRecovery)
                     ? "UPDATE meli_tokens t
@@ -301,10 +310,7 @@ final class OAuthTokenRefreshService
     private function isInvalidGrant(Throwable $error): bool
     {
         return $error instanceof MeliApiException
-            && (
-                strtolower((string) ($error->response['error'] ?? '')) === 'invalid_grant'
-                || str_contains(strtolower($error->getMessage()), 'invalid_grant')
-            );
+            && strtolower((string) ($error->response['error'] ?? '')) === 'invalid_grant';
     }
 
     private function manualEmergencyExpectedMeliUserId(): ?string

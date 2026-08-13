@@ -17,6 +17,7 @@ final class QueueV4CleanScheduler
     /** @return array<string,mixed> */
     public function run(int $maxJobs = QueueV4CleanWorker::DEFAULT_MAX_JOBS, int $runtimeSeconds = 45): array
     {
+        QueueV4CleanOAuthStageContext::reset();
         $repository = new QueueV4CleanRepository($this->pdo);
         $control = $repository->control();
         if ((string) $control['engine_state'] !== 'ACTIVE'
@@ -41,6 +42,15 @@ final class QueueV4CleanScheduler
                 $this->pdo,
                 new QueueV4CleanOAuthOperationRepository($this->pdo),
             ))->run($owner);
+            if (($oauth['abort_scheduler'] ?? false) === true) {
+                return [
+                    'ok' => false,
+                    'status' => (string) ($oauth['status'] ?? 'oauth_control_plane_blocked'),
+                    'oauth' => $oauth,
+                    'producer' => ['skipped' => true],
+                    'worker' => ['skipped' => true],
+                ];
+            }
             $producer = (new QueueV4CleanProducer($this->pdo, $repository))->produce();
             $worker = (new QueueV4CleanWorker($this->pdo, $repository))->run('scheduler', $maxJobs, $runtimeSeconds);
             $this->pdo->exec(

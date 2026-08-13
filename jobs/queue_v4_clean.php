@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 use App\Core\Database;
 use App\QueueV4Clean\QueueV4CleanScheduler;
+use App\QueueV4Clean\QueueV4CleanOAuthStageContext;
+use App\QueueV4Clean\QueueV4CleanSafeDiagnosticService;
 use App\QueueV4Clean\QueueV4CleanWorker;
 use App\Services\CronDeadlineContext;
 
@@ -27,8 +29,17 @@ try {
     $result = (new QueueV4CleanScheduler(Database::connectionFresh()))->run($maxJobs, $runtime);
     echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
     exit(!empty($result['ok']) ? 0 : 1);
-} catch (Throwable) {
+} catch (Throwable $error) {
+    $receipt = (new QueueV4CleanSafeDiagnosticService())->capture(
+        $error,
+        QueueV4CleanOAuthStageContext::current()
+    );
     fwrite(STDERR, "QUEUE_V4_CLEAN_FAILED\n");
+    fwrite(STDERR, 'diagnostic_id=' . $receipt['diagnostic_id'] . PHP_EOL);
+    fwrite(STDERR, 'error_class=' . $receipt['error_class'] . PHP_EOL);
+    fwrite(STDERR, 'safe_stage=' . $receipt['safe_stage'] . PHP_EOL);
+    fwrite(STDERR, 'file=' . $receipt['file'] . PHP_EOL);
+    fwrite(STDERR, 'line=' . $receipt['line'] . PHP_EOL);
     exit(1);
 } finally {
     CronDeadlineContext::clear();

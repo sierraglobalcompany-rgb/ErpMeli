@@ -10,6 +10,7 @@ use App\Services\ApiRhythmDeferredException;
 use App\Services\AppSettingsService;
 use App\Services\CronDeadlineDeferredException;
 use App\Services\MeliApiClient;
+use App\Services\MeliCliRuntimeCapabilityService;
 use App\Services\MeliApiException;
 use App\Services\OAuthRefreshBusyException;
 use App\Services\QueueOAuthDurableRecoveryStore;
@@ -24,26 +25,54 @@ final class QueueV4CleanOAuthSupervisor
     public const MAX_PHYSICAL_POSTS_PER_RUN = 1;
     /** @var \Closure(array<string,mixed>):array<string,mixed> */
     private \Closure $refresh;
+    private readonly MeliCliRuntimeCapabilityService $runtimeCapabilities;
+    private readonly QueueV4CleanSafeDiagnosticService $diagnostics;
 
     public function __construct(
         private readonly PDO $pdo,
         private readonly QueueV4CleanOAuthOperationRepository $operations,
         private readonly AppSettingsService $settings = new AppSettingsService(),
         ?callable $refresh = null,
+        ?callable $clientFactory = null,
+        ?MeliCliRuntimeCapabilityService $runtimeCapabilities = null,
+        ?QueueV4CleanSafeDiagnosticService $diagnostics = null,
     ) {
+        $factory = $clientFactory !== null
+            ? \Closure::fromCallable($clientFactory)
+            : static fn (int $accountId): MeliApiClient => new MeliApiClient($accountId);
         $this->refresh = $refresh !== null
             ? \Closure::fromCallable($refresh)
-            : static fn (array $operation): array => (new MeliApiClient((int) $operation['meli_account_id']))->refreshOAuthToken();
+            : static fn (array $operation): array => $factory((int) $operation['meli_account_id'])->refreshOAuthToken();
+        $this->runtimeCapabilities = $runtimeCapabilities ?? new MeliCliRuntimeCapabilityService();
+        $this->diagnostics = $diagnostics ?? new QueueV4CleanSafeDiagnosticService();
     }
 
-    /** @return array{scheduled:int,claimed:int,completed:int,waiting:int,uncertain:int,reconnect:int,failed:int,physical_posts:int} */
+    /** @return array<string,mixed> */
     public function run(string $schedulerOwner): array
     {
-        $summary = ['scheduled' => 0, 'claimed' => 0, 'completed' => 0, 'waiting' => 0, 'uncertain' => 0, 'reconnect' => 0, 'failed' => 0, 'physical_posts' => 0];
+        QueueV4CleanOAuthStageContext::reset();
+        $summary = ['scheduled' => 0, 'claimed' => 0, 'completed' => 0, 'waiting' => 0, 'uncertain' => 0, 'reconnect' => 0, 'failed' => 0, 'physical_posts' => 0, 'abort_scheduler' => false];
+        QueueV4CleanOAuthStageContext::set(QueueV4CleanOAuthStageContext::OAUTH_OPERATION_REPAIR);
         $this->reconcileStaleEscrows();
         $this->operations->repairStale();
+        QueueV4CleanOAuthStageContext::set(QueueV4CleanOAuthStageContext::OAUTH_RUNTIME_PREFLIGHT);
+        $capabilities = $this->runtimeCapabilities->inspect();
+        if (!$this->runtimeCapabilities->oauthReady($capabilities)) {
+            $diagnostic = $this->diagnostics->capture(
+                new RuntimeException('queue_v4_clean_oauth_runtime_capability_missing'),
+                QueueV4CleanOAuthStageContext::OAUTH_RUNTIME_PREFLIGHT,
+                'QUEUE_V4_CLEAN_OAUTH_RUNTIME_BLOCKED'
+            );
+            return array_replace($summary, [
+                'status' => 'oauth_control_plane_blocked',
+                'abort_scheduler' => true,
+                'diagnostic' => $diagnostic,
+                'runtime_capabilities' => $capabilities,
+            ]);
+        }
         $summary['scheduled'] = $this->scheduleDue();
         $owner = bin2hex(random_bytes(16));
+        QueueV4CleanOAuthStageContext::set(QueueV4CleanOAuthStageContext::OAUTH_OPERATION_CLAIM);
         $operation = $this->operations->claimOne($owner);
         if ($operation === null) {
             return $summary;
@@ -63,87 +92,135 @@ final class QueueV4CleanOAuthSupervisor
         ];
         $before = $this->remoteAttemptCount($operation);
         try {
-            $token = ApiExecutionMetadataContext::run(
-                $context,
-                fn (): array => ($this->refresh)($operation)
-            );
-            $currentVersion = (int) ($token['refresh_version'] ?? -1);
-            $expectedVersion = (int) $operation['expected_refresh_version'];
-            if ($currentVersion > $expectedVersion) {
-                $this->operations->complete($operation, 'refresh_completed');
-                $summary['completed'] = 1;
-            } elseif ($currentVersion === $expectedVersion) {
-                // La configuracion de lead puede reducirse entre schedule y
-                // claim. Un retorno sin rotacion no es COMPLETED: conserva la
-                // misma operacion y la reabre cuando vuelva a estar realmente
-                // dentro de la ventana automatica.
-                $this->operations->wait(
-                    $operation,
-                    'oauth_not_due_after_recheck',
-                    $this->nextDueAt((string) ($token['expires_at'] ?? '')),
+            try {
+                QueueV4CleanOAuthStageContext::set(QueueV4CleanOAuthStageContext::OAUTH_REFRESH_SERVICE);
+                $token = ApiExecutionMetadataContext::run(
+                    $context,
+                    fn (): array => ($this->refresh)($operation)
                 );
-                $summary['waiting'] = 1;
-            } else {
-                throw new RuntimeException('queue_v4_clean_oauth_refresh_version_regressed');
-            }
-        } catch (ApiRhythmDeferredException $error) {
-            $fence = QueueV4CleanOAuthDispatchFence::state($operation);
-            if ($error->reachedRemote
-                && !($fence['dispatch_state'] === 'RESPONSE_KNOWN' && $fence['http_status'] === 429)) {
-                // Retry-After en un 5xx no vuelve seguro un segundo POST con
-                // refresh token single-use. Solo 429 conocido es reintentable.
-                $this->operations->terminal($operation, 'REMOTE_UNCERTAIN', 'oauth_remote_non_429_deferred');
-                $summary['uncertain'] = 1;
-            } else {
+                $currentVersion = (int) ($token['refresh_version'] ?? -1);
+                $expectedVersion = (int) $operation['expected_refresh_version'];
+                if ($currentVersion > $expectedVersion) {
+                    $this->operations->complete($operation, 'refresh_completed');
+                    $summary['completed'] = 1;
+                } elseif ($currentVersion === $expectedVersion) {
+                    $this->operations->wait(
+                        $operation,
+                        'oauth_not_due_after_recheck',
+                        $this->nextDueAt((string) ($token['expires_at'] ?? '')),
+                    );
+                    $summary['waiting'] = 1;
+                } else {
+                    throw new RuntimeException('queue_v4_clean_oauth_refresh_version_regressed');
+                }
+            } catch (ApiRhythmDeferredException $error) {
+                $fence = QueueV4CleanOAuthDispatchFence::state($operation);
+                if ($error->reachedRemote
+                    && !($fence['dispatch_state'] === 'RESPONSE_KNOWN' && $fence['http_status'] === 429)) {
+                    $this->operations->terminal($operation, 'REMOTE_UNCERTAIN', 'oauth_remote_non_429_deferred');
+                    $summary['uncertain'] = 1;
+                } else {
+                    $this->operations->wait($operation, $this->failureClass($error), $error->nextSafeAt);
+                    $summary['waiting'] = 1;
+                }
+            } catch (ApiBudgetExhaustedException|CronDeadlineDeferredException $error) {
                 $this->operations->wait($operation, $this->failureClass($error), $error->nextSafeAt);
                 $summary['waiting'] = 1;
-            }
-        } catch (ApiBudgetExhaustedException|CronDeadlineDeferredException $error) {
-            $this->operations->wait($operation, $this->failureClass($error), $error->nextSafeAt);
-            $summary['waiting'] = 1;
-        } catch (OAuthRefreshBusyException $error) {
-            $this->operations->wait($operation, $this->failureClass($error), gmdate('Y-m-d H:i:s', time() + 60));
-            $summary['waiting'] = 1;
-        } catch (RemoteResultUncertainException|RotatedCredentialRecoveryUnavailableException $error) {
-            $this->operations->terminal($operation, 'REMOTE_UNCERTAIN', $this->failureClass($error));
-            $summary['uncertain'] = 1;
-        } catch (MeliApiException $error) {
-            if ($error->httpStatus === 429) {
-                $this->operations->wait($operation, 'http_429', gmdate('Y-m-d H:i:s', time() + 60));
-                $summary['waiting'] = 1;
-            } elseif (($error->httpStatus ?? 0) >= 500) {
-                $this->operations->terminal($operation, 'REMOTE_UNCERTAIN', 'http_5xx');
-                $summary['uncertain'] = 1;
-            } elseif ($this->invalidGrant($error)) {
-                $this->operations->terminal($operation, 'RECONNECT_REQUIRED', 'invalid_grant');
-                $summary['reconnect'] = 1;
-            } else {
-                $this->operations->terminal($operation, 'FAILED', 'oauth_http_failure');
-                $summary['failed'] = 1;
-            }
-        } catch (RuntimeException $error) {
-            $fence = QueueV4CleanOAuthDispatchFence::state($operation);
-            if ($fence['dispatch_state'] === 'RESPONSE_KNOWN'
-                && $fence['http_status'] >= 200 && $fence['http_status'] < 300
-                && $this->reconcileKnownSuccess($operation, $summary)) {
-                // Known 2xx plus a durable local authority is recoverable with
-                // zero second POST. The helper already terminalized or queued
-                // the exact local recovery postimage.
-            } elseif ($fence['dispatch_state'] !== 'NOT_DISPATCHED') {
-                $this->operations->terminal($operation, 'REMOTE_UNCERTAIN', $this->failureClass($error));
-                $summary['uncertain'] = 1;
-            } elseif (str_contains($error->getMessage(), 'recovery')) {
-                throw $error;
-            } else {
+            } catch (OAuthRefreshBusyException $error) {
                 $this->operations->wait($operation, $this->failureClass($error), gmdate('Y-m-d H:i:s', time() + 60));
                 $summary['waiting'] = 1;
+            } catch (RemoteResultUncertainException|RotatedCredentialRecoveryUnavailableException $error) {
+                $this->operations->terminal($operation, 'REMOTE_UNCERTAIN', $this->failureClass($error));
+                $summary['uncertain'] = 1;
+            } catch (MeliApiException $error) {
+                if ($error->httpStatus === 429) {
+                    $this->operations->wait($operation, 'http_429', gmdate('Y-m-d H:i:s', time() + 60));
+                    $summary['waiting'] = 1;
+                } elseif (($error->httpStatus ?? 0) >= 500) {
+                    $this->operations->terminal($operation, 'REMOTE_UNCERTAIN', 'http_5xx');
+                    $summary['uncertain'] = 1;
+                } elseif ($this->invalidGrant($error)) {
+                    $this->operations->terminal($operation, 'RECONNECT_REQUIRED', 'invalid_grant');
+                    $summary['reconnect'] = 1;
+                } else {
+                    $this->operations->terminal($operation, 'FAILED', 'oauth_http_failure');
+                    $summary['failed'] = 1;
+                }
             }
+        } catch (Throwable $error) {
+            return $this->containUnexpected($operation, $summary, $before, $error);
         }
         $after = $this->remoteAttemptCount($operation);
         $summary['physical_posts'] = max(0, $after - $before);
         if ($summary['physical_posts'] > self::MAX_PHYSICAL_POSTS_PER_RUN) {
             throw new RuntimeException('queue_v4_clean_oauth_physical_post_limit_exceeded');
         }
+        return $summary;
+    }
+
+    /** @param array<string,mixed> $operation @param array<string,mixed> $summary @return array<string,mixed> */
+    private function containUnexpected(array $operation, array $summary, int $before, Throwable $error): array
+    {
+        $diagnostic = $this->diagnostics->capture($error);
+        try {
+            $fence = QueueV4CleanOAuthDispatchFence::state($operation);
+            $state = (string) $fence['dispatch_state'];
+            $status = $fence['http_status'];
+            $errorClass = $this->failureClass($error);
+            if ($state === 'NOT_DISPATCHED') {
+                $this->operations->wait($operation, $errorClass, gmdate('Y-m-d H:i:s', time() + 60));
+                $summary['waiting'] = 1;
+            } elseif ($state === 'MAY_HAVE_DISPATCHED') {
+                $this->operations->terminal($operation, 'REMOTE_UNCERTAIN', $errorClass);
+                $summary['uncertain'] = 1;
+            } elseif ($state === 'RESPONSE_KNOWN' && $status === 429) {
+                $this->operations->wait($operation, 'http_429', gmdate('Y-m-d H:i:s', time() + 60));
+                $summary['waiting'] = 1;
+            } elseif ($state === 'RESPONSE_KNOWN' && $status !== null && $status >= 200 && $status < 300) {
+                if (!$this->reconcileKnownSuccess($operation, $summary)) {
+                    $this->operations->terminal($operation, 'REMOTE_UNCERTAIN', 'known_2xx_without_local_authority');
+                    $summary['uncertain'] = 1;
+                }
+            } elseif ($state === 'RESPONSE_KNOWN' && $status !== null && $status >= 400 && $status < 500) {
+                $this->operations->terminal($operation, 'FAILED', 'oauth_known_http_failure');
+                $summary['failed'] = 1;
+            } elseif ($state === 'RESPONSE_KNOWN') {
+                $this->operations->terminal($operation, 'REMOTE_UNCERTAIN', 'oauth_known_remote_failure');
+                $summary['uncertain'] = 1;
+            } else {
+                throw new RuntimeException('queue_v4_clean_oauth_fence_state_unreadable');
+            }
+        } catch (Throwable $containmentError) {
+            $containmentDiagnostic = $this->diagnostics->capture(
+                $containmentError,
+                QueueV4CleanOAuthStageContext::current(),
+                'OAUTH_CONTAINMENT_FAILED'
+            );
+            $summary['abort_scheduler'] = true;
+            $summary['status'] = 'oauth_containment_failed';
+            $summary['diagnostic'] = $diagnostic;
+            $summary['containment_diagnostic'] = $containmentDiagnostic;
+            $summary['physical_posts'] = 0;
+            return $summary;
+        }
+
+        try {
+            $after = $this->remoteAttemptCount($operation);
+            $summary['physical_posts'] = max(0, $after - $before);
+        } catch (Throwable $countError) {
+            $summary['abort_scheduler'] = true;
+            $summary['status'] = 'oauth_containment_failed';
+            $summary['diagnostic'] = $diagnostic;
+            $summary['containment_diagnostic'] = $this->diagnostics->capture(
+                $countError,
+                QueueV4CleanOAuthStageContext::current(),
+                'OAUTH_CONTAINMENT_FAILED'
+            );
+            return $summary;
+        }
+        $summary['abort_scheduler'] = true;
+        $summary['status'] = 'oauth_unexpected_contained';
+        $summary['diagnostic'] = $diagnostic;
         return $summary;
     }
 
@@ -319,8 +396,7 @@ final class QueueV4CleanOAuthSupervisor
 
     private function invalidGrant(MeliApiException $error): bool
     {
-        return strtolower((string) ($error->response['error'] ?? '')) === 'invalid_grant'
-            || str_contains(strtolower($error->getMessage()), 'invalid_grant');
+        return strtolower((string) ($error->response['error'] ?? '')) === 'invalid_grant';
     }
 
     private function nextDueAt(string $expiresAt): string

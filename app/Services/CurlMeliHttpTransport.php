@@ -16,6 +16,12 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         bool $form,
         array $timeouts
     ): array {
+        if ((string) (ApiExecutionMetadataContext::current()['source'] ?? '') === MeliTransportSourcePolicy::QUEUE_V4_OAUTH) {
+            $capabilities = (new MeliCliRuntimeCapabilityService())->inspect();
+            if (!(new MeliCliRuntimeCapabilityService())->oauthReady($capabilities)) {
+                throw new RuntimeException('queue_v4_clean_oauth_cli_runtime_capability_missing');
+            }
+        }
         // Última barrera independiente del llamador: nunca abrir cURL hacia
         // Mercado Libre mientras exista la parada local de emergencia.
         $emergency = new MeliEmergencyStopService();
@@ -35,6 +41,9 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         }else{
             $emergency->assertTransportAllowed($method, $url);
         }
+        \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+            \App\QueueV4Clean\QueueV4CleanOAuthStageContext::CURL_INIT
+        );
         $ch = curl_init();
         if ($ch === false) {
             throw new RuntimeException('No se pudo inicializar cURL para consultar Mercado Libre.');
@@ -67,9 +76,16 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             $options[CURLOPT_FOLLOWLOCATION] = false;
             $options[CURLOPT_MAXREDIRS] = 0;
         }
-        curl_setopt_array($ch, $options);
+        \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+            \App\QueueV4Clean\QueueV4CleanOAuthStageContext::CURL_OPTIONS
+        );
+        if (!curl_setopt_array($ch, $options)) {
+            throw new RuntimeException('queue_v4_clean_curl_options_rejected');
+        }
         if ($method !== 'GET') {
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+            if (!curl_setopt($ch, CURLOPT_POSTFIELDS, $body)) {
+                throw new RuntimeException('queue_v4_clean_curl_body_option_rejected');
+            }
         }
 
         if($executionSource==='queue_core'){
@@ -95,12 +111,18 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         }
         if (MeliTransportSourcePolicy::requiresCurrentOAuthFence($executionSource)) {
             $emergency->assertTransportAllowed($method, $url);
+            \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+                \App\QueueV4Clean\QueueV4CleanOAuthStageContext::OAUTH_DISPATCH_FENCE
+            );
             \App\QueueV4Clean\QueueV4CleanOAuthDispatchFence::immediatelyBeforeCurl(
                 $method,
                 parse_url($url, PHP_URL_PATH) ?: '/'
             );
         }
         $started = microtime(true);
+        \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+            \App\QueueV4Clean\QueueV4CleanOAuthStageContext::CURL_EXEC
+        );
         $raw = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $wireBytes = defined('CURLINFO_SIZE_DOWNLOAD_T')
@@ -110,6 +132,9 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         unset($ch);
         if (MeliTransportSourcePolicy::requiresCurrentOAuthFence($executionSource)
             && $status > 0 && $curlError === '') {
+            \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+                \App\QueueV4Clean\QueueV4CleanOAuthStageContext::RESPONSE_KNOWN
+            );
             \App\QueueV4Clean\QueueV4CleanOAuthDispatchFence::responseKnown($status);
         }
         $decoded = is_string($raw) ? json_decode($raw, true) : null;

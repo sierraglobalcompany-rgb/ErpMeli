@@ -143,17 +143,29 @@ final class MeliApiClient implements MeliReadClientInterface
         $budget = new ApiBudgetService();
         $rhythm = new ApiRhythmPolicyService();
         $path = parse_url($url, PHP_URL_PATH) ?: '/';
+        \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+            \App\QueueV4Clean\QueueV4CleanOAuthStageContext::OPERATION_PROFILE
+        );
         $profile = (new MeliOperationProfileRegistry())->resolve($method, $path, $meta);
         $meta['operation_key'] = $profile['key'];
         $meta['load_class'] = $profile['load_class'];
         $meta['workload_units'] = $profile['workload_units'];
         try {
+            \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+                \App\QueueV4Clean\QueueV4CleanOAuthStageContext::OWNERSHIP_GUARD
+            );
             \App\QueueCore\QueueCoreOwnershipGuard::assertLegacyTransportAllowed(
                 $method,
                 $path,
                 $meta
             );
+            \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+                \App\QueueV4Clean\QueueV4CleanOAuthStageContext::METADATA_GUARD
+            );
             $guard->assertMetadataScope($this->accountId, $meta);
+            \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+                \App\QueueV4Clean\QueueV4CleanOAuthStageContext::API_GUARD
+            );
             $guard->assertAllowed($this->accountId, $method, $path, $meta);
         } catch (\Throwable $blocked) {
             ApiExecutionMetadataContext::markRemoteAttempted();
@@ -180,6 +192,9 @@ final class MeliApiClient implements MeliReadClientInterface
                 ApiExecutionMetadataContext::claimRemoteCall();
                 // Ritmo antes de presupuesto: una espera local no consume
                 // presupuesto ni se presenta como transporte remoto.
+                \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+                    \App\QueueV4Clean\QueueV4CleanOAuthStageContext::RHYTHM_RESERVATION
+                );
                 $rhythmPermit = $cronV3RemoteContext
                     ? ['enabled' => true, 'source' => 'cron_v3_rate_gate']
                     : $rhythm->reserve($this->accountId, $method, $path, $meta);
@@ -195,6 +210,9 @@ final class MeliApiClient implements MeliReadClientInterface
                 if (!$cronV3RemoteContext && empty($rhythmPermit['enabled'])) {
                     (new ApiPacingService())->reserve($this->accountId, $method, $path, $meta);
                 }
+                \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+                    \App\QueueV4Clean\QueueV4CleanOAuthStageContext::BUDGET_RESERVATION
+                );
                 $budgetReservation = $budget->reserve($this->accountId, $method, $path, $meta);
                 $executionAttemptId = max(0, (int) ($meta['execution_attempt_id'] ?? 0));
                 if ($executionAttemptId > 0) {
@@ -302,6 +320,9 @@ final class MeliApiClient implements MeliReadClientInterface
                 // Core decides this boundary exclusively from the persisted
                 // physical marker written next to curl_exec by its transport.
                 $dispatchBoundaryCrossed = true;
+                \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+                    \App\QueueV4Clean\QueueV4CleanOAuthStageContext::TRANSPORT_PREPARE
+                );
                 $transportResult = ApiExecutionMetadataContext::withTransportMetadata(
                     [
                         'transport_meli_account_id' => $this->accountId,

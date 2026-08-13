@@ -107,6 +107,16 @@ $assert((int) $pdo->query(
      WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='queue_v4_clean_attempts'
        AND COLUMN_NAME IN ('dispatch_state','physical_started_at','response_known_at','source_closed_at')"
 )->fetchColumn() === 4, 'transport_journal_columns_missing');
+$assert((int) $pdo->query(
+    "SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA=DATABASE()
+       AND ((TABLE_NAME='queue_v4_clean_jobs' AND COLUMN_NAME='lease_generation')
+         OR (TABLE_NAME='queue_v4_clean_attempts' AND COLUMN_NAME='lease_generation'))"
+)->fetchColumn() === 2, 'queue_transport_generation_columns_missing');
+$assert((int) $pdo->query(
+    "SELECT COUNT(*) FROM information_schema.TABLES
+     WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='queue_v4_clean_transport_events'"
+)->fetchColumn() === 1, 'queue_transport_events_table_missing');
 $assert((int) $pdo->query('SELECT COUNT(*) FROM api_incident_materializer_state WHERE singleton_id=1')->fetchColumn() === 1,
     'api_health_materializer_state_missing');
 

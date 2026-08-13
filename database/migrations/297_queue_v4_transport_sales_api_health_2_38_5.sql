@@ -5,6 +5,10 @@
 -- -------------------------------------------------------------------------
 -- Queue V4 physical-dispatch journal on the immutable attempt row.
 -- -------------------------------------------------------------------------
+SET @q := IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='queue_v4_clean_jobs' AND COLUMN_NAME='lease_generation')=0,
+ 'ALTER TABLE queue_v4_clean_jobs ADD COLUMN lease_generation BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER lease_owner','DO 1'); PREPARE s FROM @q; EXECUTE s; DEALLOCATE PREPARE s;
+SET @q := IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='queue_v4_clean_attempts' AND COLUMN_NAME='lease_generation')=0,
+ 'ALTER TABLE queue_v4_clean_attempts ADD COLUMN lease_generation BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER lease_owner','DO 1'); PREPARE s FROM @q; EXECUTE s; DEALLOCATE PREPARE s;
 SET @q := IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='queue_v4_clean_attempts' AND COLUMN_NAME='dispatch_state')=0,
  'ALTER TABLE queue_v4_clean_attempts ADD COLUMN dispatch_state ENUM(''NOT_DISPATCHED'',''PHYSICAL_STARTED'',''RESPONSE_KNOWN'') NOT NULL DEFAULT ''NOT_DISPATCHED'' AFTER error_class','DO 1'); PREPARE s FROM @q; EXECUTE s; DEALLOCATE PREPARE s;
 SET @q := IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='queue_v4_clean_attempts' AND COLUMN_NAME='transport_method')=0,

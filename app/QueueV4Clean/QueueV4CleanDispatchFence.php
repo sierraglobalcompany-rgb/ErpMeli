@@ -75,14 +75,17 @@ final class QueueV4CleanDispatchFence
                    ON j.id=a.job_id AND j.company_id=a.company_id AND j.meli_account_id=a.meli_account_id
                  SET a.dispatch_state='RESPONSE_KNOWN',a.response_known_at=UTC_TIMESTAMP(3),a.http_status=?
                  WHERE a.id=? AND a.job_id=? AND a.company_id=? AND a.meli_account_id=?
-                   AND a.lease_owner=? AND a.outcome='running' AND a.dispatch_state='PHYSICAL_STARTED'
-                   AND j.state='running' AND j.lease_owner=?"
+                   AND a.lease_owner=? AND a.lease_generation=?
+                   AND a.outcome='running' AND a.dispatch_state='PHYSICAL_STARTED'
+                   AND j.state='running' AND j.lease_owner=? AND j.lease_generation=?"
             );
             $stmt->execute([
                 self::status($status), (int) ($meta['queue_v4_attempt_id'] ?? 0),
                 (int) ($meta['queue_v4_job_id'] ?? 0), (int) ($meta['company_id'] ?? 0),
                 (int) ($meta['account_id'] ?? 0), (string) ($meta['queue_v4_lease_owner'] ?? ''),
+                (int) ($meta['queue_v4_lease_generation'] ?? 0),
                 (string) ($meta['queue_v4_lease_owner'] ?? ''),
+                (int) ($meta['queue_v4_lease_generation'] ?? 0),
             ]);
         }
         if ($stmt->rowCount() !== 1) {
@@ -132,13 +135,16 @@ final class QueueV4CleanDispatchFence
              INNER JOIN queue_v4_clean_jobs j
                ON j.id=a.job_id AND j.company_id=a.company_id AND j.meli_account_id=a.meli_account_id
              WHERE a.id=? AND a.job_id=? AND a.company_id=? AND a.meli_account_id=?
-               AND a.lease_owner=? AND j.lease_owner=? LIMIT 1'
+               AND a.lease_owner=? AND a.lease_generation=?
+               AND j.lease_owner=? AND j.lease_generation=? LIMIT 1'
         );
         $stmt->execute([
             (int) ($meta['queue_v4_attempt_id'] ?? 0), (int) ($meta['queue_v4_job_id'] ?? 0),
             (int) ($meta['company_id'] ?? 0), (int) ($meta['account_id'] ?? 0),
             (string) ($meta['queue_v4_lease_owner'] ?? ''),
+            (int) ($meta['queue_v4_lease_generation'] ?? 0),
             (string) ($meta['queue_v4_lease_owner'] ?? ''),
+            (int) ($meta['queue_v4_lease_generation'] ?? 0),
         ]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return [
@@ -163,14 +169,18 @@ final class QueueV4CleanDispatchFence
              SET a.dispatch_state='PHYSICAL_STARTED',a.transport_method=?,a.endpoint_key=?,
                  a.physical_http_calls=1,a.physical_started_at=UTC_TIMESTAMP(3)
              WHERE a.id=? AND a.job_id=? AND a.company_id=? AND a.meli_account_id=?
-               AND a.lease_owner=? AND a.outcome='running' AND a.dispatch_state='NOT_DISPATCHED'
-               AND j.state='running' AND j.lease_owner=? AND j.lease_expires_at>UTC_TIMESTAMP(3)"
+               AND a.lease_owner=? AND a.lease_generation=?
+               AND a.outcome='running' AND a.dispatch_state='NOT_DISPATCHED'
+               AND j.state='running' AND j.lease_owner=? AND j.lease_generation=?
+               AND j.lease_expires_at>UTC_TIMESTAMP(3)"
         );
         $owner = (string) ($meta['queue_v4_lease_owner'] ?? '');
         $stmt->execute([
             $method, self::endpointKey($path), (int) ($meta['queue_v4_attempt_id'] ?? 0),
             (int) ($meta['queue_v4_job_id'] ?? 0), (int) ($meta['company_id'] ?? 0),
-            (int) ($meta['account_id'] ?? 0), $owner, $owner,
+            (int) ($meta['account_id'] ?? 0), $owner,
+            (int) ($meta['queue_v4_lease_generation'] ?? 0),
+            $owner, (int) ($meta['queue_v4_lease_generation'] ?? 0),
         ]);
         if ($stmt->rowCount() !== 1) {
             throw new RuntimeException('queue_v4_clean_dispatch_fence_lost');

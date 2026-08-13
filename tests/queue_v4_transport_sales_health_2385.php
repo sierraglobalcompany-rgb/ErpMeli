@@ -35,6 +35,7 @@ use App\QueueV4Clean\QueueV4CleanDispatchFence;
 use App\QueueV4Clean\QueueV4CleanHealthSnapshotService;
 use App\QueueV4Clean\QueueV4CleanRepository;
 use App\QueueV4Clean\QueueV4CleanUncertainReadRecoveryService;
+use App\QueueV4Clean\QueueV4CleanWorker;
 use App\Services\AppSettingsService;
 use App\Services\MeliApiClient;
 use App\Services\MeliHttpTransportInterface;
@@ -187,6 +188,64 @@ $assert($result['status'] === 'complete' && $calls === 1 && (int) $job['attempts
     && $job['status'] === 'complete' && $job['remote_dispatch_state'] === 'RESPONSE_KNOWN'
     && (int) $job['last_http_status'] === 200,
     'sales_page_not_completed:' . json_encode([$result,$job,$calls,$budget]));
+
+// A real ordinary Queue V4 worker GET must cross the physical journal with a
+// positive, monotonic lease generation. Sales-audit and OAuth fixtures do not
+// exercise this production path.
+$resetTransportState();
+$pdo->exec('DELETE FROM queue_v4_clean_recovery_events');
+$pdo->exec('DELETE FROM queue_v4_clean_attempts');
+$pdo->exec('DELETE FROM queue_v4_clean_jobs');
+$pdo->exec('DELETE FROM queue_v4_clean_runs');
+$pdo->exec("UPDATE queue_v4_clean_control SET engine_state='ACTIVE' WHERE control_key='primary'");
+$repository = new QueueV4CleanRepository($pdo);
+$queueJobId = $repository->enqueue(
+    $companyId,
+    $accountId,
+    'fresh_orders_discovery',
+    null,
+    'transport-worker-real-get',
+    ['from' => '2026-08-13T00:00:00Z', 'to' => '2026-08-13T00:01:00Z', 'offset' => 0, 'limit' => 20],
+    3,
+);
+$queueTransport = new QueueV4SalesTransport2385('success');
+$workerFactory = static fn(int $id): MeliApiClient => new MeliApiClient($id, $queueTransport);
+for ($generation = 1; $generation <= 2; $generation++) {
+    QueueV4CleanCycleBudget::start(10);
+    try {
+        $workerResult = (new QueueV4CleanWorker($pdo, $repository, $workerFactory))->run('test', 1, 5);
+    } finally {
+        QueueV4CleanCycleBudget::clear();
+    }
+    $assert($workerResult === ['claimed' => 1, 'completed' => 1, 'deferred' => 0],
+        'ordinary_worker_get_not_completed_generation_' . $generation . ':' . json_encode($workerResult));
+    if ($generation === 1) {
+        $repository->enqueue(
+            $companyId,
+            $accountId,
+            'fresh_orders_discovery',
+            null,
+            'transport-worker-real-get',
+            ['from' => '2026-08-13T00:00:00Z', 'to' => '2026-08-13T00:01:00Z', 'offset' => 0, 'limit' => 20],
+            3,
+        );
+    }
+}
+$queueGenerations = $pdo->query(
+    "SELECT lease_generation FROM queue_v4_clean_transport_events
+     WHERE source_kind='queue' AND work_id=" . $queueJobId . ' ORDER BY id'
+)->fetchAll(PDO::FETCH_COLUMN);
+$attemptGenerations = $pdo->query(
+    'SELECT lease_generation FROM queue_v4_clean_attempts WHERE job_id=' . $queueJobId . ' ORDER BY id'
+)->fetchAll(PDO::FETCH_COLUMN);
+$jobGeneration = (int) $pdo->query(
+    'SELECT lease_generation FROM queue_v4_clean_jobs WHERE id=' . $queueJobId
+)->fetchColumn();
+$assert(array_map('intval', $queueGenerations) === [1, 2]
+    && array_map('intval', $attemptGenerations) === [1, 2]
+    && $jobGeneration === 2 && $queueTransport->physicalCalls === 2,
+    'ordinary_worker_generation_not_monotonic:' . json_encode([$queueGenerations,$attemptGenerations,$jobGeneration]));
+$pdo->exec("UPDATE queue_v4_clean_control SET engine_state='STOPPED' WHERE control_key='primary'");
 
 QueueV4CleanCycleBudget::start(15);
 for ($i = 0; $i < 10; $i++) {

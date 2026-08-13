@@ -84,6 +84,13 @@ $assert(isset($databaseAuthority['tables']['oauth_refresh_operations']), 'OAuth 
 foreach (['sync_sales_audit_runs','sync_sales_audit_jobs','queue_v4_clean_recovery_events','queue_v4_clean_transport_events','api_incident_groups','api_incident_materializer_state'] as $table) {
     $assert(isset($databaseAuthority['tables'][$table]), '2.38.5 authority table missing: ' . $table);
 }
+$authorityColumns = static fn(string $table): array => array_column(
+    (array) ($databaseAuthority['tables'][$table]['columns'] ?? []),
+    'COLUMN_NAME',
+);
+$assert(in_array('lease_generation', $authorityColumns('queue_v4_clean_jobs'), true)
+    && in_array('lease_generation', $authorityColumns('queue_v4_clean_attempts'), true),
+    'ordinary Queue V4 generation columns missing from canonical DB authority');
 $assert(str_contains($appJs, 'El backend Queue V4 agotó el tiempo de respuesta.'), 'Queue V4 timeout feedback missing');
 $assert(str_contains($appJs, "includes('application/json')"), 'Queue V4 content-type gate missing');
 $assert(str_contains($readiness, "failure_class='interrupted'"), 'interrupted readiness restart missing');
@@ -140,12 +147,17 @@ $assert(str_contains($dispatchFence, "remote_dispatch_state='MAY_HAVE_DISPATCHED
 $assert(str_contains($oauthMigration, 'oauth_refresh_operations') && !preg_match('/access_token|refresh_token_encrypted/i', $oauthMigration), 'operation table stores credentials');
 $assert(str_contains($oauthMigration, "UNIQUE KEY uq_oauth_refresh_generation (company_id,meli_account_id,expected_refresh_version)"), 'OAuth operation generation uniqueness missing');
 $assert(str_contains($transportMigration, "ENUM('NOT_DISPATCHED','PHYSICAL_STARTED','RESPONSE_KNOWN')")
+    && substr_count($transportMigration, "COLUMN_NAME='lease_generation'") >= 2
     && str_contains($transportMigration, 'queue_v4_clean_recovery_events')
     && str_contains($transportMigration, 'queue_v4_clean_transport_events')
     && str_contains($transportMigration, 'api_incident_groups'), '2.38.5 transport/health schema incomplete');
 $assert(str_contains($dispatchFence . $readDispatchFence, 'QueueV4CleanTransportJournal::started')
     && str_contains($dispatchFence . $readDispatchFence, 'QueueV4CleanTransportJournal::responseKnown'),
     'unified physical transport journal integration missing');
+$assert(str_contains($repository, 'lease_generation=attempt_count+1') === false
+    && str_contains($repository, 'lease_generation=?,attempt_count=attempt_count+1')
+    && str_contains($worker, "'queue_v4_lease_generation'"),
+    'ordinary Queue V4 lease generation authority missing');
 $assert(str_contains($transportJournal, 'company_id,meli_account_id,source_kind')
     && str_contains($healthSnapshot, 'FROM queue_v4_clean_transport_events t')
     && !str_contains($healthSnapshot, 'SUM(o.remote_attempt_count)'),

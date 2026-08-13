@@ -20,7 +20,8 @@ final class QueueV4CleanUncertainReadRecoveryService
         try {
             $row = $this->pdo->query(
                 "SELECT j.id job_id,j.company_id,j.meli_account_id,j.job_type,j.resource_id,j.payload_json,
-                        j.attempt_count,a.id attempt_id,a.dispatch_state,a.error_class
+                        j.attempt_count,j.lease_generation,a.id attempt_id,
+                        a.lease_generation attempt_lease_generation,a.dispatch_state,a.error_class
                  FROM queue_v4_clean_jobs j
                  INNER JOIN queue_v4_clean_attempts a
                    ON a.id=(SELECT MAX(latest.id) FROM queue_v4_clean_attempts latest
@@ -40,6 +41,9 @@ final class QueueV4CleanUncertainReadRecoveryService
             }
             $job = $row[0];
             try {
+                if ((int) $job['lease_generation'] !== (int) $job['attempt_lease_generation']) {
+                    throw new RuntimeException('queue_v4_clean_uncertain_recovery_generation_mismatch');
+                }
                 $this->assertReadOnlyPayload($job);
                 $companyId = (int) $job['company_id'];
                 $accountId = (int) $job['meli_account_id'];
@@ -68,9 +72,10 @@ final class QueueV4CleanUncertainReadRecoveryService
                  SET state='waiting',available_at=UTC_TIMESTAMP(3),attempt_count=GREATEST(attempt_count-1,0),
                      last_error_class='remote_result_uncertain_safe_get_recovered',completed_at=NULL
                  WHERE id=? AND company_id=? AND meli_account_id=? AND state='review'
+                   AND lease_generation=?
                    AND last_error_class IN ('remoteresultuncertainexception','remote_result_uncertain')"
             );
-            $update->execute([(int) $job['job_id'], $companyId, $accountId]);
+            $update->execute([(int) $job['job_id'], $companyId, $accountId, (int) $job['lease_generation']]);
             if ($update->rowCount() !== 1) {
                 throw new RuntimeException('queue_v4_clean_uncertain_recovery_cas_lost');
             }

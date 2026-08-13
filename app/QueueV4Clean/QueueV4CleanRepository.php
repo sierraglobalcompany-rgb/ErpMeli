@@ -150,23 +150,28 @@ final class QueueV4CleanRepository
             }
             $companyId = (int) $row['company_id'];
             $accountId = (int) $row['meli_account_id'];
+            $previousGeneration = (int) ($row['lease_generation'] ?? 0);
+            $generation = $previousGeneration + 1;
             $this->assertTenant($companyId, $accountId);
             $update = $this->pdo->prepare(
                 "UPDATE queue_v4_clean_jobs
                  SET state='running',lease_owner=?,lease_expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND),
-                     attempt_count=attempt_count+1
-                 WHERE id=? AND company_id=? AND meli_account_id=? AND state='ready'"
+                     lease_generation=?,attempt_count=attempt_count+1
+                 WHERE id=? AND company_id=? AND meli_account_id=? AND state='ready' AND lease_generation=?"
             );
-            $update->execute([$owner, max(10, min(300, $leaseSeconds)), (int) $row['id'], $companyId, $accountId]);
+            $update->execute([
+                $owner, max(10, min(300, $leaseSeconds)), $generation,
+                (int) $row['id'], $companyId, $accountId, $previousGeneration,
+            ]);
             if ($update->rowCount() !== 1) {
                 throw new RuntimeException('queue_v4_clean_claim_lost');
             }
             $attempt = $this->pdo->prepare(
                 'INSERT INTO queue_v4_clean_attempts
-                 (job_id,run_id,company_id,meli_account_id,lease_owner)
-                 VALUES (?,?,?,?,?)'
+                 (job_id,run_id,company_id,meli_account_id,lease_owner,lease_generation)
+                 VALUES (?,?,?,?,?,?)'
             );
-            $attempt->execute([(int) $row['id'], $runId, $companyId, $accountId, $owner]);
+            $attempt->execute([(int) $row['id'], $runId, $companyId, $accountId, $owner, $generation]);
             $attemptId = (int) $this->pdo->lastInsertId();
             $run = $this->pdo->prepare(
                 "UPDATE queue_v4_clean_runs SET jobs_claimed=jobs_claimed+1
@@ -180,6 +185,7 @@ final class QueueV4CleanRepository
             $row['attempt_id'] = $attemptId;
             $row['attempt_count'] = (int) $row['attempt_count'] + 1;
             $row['lease_owner'] = $owner;
+            $row['lease_generation'] = $generation;
             $row['payload'] = json_decode((string) $row['payload_json'], true, 32, JSON_THROW_ON_ERROR);
             return $row;
         } catch (Throwable $error) {
@@ -223,7 +229,7 @@ final class QueueV4CleanRepository
                  SET state='waiting',available_at=?,lease_owner=NULL,lease_expires_at=NULL,
                      attempt_count=GREATEST(attempt_count-1,0),last_error_class=?,completed_at=NULL
                  WHERE id=? AND company_id=? AND meli_account_id=?
-                   AND state='running' AND lease_owner=? AND attempt_count=?"
+                   AND state='running' AND lease_owner=? AND lease_generation=? AND attempt_count=?"
             );
             $statement->execute([
                 $availableAt,
@@ -232,6 +238,7 @@ final class QueueV4CleanRepository
                 $companyId,
                 $accountId,
                 (string) $job['lease_owner'],
+                (int) $job['lease_generation'],
                 (int) $job['attempt_count'],
             ]);
             if ($statement->rowCount() !== 1) {
@@ -241,7 +248,7 @@ final class QueueV4CleanRepository
                 "UPDATE queue_v4_clean_attempts
                  SET outcome='waiting',error_class=?,finished_at=UTC_TIMESTAMP(3),source_closed_at=UTC_TIMESTAMP(3)
                  WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=?
-                   AND lease_owner=? AND outcome='running'"
+                   AND lease_owner=? AND lease_generation=? AND outcome='running'"
             );
             $attempt->execute([
                 $classification,
@@ -250,6 +257,7 @@ final class QueueV4CleanRepository
                 $companyId,
                 $accountId,
                 (string) $job['lease_owner'],
+                (int) $job['lease_generation'],
             ]);
             if ($attempt->rowCount() !== 1) {
                 throw new RuntimeException('queue_v4_clean_non_failure_attempt_cas_lost');
@@ -294,12 +302,12 @@ final class QueueV4CleanRepository
         $this->pdo->beginTransaction();
         try {
             $expired = $this->pdo->query(
-                "SELECT j.id,j.company_id,j.meli_account_id,j.lease_owner,
+                "SELECT j.id,j.company_id,j.meli_account_id,j.lease_owner,j.lease_generation,
                         a.id attempt_id,a.dispatch_state
                  FROM queue_v4_clean_jobs j
                  INNER JOIN queue_v4_clean_attempts a
                    ON a.job_id=j.id AND a.company_id=j.company_id AND a.meli_account_id=j.meli_account_id
-                  AND a.lease_owner=j.lease_owner AND a.outcome='running'
+                  AND a.lease_owner=j.lease_owner AND a.lease_generation=j.lease_generation AND a.outcome='running'
                  WHERE j.state='running' AND j.lease_expires_at<UTC_TIMESTAMP(3)
                  ORDER BY j.id FOR UPDATE"
             )->fetchAll(PDO::FETCH_ASSOC);
@@ -311,20 +319,25 @@ final class QueueV4CleanRepository
                     "UPDATE queue_v4_clean_attempts
                      SET outcome='waiting',error_class=?,finished_at=UTC_TIMESTAMP(3),source_closed_at=UTC_TIMESTAMP(3)
                      WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=?
-                       AND lease_owner=? AND outcome='running'"
+                       AND lease_owner=? AND lease_generation=? AND outcome='running'"
                 );
                 $attempt->execute([
                     $classification, (int) $row['attempt_id'], (int) $row['id'],
                     (int) $row['company_id'], (int) $row['meli_account_id'], (string) $row['lease_owner'],
+                    (int) $row['lease_generation'],
                 ]);
                 $job = $this->pdo->prepare(
                     "UPDATE queue_v4_clean_jobs
                      SET state='waiting',available_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 60 SECOND),
                          attempt_count=GREATEST(attempt_count-1,0),lease_owner=NULL,lease_expires_at=NULL,
                          last_error_class=?
-                     WHERE id=? AND company_id=? AND meli_account_id=? AND state='running'"
+                     WHERE id=? AND company_id=? AND meli_account_id=? AND state='running'
+                       AND lease_owner=? AND lease_generation=?"
                 );
-                $job->execute([$classification, (int) $row['id'], (int) $row['company_id'], (int) $row['meli_account_id']]);
+                $job->execute([
+                    $classification, (int) $row['id'], (int) $row['company_id'], (int) $row['meli_account_id'],
+                    (string) $row['lease_owner'], (int) $row['lease_generation'],
+                ]);
             }
             $this->pdo->commit();
             return count($expired);
@@ -380,17 +393,25 @@ final class QueueV4CleanRepository
                 "UPDATE queue_v4_clean_jobs
                  SET state=?,available_at={$available},lease_owner=NULL,lease_expires_at=NULL,last_error_class=?,
                      completed_at=IF(?='completed',UTC_TIMESTAMP(3),NULL)
-                 WHERE id=? AND company_id=? AND meli_account_id=? AND state='running' AND lease_owner=?"
+                 WHERE id=? AND company_id=? AND meli_account_id=? AND state='running'
+                   AND lease_owner=? AND lease_generation=?"
             );
-            $statement->execute([$jobState, $errorClass, $jobState, (int) $job['id'], $companyId, $accountId, (string) $job['lease_owner']]);
+            $statement->execute([
+                $jobState, $errorClass, $jobState, (int) $job['id'], $companyId, $accountId,
+                (string) $job['lease_owner'], (int) $job['lease_generation'],
+            ]);
             if ($statement->rowCount() !== 1) {
                 throw new RuntimeException('queue_v4_clean_finish_cas_lost');
             }
             $attempt = $this->pdo->prepare(
                 'UPDATE queue_v4_clean_attempts SET outcome=?,error_class=?,finished_at=UTC_TIMESTAMP(3),source_closed_at=UTC_TIMESTAMP(3)
-                 WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND outcome=\'running\''
+                 WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=?
+                   AND lease_owner=? AND lease_generation=? AND outcome=\'running\''
             );
-            $attempt->execute([$attemptOutcome, $errorClass, (int) $job['attempt_id'], (int) $job['id'], $companyId, $accountId, (string) $job['lease_owner']]);
+            $attempt->execute([
+                $attemptOutcome, $errorClass, (int) $job['attempt_id'], (int) $job['id'],
+                $companyId, $accountId, (string) $job['lease_owner'], (int) $job['lease_generation'],
+            ]);
             if ($attempt->rowCount() !== 1) {
                 throw new RuntimeException('queue_v4_clean_attempt_cas_lost');
             }

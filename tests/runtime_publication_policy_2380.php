@@ -46,6 +46,9 @@ function rpWrite(string $root, string $path, string $bytes): void
 $root = sys_get_temp_dir() . '/erp-runtime-policy-' . bin2hex(random_bytes(6));
 mkdir($root, 0777, true);
 try {
+    $registryRelative = 'resources/release/managed-runtime-dependencies-'
+        . ManagedRuntimePublicationPolicy::VERSION . '.json';
+    $registryPattern = preg_quote($registryRelative, '#');
     rpGit($root, ['init', '--quiet']);
     rpGit($root, ['config', 'user.email', 'runtime-policy@example.invalid']);
     rpGit($root, ['config', 'user.name', 'Runtime Policy Test']);
@@ -87,15 +90,16 @@ try {
             'public/index.php',
             'recuperar.php',
             'resources/mercadolibre-api/generated/data.json',
-            'resources/release/managed-runtime-dependencies-2.38.2.json',
+            $registryRelative,
             'stop.php',
         ]) . "\n"),
         'classification_rules' => [
             ['id' => 'runtime-files', 'classification' => 'RUNTIME_REQUIRED', 'kind' => 'regex',
-                'value' => '#^(?:app/.*\\.php|resources/(?:mercadolibre-api/generated/data\\.json|release/managed-runtime-dependencies-2\\.38\\.2\\.json))$#D'],
+                'value' => '#^(?:app/.*\\.php|' . $registryPattern
+                    . '|resources/mercadolibre-api/generated/data\\.json)$#D'],
         ],
         'runtime_dependencies' => [
-            ['id' => 'registry', 'path' => 'resources/release/managed-runtime-dependencies-2.38.2.json',
+            ['id' => 'registry', 'path' => $registryRelative,
                 'classification' => 'RUNTIME_REQUIRED', 'required_in_runtime_manifest' => true,
                 'consumers' => [['source_path' => 'app/Test.php', 'symbol' => 'test', 'path_literal' => 'registry']],
                 'provenance' => ['kind' => 'generated']],
@@ -105,7 +109,7 @@ try {
                 'provenance' => ['kind' => 'source']],
         ],
     ];
-    rpWrite($root, 'resources/release/managed-runtime-dependencies-2.38.2.json',
+    rpWrite($root, $registryRelative,
         json_encode($registry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
     rpGit($root, ['add', '.']);
     rpGit($root, ['commit', '--quiet', '-m', 'base']);

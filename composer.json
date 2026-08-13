@@ -22,7 +22,7 @@
     "psr-4": { "App\\": "app/" }
   },
   "scripts": {
-    "test": [
+    "test:legacy-archive": [
       "@php -d error_reporting=-1 -d display_errors=1 tests/run.php",
       "@php -d error_reporting=-1 -d display_errors=1 tests/route_contract.php",
       "@php -d error_reporting=-1 -d display_errors=1 tests/query_performance_report_test.php",
@@ -156,6 +156,9 @@
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/runtime_package_attestation_b21a.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/managed_runtime_package_2361.php"
     ],
+    "test": "@test:release-2383",
+    "test:release-2383": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2383.php",
+    "test:release-2383-db": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_oauth_control_plane_2383.php",
     "test:sales-control": "@php -d error_reporting=-1 -d display_errors=1 tests/sales_control_2211_mysql_integration.php",
     "test:hf12-db": "@php -d error_reporting=-1 -d display_errors=1 tests/emergency_oauth_refresh_real_integration_hf12.php",
     "test:queue-core": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_phase_b1.php",

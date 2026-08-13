@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "queue-v4-transport-sales-api-health-2.38.5-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "b1751e01263562d849abd9efa755daaf0b743520f433eabcde277dd8cb392791",
+  "runtime_manifest_paths_sha256": "a0868cbca768d9aa803ef150eef4166cda332b6f2cd864a1341f77c6157f9661",
   "coverage_base_commit": "9038524148f3f161f9b9eabe3aca64aa9e1872ca",
   "classifications": {
     "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

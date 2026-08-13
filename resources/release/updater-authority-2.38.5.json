@@ -48,11 +48,11 @@
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanDispatchFence.php",
-            "sha256": "592ee61d946a6afdfab02de18dedc1bdcf7835d5d5dee43de84064f313d0a31a"
+            "sha256": "be98f6edf9a826068dfb5598b5a63ba90e70b4004cf7c9730b1c620eb929b33c"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanHealthSnapshotService.php",
-            "sha256": "1c71882127e0e4303bc4eaba378f9040f1c27f41dedd4fae76ef6f9d56fec9ea"
+            "sha256": "c6c677f64779020397ddbba6f5ab19a59e06d89bf06b5a9235ce0abf8e76b025"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanMaintenanceService.php",
@@ -60,11 +60,11 @@
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanOAuthDispatchFence.php",
-            "sha256": "56bf26e12c9b7d0ac5fb0d872ab89aaec747d5129a76a0444db1521287a5917a"
+            "sha256": "bca3978db811633753e4736c4879f387702849443ce56980d0f3c619f13b89e5"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanOAuthOperationRepository.php",
-            "sha256": "4292594e5465b2219399d41aca92ef22d7d3c94600275ffba896f0d86dc893e7"
+            "sha256": "cc27bd4c3e2d18123ca8f8e4335444e54d76d83b5a9e9c2316c1803bcf016be0"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanOAuthStageContext.php",
@@ -99,12 +99,16 @@
             "sha256": "8efc9a3be939b828b024c3ac981483e062fe71be24768f29b8b1802e0e0c40e6"
         },
         {
+            "path": "app/QueueV4Clean/QueueV4CleanTransportJournal.php",
+            "sha256": "ee2d691a80ba8d65270d3de4eebbacfe44c6dddbfe83c8a0a11f2ca75d332eb2"
+        },
+        {
             "path": "app/QueueV4Clean/QueueV4CleanUncertainReadRecoveryService.php",
             "sha256": "3d43e35b1c0083f17a8c1d72a6762cbb0f87242446d4e2fe855b71990ee051e1"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanWorker.php",
-            "sha256": "36547b40c8a9b60e55ce65a7fa09b0ca2bac5082195a44664b779995806d8201"
+            "sha256": "6b0bbd683b53dc40144f27adb81f6d6c6f506c930c11ce4214eb09972248752f"
         },
         {
             "path": "app/Repositories/SettingsDefinitionRepository.php",
@@ -128,7 +132,7 @@
         },
         {
             "path": "app/Services/ApiHealthService.php",
-            "sha256": "ed2a1d5ae8698029c7f46237d6f02091c4fbd218b9bd330bae740251ecf3256b"
+            "sha256": "82ac601906c516f08b1210e6b7f114611e324a38f5b1f3b06a2b655e1de23727"
         },
         {
             "path": "app/Services/ApiIncidentMaterializerService.php",
@@ -204,7 +208,7 @@
         },
         {
             "path": "database/migrations/297_queue_v4_transport_sales_api_health_2_38_5.sql",
-            "sha256": "562dbcaccdf65d4635718feb79ae74325415a07e2866b92f186772a47cdf57a3"
+            "sha256": "4c5ccbceb0af0feeddd75103421f6e2b55e2c1beb32120277edcc806a91ab116"
         },
         {
             "path": "jobs/queue_v4_clean.php",
@@ -240,7 +244,7 @@
         },
         {
             "path": "resources/release/managed-runtime-dependencies-2.38.5.json",
-            "sha256": "8612c6a6275491fff0952ff882890bb6cb8a8d482ec0ac19ad58ed6bf66d0f31"
+            "sha256": "c24ebdae4b4aa90a2d2ee8532f9bc7d5cf8d461020c08aa04872e6b9c9a2bf3e"
         },
         {
             "path": "resources/release/queue-v4-canonical-db-contract-2.38.3.json",
@@ -252,7 +256,7 @@
         },
         {
             "path": "resources/release/queue-v4-canonical-db-contract-2.38.5.json",
-            "sha256": "62f15581a193b018d4b512d9ec757d1b0d21f4b5df2401e65751f83e75c79c0e"
+            "sha256": "7bfbbf021b3d5681d71d72ae493731628637bc4fe6eb9868206dd8a6e9f3ef8c"
         }
     ]
 }

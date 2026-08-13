@@ -81,6 +81,9 @@ final class OAuthTokenRefreshService
             // atómica y durable en el filesystem privado.
             $queueRecoveryBeforeTransport = $this->queueRecoveryContext();
             if (is_array($queueRecoveryBeforeTransport)) {
+                \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+                    \App\QueueV4Clean\QueueV4CleanOAuthStageContext::TOKEN_ESCROW
+                );
                 (new QueueOAuthDurableRecoveryStore())->assertStorageReady();
                 // The filesystem preflight may take time. Re-read both seller
                 // identity and refresh generation at the last local boundary

@@ -543,11 +543,14 @@ final class MeliApiClient implements MeliReadClientInterface
                 ($manualEmergencyCanary || $manualEmergencyOAuthRefresh) ? $errorCode : null,
                 $manualEmergencyCanary || $manualEmergencyOAuthRefresh
             );
-            if ($queueCoreContext && ($status === 429 || $retryAfter !== null)) {
-                $delay = $guard->retryDelaySeconds($attempt, $status, $retryAfter);
+            if (($queueCoreContext || (string) ($meta['source'] ?? '') === 'queue_v4_clean')
+                && ($status === 429 || $retryAfter !== null)) {
+                $nextSafeAt = $status === 429
+                    ? $rhythm->rateLimitNextSafeAt($rhythmPermit, $retryAfter)
+                    : gmdate('Y-m-d H:i:s', time() + max(1, $guard->retryDelaySeconds($attempt, $status, $retryAfter)));
                 throw new ApiRhythmDeferredException(
-                    'Queue Core respetará la próxima oportunidad indicada por la protección remota.',
-                    gmdate('Y-m-d H:i:s', time() + max(1, $delay)),
+                    'La cola respetará la próxima oportunidad indicada por la protección remota.',
+                    $nextSafeAt,
                     $status === 429 ? 'retry_after' : 'remote_backoff',
                     true
                 );

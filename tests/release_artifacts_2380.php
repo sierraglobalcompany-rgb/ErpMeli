@@ -12,7 +12,7 @@ use App\Services\UpdateManifestService;
 
 $directory = $argv[1] ?? '';
 if (!is_dir($directory) || !class_exists(ZipArchive::class)) {
-    fwrite(STDERR, "Release artifacts 2.38.1: FAIL arguments\n");
+    fwrite(STDERR, "Release artifacts 2.38.2: FAIL arguments\n");
     exit(2);
 }
 
@@ -88,7 +88,7 @@ try {
     $manifestService = new UpdateManifestService();
     $manifest = $manifestService->decode($manifestBytes);
     $assert(($manifest['source_trust'] ?? null) === 'local_admin', 'update_source_trust_invalid');
-    $assert(($manifest['version'] ?? null) === '2.38.1', 'update_version_invalid');
+    $assert(($manifest['version'] ?? null) === '2.38.2', 'update_version_invalid');
     $assert(($manifest['upgrade_from'] ?? null) === ['2.38.0'], 'update_source_version_invalid');
     $assert(in_array('295_inventory_warehouse_v1_2_38_0.sql', (array) ($manifest['migrations'] ?? []), true), 'migration_295_missing');
     $assert(!array_filter((array) ($manifest['migrations'] ?? []), static fn (string $name): bool => str_starts_with($name, '296_')), 'migration_296_present');
@@ -125,8 +125,8 @@ try {
         $assert(is_file($directory . '/' . $match[2]), 'sha_target_missing');
         $assert(hash_equals($match[1], hash_file('sha256', $directory . '/' . $match[2])), 'sha_target_invalid:' . $match[2]);
     }
-    fwrite(STDOUT, 'Release artifacts 2.38.1: PASS checks=' . $checks . PHP_EOL);
+    fwrite(STDOUT, 'Release artifacts 2.38.2: PASS checks=' . $checks . PHP_EOL);
 } catch (Throwable $error) {
-    fwrite(STDERR, 'Release artifacts 2.38.1: FAIL ' . $error->getMessage() . PHP_EOL);
+    fwrite(STDERR, 'Release artifacts 2.38.2: FAIL ' . $error->getMessage() . PHP_EOL);
     exit(1);
 }

@@ -27,13 +27,13 @@ $gitBlob = static function (string $path) use ($root): string {
     return $stdout;
 };
 
-$authorityPath = $root . '/resources/release/updater-authority-2.38.1.json';
+$authorityPath = $root . '/resources/release/updater-authority-2.38.2.json';
 $authorityBytes = file_get_contents($authorityPath);
 if (!is_string($authorityBytes) || str_contains($authorityBytes, 'PENDING')) {
     throw new RuntimeException('updater_authority_unfrozen');
 }
 $authority = json_decode($authorityBytes, true, 32, JSON_THROW_ON_ERROR);
-if (($authority['target_version'] ?? null) !== '2.38.1') {
+if (($authority['target_version'] ?? null) !== '2.38.2') {
     throw new RuntimeException('updater_authority_version_invalid');
 }
 
@@ -111,7 +111,7 @@ foreach ($authority['new_runtime_dependencies'] as $dependency) {
     }
 }
 
-fwrite(STDOUT, 'Updater authority 2.38.1: PASS legacy=' . count($legacyFiles)
+fwrite(STDOUT, 'Updater authority 2.38.2: PASS legacy=' . count($legacyFiles)
     . ' intentional=' . count($intentional) . ' unchanged=' . count($unchangedLines)
     . ' dependencies=' . count($dependencies)
     . ' crlf_equivalent=' . $lineEndingEquivalent . PHP_EOL);

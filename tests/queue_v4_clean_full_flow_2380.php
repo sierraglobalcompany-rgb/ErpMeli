@@ -81,31 +81,81 @@ try {
     $assert(!$wrongColumnFixtureAccepted, 'wrong migration column fixture was accepted');
 
     $version = AppVersionService::fileVersion();
+    // Rehearsal 2.38.1 -> 2.38.2: la promoción metadata-only debe preservar
+    // exactamente el incidente contenido (279 Review, 13 auditorías pending y
+    // la configuración interna ACTIVE/CERTIFIED), sin requerir Cron físico.
+    $pdo->exec("UPDATE queue_v4_clean_control
+                SET engine_state='ACTIVE',readiness_state='CERTIFIED',scheduler_enabled=1
+                WHERE control_key='primary'");
+    $reviewSeed = $pdo->prepare(
+        "INSERT INTO queue_v4_clean_jobs
+         (company_id,meli_account_id,job_type,resource_id,idempotency_key,state,attempt_count,max_attempts,payload_json,last_error_class)
+         VALUES (1,1,'order_exact',?,?,'review',3,3,?,'meliapiexception')"
+    );
+    for ($index = 1; $index <= 279; $index++) {
+        $resource = 'incident-review-' . $index;
+        $reviewSeed->execute([$resource,$resource,json_encode(['order_id'=>$resource], JSON_THROW_ON_ERROR)]);
+    }
+    $auditRun = $pdo->prepare(
+        "INSERT INTO sync_sales_audit_runs
+         (meli_account_id,company_id,period_year,period_month,timezone_used,normalizer_version,
+          local_from,local_to,utc_from,utc_to,status)
+         VALUES (1,1,2026,?,'UTC','v1','2026-01-01','2026-02-01','2026-01-01','2026-02-01','pending')"
+    );
+    $auditJob = $pdo->prepare(
+        "INSERT INTO sync_sales_audit_jobs
+         (sync_sales_audit_run_id,meli_account_id,company_id,status,next_run_at)
+         VALUES (?,1,1,'pending',UTC_TIMESTAMP())"
+    );
+    for ($index = 1; $index <= 13; $index++) {
+        $auditRun->execute([(($index - 1) % 12) + 1]);
+        $auditJob->execute([(int)$pdo->lastInsertId()]);
+    }
+    $preUpdateControl = $pdo->query(
+        "SELECT engine_state,readiness_state,scheduler_enabled
+         FROM queue_v4_clean_control WHERE control_key='primary'"
+    )->fetch(PDO::FETCH_ASSOC);
     $appVersion = $pdo->prepare(
         "INSERT INTO app_settings(setting_key,setting_value,is_encrypted,setting_group)
          VALUES ('app.version',?,0,'system')
          ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),is_encrypted=0"
     );
-    $appVersion->execute(['2.38.0']);
+    $appVersion->execute(['2.38.1']);
     $pdo->prepare(
         'INSERT INTO app_versions(version,notes,installed_at) VALUES (?,\'canonical baseline\',UTC_TIMESTAMP())
          ON DUPLICATE KEY UPDATE version=VALUES(version)'
-    )->execute(['2.38.0']);
+    )->execute(['2.38.1']);
     $marker = new InstalledVersionMarkerService();
-    $assert($marker->write('2.38.0', '295_inventory_warehouse_v1_2_38_0.sql'), 'baseline marker write failed');
+    $assert($marker->write('2.38.1', '295_inventory_warehouse_v1_2_38_0.sql'), 'baseline marker write failed');
     $promotion = (new DirectUpdateMetadataPromotionService())->promote(
         $pdo,
         $version,
         '295_inventory_warehouse_v1_2_38_0.sql',
-        'Queue V4 backlog convergence 2.38.1 metadata-only transition',
+        'Queue V4 rate-limit stability 2.38.2 metadata-only transition',
     );
     $assert(
-        $promotion['previous_version'] === '2.38.0'
+        $promotion['previous_version'] === '2.38.1'
         && $promotion['target_version'] === $version
         && $pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === $version
         && ($marker->read()['version'] ?? '') === $version,
-        'metadata transition 2.38.0 to 2.38.1 failed',
+        'metadata transition 2.38.1 to 2.38.2 failed',
     );
+    $postUpdateControl = $pdo->query(
+        "SELECT engine_state,readiness_state,scheduler_enabled
+         FROM queue_v4_clean_control WHERE control_key='primary'"
+    )->fetch(PDO::FETCH_ASSOC);
+    $assert($preUpdateControl === $postUpdateControl, 'queue_control_changed_during_metadata_update');
+    $assert((int)$pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state='review'")->fetchColumn() === 279, 'review_incident_not_preserved');
+    $assert((int)$pdo->query("SELECT COUNT(*) FROM sync_sales_audit_jobs WHERE status='pending'")->fetchColumn() === 13, 'sales_audit_pending_not_preserved');
+    $pdo->exec('DELETE FROM queue_v4_clean_attempts');
+    $pdo->exec('DELETE FROM queue_v4_clean_jobs');
+    $pdo->exec('DELETE FROM queue_v4_clean_runs');
+    $pdo->exec('DELETE FROM sync_sales_audit_jobs');
+    $pdo->exec('DELETE FROM sync_sales_audit_runs');
+    $pdo->exec("UPDATE queue_v4_clean_control
+                SET engine_state='STOPPED',readiness_state='NOT_READY',scheduler_enabled=0,
+                    readiness_passed_accounts=0,certified_at=NULL,activated_at=NULL
+                WHERE control_key='primary'");
 
     $companyInsert = $pdo->prepare(
         'INSERT INTO companies(id,name,nit,status) VALUES (?,?,?,1)

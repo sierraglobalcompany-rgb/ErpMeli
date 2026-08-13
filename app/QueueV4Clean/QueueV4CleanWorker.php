@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace App\QueueV4Clean;
 
 use App\Services\ApiExecutionMetadataContext;
+use App\Services\ApiBudgetExhaustedException;
+use App\Services\ApiRhythmDeferredException;
 use App\Services\CronDeadlineContext;
 use App\Services\CronDeadlineDeferredException;
 use App\Services\MeliApiClient;
+use App\Services\MeliApiException;
 use App\Services\MeliReadClientInterface;
 use App\Services\OrderSyncService;
 use PDO;
@@ -72,18 +75,49 @@ final class QueueV4CleanWorker
                 $claimed++;
                 try {
                     $this->handle($job);
+                } catch (ApiRhythmDeferredException $error) {
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        'rate_limit_deferred:' . $this->safeToken($error->blockingScope),
+                        $error->nextSafeAt,
+                    );
+                    $deferred++;
+                    continue;
+                } catch (ApiBudgetExhaustedException $error) {
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        'capacity_deferred:budget',
+                        $error->nextSafeAt,
+                    );
+                    $deferred++;
+                    continue;
                 } catch (CronDeadlineDeferredException $error) {
-                    $this->repository->wait($job, $runId, $this->failureClass($error), 5);
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        'capacity_deferred:cron_deadline',
+                        $error->nextSafeAt,
+                    );
                     $deferred++;
                     break;
-                } catch (RuntimeException $error) {
-                    if (str_starts_with($error->getMessage(), 'queue_v4_clean_payload_')) {
-                        $this->repository->dead($job, $runId, $error->getMessage());
-                    } elseif ((int) $job['attempt_count'] >= (int) $job['max_attempts']) {
-                        $this->repository->review($job, $runId, $this->failureClass($error));
-                    } else {
-                        $this->repository->wait($job, $runId, $this->failureClass($error), 30);
+                } catch (MeliApiException $error) {
+                    if ($error->httpStatus === 429) {
+                        $this->repository->deferWithoutAttemptPenalty(
+                            $job,
+                            $runId,
+                            'rate_limit_deferred:http_429_fallback',
+                            gmdate('Y-m-d H:i:s', time() + 300),
+                        );
+                        $deferred++;
+                        continue;
                     }
+                    $this->functionalFailure($job, $runId, $error);
+                    $deferred++;
+                    continue;
+                } catch (RuntimeException $error) {
+                    $this->functionalFailure($job, $runId, $error);
                     $deferred++;
                     continue;
                 }
@@ -132,6 +166,8 @@ final class QueueV4CleanWorker
                     'job_type' => 'fresh_orders_discovery',
                     'company_id' => $companyId,
                     'account_id' => $accountId,
+                    'source_queue_key' => 'queue_v4_clean',
+                    'source_work_id' => (string) $job['id'],
                     'bulk' => false,
                 ],
                 static fn (): array => $client->get('/orders/search', [
@@ -201,6 +237,8 @@ final class QueueV4CleanWorker
             $sync->syncOrderByIdForQueueV4Clean($orderId, [
                 'company_id' => $companyId,
                 'account_id' => $accountId,
+                'source_queue_key' => 'queue_v4_clean',
+                'source_work_id' => (string) $job['id'],
             ]);
             return;
         }
@@ -210,5 +248,22 @@ final class QueueV4CleanWorker
     private function failureClass(Throwable $error): string
     {
         return substr(strtolower((new \ReflectionClass($error))->getShortName()), 0, 100);
+    }
+
+    /** @param array<string,mixed> $job */
+    private function functionalFailure(array $job, int $runId, RuntimeException $error): void
+    {
+        if (str_starts_with($error->getMessage(), 'queue_v4_clean_payload_')) {
+            $this->repository->dead($job, $runId, $error->getMessage());
+        } elseif ((int) $job['attempt_count'] >= (int) $job['max_attempts']) {
+            $this->repository->review($job, $runId, $this->failureClass($error));
+        } else {
+            $this->repository->wait($job, $runId, $this->failureClass($error), 30);
+        }
+    }
+
+    private function safeToken(string $value): string
+    {
+        return substr(preg_replace('/[^a-z0-9_]+/', '_', strtolower($value)) ?: 'rhythm', 0, 70);
     }
 }

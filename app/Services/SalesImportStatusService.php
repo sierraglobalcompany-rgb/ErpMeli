@@ -346,8 +346,11 @@ final class SalesImportStatusService
         if ($this->hasStatus($repairJobs, ['pending', 'running', 'waiting_budget'])) {
             return $this->month($month, 'repairing', 'Descargando faltantes', 'El ERP está trayendo ventas faltantes de forma segura.', 'working', $localTotal, $temporalCoverage);
         }
-        if ($this->hasStatus($auditJobs, ['pending', 'running'])) {
+        if ($this->hasStatus($auditJobs, ['running'])) {
             return $this->month($month, 'running', 'Verificando ventas', 'La auditoría exacta está preparada o en ejecución por el lanzador único.', 'working', $localTotal, $temporalCoverage);
+        }
+        if ($this->hasStatus($auditJobs, ['pending'])) {
+            return $this->month($month, 'queued', 'Preparado', 'El trabajo local espera al procesador autorizado; todavía no consulta Mercado Libre.', 'queued', $localTotal, $temporalCoverage);
         }
 
         if ($run !== null) {

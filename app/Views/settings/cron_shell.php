@@ -32,7 +32,21 @@ $csrfToken = Csrf::token();
     <article><span>Estado</span><strong data-qv4-engine>Detenido</strong><p>Certificar no activa el motor.</p></article>
     <article><span>Cuentas OAuth</span><strong data-qv4-oauth>0/3</strong><p>Tres cuentas exactas y vigentes.</p></article>
     <article><span>Readiness GET</span><strong data-qv4-readiness>0/3</strong><p>Un GET /users/me directo por cuenta, fuera de la cola.</p></article>
-    <article><span>Scheduler</span><strong data-qv4-scheduler>Inactivo</strong><p>Esta pantalla no crea tareas Hostinger.</p></article>
+    <article><span>Configuración scheduler ERP</span><strong data-qv4-scheduler>Inactivo</strong><p>Es configuración interna; no demuestra que exista Cron en hPanel.</p></article>
+    <article><span>Heartbeat del Cron</span><strong data-qv4-heartbeat>Sin evidencia</strong><p data-qv4-physical>Observación física: UNKNOWN</p></article>
+  </section>
+
+  <section class="cron-task-section" aria-labelledby="queue-v4-review-title">
+    <div class="section-heading"><div>
+      <h2 id="queue-v4-review-title">Review por causa operativa</h2>
+      <p>Los aplazamientos de capacidad se separan de fallos funcionales y evidencia ambigua.</p>
+    </div></div>
+    <section class="cron-truth-grid" aria-label="Clasificación Review">
+      <article><span>Capacidad recuperable</span><strong data-qv4-review="recoverable">0</strong></article>
+      <article><span>Fallo funcional</span><strong data-qv4-review="functional">0</strong></article>
+      <article><span>Ambiguo</span><strong data-qv4-review="ambiguous">0</strong></article>
+      <article><span>Más antiguo</span><strong data-qv4-review="oldest">—</strong></article>
+    </section>
   </section>
 
   <section class="cron-task-section" aria-labelledby="queue-v4-counts-title">

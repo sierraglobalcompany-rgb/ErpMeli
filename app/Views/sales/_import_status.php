@@ -7,7 +7,7 @@ $importStatus = is_array($importStatus ?? null) ? $importStatus : null;
 $label = static fn(string $state): string => match ($state) {
     'not_started' => 'Sin preparar',
     'queued' => 'Preparado',
-    'running' => 'Verificando',
+    'running' => 'En ejecución',
     'needs_repair' => 'Faltantes',
     'repairing' => 'Descargando',
     'date_repair_needed' => 'Fechas',

@@ -214,14 +214,14 @@ try {
     $updateManifest = [
         'manifest_version' => 1,
         'product_id' => 'erp-meli',
-        'release_id' => 'erp-meli-2.38.1-queue-v4-backlog-convergence',
+        'release_id' => 'erp-meli-2.38.2-queue-v4-rate-limit-stability',
         'version' => $version,
-        'sequence' => 23801,
+        'sequence' => 23802,
         'channel' => 'manual',
         'source_trust' => 'local_admin',
         'published_at' => ManagedRuntimePublicationPolicy::BUILT_AT,
         'expires_at' => '2099-12-31T23:59:59+00:00',
-        'upgrade_from' => ['2.38.0'],
+        'upgrade_from' => ['2.38.1'],
         'required_bridges' => [],
         'requirements' => [
             'php_min' => '8.3.0',
@@ -240,7 +240,7 @@ try {
     release2380Zip($updatePath, $entries, $files, $timestamp, $updateManifestBytes);
 
     $overlayInventory = [
-        'schema' => 'erp-meli-2381-ftp-overlay-v1',
+        'schema' => 'erp-meli-2382-ftp-overlay-v1',
         'version' => $version,
         'base_commit' => $baseCommit,
         'commit' => $commit,
@@ -261,15 +261,15 @@ try {
 
     $instructionPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_FTP_INSTRUCTIONS.md';
     file_put_contents($instructionPath, implode("\n", [
-        '# ERP MELI 2.38.1 — instalación manual',
+        '# ERP MELI 2.38.2 — instalación manual',
         '',
-        '1. Extraiga ERP_MELI_2.38.1_FTP_REPAIR_OVERLAY.zip localmente.',
+        '1. Extraiga ERP_MELI_2.38.2_FTP_REPAIR_OVERLAY.zip localmente.',
         '2. Suba únicamente los archivos incluidos sobre la carpeta existente erp-meli, conservando rutas.',
         '3. Nunca sobrescriba config.env, shared/config.env, storage, OAuth, pausas, logs o backups.',
-        '4. Abra actualizar.php y complete 2.38.0 → 2.38.1; no hay migraciones nuevas.',
-        '5. Confirme VERSION, app.version y marker 2.38.1; schema 295 y pendientes 0.',
-        '6. Edite la única tarea Cron existente: conserve frecuencia cada minuto y cambie sólo --max-jobs=3 por --max-jobs=15.',
-        '7. Comando exacto: /opt/alt/php83/usr/bin/php /home/u390570745/domains/bodegadigitalmedellin.com/public_html/erp-meli/jobs/queue_v4_clean.php --runtime=45 --max-jobs=15',
+        '4. Abra actualizar.php y complete 2.38.1 → 2.38.2; no hay migraciones nuevas.',
+        '5. Confirme VERSION, app.version y marker 2.38.2; schema 295 y pendientes 0.',
+        '6. No cree Cron todavía. Verifique primero OAuth 3/3, RUNNING=0, DEAD=0 y Review por clase en modo read-only.',
+        '7. Sólo después de esa auditoría, la reactivación inicial autorizada usa un único Cron cada minuto con --runtime=45 --max-jobs=5.',
         '',
         'La instalación no crea Cron Hostinger, no cambia el estado de Queue V4 Clean y no ejecuta readiness automáticamente.',
         '',
@@ -280,7 +280,7 @@ try {
         $artifacts[basename($path)] = ['bytes' => filesize($path), 'sha256' => hash_file('sha256', $path)];
     }
     $authority = [
-        'schema' => 'erp-meli-2381-artifacts-v1',
+        'schema' => 'erp-meli-2382-artifacts-v1',
         'source' => 'GIT_OBJECT_DATABASE',
         'commit' => $commit,
         'tree' => $tree,

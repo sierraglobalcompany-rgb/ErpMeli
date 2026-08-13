@@ -16,6 +16,9 @@ use Throwable;
  */
 final class ApiRhythmPolicyService
 {
+    private const ORDERS_SEARCH_ENDPOINT = 'orders_search';
+    private const ORDERS_SEARCH_WINDOW_SECONDS = 900;
+    private const ORDERS_SEARCH_LOCAL_CEILING = 30;
     private static ?bool $schemaAvailable = null;
 
     /** @var array<string,int> */
@@ -737,6 +740,32 @@ final class ApiRhythmPolicyService
         int $globalLimit,
         int $windowSeconds
     ): ?array {
+        if (hash_equals(self::ORDERS_SEARCH_ENDPOINT, $endpointKey)) {
+            $ordersSearch = $this->rollingCount(
+                $pdo,
+                'endpoint_shared',
+                $endpointKey,
+                self::ORDERS_SEARCH_WINDOW_SECONDS
+            );
+            $ceiling = max(
+                1,
+                min(
+                    self::ORDERS_SEARCH_LOCAL_CEILING,
+                    $this->settings->int(
+                        'api.rhythm.orders_search_requests_per_15m',
+                        self::ORDERS_SEARCH_LOCAL_CEILING
+                    )
+                )
+            );
+            if ($ordersSearch['count'] >= $ceiling) {
+                return $this->rollingDeferred(
+                    $ordersSearch['oldest'],
+                    self::ORDERS_SEARCH_WINDOW_SECONDS,
+                    'rhythm_shared_orders_search_window'
+                );
+            }
+        }
+
         $global = $this->rollingCount($pdo, '', null, $windowSeconds);
         if ($global['count'] >= $globalLimit) {
             return $this->rollingDeferred($global['oldest'], $windowSeconds, 'rhythm_global_window');
@@ -767,13 +796,12 @@ final class ApiRhythmPolicyService
                 ];
             }
             $scopeKey = (string) $row['scope_key'];
-            $kind = str_starts_with($scopeKey, 'endpoint:') ? 'endpoint' : 'account';
+            $kind = str_starts_with($scopeKey, 'endpoint:') ? 'endpoint_shared' : 'account';
             $count = $this->rollingCount(
                 $pdo,
                 $kind,
-                $kind === 'endpoint' ? $endpointKey : $accountId,
-                $windowSeconds,
-                $kind === 'endpoint' ? $accountId : null
+                $kind === 'endpoint_shared' ? $endpointKey : $accountId,
+                $windowSeconds
             );
             $limit = max(1, min($globalLimit, (int) $row['reduced_limit_per_minute']));
             if ($count['count'] >= $limit) {
@@ -791,10 +819,9 @@ final class ApiRhythmPolicyService
         if ($kind === 'account') {
             $where .= ' AND meli_account_id=?';
             $params[] = (int) $value;
-        } elseif ($kind === 'endpoint') {
-            $where .= ' AND endpoint_key=? AND meli_account_id=?';
+        } elseif ($kind === 'endpoint_shared') {
+            $where .= ' AND endpoint_key=?';
             $params[] = (string) $value;
-            $params[] = max(0, (int) $accountId);
         }
         $stmt = $pdo->prepare(
             'SELECT COUNT(*) total,MIN(dispatched_at) oldest FROM api_remote_permits WHERE ' . $where
@@ -826,7 +853,7 @@ final class ApiRhythmPolicyService
         );
         $stmt->execute([
             'account:' . $accountId,
-            $this->endpointPenaltyKey($accountId, $endpointKey),
+            $this->endpointPenaltyKey($endpointKey),
         ]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
@@ -852,7 +879,7 @@ final class ApiRhythmPolicyService
             }
             $current = max(1, (int) ($permit['current_adaptive_limit'] ?? $this->configuration()['current_adaptive_limit']));
             $reduced = max(1, (int) floor($current / 2));
-            $retry = max(1, min(86400, (int) ($retryAfterSeconds ?? 60)));
+            $retry = $this->rateLimitDelaySeconds($permit, $retryAfterSeconds);
             $stableMinutes = max(15, min(240, $this->settings->int('api.rhythm.ramp_stable_after_429_minutes', 60)));
             $upsert = $pdo->prepare(
                 "INSERT INTO api_rhythm_penalties
@@ -865,7 +892,7 @@ final class ApiRhythmPolicyService
                     reduced_until=GREATEST(reduced_until,VALUES(reduced_until)),
                     reason=VALUES(reason),updated_at=VALUES(updated_at)"
             );
-            foreach (['account:' . $accountId, $this->endpointPenaltyKey($accountId, $endpointKey)] as $scopeKey) {
+            foreach (['account:' . $accountId, $this->endpointPenaltyKey($endpointKey)] as $scopeKey) {
                 $upsert->execute([$scopeKey, $reduced, $retry, $stableMinutes]);
             }
         } catch (Throwable) {
@@ -874,9 +901,43 @@ final class ApiRhythmPolicyService
         }
     }
 
-    private function endpointPenaltyKey(int $accountId, string $endpointKey): string
+    private function endpointPenaltyKey(string $endpointKey): string
     {
-        return 'endpoint:' . $accountId . ':' . hash('sha256', $endpointKey);
+        return 'endpoint:shared:' . hash('sha256', $endpointKey);
+    }
+
+    /**
+     * Devuelve la misma autoridad absoluta usada para persistir el breaker
+     * compartido. El jitter es determinista por permiso: evita estampidas sin
+     * volver imposible probar o explicar la postimagen.
+     *
+     * @param array<string,mixed> $permit
+     */
+    public function rateLimitNextSafeAt(array $permit, ?int $retryAfterSeconds): string
+    {
+        return $this->formatTimestamp(
+            microtime(true) + $this->rateLimitDelaySeconds($permit, $retryAfterSeconds)
+        );
+    }
+
+    /** @param array<string,mixed> $permit */
+    private function rateLimitDelaySeconds(array $permit, ?int $retryAfterSeconds): int
+    {
+        $base = max(
+            60,
+            min(86400, $this->settings->int('api.rhythm.shared_429_backoff_seconds', 300))
+        );
+        $jitterMax = max(
+            0,
+            min(300, $this->settings->int('api.rhythm.shared_429_jitter_seconds', 30))
+        );
+        $token = (string) ($permit['permit_token'] ?? 'shared-rate-limit');
+        $jitter = $jitterMax === 0
+            ? 0
+            : (int) (hexdec(substr(hash('sha256', $token), 0, 8)) % ($jitterMax + 1));
+        // Retry-After nunca se reduce. El tope de un año es únicamente una
+        // defensa de rango DATETIME, no el antiguo recorte artificial a 1 h.
+        return min(31536000, max($base, (int) ($retryAfterSeconds ?? 0)) + $jitter);
     }
 
     /** @param array<string,mixed> $permit */

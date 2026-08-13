@@ -23,7 +23,7 @@ $control = $read('app/QueueV4Clean/QueueV4CleanControlService.php');
 $databaseContract = $read('app/QueueV4Clean/QueueV4CleanDatabaseContract.php');
 $appJs = $read('public/assets/app.js');
 
-$assert(trim($read('VERSION')) === '2.38.1', 'VERSION is not 2.38.1');
+$assert(trim($read('VERSION')) === '2.38.2', 'VERSION is not 2.38.2');
 $assert(str_contains($architecture, '## REUSE') && str_contains($architecture, '## REPLACE') && str_contains($architecture, '## LEGACY_IGNORE'), 'architecture classification incomplete');
 foreach (['control', 'readiness_runs', 'readiness_accounts', 'jobs', 'attempts', 'runs', 'leases', 'checkpoints'] as $table) {
     $assert(str_contains($migration, 'queue_v4_clean_' . $table), 'new table missing: ' . $table);

@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.38.1.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.38.2.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -40,10 +40,10 @@ final class ManagedRuntimePublicationPolicy
         'bin/runtime_process_audit.php',
     ];
     public const BASE_COMMIT = 'c40d073705833c94911c254ec633bf8eb231375e';
-    public const INSTALLED_BASE_COMMIT = '4b08e64bfc663858a7cb473f1bef1bbfd2759551';
-    public const VERSION = '2.38.1';
-    public const BUILD_ID = 'erp-meli-2.38.1-queue-v4-backlog-convergence-rc1-20260813';
-    public const BUILT_AT = '2026-08-13T05:30:00Z';
+    public const INSTALLED_BASE_COMMIT = '1eef380afc6ceb42d8955b2def1a439eb4d579fe';
+    public const VERSION = '2.38.2';
+    public const BUILD_ID = 'erp-meli-2.38.2-queue-v4-rate-limit-stability-rc1-20260813';
+    public const BUILT_AT = '2026-08-13T07:30:00Z';
     public const MINIMUM_MIGRATION = '295_inventory_warehouse_v1_2_38_0.sql';
     private const QUEUE_V4_MINIMUM_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';
     private const LEGACY_MINIMUM_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
@@ -138,6 +138,11 @@ final class ManagedRuntimePublicationPolicy
             'build_id' => 'erp-meli-2.38.0-inventory-warehouse-v1-rc1-20260812',
             'minimum_migration' => self::MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.38.0.json',
+        ],
+        '2.38.1' => [
+            'build_id' => 'erp-meli-2.38.1-queue-v4-backlog-convergence-rc1-20260813',
+            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.38.1.json',
         ],
         self::VERSION => [
             'build_id' => self::BUILD_ID,

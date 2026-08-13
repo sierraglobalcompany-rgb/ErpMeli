@@ -230,7 +230,9 @@ final class ApiBudgetService
             }
         }
         $cooldownUntil = null;
-        if ($retryAfter !== null && $retryAfter > 0) {
+        // 429/Retry-After pertenece a la autoridad compartida de Rhythm.
+        // Budget conserva contadores preventivos, no otro cooldown efectivo.
+        if ($status !== 429 && $retryAfter !== null && $retryAfter > 0) {
             $cooldownUntil = gmdate('Y-m-d H:i:s', time() + $retryAfter);
         }
         try {

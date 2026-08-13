@@ -548,6 +548,21 @@
     root.querySelector('[data-qv4-oauth]').textContent = `${Number(data.accounts_oauth || 0)}/3`;
     root.querySelector('[data-qv4-readiness]').textContent = `${Number(data.readiness_get_passed || 0)}/3`;
     root.querySelector('[data-qv4-scheduler]').textContent = data.scheduler === 'active' ? 'Activo' : 'Inactivo';
+    const heartbeat = root.querySelector('[data-qv4-heartbeat]');
+    if (heartbeat) heartbeat.textContent = data.last_scheduler_heartbeat || 'Sin evidencia';
+    const physical = root.querySelector('[data-qv4-physical]');
+    if (physical) physical.textContent = `Observación física: ${data.physical_cron_observed || 'UNKNOWN'}`;
+    const review = data.review_forensics || {};
+    const reviewValues = {
+      recoverable: review.recoverable_count || 0,
+      functional: review.functional_count || 0,
+      ambiguous: review.ambiguous_count || 0,
+      oldest: review.oldest || '—'
+    };
+    Object.entries(reviewValues).forEach(([key, value]) => {
+      const node = root.querySelector(`[data-qv4-review="${key}"]`);
+      if (node) node.textContent = String(value);
+    });
     Object.entries(data.queue || {}).forEach(([key, value]) => {
       const node = root.querySelector(`[data-qv4-count="${key}"]`);
       if (node) node.textContent = String(value);

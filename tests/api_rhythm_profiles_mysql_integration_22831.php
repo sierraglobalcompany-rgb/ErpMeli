@@ -83,27 +83,23 @@ foreach ([10, 20, 30, 40] as $target) {
     profileAssert($dispatched === $target, "La ventana {$target}/min persistió {$dispatched} transportes.");
 }
 
-// Un 429 reduce solo la cuenta y endpoint afectados; otra cuenta conserva su
-// capacidad aun cuando use el mismo contrato de endpoint.
+// Un 429 protege inmediatamente el endpoint normalizado compartido por la
+// aplicación. La segunda cuenta no puede obtener permiso remoto.
 configureProfile($pdo, 40);
 $service = new ApiRhythmPolicyService();
 $permit = $service->reserve($accountOne, 'GET', '/orders/first', ['job_type' => 'orders_sync']);
 profileAssert($service->dispatched($permit), 'El permiso previo al 429 no fue despachado.');
 $service->finalizeKnownResult($permit, 429, 30);
 releaseMinimumInterval($pdo);
-$otherAccountPermit = $service->reserve($accountTwo, 'GET', '/orders/second', ['job_type' => 'orders_sync']);
-profileAssert($service->dispatched($otherAccountPermit), 'El 429 de una cuenta contaminó otra cuenta.');
-$service->finalizeKnownResult($otherAccountPermit, 200);
-releaseMinimumInterval($pdo);
 $blocked = false;
 try {
-    $service->reserve($accountOne, 'GET', '/orders/third', ['job_type' => 'orders_sync']);
+    $service->reserve($accountTwo, 'GET', '/orders/second', ['job_type' => 'orders_sync']);
 } catch (ApiRhythmDeferredException $error) {
     $blocked = $error->blockingScope === 'retry_after';
 }
-profileAssert($blocked, 'HTTP 429 no aplicó Retry-After al alcance afectado.');
+profileAssert($blocked, 'HTTP 429 no protegió el endpoint compartido para otra cuenta.');
 profileAssert((int) $pdo->query('SELECT COUNT(*) FROM api_rhythm_penalties')->fetchColumn() === 2,
-    'La reducción debe persistir cuenta y endpoint por separado.');
+    'La reducción debe persistir cuenta adicional y endpoint compartido.');
 
 $now = time();
 $httpDate = gmdate('D, d M Y H:i:s \G\M\T', $now + 37);

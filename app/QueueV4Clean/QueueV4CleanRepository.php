@@ -44,6 +44,26 @@ final class QueueV4CleanRepository
         return $counts + ['total' => array_sum($counts)];
     }
 
+    /** @return array<string,mixed> */
+    public function operationalObservability(): array
+    {
+        $heartbeat = $this->pdo->query(
+            "SELECT COALESCE(finished_at,started_at)
+             FROM queue_v4_clean_runs
+             WHERE launcher='scheduler'
+             ORDER BY id DESC LIMIT 1"
+        )->fetchColumn();
+        $heartbeat = $heartbeat === false ? null : (string) $heartbeat;
+        $timestamp = $heartbeat === null ? false : strtotime($heartbeat . ' UTC');
+        $physical = $timestamp === false
+            ? 'UNKNOWN'
+            : (time() - $timestamp <= 180 ? 'RECENT' : 'STALE');
+        return [
+            'last_scheduler_heartbeat' => $heartbeat,
+            'physical_cron_observed' => $physical,
+        ];
+    }
+
     public function hasOutstandingOperationalWork(int $companyId, int $accountId): bool
     {
         $this->assertTenant($companyId, $accountId);
@@ -163,6 +183,77 @@ final class QueueV4CleanRepository
     public function wait(array $job, int $runId, string $errorClass, int $delaySeconds = 30): void
     {
         $this->finish($job, $runId, 'waiting', 'waiting', $errorClass, max(1, min(3600, $delaySeconds)));
+    }
+
+    /**
+     * Aplaza una condición de capacidad/pacing sin convertirla en intento
+     * funcional. El CAS revierte exactamente el incremento hecho por claim().
+     *
+     * @param array<string,mixed> $job
+     */
+    public function deferWithoutAttemptPenalty(
+        array $job,
+        int $runId,
+        string $classification,
+        ?string $nextSafeAt,
+    ): void {
+        $companyId = (int) ($job['company_id'] ?? 0);
+        $accountId = (int) ($job['meli_account_id'] ?? 0);
+        $this->assertTenant($companyId, $accountId);
+        $availableAt = $this->safeUtcDateTime($nextSafeAt);
+        $this->pdo->beginTransaction();
+        try {
+            $statement = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_jobs
+                 SET state='waiting',available_at=?,lease_owner=NULL,lease_expires_at=NULL,
+                     attempt_count=GREATEST(attempt_count-1,0),last_error_class=?,completed_at=NULL
+                 WHERE id=? AND company_id=? AND meli_account_id=?
+                   AND state='running' AND lease_owner=? AND attempt_count=?"
+            );
+            $statement->execute([
+                $availableAt,
+                $classification,
+                (int) $job['id'],
+                $companyId,
+                $accountId,
+                (string) $job['lease_owner'],
+                (int) $job['attempt_count'],
+            ]);
+            if ($statement->rowCount() !== 1) {
+                throw new RuntimeException('queue_v4_clean_non_failure_defer_cas_lost');
+            }
+            $attempt = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_attempts
+                 SET outcome='waiting',error_class=?,finished_at=UTC_TIMESTAMP(3)
+                 WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=?
+                   AND lease_owner=? AND outcome='running'"
+            );
+            $attempt->execute([
+                $classification,
+                (int) $job['attempt_id'],
+                (int) $job['id'],
+                $companyId,
+                $accountId,
+                (string) $job['lease_owner'],
+            ]);
+            if ($attempt->rowCount() !== 1) {
+                throw new RuntimeException('queue_v4_clean_non_failure_attempt_cas_lost');
+            }
+            $run = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_runs SET jobs_deferred=jobs_deferred+1
+                 WHERE id=? AND status='running'"
+            );
+            $run->execute([$runId]);
+            if ($run->rowCount() !== 1) {
+                throw new RuntimeException('queue_v4_clean_non_failure_run_cas_lost');
+            }
+            $this->pdo->commit();
+        } catch (Throwable $error) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $error;
+        }
     }
 
     public function review(array $job, int $runId, string $errorClass): void
@@ -301,5 +392,14 @@ final class QueueV4CleanRepository
         if ($statement->fetchColumn() === false) {
             throw new RuntimeException('queue_v4_clean_tenant_mismatch');
         }
+    }
+
+    private function safeUtcDateTime(?string $value): string
+    {
+        $timestamp = $value === null || trim($value) === ''
+            ? false
+            : strtotime(trim($value) . ' UTC');
+        $minimum = time() + 1;
+        return gmdate('Y-m-d H:i:s', max($minimum, $timestamp === false ? $minimum : $timestamp));
     }
 }

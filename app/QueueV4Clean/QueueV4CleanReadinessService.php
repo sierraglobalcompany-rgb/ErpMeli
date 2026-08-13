@@ -38,6 +38,8 @@ final class QueueV4CleanReadinessService
     {
         $repository = new QueueV4CleanRepository($this->pdo);
         $control = $repository->control();
+        $observability = $repository->operationalObservability();
+        $review = (new QueueV4CleanReviewService($this->pdo))->summary();
         $checks = $this->preconditions();
         $stored = (string) $control['readiness_state'];
         $state = $stored;
@@ -51,7 +53,11 @@ final class QueueV4CleanReadinessService
             'readiness_get_passed' => (int) $control['readiness_passed_accounts'],
             'queue' => $repository->counts(),
             'scheduler' => (int) $control['scheduler_enabled'] === 1 ? 'active' : 'inactive',
+            'scheduler_config' => (int) $control['scheduler_enabled'] === 1 ? 'ENABLED' : 'DISABLED',
+            'last_scheduler_heartbeat' => $observability['last_scheduler_heartbeat'],
+            'physical_cron_observed' => $observability['physical_cron_observed'],
             'engine' => (string) $control['engine_state'],
+            'review_forensics' => $review,
             'issues' => $checks['issues'],
             'legacy_state_consulted' => false,
             'read_only' => true,

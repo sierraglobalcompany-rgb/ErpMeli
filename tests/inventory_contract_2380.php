@@ -19,7 +19,7 @@ $read = static function (string $path) use ($root): string {
 };
 
 try {
-    $assert(trim($read('VERSION')) === '2.38.1', 'version');
+    $assert(trim($read('VERSION')) === '2.38.2', 'version');
     $migration = $read('database/migrations/295_inventory_warehouse_v1_2_38_0.sql');
     foreach (['inventory_warehouses', 'inventory_balances', 'inventory_movements', 'inventory_reviews'] as $table) {
         $assert(str_contains($migration, 'CREATE TABLE IF NOT EXISTS ' . $table), 'migration_table:' . $table);

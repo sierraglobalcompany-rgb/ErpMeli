@@ -176,6 +176,12 @@
       "@php -d error_reporting=-1 -d display_errors=1 tests/runtime_publication_policy_2380.php",
       "@php -d error_reporting=-1 -d display_errors=1 tests/updater_authority_2381.php"
     ],
+    "test:release-2382": [
+      "@php -d error_reporting=-1 -d display_errors=1 tests/inventory_contract_2380.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_clean_contract_2380.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/runtime_publication_policy_2380.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/updater_authority_2381.php"
+    ],
     "test:queue-core-webhook-b21-db": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_webhook_ownership_b2_mysql.php",
     "test:release-db": "@php -d error_reporting=-1 -d display_errors=1 tests/release_gate.php",
     "lint": "php bin/lint.php",

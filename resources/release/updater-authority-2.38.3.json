@@ -1,5 +1,154 @@
 {
-  "schema_version": 1,
-  "target_version": "2.38.3",
-  "status": "PENDING_FINAL_GIT_AUTHORITY"
+    "schema_version": 1,
+    "target_version": "2.38.3",
+    "contract": "The 2.38.2 to 2.38.3 update applies only schema 296 for the Queue V4 automatic OAuth control plane. It preserves the one physical Cron, runs OAuth before Producer/Worker outside the commercial FIFO, caps each scheduler run at one physical OAuth POST, never retries a remotely uncertain refresh, performs no Mercado Libre business writes, and preserves updater state paths.",
+    "supersedes_inventory": {
+        "path": "resources/release/updater-locked-file-inventory-2.36.1.json",
+        "sha256": "7b90dab866e6b49d785ce8c706f3ea7ce7db6846fdd1678e6a953a6bf4e31fd5",
+        "file_count": 29
+    },
+    "unchanged_locked": {
+        "file_count": 27,
+        "sorted_path_hash_lines_sha256": "76d38e632333da994447234dc809557150bdf7ed09f1c9643aa12056c21a6f5a"
+    },
+    "intentional_locked_changes": [
+        {
+            "path": "app/Services/ReleaseIntegrityService.php",
+            "previous_sha256": "33aa577f0057f9da5ec9bc619e9a794da61df097d03a4c47321c0c618f1dbf82",
+            "target_sha256": "519cecd67ef7ef4142396cedb13de4a23c1bce5463b2bde3eb2f5d1dee80541f",
+            "reason": "Select the exact legacy or managed publication authority from a recognized manifest identity."
+        },
+        {
+            "path": "app/Recovery/RecoveryKernel.php",
+            "previous_sha256": "4e3e02463c7271b0ad31792e64419ee1ff78e8a0054274c469ead73e22b91cf4",
+            "target_sha256": "f5bc008eec1c2cf9d1959a40d9f6f8c3f9fda907fe16cdc027e8508f3cf42e59",
+            "reason": "Preserve the certified metadata-only update path and Queue V4 state."
+        }
+    ],
+    "new_runtime_dependencies": [
+        {
+            "path": "VERSION",
+            "sha256": "3e6eb606f65d9e23b8f81de1a09cd4948df81ebba4ca14c23f893e02f437a8b9"
+        },
+        {
+            "path": "app/QueueCore/QueueCoreOwnershipGuard.php",
+            "sha256": "a2533cf17895b686829b50e3d17cace0520839c6e33a27c530119617eca9bcc8"
+        },
+        {
+            "path": "app/QueueV4Clean/QueueV4CleanDatabaseContract.php",
+            "sha256": "442d4a1db731530b59e7e3113d41afde12bf45c251238940d7416b94ee9ba212"
+        },
+        {
+            "path": "app/QueueV4Clean/QueueV4CleanOAuthDispatchFence.php",
+            "sha256": "8812bf614520a843e82e2b463f2549e30db503ddf35d8d9f4d04d3238ba55f4e"
+        },
+        {
+            "path": "app/QueueV4Clean/QueueV4CleanOAuthOperationRepository.php",
+            "sha256": "4292594e5465b2219399d41aca92ef22d7d3c94600275ffba896f0d86dc893e7"
+        },
+        {
+            "path": "app/QueueV4Clean/QueueV4CleanOAuthSupervisor.php",
+            "sha256": "f168905e7c95916b204fc045d5071061420aa9447de73900396aa18f824e7511"
+        },
+        {
+            "path": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
+            "sha256": "b065ef153630ecf6e8b74a3bfe96bf16c64fa1606018c9787c939d2465750f3d"
+        },
+        {
+            "path": "app/QueueV4Clean/QueueV4CleanRepository.php",
+            "sha256": "212e182285ab2559085b3e00d3836683a34207fc2607255dab449606ba345558"
+        },
+        {
+            "path": "app/QueueV4Clean/QueueV4CleanReviewService.php",
+            "sha256": "51b2e571cd8f2d10795eaafcd6535e8a73060da0e7d1fdbe924c8bc2cf3ba235"
+        },
+        {
+            "path": "app/QueueV4Clean/QueueV4CleanScheduler.php",
+            "sha256": "3f6f067444f0e9ad89724a353680d58539ec2b9eb4770be6619f27937ba0588e"
+        },
+        {
+            "path": "app/QueueV4Clean/QueueV4CleanWorker.php",
+            "sha256": "fdc05aa1c90db8ad3b29c94284275efa715a2235a7143c6ca9d6788e8eebe8f9"
+        },
+        {
+            "path": "app/Repositories/SettingsDefinitionRepository.php",
+            "sha256": "21618f482fd92744aea22e1004cd89ee330e9ed5042511d5a6f24d5558be4f0a"
+        },
+        {
+            "path": "app/Services/ApiBudgetService.php",
+            "sha256": "57cc4a62e17208177744b369bb05d2c73ca8e95880959ff5e4e5ae8e8f2c6afd"
+        },
+        {
+            "path": "app/Services/ApiExecutionMetadataContext.php",
+            "sha256": "4897fdfaa1aed170068d7252b0b9587d447fea1aaf968e339db435fde9b606e8"
+        },
+        {
+            "path": "app/Services/ApiGuardService.php",
+            "sha256": "20dccb35217368ba2ce0737f267b81fbd9a1aec94e5d66763be7da7082579428"
+        },
+        {
+            "path": "app/Services/ApiRhythmPolicyService.php",
+            "sha256": "6de9d3b6b9c0948355d0db5c369181d933680861b5906722bf837ee3d4f03d53"
+        },
+        {
+            "path": "app/Services/CurlMeliHttpTransport.php",
+            "sha256": "0ba0731aafcf7cf1ffb6e54caec69c60b06466cd153f38d7d1c83abe9df27091"
+        },
+        {
+            "path": "app/Services/ManagedRuntimePublicationPolicy.php",
+            "sha256": "d2b5d2ec155a978867db77ba19ac9af1cf0579f351a766742ca52082a21e9d69"
+        },
+        {
+            "path": "app/Services/MeliApiClient.php",
+            "sha256": "d102933d2107c194f0b6ee1bbe955d6a873aa0eda9758b6b138c7c2ae0d524b2"
+        },
+        {
+            "path": "app/Services/MeliTransportSourcePolicy.php",
+            "sha256": "51d50b7a97a4db9f51ad779ea9ee7490f2b728a59b0c4904be182eb7515187c5"
+        },
+        {
+            "path": "app/Services/OAuthTokenRefreshService.php",
+            "sha256": "656c3546dd142d514184c5743c64e5c3ffdaac9df6417ce6b2a24b11ed5716bf"
+        },
+        {
+            "path": "app/Services/SalesImportStatusService.php",
+            "sha256": "dea2af26dd78830dc68032cd83c35af4fb4fab3cb12fbb2aedd378eedc4562cb"
+        },
+        {
+            "path": "app/Views/sales/_import_status.php",
+            "sha256": "c47ab8bddb3e119f6bb16c7e7323a2363cf74317f99643574effb151e9efa467"
+        },
+        {
+            "path": "app/Views/sales/index.php",
+            "sha256": "6ddae5c553d57c3c570fde199cf39a2ba3d3a5576c41ba6028e0bea09061e23d"
+        },
+        {
+            "path": "app/Views/settings/cron_shell.php",
+            "sha256": "ee16b7e1bfea6a9ce9fdc264fed15b247ea8ef28299c66bc0a89a5798e14c772"
+        },
+        {
+            "path": "database/migrations/296_queue_v4_clean_oauth_control_plane_2_38_3.sql",
+            "sha256": "6ac2493e1b4b61de0c768274452e43169f59345792ecef88af77061c7e1fc64e"
+        },
+        {
+            "path": "jobs/queue_v4_clean_review_recovery.php",
+            "sha256": "79b4083aad09630584521453751216c1add00239225a9b79b886fbd05bd7f98a"
+        },
+        {
+            "path": "public/assets/app.js",
+            "sha256": "3ea9218795b965f04ffac3e97f8192386b8a03b0568a4f428cf636f05ccc0a7c"
+        },
+        {
+            "path": "resources/release/managed-runtime-dependencies-2.38.2.json",
+            "sha256": "f96050cb074607c6d551d33516dc38d3c703cfce6c6271d4c654d00f99390fcb"
+        },
+        {
+            "path": "resources/release/managed-runtime-dependencies-2.38.3.json",
+            "sha256": "2452006bc6f5799e52243792feee816896a0df5ba8f4850c8d777b8cba3c262c"
+        },
+        {
+            "path": "resources/release/queue-v4-canonical-db-contract-2.38.3.json",
+            "sha256": "1be99d3f8c5240649ead02fbc730def8a70adb85cd83d9f18e617a5f1c776a1e"
+        }
+    ]
 }

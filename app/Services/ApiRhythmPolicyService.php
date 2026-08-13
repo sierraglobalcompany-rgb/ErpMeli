@@ -896,8 +896,9 @@ final class ApiRhythmPolicyService
                 $upsert->execute([$scopeKey, $reduced, $retry, $stableMinutes]);
             }
         } catch (Throwable) {
-            // ApiGuardService conserva Retry-After aunque el registro de la
-            // penalización adaptativa no esté disponible.
+            // El request remoto ya quedó contabilizado. La excepción que se
+            // propaga conserva next_safe_at aunque no se pueda persistir la
+            // penalización adaptativa; Guard no es una autoridad 429.
         }
     }
 
@@ -917,6 +918,17 @@ final class ApiRhythmPolicyService
     {
         return $this->formatTimestamp(
             microtime(true) + $this->rateLimitDelaySeconds($permit, $retryAfterSeconds)
+        );
+    }
+
+    /**
+     * Fallback defensivo para un 429 que llegue sin el permiso original.
+     * Conserva la misma configuración canónica y no introduce otro breaker.
+     */
+    public function conservativeRateLimitNextSafeAt(): string
+    {
+        return $this->formatTimestamp(
+            microtime(true) + $this->rateLimitDelaySeconds([], null)
         );
     }
 

@@ -99,6 +99,23 @@ $assert(
     'retry_after_was_truncated'
 );
 
+// M también en sentido inverso: sales_audit dispara el 429 y fresh discovery
+// queda bloqueado sin un nuevo permiso remoto.
+$pdo->exec('DELETE FROM api_remote_permits');
+$pdo->exec('DELETE FROM api_rhythm_penalties');
+$pdo->exec('DELETE FROM api_rhythm_states');
+$salesFirst = $rhythm->reserve((int)$accounts[0]['id'], 'GET', '/orders/search', ['job_type'=>'sales_audit']);
+$assert($rhythm->dispatched($salesFirst), 'sales_audit_first_dispatch_missing');
+$rhythm->finalizeKnownResult($salesFirst, 429, null);
+$releaseInterval();
+$freshAfterSalesBlocked = false;
+try {
+    $rhythm->reserve((int)$accounts[1]['id'], 'GET', '/orders/search', ['job_type'=>'fresh_orders_discovery']);
+} catch (ApiRhythmDeferredException) {
+    $freshAfterSalesBlocked = true;
+}
+$assert($freshAfterSalesBlocked, 'fresh_discovery_bypassed_sales_audit_breaker');
+
 // Reinicia autoridad para probar techo rodante compartido /orders/search.
 $pdo->exec('DELETE FROM api_remote_permits');
 $pdo->exec('DELETE FROM api_rhythm_penalties');
@@ -199,6 +216,13 @@ $recovered = (new QueueV4CleanReviewService($pdo))->recoverExact(
 $assert(($recovered['state'] ?? null) === 'waiting', 'exact_non_failure_review_not_recovered');
 $recoveredRow = $pdo->query("SELECT state,attempt_count FROM queue_v4_clean_jobs WHERE id={$recoverableId}")->fetch(PDO::FETCH_ASSOC);
 $assert((string)$recoveredRow['state'] === 'waiting' && (int)$recoveredRow['attempt_count'] === 0, 'review_recovery_postimage_invalid');
+$replayed = (new QueueV4CleanReviewService($pdo))->recoverExact(
+    (int) $accounts[0]['company_id'],
+    (int) $accounts[0]['id'],
+    $recoverableId,
+    gmdate('Y-m-d H:i:s', time() + 600)
+);
+$assert(($replayed['idempotent_replay'] ?? false) === true, 'review_recovery_not_idempotent');
 
 $mixedId = $repository->enqueue(
     (int) $accounts[1]['company_id'],
@@ -269,6 +293,8 @@ $blockedTransport = new class implements MeliHttpTransportInterface {
 $send = new ReflectionMethod(MeliApiClient::class, 'send');
 $clientOne = new MeliApiClient((int) $accounts[0]['id'], $firstTransport);
 $clientTwo = new MeliApiClient((int) $accounts[1]['id'], $blockedTransport);
+$thirdTransport = clone $blockedTransport;
+$clientThree = new MeliApiClient((int) $accounts[2]['id'], $thirdTransport);
 $meta = [
     'source'=>'queue_v4_clean',
     'job_type'=>'fresh_orders_discovery',
@@ -294,5 +320,58 @@ try {
 }
 $assert($secondDeferred instanceof ApiRhythmDeferredException, 'shared_429_did_not_block_second_client');
 $assert($blockedTransport->calls === 0, 'second_account_crossed_fake_transport');
+$meta['company_id'] = (int) $accounts[2]['company_id'];
+$meta['account_id'] = (int) $accounts[2]['id'];
+$thirdDeferred = null;
+try {
+    $send->invoke($clientThree, 'GET', 'https://api.mercadolibre.com/orders/search', [], [], false, false, $meta);
+} catch (Throwable $error) {
+    $thirdDeferred = $error;
+}
+$assert($thirdDeferred instanceof ApiRhythmDeferredException, 'shared_429_did_not_block_third_client');
+$assert($thirdTransport->calls === 0, 'third_account_crossed_fake_transport');
+
+// B: la autoridad absoluta del Retry-After llega intacta hasta available_at.
+$pdo->exec('DELETE FROM queue_v4_clean_attempts');
+$pdo->exec('DELETE FROM queue_v4_clean_jobs');
+$pdo->exec('DELETE FROM queue_v4_clean_runs');
+$retryJob = $repository->enqueue(
+    (int)$accounts[0]['company_id'],
+    (int)$accounts[0]['id'],
+    'order_exact',
+    '99200',
+    'retry_after_worker',
+    ['order_id'=>'99200'],
+    3
+);
+(new QueueV4CleanWorker($pdo, $repository, null, null, static function () use ($clientDeferred): void {
+    throw $clientDeferred;
+}))->run('test', 1, 10);
+$retryRow = $pdo->query("SELECT state,attempt_count,available_at FROM queue_v4_clean_jobs WHERE id={$retryJob}")->fetch(PDO::FETCH_ASSOC);
+$assert((string)$retryRow['state'] === 'waiting' && (int)$retryRow['attempt_count'] === 0, 'retry_after_worker_consumed_attempt');
+$assert((strtotime((string)$retryRow['available_at'] . ' UTC') ?: 0) >= (strtotime($clientDeferred->nextSafeAt . ' UTC') ?: PHP_INT_MAX), 'available_at_precedes_retry_after');
+
+// J: un HTTP no recuperable conserva la política funcional normal.
+$pdo->exec('DELETE FROM queue_v4_clean_attempts');
+$pdo->exec('DELETE FROM queue_v4_clean_jobs');
+$pdo->exec('DELETE FROM queue_v4_clean_runs');
+$nonRetryableId = $repository->enqueue(
+    (int)$accounts[0]['company_id'],
+    (int)$accounts[0]['id'],
+    'order_exact',
+    '99201',
+    'non_retryable_http',
+    ['order_id'=>'99201'],
+    3
+);
+for ($index = 0; $index < 3; $index++) {
+    (new QueueV4CleanWorker($pdo, $repository, null, null, static function (): void {
+        throw new MeliApiException('not recoverable', 400);
+    }))->run('test', 1, 10);
+    $pdo->prepare("UPDATE queue_v4_clean_jobs SET available_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE id=?")->execute([$nonRetryableId]);
+    $repository->releaseDueWaiting();
+}
+$nonRetryable = $pdo->query("SELECT state,attempt_count FROM queue_v4_clean_jobs WHERE id={$nonRetryableId}")->fetch(PDO::FETCH_ASSOC);
+$assert((string)$nonRetryable['state'] === 'review' && (int)$nonRetryable['attempt_count'] === 3, 'non_retryable_http_failure_policy_changed');
 
 fwrite(STDOUT, "PASS queue_v4_rate_limit_stability_2382 checks={$checks} fake_transport_calls=1 real_http_calls=0\n");

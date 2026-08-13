@@ -60,3 +60,50 @@ Después de instalar se exige una auditoría read-only. Sólo con OAuth 3/3,
 único cada minuto con `--runtime=45 --max-jobs=5`, seguido por observación de 60
 minutos y 24 horas. Auditoría de ventas y recuperación Review permanecen
 dormidas durante esa certificación primaria.
+
+## Trazabilidad del contrato auditado
+
+- `QueueV4CleanRepository::claim()` es el único punto que incrementa
+  `attempt_count`. `deferWithoutAttemptPenalty()` revierte exactamente ese
+  incremento dentro del CAS tenant-scoped y cierra el intento como `waiting`.
+- `QueueV4CleanWorker` trata Rhythm, Budget, deadline y 429 como non-failure
+  antes de los fallos funcionales. Payload inválido conserva `dead`; errores
+  funcionales y HTTP no recuperables consumen `max_attempts` y terminan en
+  `review`.
+- `MeliApiClient` normaliza y reserva el transporte antes de cruzar la frontera
+  HTTP. Un 429 conocido se transforma en `ApiRhythmDeferredException` con
+  `reached_remote=true` y `next_safe_at`; el fallback genérico 429 usa el mismo
+  backoff configurable de Rhythm.
+- `ApiRhythmPolicyService` normaliza el endpoint, mantiene el breaker compartido
+  `endpoint:shared:<sha256(endpoint)>`, conserva un límite adicional por cuenta
+  y aplica el techo rodante de `/orders/search`. `ApiBudgetService` sólo decide
+  cuotas preventivas y `ApiGuardService` excluye expresamente HTTP 429.
+- `QueueV4CleanReviewService` clasifica evidencia histórica, recupera un único
+  job exacto con CAS, rechaza evidencia mixta/ambigua y reconoce idempotentemente
+  una postimagen `waiting` ya recuperada sin volver a mutarla.
+
+## Matriz focal sin HTTP real
+
+| Caso | Autoridad comprobada | Resultado |
+|---|---|---|
+| A | Primer 429 remoto; cuentas 2 y 3 bloqueadas antes del transporte fake | PASS |
+| B | `Retry-After=7200` llega hasta `available_at` absoluto | PASS |
+| C | 429 sin cabecera usa backoff conservador configurable | PASS |
+| D | 10 aplazamientos Rhythm | PASS, intento final 0, Review 0 |
+| E | 10 aplazamientos Budget | PASS, intento final 0, Review 0 |
+| F | 10 aplazamientos deadline | PASS, intento final 0, Review 0 |
+| G | Payload inválido | PASS, Dead |
+| H | `RuntimeException` funcional repetida | PASS, Review al máximo |
+| I | Fallback `MeliApiException(429)` | PASS, intento 0 |
+| J | `MeliApiException(400)` repetida | PASS, Review al máximo |
+| K | Salidas 1–30 y bloqueo local de la 31 | PASS |
+| L | Ventana rodante libera sólo la salida realmente vencida | PASS |
+| M | Discovery bloquea Sales Audit y Sales Audit bloquea Discovery | PASS |
+| N | FIFO/leases del full-flow canónico | PASS |
+| O | Packs siguen siendo contenedores, doble venta 0 | PASS |
+| P | Escrituras remotas de negocio | PASS, 0 |
+
+La prueba focal ejecuta 68 comprobaciones, un solo cruce al transporte fake que
+responde 429 y cero llamadas HTTP reales. El rehearsal conserva exactamente 279
+Review, 13 auditorías de ventas `pending`, el motor y la configuración interna
+del scheduler; no crea Cron físico ni ejecuta recuperación.

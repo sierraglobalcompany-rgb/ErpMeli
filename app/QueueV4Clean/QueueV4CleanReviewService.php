@@ -85,15 +85,30 @@ final class QueueV4CleanReviewService
         $this->pdo->beginTransaction();
         try {
             $jobStmt = $this->pdo->prepare(
-                "SELECT j.id,j.attempt_count,j.last_error_class
+                "SELECT j.id,j.state,j.attempt_count,j.last_error_class,j.available_at
                  FROM queue_v4_clean_jobs j
                  INNER JOIN meli_accounts a
                    ON a.company_id=j.company_id AND a.id=j.meli_account_id
-                 WHERE j.id=? AND j.company_id=? AND j.meli_account_id=? AND j.state='review'
+                 WHERE j.id=? AND j.company_id=? AND j.meli_account_id=?
+                   AND j.state IN ('review','waiting')
                  FOR UPDATE"
             );
             $jobStmt->execute([$jobId, $companyId, $accountId]);
             $job = $jobStmt->fetch(PDO::FETCH_ASSOC);
+            if (is_array($job)
+                && (string)$job['state'] === 'waiting'
+                && hash_equals('capacity_recovery', (string)$job['last_error_class'])) {
+                $this->pdo->commit();
+                return [
+                    'ok' => true,
+                    'company_id' => $companyId,
+                    'meli_account_id' => $accountId,
+                    'job_id' => $jobId,
+                    'state' => 'waiting',
+                    'next_safe_at' => (string)$job['available_at'],
+                    'idempotent_replay' => true,
+                ];
+            }
             if (!is_array($job) || $this->classification((string) $job['last_error_class']) !== 'NON_FAILURE_TECHNICAL') {
                 throw new RuntimeException('queue_v4_review_recovery_not_proven');
             }
@@ -130,6 +145,7 @@ final class QueueV4CleanReviewService
                 'job_id' => $jobId,
                 'state' => 'waiting',
                 'next_safe_at' => gmdate('Y-m-d H:i:s', $timestamp),
+                'idempotent_replay' => false,
             ];
         } catch (Throwable $error) {
             if ($this->pdo->inTransaction()) {

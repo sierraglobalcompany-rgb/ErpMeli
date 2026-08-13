@@ -7,6 +7,7 @@ namespace App\QueueV4Clean;
 use App\Services\ApiExecutionMetadataContext;
 use App\Services\ApiBudgetExhaustedException;
 use App\Services\ApiRhythmDeferredException;
+use App\Services\ApiRhythmPolicyService;
 use App\Services\CronDeadlineContext;
 use App\Services\CronDeadlineDeferredException;
 use App\Services\MeliApiClient;
@@ -108,7 +109,7 @@ final class QueueV4CleanWorker
                             $job,
                             $runId,
                             'rate_limit_deferred:http_429_fallback',
-                            gmdate('Y-m-d H:i:s', time() + 300),
+                            (new ApiRhythmPolicyService())->conservativeRateLimitNextSafeAt(),
                         );
                         $deferred++;
                         continue;

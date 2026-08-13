@@ -44,6 +44,20 @@ final class QueueV4CleanRepository
         return $counts + ['total' => array_sum($counts)];
     }
 
+    public function hasOutstandingOperationalWork(int $companyId, int $accountId): bool
+    {
+        $this->assertTenant($companyId, $accountId);
+        $statement = $this->pdo->prepare(
+            "SELECT EXISTS(
+                SELECT 1 FROM queue_v4_clean_jobs
+                WHERE company_id=? AND meli_account_id=?
+                  AND state IN ('ready','running','waiting')
+             )"
+        );
+        $statement->execute([$companyId, $accountId]);
+        return (int) $statement->fetchColumn() === 1;
+    }
+
     /**
      * @param array<string,mixed> $payload
      */

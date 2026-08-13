@@ -168,6 +168,7 @@ try {
     if (!hash_equals(ManagedRuntimePublicationPolicy::VERSION, trim(ManagedRuntimePublicationPolicy::gitBlob($source, $commit, 'VERSION')))) {
         throw new RuntimeException('release_version_invalid');
     }
+    $version = ManagedRuntimePublicationPolicy::VERSION;
 
     $entries = ManagedRuntimePublicationPolicy::packageEntries($source, $commit);
     $files = [];
@@ -201,9 +202,9 @@ try {
     if ($timestamp <= 0) {
         throw new RuntimeException('release_timestamp_invalid');
     }
-    $fullPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_2.38.0_GIT_EXACT.zip';
-    $overlayPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_2.38.0_FTP_REPAIR_OVERLAY.zip';
-    $updatePath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_2.38.0_UPDATE_PACKAGE.erpupd';
+    $fullPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_GIT_EXACT.zip';
+    $overlayPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_FTP_REPAIR_OVERLAY.zip';
+    $updatePath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_UPDATE_PACKAGE.erpupd';
     release2380Zip($fullPath, $entries, $files, $timestamp);
     release2380Zip($overlayPath, $overlayEntries, $files, $timestamp);
 
@@ -213,14 +214,14 @@ try {
     $updateManifest = [
         'manifest_version' => 1,
         'product_id' => 'erp-meli',
-        'release_id' => 'erp-meli-2.38.0-inventory-warehouse-v1',
-        'version' => '2.38.0',
-        'sequence' => 23800,
+        'release_id' => 'erp-meli-2.38.1-queue-v4-backlog-convergence',
+        'version' => $version,
+        'sequence' => 23801,
         'channel' => 'manual',
         'source_trust' => 'local_admin',
         'published_at' => ManagedRuntimePublicationPolicy::BUILT_AT,
         'expires_at' => '2099-12-31T23:59:59+00:00',
-        'upgrade_from' => ['2.37.2'],
+        'upgrade_from' => ['2.38.0'],
         'required_bridges' => [],
         'requirements' => [
             'php_min' => '8.3.0',
@@ -239,8 +240,8 @@ try {
     release2380Zip($updatePath, $entries, $files, $timestamp, $updateManifestBytes);
 
     $overlayInventory = [
-        'schema' => 'erp-meli-2380-ftp-overlay-v1',
-        'version' => '2.38.0',
+        'schema' => 'erp-meli-2381-ftp-overlay-v1',
+        'version' => $version,
         'base_commit' => $baseCommit,
         'commit' => $commit,
         'tree' => $tree,
@@ -255,20 +256,20 @@ try {
             'shared/current-release.json',
         ],
     ];
-    $inventoryPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_2.38.0_FTP_REPAIR_OVERLAY_INVENTORY.json';
+    $inventoryPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_FTP_REPAIR_OVERLAY_INVENTORY.json';
     file_put_contents($inventoryPath, release2380Json($overlayInventory));
 
-    $instructionPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_2.38.0_FTP_INSTRUCTIONS.md';
+    $instructionPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_FTP_INSTRUCTIONS.md';
     file_put_contents($instructionPath, implode("\n", [
-        '# ERP MELI 2.38.0 — instalación manual',
+        '# ERP MELI 2.38.1 — instalación manual',
         '',
-        '1. Extraiga ERP_MELI_2.38.0_FTP_REPAIR_OVERLAY.zip localmente.',
+        '1. Extraiga ERP_MELI_2.38.1_FTP_REPAIR_OVERLAY.zip localmente.',
         '2. Suba únicamente los archivos incluidos sobre la carpeta existente erp-meli, conservando rutas.',
         '3. Nunca sobrescriba config.env, shared/config.env, storage, OAuth, pausas, logs o backups.',
-        '4. Abra actualizar.php y complete 2.37.2 → 2.38.0; se aplica únicamente la migración 295.',
-        '5. Confirme VERSION, app.version y marker 2.38.0; schema 295 y pendientes 0.',
-        '6. En /inventory, cree una bodega y seleccione explícitamente la predeterminada para cada empresa.',
-        '7. Registre saldos iniciales o recepciones antes de esperar salidas automáticas por ventas.',
+        '4. Abra actualizar.php y complete 2.38.0 → 2.38.1; no hay migraciones nuevas.',
+        '5. Confirme VERSION, app.version y marker 2.38.1; schema 295 y pendientes 0.',
+        '6. Edite la única tarea Cron existente: conserve frecuencia cada minuto y cambie sólo --max-jobs=3 por --max-jobs=15.',
+        '7. Comando exacto: /opt/alt/php83/usr/bin/php /home/u390570745/domains/bodegadigitalmedellin.com/public_html/erp-meli/jobs/queue_v4_clean.php --runtime=45 --max-jobs=15',
         '',
         'La instalación no crea Cron Hostinger, no cambia el estado de Queue V4 Clean y no ejecuta readiness automáticamente.',
         '',
@@ -279,21 +280,21 @@ try {
         $artifacts[basename($path)] = ['bytes' => filesize($path), 'sha256' => hash_file('sha256', $path)];
     }
     $authority = [
-        'schema' => 'erp-meli-2380-artifacts-v1',
+        'schema' => 'erp-meli-2381-artifacts-v1',
         'source' => 'GIT_OBJECT_DATABASE',
         'commit' => $commit,
         'tree' => $tree,
         'base_commit' => $baseCommit,
-        'version' => '2.38.0',
+        'version' => $version,
         'runtime_files' => count($entries),
         'runtime_components' => count((array) ($runtimeManifest['components'] ?? [])),
         'overlay_files' => count($overlayEntries),
         'artifacts' => $artifacts,
     ];
-    $authorityPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_2.38.0_ARTIFACT_MANIFEST.json';
+    $authorityPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_ARTIFACT_MANIFEST.json';
     file_put_contents($authorityPath, release2380Json($authority));
     $artifacts[basename($authorityPath)] = ['bytes' => filesize($authorityPath), 'sha256' => hash_file('sha256', $authorityPath)];
-    $sumsPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_2.38.0_SHA256SUMS.txt';
+    $sumsPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_SHA256SUMS.txt';
     $sumLines = [];
     foreach ($artifacts as $name => $definition) {
         $sumLines[] = $definition['sha256'] . '  ' . $name;
@@ -310,6 +311,6 @@ try {
         'artifacts' => $artifacts,
     ], false));
 } catch (Throwable $error) {
-    fwrite(STDERR, 'Artifact build 2.38.0: FAIL ' . $error->getMessage() . "\n");
+    fwrite(STDERR, 'Artifact build ' . ManagedRuntimePublicationPolicy::VERSION . ': FAIL ' . $error->getMessage() . "\n");
     exit(1);
 }

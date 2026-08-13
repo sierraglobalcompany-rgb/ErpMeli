@@ -72,9 +72,30 @@ final class QueueV4CleanProducer
                         continue;
                     }
                     $from = strtotime((string) $checkpoint['watermark_at'] . ' UTC') ?: ($now - $windowSeconds);
-                    $from = max($now - $windowSeconds, $from);
                 }
-                $to = $now;
+                // A frontier remains open while any of its pagination or
+                // exact-order work is operational. Do not mint a new remote
+                // discovery round while the tenant still has FIFO work from
+                // the previous one (or another bounded local source).
+                if ($this->repository->hasOutstandingOperationalWork($companyId, $accountId)) {
+                    $this->pdo->commit();
+                    continue;
+                }
+                $from = max(0, min($now, $from));
+                if ($from >= $now) {
+                    $defer = $this->pdo->prepare(
+                        "UPDATE queue_v4_clean_checkpoints
+                         SET next_due_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 60 SECOND)
+                         WHERE producer_key='fresh_orders' AND company_id=? AND meli_account_id=?"
+                    );
+                    $defer->execute([$companyId, $accountId]);
+                    $this->pdo->commit();
+                    continue;
+                }
+                // Catch up in bounded contiguous windows. Never clamp the
+                // lower frontier to "now-window", which would lose coverage
+                // after a prolonged backlog or outage.
+                $to = min($now, $from + $windowSeconds);
                 $key = gmdate('YmdHis', $from) . '-' . gmdate('YmdHis', $to);
                 $jobId = $this->repository->enqueue(
                     $companyId,

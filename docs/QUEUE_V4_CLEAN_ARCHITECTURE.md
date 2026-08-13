@@ -36,6 +36,22 @@ Legacy tables may remain physically present. Queue V4 Clean never reads them.
 The only compatibility condition is that V3 and V3 Shadow configuration stay
 disabled so legacy launchers cannot execute accidentally.
 
+## CAPACITY_2_38_1
+
+- The scheduler remains one CLI invocation per minute with a 45-second hard
+  runtime and the existing single-owner scheduler lease.
+- The worker accepts at most 15 jobs per invocation. This is an upper bound,
+  not a promise of 15 HTTP calls: the existing application/account budgets,
+  retry gates and shared CLI deadline remain authoritative.
+- A tenant cannot open a new fresh-discovery frontier while any of its prior
+  `ready`, `running` or `waiting` work remains. Pagination and exact-order
+  children therefore drain before the next remote discovery window.
+- Catch-up windows advance contiguously from the persisted watermark; they are
+  never clamped forward to `now-window`, so backlog does not create time gaps.
+- Recommended Hostinger command (exactly one task, every minute):
+
+  `/opt/alt/php83/usr/bin/php /home/u390570745/domains/bodegadigitalmedellin.com/public_html/erp-meli/jobs/queue_v4_clean.php --runtime=45 --max-jobs=15`
+
 ## State model
 
 Readiness has exactly `NOT_READY`, `READY_TO_TEST`, `TESTING`, `CERTIFIED`, and

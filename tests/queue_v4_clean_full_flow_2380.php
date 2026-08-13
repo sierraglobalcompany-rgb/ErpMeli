@@ -86,25 +86,25 @@ try {
          VALUES ('app.version',?,0,'system')
          ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),is_encrypted=0"
     );
-    $appVersion->execute(['2.37.2']);
+    $appVersion->execute(['2.38.0']);
     $pdo->prepare(
         'INSERT INTO app_versions(version,notes,installed_at) VALUES (?,\'canonical baseline\',UTC_TIMESTAMP())
          ON DUPLICATE KEY UPDATE version=VALUES(version)'
-    )->execute(['2.37.2']);
+    )->execute(['2.38.0']);
     $marker = new InstalledVersionMarkerService();
-    $assert($marker->write('2.37.2', '294_queue_v4_clean_greenfield_2_37_0.sql'), 'baseline marker write failed');
+    $assert($marker->write('2.38.0', '295_inventory_warehouse_v1_2_38_0.sql'), 'baseline marker write failed');
     $promotion = (new DirectUpdateMetadataPromotionService())->promote(
         $pdo,
         $version,
         '295_inventory_warehouse_v1_2_38_0.sql',
-        'Inventory Warehouse 2.38.0 canonical transition',
+        'Queue V4 backlog convergence 2.38.1 metadata-only transition',
     );
     $assert(
-        $promotion['previous_version'] === '2.37.2'
-        && $promotion['target_version'] === '2.38.0'
-        && $pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === '2.38.0'
-        && ($marker->read()['version'] ?? '') === '2.38.0',
-        'metadata transition 2.37.2 to 2.38.0 failed',
+        $promotion['previous_version'] === '2.38.0'
+        && $promotion['target_version'] === $version
+        && $pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === $version
+        && ($marker->read()['version'] ?? '') === $version,
+        'metadata transition 2.38.0 to 2.38.1 failed',
     );
 
     $companyInsert = $pdo->prepare(
@@ -391,7 +391,8 @@ try {
         );
     }
     $assert($reactivationDriftBlocked, 'stale readiness certification allowed reactivation');
-    $pdo->exec("UPDATE app_settings SET setting_value='2.38.0' WHERE setting_key='app.version'");
+    $restoreVersion = $pdo->prepare("UPDATE app_settings SET setting_value=? WHERE setting_key='app.version'");
+    $restoreVersion->execute([$version]);
     $control->activate(1);
     $assert(
         $repository->control()['engine_state'] === 'ACTIVE'

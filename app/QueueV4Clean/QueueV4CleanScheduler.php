@@ -15,7 +15,7 @@ final class QueueV4CleanScheduler
     }
 
     /** @return array<string,mixed> */
-    public function run(int $maxJobs = 3, int $runtimeSeconds = 45): array
+    public function run(int $maxJobs = QueueV4CleanWorker::DEFAULT_MAX_JOBS, int $runtimeSeconds = 45): array
     {
         $repository = new QueueV4CleanRepository($this->pdo);
         $control = $repository->control();

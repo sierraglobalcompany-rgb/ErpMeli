@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\QueueV4Clean;
 
 use App\Services\ApiExecutionMetadataContext;
+use App\Services\CronDeadlineContext;
+use App\Services\CronDeadlineDeferredException;
 use App\Services\MeliApiClient;
 use App\Services\MeliReadClientInterface;
 use App\Services\OrderSyncService;
@@ -14,6 +16,9 @@ use Throwable;
 
 final class QueueV4CleanWorker
 {
+    public const DEFAULT_MAX_JOBS = 15;
+    public const HARD_MAX_JOBS = 15;
+
     /** @var \Closure(int):MeliReadClientInterface */
     private \Closure $clientFactory;
     /** @var \Closure(int):OrderSyncService */
@@ -43,13 +48,13 @@ final class QueueV4CleanWorker
     }
 
     /** @return array{claimed:int,completed:int,deferred:int} */
-    public function run(string $launcher, int $maxJobs = 3, int $runtimeSeconds = 45): array
+    public function run(string $launcher, int $maxJobs = self::DEFAULT_MAX_JOBS, int $runtimeSeconds = 45): array
     {
         $control = $this->repository->control();
         if ((string) $control['engine_state'] !== 'ACTIVE') {
             return ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
         }
-        $maxJobs = max(1, min(3, $maxJobs));
+        $maxJobs = max(1, min(self::HARD_MAX_JOBS, $maxJobs));
         $deadline = microtime(true) + max(5, min(45, $runtimeSeconds));
         $owner = bin2hex(random_bytes(16));
         $runId = $this->repository->beginRun($launcher, $owner);
@@ -57,7 +62,9 @@ final class QueueV4CleanWorker
         try {
             $this->repository->expireLeases();
             $this->repository->releaseDueWaiting();
-            while ($claimed < $maxJobs && microtime(true) < $deadline - 1.0) {
+            while ($claimed < $maxJobs
+                && microtime(true) < $deadline - 2.0
+                && CronDeadlineContext::canAcceptWork(2)) {
                 $job = $this->repository->claim($runId, $owner, 60);
                 if ($job === null) {
                     break;
@@ -65,6 +72,10 @@ final class QueueV4CleanWorker
                 $claimed++;
                 try {
                     $this->handle($job);
+                } catch (CronDeadlineDeferredException $error) {
+                    $this->repository->wait($job, $runId, $this->failureClass($error), 5);
+                    $deferred++;
+                    break;
                 } catch (RuntimeException $error) {
                     if (str_starts_with($error->getMessage(), 'queue_v4_clean_payload_')) {
                         $this->repository->dead($job, $runId, $error->getMessage());

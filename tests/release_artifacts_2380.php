@@ -12,7 +12,7 @@ use App\Services\UpdateManifestService;
 
 $directory = $argv[1] ?? '';
 if (!is_dir($directory) || !class_exists(ZipArchive::class)) {
-    fwrite(STDERR, "Release artifacts 2.38.0: FAIL arguments\n");
+    fwrite(STDERR, "Release artifacts 2.38.1: FAIL arguments\n");
     exit(2);
 }
 
@@ -46,12 +46,13 @@ $readZip = static function (string $path): array {
 };
 
 try {
-    $fullPath = $directory . '/ERP_MELI_2.38.0_GIT_EXACT.zip';
-    $overlayPath = $directory . '/ERP_MELI_2.38.0_FTP_REPAIR_OVERLAY.zip';
-    $updatePath = $directory . '/ERP_MELI_2.38.0_UPDATE_PACKAGE.erpupd';
-    $inventoryPath = $directory . '/ERP_MELI_2.38.0_FTP_REPAIR_OVERLAY_INVENTORY.json';
-    $authorityPath = $directory . '/ERP_MELI_2.38.0_ARTIFACT_MANIFEST.json';
-    $sumsPath = $directory . '/ERP_MELI_2.38.0_SHA256SUMS.txt';
+    $version = ManagedRuntimePublicationPolicy::VERSION;
+    $fullPath = $directory . '/ERP_MELI_' . $version . '_GIT_EXACT.zip';
+    $overlayPath = $directory . '/ERP_MELI_' . $version . '_FTP_REPAIR_OVERLAY.zip';
+    $updatePath = $directory . '/ERP_MELI_' . $version . '_UPDATE_PACKAGE.erpupd';
+    $inventoryPath = $directory . '/ERP_MELI_' . $version . '_FTP_REPAIR_OVERLAY_INVENTORY.json';
+    $authorityPath = $directory . '/ERP_MELI_' . $version . '_ARTIFACT_MANIFEST.json';
+    $sumsPath = $directory . '/ERP_MELI_' . $version . '_SHA256SUMS.txt';
     foreach ([$fullPath, $overlayPath, $updatePath, $inventoryPath, $authorityPath, $sumsPath] as $path) {
         $assert(is_file($path), 'artifact_missing:' . basename($path));
     }
@@ -87,8 +88,8 @@ try {
     $manifestService = new UpdateManifestService();
     $manifest = $manifestService->decode($manifestBytes);
     $assert(($manifest['source_trust'] ?? null) === 'local_admin', 'update_source_trust_invalid');
-    $assert(($manifest['version'] ?? null) === '2.38.0', 'update_version_invalid');
-    $assert(($manifest['upgrade_from'] ?? null) === ['2.37.2'], 'update_source_version_invalid');
+    $assert(($manifest['version'] ?? null) === '2.38.1', 'update_version_invalid');
+    $assert(($manifest['upgrade_from'] ?? null) === ['2.38.0'], 'update_source_version_invalid');
     $assert(in_array('295_inventory_warehouse_v1_2_38_0.sql', (array) ($manifest['migrations'] ?? []), true), 'migration_295_missing');
     $assert(!array_filter((array) ($manifest['migrations'] ?? []), static fn (string $name): bool => str_starts_with($name, '296_')), 'migration_296_present');
     $assert(!isset($manifest['signature']), 'unexpected_update_signature');
@@ -106,8 +107,9 @@ try {
         $assert(!in_array($normalized, ['.env', 'config.env', 'shared/config.env', 'pause_meli_api', 'pause_erp_automation', 'shared/current-release.json'], true), 'protected_file_packaged:' . $path);
         $assert(!preg_match('#^(?:storage|shared/storage|logs|sessions|backups)/#', $normalized), 'protected_tree_packaged:' . $path);
     }
-    foreach (['app/Services/InventoryLedgerService.php', 'app/Services/OrderInventoryService.php',
-        'database/migrations/295_inventory_warehouse_v1_2_38_0.sql'] as $requiredOverlay) {
+    foreach (['VERSION', 'app/QueueV4Clean/QueueV4CleanProducer.php',
+        'app/QueueV4Clean/QueueV4CleanRepository.php', 'app/QueueV4Clean/QueueV4CleanWorker.php',
+        'jobs/queue_v4_clean.php'] as $requiredOverlay) {
         $assert(isset($overlay[$requiredOverlay]), 'required_overlay_path_missing:' . $requiredOverlay);
     }
 
@@ -123,8 +125,8 @@ try {
         $assert(is_file($directory . '/' . $match[2]), 'sha_target_missing');
         $assert(hash_equals($match[1], hash_file('sha256', $directory . '/' . $match[2])), 'sha_target_invalid:' . $match[2]);
     }
-    fwrite(STDOUT, 'Release artifacts 2.38.0: PASS checks=' . $checks . PHP_EOL);
+    fwrite(STDOUT, 'Release artifacts 2.38.1: PASS checks=' . $checks . PHP_EOL);
 } catch (Throwable $error) {
-    fwrite(STDERR, 'Release artifacts 2.38.0: FAIL ' . $error->getMessage() . PHP_EOL);
+    fwrite(STDERR, 'Release artifacts 2.38.1: FAIL ' . $error->getMessage() . PHP_EOL);
     exit(1);
 }

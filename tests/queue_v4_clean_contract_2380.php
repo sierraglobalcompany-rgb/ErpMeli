@@ -23,7 +23,7 @@ $control = $read('app/QueueV4Clean/QueueV4CleanControlService.php');
 $databaseContract = $read('app/QueueV4Clean/QueueV4CleanDatabaseContract.php');
 $appJs = $read('public/assets/app.js');
 
-$assert(trim($read('VERSION')) === '2.38.0', 'VERSION is not 2.38.0');
+$assert(trim($read('VERSION')) === '2.38.1', 'VERSION is not 2.38.1');
 $assert(str_contains($architecture, '## REUSE') && str_contains($architecture, '## REPLACE') && str_contains($architecture, '## LEGACY_IGNORE'), 'architecture classification incomplete');
 foreach (['control', 'readiness_runs', 'readiness_accounts', 'jobs', 'attempts', 'runs', 'leases', 'checkpoints'] as $table) {
     $assert(str_contains($migration, 'queue_v4_clean_' . $table), 'new table missing: ' . $table);
@@ -70,11 +70,15 @@ $assert(str_contains($readiness, "failure_class='interrupted'"), 'interrupted re
 $assert(!str_contains($readiness, '/orders/search'), 'readiness uses operational search');
 $assert(str_contains($repository, "ORDER BY available_at ASC,id ASC"), 'FIFO order is not exact');
 $assert(str_contains($worker . $repository, "state='ready'"), 'ready FIFO state missing');
-$assert(str_contains($worker, "max(1, min(3, \$maxJobs))"), 'worker max-jobs bound missing');
+$assert(str_contains($worker, 'public const HARD_MAX_JOBS = 15'), 'worker hard capacity ceiling missing');
+$assert(str_contains($worker, 'min(self::HARD_MAX_JOBS, $maxJobs)'), 'worker max-jobs bound missing');
+$assert(str_contains($worker, 'CronDeadlineContext::canAcceptWork(2)'), 'worker shared deadline gate missing');
 $assert(str_contains($worker, "'source' => 'queue_v4_clean'"), 'worker source authority missing');
 $assert(!str_contains($worker, 'historical'), 'worker contains historical importer');
 $assert(str_contains($producer, 'queue_v4_clean_readiness_accounts'), 'producer is not bound to certified accounts');
 $assert(str_contains($producer, 'queue_v4_clean_certified_account_set_invalid'), 'producer exact certified account cardinality gate missing');
+$assert(str_contains($producer, 'hasOutstandingOperationalWork($companyId, $accountId)'), 'producer frontier backpressure missing');
+$assert(str_contains($producer, '$to = min($now, $from + $windowSeconds)'), 'producer contiguous catch-up window missing');
 $assert(str_contains($producer, "producer_key='inventory_order_refresh'"), 'inventory lifecycle refresh checkpoint missing');
 $assert(str_contains($producer, 'INTERVAL 15 MINUTE'), 'inventory lifecycle refresh is not bounded');
 $assert(str_contains($producer, 'reversal.reversal_of_movement_id=issue.id'), 'inventory lifecycle refresh does not stop after reversal');

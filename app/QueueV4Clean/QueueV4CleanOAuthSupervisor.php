@@ -51,7 +51,7 @@ final class QueueV4CleanOAuthSupervisor
     public function run(string $schedulerOwner): array
     {
         QueueV4CleanOAuthStageContext::reset();
-        $summary = ['scheduled' => 0, 'claimed' => 0, 'completed' => 0, 'waiting' => 0, 'uncertain' => 0, 'reconnect' => 0, 'failed' => 0, 'physical_posts' => 0, 'abort_scheduler' => false];
+        $summary = ['scheduled' => 0, 'claimed' => 0, 'completed' => 0, 'waiting' => 0, 'uncertain' => 0, 'reconnect' => 0, 'failed' => 0, 'physical_posts' => 0, 'physical_posts_known' => true, 'abort_scheduler' => false];
         QueueV4CleanOAuthStageContext::set(QueueV4CleanOAuthStageContext::OAUTH_OPERATION_REPAIR);
         $this->reconcileStaleEscrows();
         $this->operations->repairStale();
@@ -200,7 +200,15 @@ final class QueueV4CleanOAuthSupervisor
             $summary['status'] = 'oauth_containment_failed';
             $summary['diagnostic'] = $diagnostic;
             $summary['containment_diagnostic'] = $containmentDiagnostic;
-            $summary['physical_posts'] = 0;
+            try {
+                $after = $this->remoteAttemptCount($operation);
+                $summary['physical_posts'] = max(0, $after - $before);
+            } catch (Throwable) {
+                // A failed authority read must stay explicitly unknown. Zero
+                // would incorrectly assert that no request crossed the wire.
+                $summary['physical_posts'] = null;
+                $summary['physical_posts_known'] = false;
+            }
             return $summary;
         }
 
@@ -210,6 +218,8 @@ final class QueueV4CleanOAuthSupervisor
         } catch (Throwable $countError) {
             $summary['abort_scheduler'] = true;
             $summary['status'] = 'oauth_containment_failed';
+            $summary['physical_posts'] = null;
+            $summary['physical_posts_known'] = false;
             $summary['diagnostic'] = $diagnostic;
             $summary['containment_diagnostic'] = $this->diagnostics->capture(
                 $countError,

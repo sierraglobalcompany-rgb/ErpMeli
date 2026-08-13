@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "queue-v4-automatic-oauth-control-plane-2.38.4-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "e4f49bfcf3e9fe156c1fdc8e968a428b3ac5a4400a630ed226fc998d6c0b24a8",
+  "runtime_manifest_paths_sha256": "46385b4c7685d5dba3f8714cb90340cafa0fa3d13f8f113acd125044740cd34e",
   "coverage_base_commit": "b8ac32ec3a668f06c36b9af86d3bd865142bb0f1",
   "classifications": {
     "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

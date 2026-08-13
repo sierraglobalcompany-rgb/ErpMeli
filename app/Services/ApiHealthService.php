@@ -15,6 +15,12 @@ final class ApiHealthService
     private bool $dataAvailable = true;
     private int $lastIncidentTotal = 0;
 
+    /** @return array{current:bool,last_log_id:int,latest_log_id:int} */
+    public function incidentReadModelFreshness(): array
+    {
+        return (new ApiIncidentReadModelService())->freshness();
+    }
+
     public function dashboard(): array
     {
         $summary = $this->summary();
@@ -202,6 +208,16 @@ final class ApiHealthService
             return array_map(fn(array $row): array => $this->presentIncident($row), $materialized['rows']);
         }
 
+        // Web/API Health is materialized-only. Raw GROUP_CONCAT over the request
+        // log is a CLI rebuild concern and must never hold an administrative GET.
+        if (PHP_SAPI !== 'cli') {
+            $this->dataAvailable = false;
+            $this->lastIncidentTotal = 0;
+            return [];
+        }
+
+        // The bounded CLI path remains available to rebuild/verify the read
+        // model without making the browser wait on raw telemetry aggregation.
         try {
             $schema = new SchemaInspectorService();
             $hasAcknowledgements = $schema->hasTable('api_incident_acknowledgements');
@@ -337,6 +353,13 @@ final class ApiHealthService
         }
         $limit = 500;
         $rows = $this->incidents($filters, $limit);
+        if (!$this->dataAvailable()) {
+            return [
+                'active' => [], 'recovered' => [], 'policy' => [],
+                'counts' => ['active' => 0, 'recovered' => 0, 'reviewed' => 0, 'historical' => 0],
+                'truncated' => false,
+            ];
+        }
         $counts = ['active' => 0, 'recovered' => 0, 'reviewed' => 0, 'historical' => 0];
         $active = [];
         $recovered = [];
@@ -374,6 +397,14 @@ final class ApiHealthService
     /** @return array{active:int,recovered:int,reviewed:int,historical:int}|null */
     private function fastIncidentStateCounts(int $hours, ?int $accountId): ?array
     {
+        $materialized = (new ApiIncidentReadModelService())->stateCounts($hours, $accountId);
+        if ($materialized !== null) {
+            return $materialized;
+        }
+        if (PHP_SAPI !== 'cli') {
+            $this->dataAvailable = false;
+            return null;
+        }
         try {
             [$scopeSql, $scopeParams] = $this->telemetryScopeSql('l', 'count_scope', $accountId);
             $schema = new SchemaInspectorService();
@@ -430,6 +461,44 @@ final class ApiHealthService
     {
         $key = strtolower(trim($key));
         if (!preg_match('/^[a-f0-9]{64}$/', $key) || !$this->supportsOutcomeClassification()) {
+            return null;
+        }
+        $materialized = (new ApiIncidentReadModelService())->byKey($key);
+        if (is_array($materialized)) {
+            if ($materialized === []) {
+                return null;
+            }
+            $incident = $this->presentIncident($materialized[0]);
+            $incident['accounts'] = array_map(static fn(array $row): array => [
+                'meli_account_id' => $row['meli_account_id'] ?? null,
+                'company_id' => $row['company_id'] ?? null,
+                'scope_kind' => $row['scope_kind'] ?? 'application',
+                'scope_key' => $row['scope_key'] ?? 'application',
+                'account_name' => $row['account_names'] ?? 'Aplicación',
+                'acknowledged_all' => (int) ($row['acknowledged_all'] ?? 0),
+                'repetitions' => (int) ($row['repetitions'] ?? 0),
+                'first_seen_at' => $row['first_seen_at'] ?? null,
+                'last_seen_at' => $row['last_seen_at'] ?? null,
+            ], $materialized);
+            $incident['samples'] = array_map(static fn(array $row): array => [
+                'created_at' => $row['last_seen_at'] ?? null,
+                'account_name' => $row['account_names'] ?? 'Aplicación',
+                'method' => $row['method'] ?? null,
+                'endpoint_path' => $row['endpoint_path'] ?? null,
+                'http_status' => $row['http_status'] ?? null,
+                'error_type' => $row['error_type'] ?? null,
+                'error_code' => $row['error_code'] ?? null,
+                'safe_message' => $row['safe_message'] ?? null,
+                'diagnostic_id' => $row['diagnostic_id'] ?? null,
+                'request_id' => null,
+            ], $materialized);
+            $incident['acknowledgement'] = (int) ($materialized[0]['acknowledged_all'] ?? 0) === 1
+                ? $this->incidentAcknowledgement($key)
+                : null;
+            return $incident;
+        }
+        if (PHP_SAPI !== 'cli') {
+            $this->dataAvailable = false;
             return null;
         }
         $incidents = $this->incidentsByKey($key);
@@ -547,6 +616,18 @@ final class ApiHealthService
         if (!$this->supportsOutcomeClassification()) {
             return [];
         }
+        if (PHP_SAPI !== 'cli') {
+            try {
+                $access = (new ApiHealthAccessScope())->snapshot($accountId);
+                $snapshot = (new \App\QueueV4Clean\QueueV4CleanHealthSnapshotService(
+                    Database::connectionFresh()
+                ))->snapshot($accountId, $access['company_ids'], $access['account_ids'], $hours);
+                return array_slice((array) ($snapshot['recent_activity'] ?? []), 0, max(1, min(20, $limit)));
+            } catch (Throwable) {
+                $this->dataAvailable = false;
+                return [];
+            }
+        }
         try {
             if ($accountId !== null && $accountId > 0) {
                 (new BusinessScopeContext())->account($accountId);
@@ -621,6 +702,18 @@ final class ApiHealthService
     /** @return list<array<string,mixed>> */
     private function stats(int $hours, ?int $accountId = null): array
     {
+        if (PHP_SAPI !== 'cli') {
+            try {
+                $access = (new ApiHealthAccessScope())->snapshot($accountId);
+                $snapshot = (new \App\QueueV4Clean\QueueV4CleanHealthSnapshotService(
+                    Database::connectionFresh()
+                ))->snapshot($accountId, $access['company_ids'], $access['account_ids'], $hours);
+                return (array) ($snapshot['account_stats'] ?? []);
+            } catch (Throwable) {
+                $this->dataAvailable = false;
+                return [];
+            }
+        }
         try {
             $activeWindowMinutes = $this->activeWindowMinutes();
             [$scopeSql, $scopeParams] = $this->telemetryScopeSql('l', 'stats_scope', $accountId);
@@ -690,6 +783,14 @@ final class ApiHealthService
     /** @return array<string,int> */
     private function activeSignals(?int $accountId = null): array
     {
+        if (PHP_SAPI !== 'cli') {
+            $signals = (new ApiIncidentReadModelService())->signalCounts($accountId);
+            if ($signals === null) {
+                $this->dataAvailable = false;
+                return [];
+            }
+            return $signals;
+        }
         try {
             $activeWindowMinutes = $this->activeWindowMinutes();
             [$scopeSql, $scopeParams] = $this->telemetryScopeSql('api_request_logs', 'signal_scope', $accountId);

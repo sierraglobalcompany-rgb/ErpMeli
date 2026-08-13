@@ -239,7 +239,7 @@ final class QueueV4CleanRepository
             }
             $attempt = $this->pdo->prepare(
                 "UPDATE queue_v4_clean_attempts
-                 SET outcome='waiting',error_class=?,finished_at=UTC_TIMESTAMP(3)
+                 SET outcome='waiting',error_class=?,finished_at=UTC_TIMESTAMP(3),source_closed_at=UTC_TIMESTAMP(3)
                  WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=?
                    AND lease_owner=? AND outcome='running'"
             );
@@ -294,24 +294,37 @@ final class QueueV4CleanRepository
         $this->pdo->beginTransaction();
         try {
             $expired = $this->pdo->query(
-                "SELECT id,company_id,meli_account_id,lease_owner
-                 FROM queue_v4_clean_jobs
-                 WHERE state='running' AND lease_expires_at<UTC_TIMESTAMP(3)
-                 ORDER BY id FOR UPDATE"
+                "SELECT j.id,j.company_id,j.meli_account_id,j.lease_owner,
+                        a.id attempt_id,a.dispatch_state
+                 FROM queue_v4_clean_jobs j
+                 INNER JOIN queue_v4_clean_attempts a
+                   ON a.job_id=j.id AND a.company_id=j.company_id AND a.meli_account_id=j.meli_account_id
+                  AND a.lease_owner=j.lease_owner AND a.outcome='running'
+                 WHERE j.state='running' AND j.lease_expires_at<UTC_TIMESTAMP(3)
+                 ORDER BY j.id FOR UPDATE"
             )->fetchAll(PDO::FETCH_ASSOC);
             foreach ($expired as $row) {
+                $classification = (string) $row['dispatch_state'] === 'NOT_DISPATCHED'
+                    ? 'pre_transport_lease_expired'
+                    : 'remote_result_uncertain_safe_get';
                 $attempt = $this->pdo->prepare(
-                    "UPDATE queue_v4_clean_attempts SET outcome='lease_expired',finished_at=UTC_TIMESTAMP(3)
-                     WHERE job_id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND outcome='running'"
+                    "UPDATE queue_v4_clean_attempts
+                     SET outcome='waiting',error_class=?,finished_at=UTC_TIMESTAMP(3),source_closed_at=UTC_TIMESTAMP(3)
+                     WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=?
+                       AND lease_owner=? AND outcome='running'"
                 );
-                $attempt->execute([(int) $row['id'], (int) $row['company_id'], (int) $row['meli_account_id'], (string) $row['lease_owner']]);
+                $attempt->execute([
+                    $classification, (int) $row['attempt_id'], (int) $row['id'],
+                    (int) $row['company_id'], (int) $row['meli_account_id'], (string) $row['lease_owner'],
+                ]);
                 $job = $this->pdo->prepare(
                     "UPDATE queue_v4_clean_jobs
-                     SET state=IF(attempt_count<max_attempts,'ready','review'),lease_owner=NULL,lease_expires_at=NULL,
-                         last_error_class='lease_expired'
+                     SET state='waiting',available_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 60 SECOND),
+                         attempt_count=GREATEST(attempt_count-1,0),lease_owner=NULL,lease_expires_at=NULL,
+                         last_error_class=?
                      WHERE id=? AND company_id=? AND meli_account_id=? AND state='running'"
                 );
-                $job->execute([(int) $row['id'], (int) $row['company_id'], (int) $row['meli_account_id']]);
+                $job->execute([$classification, (int) $row['id'], (int) $row['company_id'], (int) $row['meli_account_id']]);
             }
             $this->pdo->commit();
             return count($expired);
@@ -374,7 +387,7 @@ final class QueueV4CleanRepository
                 throw new RuntimeException('queue_v4_clean_finish_cas_lost');
             }
             $attempt = $this->pdo->prepare(
-                'UPDATE queue_v4_clean_attempts SET outcome=?,error_class=?,finished_at=UTC_TIMESTAMP(3)
+                'UPDATE queue_v4_clean_attempts SET outcome=?,error_class=?,finished_at=UTC_TIMESTAMP(3),source_closed_at=UTC_TIMESTAMP(3)
                  WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND outcome=\'running\''
             );
             $attempt->execute([$attemptOutcome, $errorClass, (int) $job['attempt_id'], (int) $job['id'], $companyId, $accountId, (string) $job['lease_owner']]);

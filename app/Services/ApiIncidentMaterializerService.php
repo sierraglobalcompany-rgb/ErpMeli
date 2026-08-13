@@ -29,10 +29,17 @@ final class ApiIncidentMaterializerService
                 'SELECT last_log_id FROM api_incident_materializer_state WHERE singleton_id=1 FOR UPDATE'
             )->fetchColumn();
             $rows = $pdo->query(
-                'SELECT id,incident_key,scope_kind,company_id,meli_account_id,outcome_class,method,
-                        endpoint_path,http_status,error_type,error_code,safe_message,diagnostic_id,
-                        reached_remote,actionable,risk_signal,created_at
-                 FROM api_request_logs WHERE id>' . $cursor . ' ORDER BY id LIMIT ' . $limit
+                'SELECT l.id,l.incident_key,l.scope_kind,l.company_id,l.meli_account_id,l.outcome_class,l.method,
+                        l.endpoint_path,l.http_status,l.error_type,l.error_code,l.safe_message,l.diagnostic_id,
+                        l.reached_remote,l.actionable,l.risk_signal,l.created_at,
+                        IF((l.meli_account_id IS NULL OR a.id IS NOT NULL)
+                           AND (l.company_id IS NULL OR c.id IS NOT NULL),1,0) tenant_valid
+                 FROM api_request_logs l
+                 LEFT JOIN meli_accounts a
+                   ON a.company_id=l.company_id AND a.id=l.meli_account_id
+                 LEFT JOIN companies c ON c.id=l.company_id
+                 WHERE l.id>' . $cursor . '
+                 ORDER BY l.id LIMIT ' . $limit
             )->fetchAll(PDO::FETCH_ASSOC);
             $upsert = $pdo->prepare(
                 'INSERT INTO api_incident_groups
@@ -60,7 +67,8 @@ final class ApiIncidentMaterializerService
                 $last = max($last, (int) $row['id']);
                 $incidentKey = trim((string) ($row['incident_key'] ?? ''));
                 $outcome = trim((string) ($row['outcome_class'] ?? ''));
-                if ($incidentKey === '' || in_array($outcome, ['success', 'expected_absence'], true)) {
+                if ((int) ($row['tenant_valid'] ?? 0) !== 1
+                    || $incidentKey === '' || in_array($outcome, ['success', 'expected_absence'], true)) {
                     continue;
                 }
                 $scopeKind = in_array((string) ($row['scope_kind'] ?? ''), ['application','company','account'], true)
@@ -101,5 +109,22 @@ final class ApiIncidentMaterializerService
             }
             throw $error;
         }
+    }
+
+    public function retainStep(int $limit = 100, int $days = 90): int
+    {
+        $schema = new SchemaInspectorService();
+        if (!$schema->hasTable('api_incident_groups')) {
+            return 0;
+        }
+        $limit = max(1, min(500, $limit));
+        $days = max(30, min(730, $days));
+        $statement = Database::connection()->prepare(
+            'DELETE FROM api_incident_groups
+             WHERE last_seen_at<DATE_SUB(UTC_TIMESTAMP(3),INTERVAL ' . $days . ' DAY)
+             ORDER BY last_seen_at,id LIMIT ' . $limit
+        );
+        $statement->execute();
+        return $statement->rowCount();
     }
 }

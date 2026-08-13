@@ -119,6 +119,13 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
                 parse_url($url, PHP_URL_PATH) ?: '/'
             );
         }
+        if (MeliTransportSourcePolicy::requiresQueueV4ReadFence($executionSource)) {
+            $emergency->assertTransportAllowed($method, $url);
+            \App\QueueV4Clean\QueueV4CleanDispatchFence::immediatelyBeforeCurl(
+                $method,
+                parse_url($url, PHP_URL_PATH) ?: '/'
+            );
+        }
         $started = microtime(true);
         \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
             \App\QueueV4Clean\QueueV4CleanOAuthStageContext::CURL_EXEC
@@ -136,6 +143,10 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
                 \App\QueueV4Clean\QueueV4CleanOAuthStageContext::RESPONSE_KNOWN
             );
             \App\QueueV4Clean\QueueV4CleanOAuthDispatchFence::responseKnown($status);
+        }
+        if (MeliTransportSourcePolicy::requiresQueueV4ReadFence($executionSource)
+            && $status > 0 && $curlError === '') {
+            \App\QueueV4Clean\QueueV4CleanDispatchFence::responseKnown($status);
         }
         $decoded = is_string($raw) ? json_decode($raw, true) : null;
         if ($emergencySource === 'manual_emergency_canary') {

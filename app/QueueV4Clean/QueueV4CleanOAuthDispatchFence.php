@@ -43,34 +43,47 @@ final class QueueV4CleanOAuthDispatchFence
             throw new RuntimeException('queue_v4_clean_oauth_fence_context_invalid');
         }
 
-        $pdo = Database::connectionFresh();
-        $scheduler = $pdo->prepare(
-            "UPDATE queue_v4_clean_leases SET heartbeat_at=UTC_TIMESTAMP(3),
-                    expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 60 SECOND)
-             WHERE lease_key='scheduler' AND owner_ref=? AND expires_at>UTC_TIMESTAMP(3)"
-        );
-        $scheduler->execute([$schedulerOwner]);
-        if ($scheduler->rowCount() !== 1) {
-            throw new RuntimeException('queue_v4_clean_oauth_scheduler_lease_lost');
-        }
-        $dispatch = $pdo->prepare(
-            "UPDATE oauth_refresh_operations o
-             INNER JOIN meli_accounts a ON a.company_id=o.company_id AND a.id=o.meli_account_id
-             INNER JOIN meli_tokens t ON t.meli_account_id=a.id
-             SET o.remote_dispatch_state='MAY_HAVE_DISPATCHED',o.remote_dispatched_at=UTC_TIMESTAMP(3),
-                 o.remote_attempt_count=o.remote_attempt_count+1,o.last_request_id=?
-             WHERE o.id=? AND o.company_id=? AND o.meli_account_id=?
-               AND o.expected_refresh_version=? AND o.expected_meli_user_id=a.meli_user_id
-               AND t.refresh_version=o.expected_refresh_version
-               AND o.state='RUNNING' AND o.remote_dispatch_state='NOT_DISPATCHED'
-               AND o.lease_owner=? AND o.lease_generation=? AND o.lease_expires_at>UTC_TIMESTAMP(3)"
-        );
-        $dispatch->execute([
-            $requestId, $operationId, $companyId, $accountId, $version,
-            $operationOwner, $operationGeneration,
-        ]);
-        if ($dispatch->rowCount() !== 1) {
-            throw new RuntimeException('queue_v4_clean_oauth_dispatch_fence_lost');
+        QueueV4CleanCycleBudget::claim();
+        try {
+            $pdo = Database::connectionFresh();
+            $scheduler = $pdo->prepare(
+                "UPDATE queue_v4_clean_leases SET heartbeat_at=UTC_TIMESTAMP(3),
+                        expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 60 SECOND)
+                 WHERE lease_key='scheduler' AND owner_ref=? AND expires_at>UTC_TIMESTAMP(3)"
+            );
+            $scheduler->execute([$schedulerOwner]);
+            if ($scheduler->rowCount() !== 1) {
+                $stillOwned = $pdo->prepare(
+                    "SELECT 1 FROM queue_v4_clean_leases
+                     WHERE lease_key='scheduler' AND owner_ref=? AND expires_at>UTC_TIMESTAMP(3) LIMIT 1"
+                );
+                $stillOwned->execute([$schedulerOwner]);
+                if ($stillOwned->fetchColumn() === false) {
+                    throw new RuntimeException('queue_v4_clean_oauth_scheduler_lease_lost');
+                }
+            }
+            $dispatch = $pdo->prepare(
+                "UPDATE oauth_refresh_operations o
+                 INNER JOIN meli_accounts a ON a.company_id=o.company_id AND a.id=o.meli_account_id
+                 INNER JOIN meli_tokens t ON t.meli_account_id=a.id
+                 SET o.remote_dispatch_state='MAY_HAVE_DISPATCHED',o.remote_dispatched_at=UTC_TIMESTAMP(3),
+                     o.remote_attempt_count=o.remote_attempt_count+1,o.last_request_id=?
+                 WHERE o.id=? AND o.company_id=? AND o.meli_account_id=?
+                   AND o.expected_refresh_version=? AND o.expected_meli_user_id=a.meli_user_id
+                   AND t.refresh_version=o.expected_refresh_version
+                   AND o.state='RUNNING' AND o.remote_dispatch_state='NOT_DISPATCHED'
+                   AND o.lease_owner=? AND o.lease_generation=? AND o.lease_expires_at>UTC_TIMESTAMP(3)"
+            );
+            $dispatch->execute([
+                $requestId, $operationId, $companyId, $accountId, $version,
+                $operationOwner, $operationGeneration,
+            ]);
+            if ($dispatch->rowCount() !== 1) {
+                throw new RuntimeException('queue_v4_clean_oauth_dispatch_fence_lost');
+            }
+        } catch (\Throwable $error) {
+            QueueV4CleanCycleBudget::releaseBeforeTransport();
+            throw $error;
         }
     }
 

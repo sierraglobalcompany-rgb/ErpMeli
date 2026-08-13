@@ -18,6 +18,8 @@ final class QueueV4CleanScheduler
     public function run(int $maxJobs = QueueV4CleanWorker::DEFAULT_MAX_JOBS, int $runtimeSeconds = 45): array
     {
         QueueV4CleanOAuthStageContext::reset();
+        $startedAt = microtime(true);
+        $deadline = $startedAt + max(5, min(45, $runtimeSeconds));
         $repository = new QueueV4CleanRepository($this->pdo);
         $control = $repository->control();
         if ((string) $control['engine_state'] !== 'ACTIVE'
@@ -37,6 +39,7 @@ final class QueueV4CleanScheduler
         if ($lease->rowCount() !== 1) {
             return ['ok' => true, 'status' => 'busy', 'processed' => 0];
         }
+        QueueV4CleanCycleBudget::start(min(10, max(1, $maxJobs)));
         try {
             $oauth = (new QueueV4CleanOAuthSupervisor(
                 $this->pdo,
@@ -54,12 +57,37 @@ final class QueueV4CleanScheduler
             // OAuth provenance must not leak into later producer/worker
             // diagnostics in the same long-lived PHP process.
             QueueV4CleanOAuthStageContext::reset();
+            $recovery = (new QueueV4CleanUncertainReadRecoveryService($this->pdo))->recoverOne();
+            $salesAudit = (new QueueV4CleanSalesAuditStage())->run($deadline);
             $producer = (new QueueV4CleanProducer($this->pdo, $repository))->produce();
-            $worker = (new QueueV4CleanWorker($this->pdo, $repository))->run('scheduler', $maxJobs, $runtimeSeconds);
+            $oauthClaimed = (int) ($oauth['claimed'] ?? 0);
+            $salesClaimed = (int) ($salesAudit['claimed'] ?? 0);
+            $remainingJobs = max(0, min(10, $maxJobs) - $oauthClaimed - $salesClaimed);
+            $remaining = min(45, (int) floor($deadline - microtime(true)));
+            // Reserve a small local-only window for the incident read model.
+            // HTTP/business work remains bounded by the shared cycle budget.
+            $workerRuntime = $remaining >= 8 ? $remaining - 3 : $remaining;
+            $worker = $remaining >= 5 && $remainingJobs > 0
+                ? (new QueueV4CleanWorker($this->pdo, $repository))->run('scheduler', $remainingJobs, $workerRuntime)
+                : ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
+            $maintenance = microtime(true) < $deadline - 1.0
+                ? (new QueueV4CleanMaintenanceService())->run(100)
+                : ['materialized' => 0, 'retained' => 0, 'warnings' => 0, 'deferred' => true];
             $this->pdo->exec(
                 "UPDATE queue_v4_clean_control SET last_scheduler_at=UTC_TIMESTAMP(3) WHERE control_key='primary'"
             );
-            return ['ok' => true, 'status' => 'completed', 'oauth' => $oauth, 'producer' => $producer, 'worker' => $worker];
+            return [
+                'ok' => true,
+                'status' => 'completed',
+                'oauth' => $oauth,
+                'recovery' => $recovery,
+                'maintenance' => $maintenance,
+                'sales_audit' => $salesAudit,
+                'producer' => $producer,
+                'worker' => $worker,
+                'claimed_total' => $oauthClaimed + $salesClaimed + (int) ($worker['claimed'] ?? 0),
+                'http_budget' => QueueV4CleanCycleBudget::snapshot(),
+            ];
         } finally {
             $release = $this->pdo->prepare(
                 "UPDATE queue_v4_clean_leases
@@ -67,6 +95,7 @@ final class QueueV4CleanScheduler
                  WHERE lease_key='scheduler' AND owner_ref=?"
             );
             $release->execute([$owner]);
+            QueueV4CleanCycleBudget::clear();
         }
     }
 }

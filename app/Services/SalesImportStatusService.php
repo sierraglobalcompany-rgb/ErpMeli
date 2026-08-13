@@ -50,7 +50,7 @@ final class SalesImportStatusService
         $runs = $this->latestRuns($companyId, $accountId, $year);
         $auditJobs = $this->auditJobs($companyId, $accountId, $year);
         $repairJobs = $this->repairJobs($companyId, $accountId, $year);
-        $dateJobs = $this->dateRepairJobs($accountId, $year);
+        $dateJobs = $this->dateRepairJobs($companyId, $accountId, $year);
         $localCounts = $this->localOrderCounts($companyId, $accountId, $year);
 
         $months = [];
@@ -227,9 +227,9 @@ final class SalesImportStatusService
                 FROM sync_sales_audit_runs
                 WHERE company_id=? AND meli_account_id=? AND period_year=? AND mode="exact"
                 GROUP BY period_month
-             ) latest ON latest.id=r.id'
+             ) latest ON latest.id=r.id AND r.company_id=? AND r.meli_account_id=?'
         );
-        $stmt->execute([$companyId, $accountId, $year]);
+        $stmt->execute([$companyId, $accountId, $year, $companyId, $accountId]);
         $rows = [];
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $rows[(int) $row['period_month']] = $row;
@@ -243,7 +243,9 @@ final class SalesImportStatusService
         $stmt = Database::connectionFresh()->prepare(
             'SELECT r.period_month,j.status,j.next_run_at,j.safe_error_message,j.diagnostic_id
              FROM sync_sales_audit_jobs j
-             JOIN sync_sales_audit_runs r ON r.id=j.sync_sales_audit_run_id
+             JOIN sync_sales_audit_runs r
+               ON r.id=j.sync_sales_audit_run_id AND r.company_id=j.company_id
+              AND r.meli_account_id=j.meli_account_id
              WHERE r.company_id=? AND r.meli_account_id=? AND r.period_year=?'
         );
         $stmt->execute([$companyId, $accountId, $year]);
@@ -266,14 +268,15 @@ final class SalesImportStatusService
     }
 
     /** @return array<int,list<array<string,mixed>>> */
-    private function dateRepairJobs(int $accountId, int $year): array
+    private function dateRepairJobs(int $companyId, int $accountId, int $year): array
     {
         $stmt = Database::connectionFresh()->prepare(
-            'SELECT period_month,status,error_message
-             FROM order_datetime_repair_jobs
-             WHERE meli_account_id=? AND period_year=?'
+            'SELECT j.period_month,j.status,j.error_message
+             FROM order_datetime_repair_jobs j
+             INNER JOIN meli_accounts a ON a.company_id=? AND a.id=j.meli_account_id
+             WHERE j.meli_account_id=? AND j.period_year=?'
         );
-        $stmt->execute([$accountId, $year]);
+        $stmt->execute([$companyId, $accountId, $year]);
         return $this->groupByMonth($stmt->fetchAll(PDO::FETCH_ASSOC));
     }
 

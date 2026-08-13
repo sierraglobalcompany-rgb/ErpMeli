@@ -139,6 +139,14 @@ foreach (array_slice(is_array($_SERVER['argv'] ?? null) ? $_SERVER['argv'] : [],
     }
 }
 
+$releaseBaseRef = trim((string) (getenv('ERP_RELEASE_BASE_REF') ?: 'aeeb61c6296cb0221300eb641e17dd7957331f4e'));
+$releaseId = trim((string) (getenv('ERP_RELEASE_ID') ?: 'erp-meli-2.38.4-queue-v4-oauth-real-path-containment'));
+$releaseSequence = (int) (getenv('ERP_RELEASE_SEQUENCE') ?: 23803);
+$releaseUpgradeFrom = trim((string) (getenv('ERP_RELEASE_UPGRADE_FROM') ?: '2.38.3'));
+$releaseSchema = trim((string) (getenv('ERP_RELEASE_SCHEMA') ?: '296'));
+$releaseMigrationNote = trim((string) (getenv('ERP_RELEASE_MIGRATION_NOTE') ?: 'no se agrega ninguna migración'));
+$releaseInstruction = trim((string) (getenv('ERP_RELEASE_INSTRUCTION') ?: 'Mantenga Cron deshabilitado y ejecute por SSH únicamente jobs/queue_v4_runtime_self_check.php.'));
+
 try {
     if (!class_exists(ZipArchive::class)) {
         throw new RuntimeException('zip_extension_missing');
@@ -146,7 +154,7 @@ try {
     $source = realpath((string) ($arguments['source'] ?? dirname(__DIR__)));
     $output = realpath((string) ($arguments['output-dir'] ?? ''));
     $ref = trim((string) ($arguments['ref'] ?? 'HEAD'));
-    $baseRef = trim((string) ($arguments['base-ref'] ?? 'aeeb61c6296cb0221300eb641e17dd7957331f4e'));
+    $baseRef = trim((string) ($arguments['base-ref'] ?? $releaseBaseRef));
     if ($source === false || $output === false || !is_dir($output) || !is_writable($output) || $ref === '' || $baseRef === '') {
         throw new RuntimeException('artifact_arguments_invalid');
     }
@@ -214,14 +222,14 @@ try {
     $updateManifest = [
         'manifest_version' => 1,
         'product_id' => 'erp-meli',
-        'release_id' => 'erp-meli-2.38.4-queue-v4-oauth-real-path-containment',
+        'release_id' => $releaseId,
         'version' => $version,
-        'sequence' => 23803,
+        'sequence' => $releaseSequence,
         'channel' => 'manual',
         'source_trust' => 'local_admin',
         'published_at' => ManagedRuntimePublicationPolicy::BUILT_AT,
         'expires_at' => '2099-12-31T23:59:59+00:00',
-        'upgrade_from' => ['2.38.3'],
+        'upgrade_from' => [$releaseUpgradeFrom],
         'required_bridges' => [],
         'requirements' => [
             'php_min' => '8.3.0',
@@ -240,7 +248,7 @@ try {
     release2380Zip($updatePath, $entries, $files, $timestamp, $updateManifestBytes);
 
     $overlayInventory = [
-        'schema' => 'erp-meli-2384-ftp-overlay-v1',
+        'schema' => 'erp-meli-' . str_replace('.', '', $version) . '-ftp-overlay-v1',
         'version' => $version,
         'base_commit' => $baseCommit,
         'commit' => $commit,
@@ -261,15 +269,15 @@ try {
 
     $instructionPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_FTP_INSTRUCTIONS.md';
     file_put_contents($instructionPath, implode("\n", [
-        '# ERP MELI 2.38.4 — instalación manual',
+        '# ERP MELI ' . $version . ' — instalación manual',
         '',
-        '1. Extraiga ERP_MELI_2.38.4_FTP_REPAIR_OVERLAY.zip localmente.',
+        '1. Extraiga ERP_MELI_' . $version . '_FTP_REPAIR_OVERLAY.zip localmente.',
         '2. Suba únicamente los archivos incluidos sobre la carpeta existente erp-meli, conservando rutas.',
         '3. Nunca sobrescriba config.env, shared/config.env, storage, OAuth, pausas, logs o backups.',
-        '4. Abra actualizar.php y complete 2.38.3 → 2.38.4; no se agrega ninguna migración.',
-        '5. Confirme VERSION, app.version y marker 2.38.4; schema 296 y pendientes 0.',
-        '6. Mantenga Cron deshabilitado y ejecute por SSH únicamente jobs/queue_v4_runtime_self_check.php.',
-        '7. Si el self-check es PASS, envíe el resultado para autorizar una ejecución controlada posterior; todavía no habilite Cron.',
+        '4. Abra actualizar.php y complete ' . $releaseUpgradeFrom . ' → ' . $version . '; ' . $releaseMigrationNote . '.',
+        '5. Confirme VERSION, app.version y marker ' . $version . '; schema ' . $releaseSchema . ' y pendientes 0.',
+        '6. ' . $releaseInstruction,
+        '7. Verifique el estado operativo antes de habilitar el único Cron.',
         '',
         'La instalación no crea Cron Hostinger, no ejecuta OAuth, no cambia Queue V4 Clean y no ejecuta readiness automáticamente.',
         '',
@@ -280,7 +288,7 @@ try {
         $artifacts[basename($path)] = ['bytes' => filesize($path), 'sha256' => hash_file('sha256', $path)];
     }
     $authority = [
-        'schema' => 'erp-meli-2384-artifacts-v1',
+        'schema' => 'erp-meli-' . str_replace('.', '', $version) . '-artifacts-v1',
         'source' => 'GIT_OBJECT_DATABASE',
         'commit' => $commit,
         'tree' => $tree,

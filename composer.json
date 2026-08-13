@@ -156,9 +156,11 @@
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/runtime_package_attestation_b21a.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/managed_runtime_package_2361.php"
     ],
-    "test": "@test:release-2384",
+    "test": "@test:release-2385",
     "test:release-2384": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2384.php",
     "test:release-2384-db": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_oauth_real_path_2384.php",
+    "test:release-2385": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2385.php",
+    "test:release-2385-db": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_transport_sales_health_2385.php",
     "test:release-2383": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2383.php",
     "test:release-2383-db": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_oauth_control_plane_2383.php",
     "test:sales-control": "@php -d error_reporting=-1 -d display_errors=1 tests/sales_control_2211_mysql_integration.php",

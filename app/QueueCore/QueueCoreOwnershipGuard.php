@@ -49,7 +49,8 @@ final class QueueCoreOwnershipGuard
         ?PDO $pdo = null,
     ): void {
         $source = (string) ($metadata['source'] ?? '');
-        if (in_array($source, ['queue_v4_clean', 'queue_v4_clean_readiness'], true)
+        if ($source === 'queue_v4_clean_readiness'
+            || MeliTransportSourcePolicy::requiresQueueV4ReadFence($source)
             || MeliTransportSourcePolicy::requiresCurrentOAuthFence($source)) {
             return;
         }

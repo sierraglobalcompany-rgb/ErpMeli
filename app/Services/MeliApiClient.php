@@ -181,6 +181,7 @@ final class MeliApiClient implements MeliReadClientInterface
         $manualEmergencyCanary = (string) ($meta['source'] ?? '') === 'manual_emergency_canary';
         $manualEmergencyOAuthRefresh = (string) ($meta['source'] ?? '') === 'manual_emergency_oauth_refresh';
         $oauthControlPlane = MeliTransportSourcePolicy::requiresCurrentOAuthFence($source);
+        $queueV4ReadContext = MeliTransportSourcePolicy::requiresQueueV4ReadFence($source);
         $cronV3RemoteContext = (string) ($meta['source'] ?? '') === 'cron_v3_remote';
         $queueCoreContext = (string) ($meta['source'] ?? '') === 'queue_core';
         $attempts = $singleDispatchAttempt ? 1 : $guard->maxAttempts($mutation, $method);
@@ -396,6 +397,48 @@ final class MeliApiClient implements MeliReadClientInterface
                         throw $transportBlocked;
                     }
                 }
+                if ($queueV4ReadContext) {
+                    $queueV4Fence = \App\QueueV4Clean\QueueV4CleanDispatchFence::state($meta);
+                    if ($queueV4Fence['dispatch_state'] === 'NOT_DISPATCHED') {
+                        $budget->releaseReservation($budgetReservation, true);
+                        $rhythm->cancelBeforeTransport($rhythmPermit, true);
+                        ApiExecutionMetadataContext::markRemoteBlocked();
+                        if ($transportBlocked instanceof ApiBudgetExhaustedException
+                            || $transportBlocked instanceof ApiManualPauseException
+                            || $transportBlocked instanceof CronDeadlineDeferredException) {
+                            throw $transportBlocked;
+                        }
+                        throw new QueueV4PreTransportDeferredException(
+                            gmdate('Y-m-d H:i:s', time() + 60)
+                        );
+                    }
+                    ApiExecutionMetadataContext::markRemoteDispatched();
+                    $classification = [
+                        'type' => 'remote_result_uncertain',
+                        'outcome_class' => 'policy_delay',
+                        'reached_remote' => true,
+                        'is_retryable' => true,
+                        'is_app_blocked_signal' => false,
+                        'recommendation' => 'Queue V4 repetirá este GET idempotente en otra ventana segura.',
+                    ];
+                    $budget->recordResult($this->accountId, $method, $path, null, null, $meta, $classification);
+                    $guard->recordRequest(
+                        $this->accountId,
+                        $requestId,
+                        $method,
+                        $path,
+                        $queueV4Fence['http_status'],
+                        null,
+                        null,
+                        $attempt,
+                        true,
+                        'La lectura GET cruzó la frontera física sin un resultado local utilizable.',
+                        $classification,
+                        'remote_result_uncertain',
+                        $meta
+                    );
+                    throw new RemoteResultUncertainException($requestId);
+                }
                 // La barrera del transporte OAuth se ejecuta dentro del
                 // adaptador pero todavía antes de curl_init/curl_exec. Una
                 // denegación de emergencia en ese punto certifica cero HTTP,
@@ -473,6 +516,24 @@ final class MeliApiClient implements MeliReadClientInterface
             $wireBytes = max(0, $transportResult['wire_bytes']);
             $decodedBytes = max(0, $transportResult['decoded_bytes']);
             $retryAfter = HttpRetryAfterParser::seconds($responseHeaders['retry-after'] ?? null);
+            if ($queueV4ReadContext && ($status <= 0 || $curlError !== '')) {
+                $classification = [
+                    'type' => 'remote_result_uncertain',
+                    'outcome_class' => 'policy_delay',
+                    'reached_remote' => true,
+                    'is_retryable' => true,
+                    'is_app_blocked_signal' => false,
+                    'recommendation' => 'Queue V4 repetirá este GET idempotente en otra ventana segura.',
+                ];
+                $budget->recordResult($this->accountId, $method, $path, null, null, $meta, $classification);
+                $guard->recordRequest(
+                    $this->accountId, $requestId, $method, $path, null, $durationMs, null,
+                    $attempt, false,
+                    'El GET inició transporte, pero no produjo una respuesta local verificable.',
+                    $classification, 'remote_result_uncertain', $meta
+                );
+                throw new RemoteResultUncertainException($requestId);
+            }
             // Queue Core treats 206 as an incomplete page, never as a
             // successful terminal receipt. The known response remains
             // retryable in a new fenced attempt without advancing cursors.

@@ -10,9 +10,13 @@ require dirname(__DIR__) . '/app/Services/UpdateManifestService.php';
 use App\Services\ManagedRuntimePublicationPolicy;
 use App\Services\UpdateManifestService;
 
+$targetVersion = trim((string) (getenv('ERP_RELEASE_ARTIFACT_VERSION') ?: '2.38.4'));
+$upgradeFrom = trim((string) (getenv('ERP_RELEASE_ARTIFACT_UPGRADE_FROM') ?: '2.38.3'));
+$requiredMigration = trim((string) (getenv('ERP_RELEASE_ARTIFACT_MIGRATION') ?: '296_queue_v4_clean_oauth_control_plane_2_38_3.sql'));
+$forbiddenMigrationPrefix = trim((string) (getenv('ERP_RELEASE_ARTIFACT_FORBIDDEN_MIGRATION_PREFIX') ?: '297_'));
 $directory = $argv[1] ?? '';
 if (!is_dir($directory) || !class_exists(ZipArchive::class)) {
-    fwrite(STDERR, "Release artifacts 2.38.4: FAIL arguments\n");
+    fwrite(STDERR, 'Release artifacts ' . $targetVersion . ": FAIL arguments\n");
     exit(2);
 }
 
@@ -88,11 +92,11 @@ try {
     $manifestService = new UpdateManifestService();
     $manifest = $manifestService->decode($manifestBytes);
     $assert(($manifest['source_trust'] ?? null) === 'local_admin', 'update_source_trust_invalid');
-    $assert(($manifest['version'] ?? null) === '2.38.4', 'update_version_invalid');
-    $assert(($manifest['upgrade_from'] ?? null) === ['2.38.3'], 'update_source_version_invalid');
+    $assert(($manifest['version'] ?? null) === $targetVersion, 'update_version_invalid');
+    $assert(($manifest['upgrade_from'] ?? null) === [$upgradeFrom], 'update_source_version_invalid');
     $assert(in_array('295_inventory_warehouse_v1_2_38_0.sql', (array) ($manifest['migrations'] ?? []), true), 'migration_295_missing');
-    $assert(in_array('296_queue_v4_clean_oauth_control_plane_2_38_3.sql', (array) ($manifest['migrations'] ?? []), true), 'migration_296_missing');
-    $assert(!array_filter((array) ($manifest['migrations'] ?? []), static fn (string $name): bool => str_starts_with($name, '297_')), 'migration_297_present');
+    $assert(in_array($requiredMigration, (array) ($manifest['migrations'] ?? []), true), 'required_migration_missing');
+    $assert(!array_filter((array) ($manifest['migrations'] ?? []), static fn (string $name): bool => str_starts_with($name, $forbiddenMigrationPrefix)), 'forbidden_migration_present');
     $assert(!isset($manifest['signature']), 'unexpected_update_signature');
     $assert($manifestService->verifySignature($manifest) === 'local_unsigned', 'local_admin_signature_status_invalid');
     unset($update['update-manifest.json']);
@@ -108,7 +112,7 @@ try {
         $assert(!in_array($normalized, ['.env', 'config.env', 'shared/config.env', 'pause_meli_api', 'pause_erp_automation', 'shared/current-release.json'], true), 'protected_file_packaged:' . $path);
         $assert(!preg_match('#^(?:storage|shared/storage|logs|sessions|backups)/#', $normalized), 'protected_tree_packaged:' . $path);
     }
-    foreach (['VERSION',
+    $requiredOverlayPaths = ['VERSION',
         'app/QueueV4Clean/QueueV4CleanDatabaseContract.php',
         'app/QueueV4Clean/QueueV4CleanOAuthStageContext.php',
         'app/QueueV4Clean/QueueV4CleanSafeDiagnosticService.php',
@@ -121,10 +125,23 @@ try {
         'app/Services/OAuthTokenRefreshService.php',
         'jobs/queue_v4_clean.php',
         'jobs/queue_v4_runtime_self_check.php',
-        'resources/release/managed-runtime-dependencies-2.38.4.json',
-        'resources/release/queue-v4-canonical-db-contract-2.38.4.json',
-        'resources/release/updater-authority-2.38.4.json',
-        'resources/runtime-manifest.json'] as $requiredOverlay) {
+        'resources/release/managed-runtime-dependencies-' . $targetVersion . '.json',
+        'resources/release/queue-v4-canonical-db-contract-' . $targetVersion . '.json',
+        'resources/release/updater-authority-' . $targetVersion . '.json',
+        'resources/runtime-manifest.json'];
+    if ($targetVersion === '2.38.5') {
+        $requiredOverlayPaths = array_merge($requiredOverlayPaths, [
+            'app/QueueV4Clean/QueueV4CleanCycleBudget.php',
+            'app/QueueV4Clean/QueueV4CleanDispatchFence.php',
+            'app/QueueV4Clean/QueueV4CleanHealthSnapshotService.php',
+            'app/QueueV4Clean/QueueV4CleanMaintenanceService.php',
+            'app/QueueV4Clean/QueueV4CleanSalesAuditStage.php',
+            'app/QueueV4Clean/QueueV4CleanUncertainReadRecoveryService.php',
+            'app/Services/QueueV4PreTransportDeferredException.php',
+            'database/migrations/297_queue_v4_transport_sales_api_health_2_38_5.sql',
+        ]);
+    }
+    foreach (array_values(array_unique($requiredOverlayPaths)) as $requiredOverlay) {
         $assert(isset($overlay[$requiredOverlay]), 'required_overlay_path_missing:' . $requiredOverlay);
     }
 
@@ -140,8 +157,8 @@ try {
         $assert(is_file($directory . '/' . $match[2]), 'sha_target_missing');
         $assert(hash_equals($match[1], hash_file('sha256', $directory . '/' . $match[2])), 'sha_target_invalid:' . $match[2]);
     }
-    fwrite(STDOUT, 'Release artifacts 2.38.4: PASS checks=' . $checks . PHP_EOL);
+    fwrite(STDOUT, 'Release artifacts ' . $targetVersion . ': PASS checks=' . $checks . PHP_EOL);
 } catch (Throwable $error) {
-    fwrite(STDERR, 'Release artifacts 2.38.4: FAIL ' . $error->getMessage() . PHP_EOL);
+    fwrite(STDERR, 'Release artifacts ' . $targetVersion . ': FAIL ' . $error->getMessage() . PHP_EOL);
     exit(1);
 }

@@ -3,9 +3,12 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__);
-$base = 'aeeb61c6296cb0221300eb641e17dd7957331f4e';
-$previousPath = $root . '/resources/release/updater-authority-2.38.3.json';
-$targetPath = $root . '/resources/release/updater-authority-2.38.4.json';
+$base = trim((string) (getenv('ERP_UPDATER_GENERATOR_BASE') ?: 'aeeb61c6296cb0221300eb641e17dd7957331f4e'));
+$previousVersion = trim((string) (getenv('ERP_UPDATER_GENERATOR_PREVIOUS') ?: '2.38.3'));
+$targetVersion = trim((string) (getenv('ERP_UPDATER_GENERATOR_TARGET') ?: '2.38.4'));
+$contract = trim((string) (getenv('ERP_UPDATER_GENERATOR_CONTRACT') ?: 'The metadata-only 2.38.3 to 2.38.4 update keeps schema 296 and adds Queue V4 OAuth CLI capability preflight, sanitized stage diagnostics, fence-based Throwable containment, a zero-HTTP runtime self-check, and scheduler abort after an unexpected OAuth fault. It never retries a remotely uncertain refresh, performs no Mercado Libre business writes, and preserves updater state paths.'));
+$previousPath = $root . '/resources/release/updater-authority-' . $previousVersion . '.json';
+$targetPath = $root . '/resources/release/updater-authority-' . $targetVersion . '.json';
 
 /** @param list<string> $arguments */
 $git = static function (array $arguments) use ($root): string {
@@ -53,9 +56,9 @@ foreach ($changed as $path) {
 }
 unset(
     $dependencyPaths['resources/runtime-manifest.json'],
-    $dependencyPaths['resources/release/updater-authority-2.38.4.json'],
+    $dependencyPaths['resources/release/updater-authority-' . $targetVersion . '.json'],
 );
-$dependencyPaths['resources/release/managed-runtime-dependencies-2.38.4.json'] = true;
+$dependencyPaths['resources/release/managed-runtime-dependencies-' . $targetVersion . '.json'] = true;
 ksort($dependencyPaths, SORT_STRING);
 $dependencies = [];
 foreach (array_keys($dependencyPaths) as $path) {
@@ -65,8 +68,8 @@ foreach (array_keys($dependencyPaths) as $path) {
 
 $authority = [
     'schema_version' => 1,
-    'target_version' => '2.38.4',
-    'contract' => 'The metadata-only 2.38.3 to 2.38.4 update keeps schema 296 and adds Queue V4 OAuth CLI capability preflight, sanitized stage diagnostics, fence-based Throwable containment, a zero-HTTP runtime self-check, and scheduler abort after an unexpected OAuth fault. It never retries a remotely uncertain refresh, performs no Mercado Libre business writes, and preserves updater state paths.',
+    'target_version' => $targetVersion,
+    'contract' => $contract,
     'supersedes_inventory' => $previous['supersedes_inventory'],
     'unchanged_locked' => $previous['unchanged_locked'],
     'intentional_locked_changes' => $previous['intentional_locked_changes'],
@@ -76,4 +79,4 @@ $json = json_encode($authority, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSO
 if (file_put_contents($targetPath, $json, LOCK_EX) !== strlen($json)) {
     throw new RuntimeException('updater_authority_write_failed');
 }
-fwrite(STDOUT, 'Updater authority 2.38.4 generated dependencies=' . count($dependencies) . PHP_EOL);
+fwrite(STDOUT, 'Updater authority ' . $targetVersion . ' generated dependencies=' . count($dependencies) . PHP_EOL);

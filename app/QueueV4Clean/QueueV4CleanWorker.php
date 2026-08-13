@@ -15,6 +15,8 @@ use App\Services\MeliApiException;
 use App\Services\MeliReadClientInterface;
 use App\Services\OAuthRefreshRequiredException;
 use App\Services\OrderSyncService;
+use App\Services\QueueV4PreTransportDeferredException;
+use App\Services\RemoteResultUncertainException;
 use PDO;
 use RuntimeException;
 use Throwable;
@@ -55,11 +57,14 @@ final class QueueV4CleanWorker
     /** @return array{claimed:int,completed:int,deferred:int} */
     public function run(string $launcher, int $maxJobs = self::DEFAULT_MAX_JOBS, int $runtimeSeconds = 45): array
     {
+        if ($maxJobs < 1 || $runtimeSeconds < 5) {
+            return ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
+        }
         $control = $this->repository->control();
         if ((string) $control['engine_state'] !== 'ACTIVE') {
             return ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
         }
-        $maxJobs = max(1, min(self::HARD_MAX_JOBS, $maxJobs));
+        $maxJobs = min(self::HARD_MAX_JOBS, $maxJobs);
         $deadline = microtime(true) + max(5, min(45, $runtimeSeconds));
         $owner = bin2hex(random_bytes(16));
         $runId = $this->repository->beginRun($launcher, $owner);
@@ -116,6 +121,24 @@ final class QueueV4CleanWorker
                     );
                     $deferred++;
                     break;
+                } catch (QueueV4PreTransportDeferredException $error) {
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        'pre_transport_deferred',
+                        $error->nextSafeAt,
+                    );
+                    $deferred++;
+                    continue;
+                } catch (RemoteResultUncertainException) {
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        'remote_result_uncertain_safe_get',
+                        gmdate('Y-m-d H:i:s', time() + 60),
+                    );
+                    $deferred++;
+                    continue;
                 } catch (MeliApiException $error) {
                     if ($error->httpStatus === 429) {
                         $this->repository->deferWithoutAttemptPenalty(
@@ -183,7 +206,7 @@ final class QueueV4CleanWorker
                     'source_queue_key' => 'queue_v4_clean',
                     'source_work_id' => (string) $job['id'],
                     'bulk' => false,
-                ],
+                ] + $this->transportMeta($job),
                 static fn (): array => $client->get('/orders/search', [
                     'seller' => $sellerId,
                     'order.date_created.from' => $from,
@@ -253,7 +276,7 @@ final class QueueV4CleanWorker
                 'account_id' => $accountId,
                 'source_queue_key' => 'queue_v4_clean',
                 'source_work_id' => (string) $job['id'],
-            ]);
+            ] + $this->transportMeta($job));
             return;
         }
         throw new RuntimeException('queue_v4_clean_payload_job_type');
@@ -279,5 +302,15 @@ final class QueueV4CleanWorker
     private function safeToken(string $value): string
     {
         return substr(preg_replace('/[^a-z0-9_]+/', '_', strtolower($value)) ?: 'rhythm', 0, 70);
+    }
+
+    /** @param array<string,mixed> $job @return array<string,mixed> */
+    private function transportMeta(array $job): array
+    {
+        return [
+            'queue_v4_job_id' => (int) ($job['id'] ?? 0),
+            'queue_v4_attempt_id' => (int) ($job['attempt_id'] ?? 0),
+            'queue_v4_lease_owner' => (string) ($job['lease_owner'] ?? ''),
+        ];
     }
 }

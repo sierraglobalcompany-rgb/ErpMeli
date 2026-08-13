@@ -19,6 +19,17 @@ use Throwable;
  */
 final class SalesAuditRunService
 {
+    /** @var \Closure(int):MeliApiClient */
+    private \Closure $clientFactory;
+
+    /** @param null|callable(int):MeliApiClient $clientFactory */
+    public function __construct(?callable $clientFactory = null)
+    {
+        $this->clientFactory = $clientFactory !== null
+            ? \Closure::fromCallable($clientFactory)
+            : static fn(int $accountId): MeliApiClient => new MeliApiClient($accountId);
+    }
+
     public function available(): bool
     {
         $schema = new SchemaInspectorService();
@@ -56,7 +67,9 @@ final class SalesAuditRunService
             $active = $pdo->prepare(
             'SELECT j.id
              FROM sync_sales_audit_jobs j
-             JOIN sync_sales_audit_runs r ON r.id=j.sync_sales_audit_run_id
+             JOIN sync_sales_audit_runs r
+               ON r.id=j.sync_sales_audit_run_id AND r.company_id=j.company_id
+              AND r.meli_account_id=j.meli_account_id
              WHERE r.company_id=? AND r.meli_account_id=? AND r.period_year=? AND r.period_month=?
                AND j.status IN ("pending","running","waiting_budget","paused")
              ORDER BY j.id DESC LIMIT 1'
@@ -166,38 +179,58 @@ final class SalesAuditRunService
         $worker = 'sales-audit-' . getmypid() . '-' . bin2hex(random_bytes(3));
         $job = $this->claim($worker, $jobId);
         if (!$job) {
-            return ['processed' => 0, 'errors' => 0, 'status' => 'empty'];
+            return ['claimed' => 0, 'processed' => 0, 'errors' => 0, 'status' => 'empty'];
         }
 
         $processed = 0;
         try {
             for ($page = 0; $page < $pagesPerCycle; $page++) {
                 if ($deadline !== null && microtime(true) >= $deadline - 2.0) {
-                    $this->release($job, $worker, 'pending', 'time_budget', null);
-                    return ['processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'time_budget'];
+                    $this->release($job, $worker, 'pending', 'time_budget', null, gmdate('Y-m-d H:i:s', time() + 5), true);
+                    return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'time_budget'];
                 }
                 $result = $this->fetchPage($job, $worker);
                 $processed += $result['inserted'];
                 $job['next_offset'] = $result['next_offset'];
                 $job['remote_reported_total'] = $result['remote_total'];
                 if (!empty($result['finished'])) {
-                    $this->finalizeRun((int) $job['sync_sales_audit_run_id']);
+                    $this->finalizeRun(
+                        (int) $job['sync_sales_audit_run_id'],
+                        (int) $job['company_id'],
+                        (int) $job['meli_account_id'],
+                    );
                     $this->complete($job, $worker);
-                    return ['processed' => $processed, 'errors' => 0, 'status' => 'complete', 'run_id' => (int) $job['sync_sales_audit_run_id']];
+                    return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'complete', 'run_id' => (int) $job['sync_sales_audit_run_id']];
                 }
             }
-            $this->release($job, $worker, 'pending', null, null);
-            return ['processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'page_checkpoint'];
-        } catch (ApiBudgetExhaustedException|ApiManualPauseException $error) {
-            $this->release($job, $worker, 'waiting_budget', 'api_budget', $error);
-            return ['processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'api_budget'];
+            $this->release($job, $worker, 'pending', null, null, gmdate('Y-m-d H:i:s', time() + 5), true);
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'page_checkpoint'];
+        } catch (RemoteResultUncertainException $error) {
+            $this->release(
+                $job, $worker, 'waiting_budget', 'remote_result_uncertain_safe_get', $error,
+                gmdate('Y-m-d H:i:s', time() + 60), true
+            );
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'safe_get_uncertain'];
+        } catch (QueueV4PreTransportDeferredException $error) {
+            $this->release($job, $worker, 'waiting_budget', 'pre_transport_deferred', $error, $error->nextSafeAt, true);
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'pre_transport'];
+        } catch (ApiRhythmDeferredException $error) {
+            $this->release($job, $worker, 'waiting_budget', $error->blockingScope, $error, $error->nextSafeAt, true);
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => $error->blockingScope];
+        } catch (ApiBudgetExhaustedException $error) {
+            $this->release($job, $worker, 'waiting_budget', 'api_budget', $error, $error->nextSafeAt, true);
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'api_budget'];
+        } catch (ApiManualPauseException $error) {
+            $this->release($job, $worker, 'waiting_budget', 'api_pause', $error, $error->resumeAt, true);
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'api_pause'];
         } catch (Throwable $error) {
             $safe = SafeErrorPresenter::report($error, 'No fue posible continuar la auditoría exacta.', [
                 'module' => 'sales_audit',
                 'job_id' => (int) $job['id'],
             ]);
-            $this->release($job, $worker, 'error', 'error', $error, $safe['reference']);
+            $this->release($job, $worker, 'error', 'error', $error, null, false, $safe['reference']);
             return [
+                'claimed' => 1,
                 'processed' => $processed,
                 'errors' => 1,
                 'status' => 'error',
@@ -221,42 +254,51 @@ final class SalesAuditRunService
         if (!$this->available()) {
             return null;
         }
+        $authorizedAccount = (new SalesAuditAccessGateway())->account($accountId, $companyId);
+        $companyId = (int) $authorizedAccount['company_id'];
         $stmt = Database::connection()->prepare(
             'SELECT r.*,a.account_name,j.id job_id,j.status job_status,j.next_offset,j.remote_reported_total job_remote_total,
                     j.next_run_at,j.safe_error_message job_error,j.diagnostic_id job_diagnostic
              FROM sync_sales_audit_runs r
-             JOIN meli_accounts a ON a.id=r.meli_account_id
-             LEFT JOIN sync_sales_audit_jobs j ON j.sync_sales_audit_run_id=r.id
-              WHERE r.meli_account_id=? AND r.period_year=? AND r.period_month=?
-                AND (?=0 OR r.company_id=?)
+             JOIN meli_accounts a ON a.company_id=r.company_id AND a.id=r.meli_account_id
+             LEFT JOIN sync_sales_audit_jobs j
+               ON j.sync_sales_audit_run_id=r.id AND j.company_id=r.company_id
+              AND j.meli_account_id=r.meli_account_id
+              WHERE r.company_id=? AND r.meli_account_id=? AND r.period_year=? AND r.period_month=?
               ORDER BY r.id DESC LIMIT 1'
         );
-        $stmt->execute([$accountId, $year, $month, $companyId, $companyId]);
+        $stmt->execute([$companyId, $accountId, $year, $month]);
         $run = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$run) {
             return null;
         }
         $days = Database::connection()->prepare(
-            'SELECT * FROM sync_sales_audit_run_days WHERE sync_sales_audit_run_id=? ORDER BY audit_date'
+            'SELECT d.* FROM sync_sales_audit_run_days d
+             INNER JOIN sync_sales_audit_runs r
+               ON r.id=d.sync_sales_audit_run_id AND r.company_id=? AND r.meli_account_id=?
+             WHERE d.sync_sales_audit_run_id=? ORDER BY d.audit_date'
         );
-        $days->execute([(int) $run['id']]);
+        $days->execute([$companyId, $accountId, (int) $run['id']]);
         $run['days'] = $days->fetchAll(PDO::FETCH_ASSOC);
 
         $perPage = in_array($perPage, [25, 50, 100], true) ? $perPage : 50;
         $page = max(1, $page);
-        $where = 'sync_sales_audit_run_id=? AND classification<>"present"';
-        $params = [(int) $run['id']];
+        $where = 'ro.sync_sales_audit_run_id=? AND ro.meli_account_id=?'
+            . ' AND r.company_id=? AND r.meli_account_id=? AND ro.classification<>"present"';
+        $params = [(int) $run['id'], $accountId, $companyId, $accountId];
         if ($classification !== null && $classification !== '') {
-            $where .= ' AND classification=?';
+            $where .= ' AND ro.classification=?';
             $params[] = $classification;
         }
-        $count = Database::connection()->prepare('SELECT COUNT(*) FROM sync_sales_audit_run_orders WHERE ' . $where);
+        $from = ' FROM sync_sales_audit_run_orders ro'
+            . ' INNER JOIN sync_sales_audit_runs r ON r.id=ro.sync_sales_audit_run_id';
+        $count = Database::connection()->prepare('SELECT COUNT(*)' . $from . ' WHERE ' . $where);
         $count->execute($params);
         $run['difference_total'] = (int) $count->fetchColumn();
         $offset = ($page - 1) * $perPage;
         $details = Database::connection()->prepare(
-            'SELECT * FROM sync_sales_audit_run_orders WHERE ' . $where . '
-             ORDER BY audit_date ASC,classification ASC,id ASC LIMIT ' . $perPage . ' OFFSET ' . $offset
+            'SELECT ro.*' . $from . ' WHERE ' . $where . '
+             ORDER BY ro.audit_date ASC,ro.classification ASC,ro.id ASC LIMIT ' . $perPage . ' OFFSET ' . $offset
         );
         $details->execute($params);
         $run['differences'] = $details->fetchAll(PDO::FETCH_ASSOC);
@@ -294,14 +336,20 @@ final class SalesAuditRunService
         $pdo = Database::connectionFresh();
         $pdo->beginTransaction();
         try {
-            $reservationGuard = ManualCampaignReservationGuard::sql('sales_audit', 'sync_sales_audit_jobs.id');
+            $reservationGuard = ManualCampaignReservationGuard::sql('sales_audit', 'j.id');
             $stmt = $pdo->prepare(
-                'SELECT * FROM sync_sales_audit_jobs
-                 WHERE status IN ("pending","waiting_budget")
-                   AND next_run_at<=UTC_TIMESTAMP()
-                   AND (lock_expires_at IS NULL OR lock_expires_at<UTC_TIMESTAMP())
-                   AND (? IS NULL OR id=?)' . $reservationGuard . '
-                 ORDER BY created_at ASC,id ASC LIMIT 1 FOR UPDATE'
+                'SELECT j.* FROM sync_sales_audit_jobs j
+                 INNER JOIN sync_sales_audit_runs r
+                   ON r.id=j.sync_sales_audit_run_id AND r.company_id=j.company_id
+                  AND r.meli_account_id=j.meli_account_id
+                 INNER JOIN meli_accounts a ON a.company_id=j.company_id AND a.id=j.meli_account_id
+                 WHERE j.status IN ("pending","waiting_budget")
+                   AND j.next_run_at<=UTC_TIMESTAMP()
+                   AND (j.lock_expires_at IS NULL OR j.lock_expires_at<UTC_TIMESTAMP())
+                   AND (? IS NULL OR j.id=?)' . $reservationGuard . '
+                 ORDER BY COALESCE(j.heartbeat_at,j.updated_at,j.created_at) ASC,
+                          j.company_id,j.meli_account_id,j.id
+                 LIMIT 1 FOR UPDATE'
             );
             $stmt->execute([$jobId, $jobId]);
             $job = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -313,13 +361,15 @@ final class SalesAuditRunService
                 'UPDATE sync_sales_audit_jobs
                  SET status="running",locked_by=?,lock_expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 60 SECOND),
                       heartbeat_at=UTC_TIMESTAMP(),lease_generation=lease_generation+1,
-                      started_at=COALESCE(started_at,UTC_TIMESTAMP()),attempts=attempts+1,updated_at=UTC_TIMESTAMP()
-                  WHERE id=?'
-            )->execute([$worker, (int) $job['id']]);
+                      started_at=COALESCE(started_at,UTC_TIMESTAMP()),attempts=attempts+1,updated_at=UTC_TIMESTAMP(),
+                      remote_dispatch_state="NOT_DISPATCHED",remote_dispatched_at=NULL,response_known_at=NULL,
+                      last_request_id=NULL,last_http_status=NULL
+                  WHERE id=? AND company_id=? AND meli_account_id=? AND sync_sales_audit_run_id=?'
+            )->execute([$worker, (int) $job['id'], (int) $job['company_id'], (int) $job['meli_account_id'], (int) $job['sync_sales_audit_run_id']]);
             $pdo->prepare(
                 'UPDATE sync_sales_audit_runs SET status="running",started_at=COALESCE(started_at,UTC_TIMESTAMP())
-                 WHERE id=?'
-            )->execute([(int) $job['sync_sales_audit_run_id']]);
+                 WHERE id=? AND company_id=? AND meli_account_id=?'
+            )->execute([(int) $job['sync_sales_audit_run_id'], (int) $job['company_id'], (int) $job['meli_account_id']]);
             $pdo->commit();
             $job['locked_by'] = $worker;
             $job['lease_generation'] = ((int) ($job['lease_generation'] ?? 0)) + 1;
@@ -336,14 +386,14 @@ final class SalesAuditRunService
     private function fetchPage(array $job, string $worker): array
     {
         $pdo = Database::connectionFresh();
-        $runStmt = $pdo->prepare('SELECT * FROM sync_sales_audit_runs WHERE id=?');
-        $runStmt->execute([(int) $job['sync_sales_audit_run_id']]);
+        $runStmt = $pdo->prepare('SELECT * FROM sync_sales_audit_runs WHERE id=? AND company_id=? AND meli_account_id=?');
+        $runStmt->execute([(int) $job['sync_sales_audit_run_id'], (int) $job['company_id'], (int) $job['meli_account_id']]);
         $run = $runStmt->fetch(PDO::FETCH_ASSOC);
         if (!$run) {
             throw new \RuntimeException('La ejecución de auditoría ya no existe.');
         }
-        $seller = $pdo->prepare('SELECT meli_user_id FROM meli_accounts WHERE id=?');
-        $seller->execute([(int) $job['meli_account_id']]);
+        $seller = $pdo->prepare('SELECT meli_user_id FROM meli_accounts WHERE company_id=? AND id=?');
+        $seller->execute([(int) $job['company_id'], (int) $job['meli_account_id']]);
         $sellerId = (int) $seller->fetchColumn();
         if ($sellerId <= 0) {
             throw new \RuntimeException('La cuenta no tiene vendedor Mercado Libre asociado.');
@@ -352,15 +402,30 @@ final class SalesAuditRunService
         $offset = max(0, (int) $job['next_offset']);
         $utcFrom = new \DateTimeImmutable((string) $run['utc_from'], new \DateTimeZone('UTC'));
         $utcTo = new \DateTimeImmutable((string) $run['utc_to'], new \DateTimeZone('UTC'));
-        $client = new MeliApiClient((int) $job['meli_account_id']);
-        $page = $client->get('/orders/search', [
-            'seller' => $sellerId,
-            'order.date_created.from' => $utcFrom->format(DATE_ATOM),
-            'order.date_created.to' => $utcTo->format(DATE_ATOM),
-            'sort' => 'date_desc',
-            'offset' => $offset,
-            'limit' => $limit,
-        ], ['job_type' => 'sales_audit', 'bulk' => true]);
+        $client = ($this->clientFactory)((int) $job['meli_account_id']);
+        $transportMeta = [
+            'source' => MeliTransportSourcePolicy::QUEUE_V4_SALES_AUDIT,
+            'job_type' => 'sales_audit',
+            'bulk' => true,
+            'company_id' => (int) $job['company_id'],
+            'account_id' => (int) $job['meli_account_id'],
+            'source_queue_key' => 'sync_sales_audit_jobs',
+            'source_work_id' => (string) $job['id'],
+            'sales_audit_job_id' => (int) $job['id'],
+            'sales_audit_lease_owner' => $worker,
+            'sales_audit_lease_generation' => (int) $job['lease_generation'],
+        ];
+        $page = ApiExecutionMetadataContext::run(
+            $transportMeta,
+            static fn(): array => $client->get('/orders/search', [
+                'seller' => $sellerId,
+                'order.date_created.from' => $utcFrom->format(DATE_ATOM),
+                'order.date_created.to' => $utcTo->format(DATE_ATOM),
+                'sort' => 'date_desc',
+                'offset' => $offset,
+                'limit' => $limit,
+            ], $transportMeta)
+        );
         $responseMeta = $client->lastResponseMetadata() ?? ['status' => 200, 'headers' => []];
         if (!$this->ownsLease($job, $worker)) {
             throw new \RuntimeException('La reserva temporal de la auditoría venció. El resultado tardío fue descartado.');
@@ -375,10 +440,11 @@ final class SalesAuditRunService
         try {
             $fence = $pdo->prepare(
                 'SELECT id FROM sync_sales_audit_jobs
-                 WHERE id=? AND locked_by=? AND lease_generation=? AND lock_expires_at>=UTC_TIMESTAMP()
+                 WHERE id=? AND company_id=? AND meli_account_id=? AND sync_sales_audit_run_id=?
+                   AND locked_by=? AND lease_generation=? AND lock_expires_at>=UTC_TIMESTAMP()
                  FOR UPDATE'
             );
-            $fence->execute([(int) $job['id'], $worker, (int) $job['lease_generation']]);
+            $fence->execute([(int) $job['id'], (int) $job['company_id'], (int) $job['meli_account_id'], (int) $job['sync_sales_audit_run_id'], $worker, (int) $job['lease_generation']]);
             if (!$fence->fetchColumn()) {
                 throw new \RuntimeException('La reserva temporal cambió antes de guardar la página. El resultado fue descartado.');
             }
@@ -449,7 +515,8 @@ final class SalesAuditRunService
              SET next_offset=?,remote_reported_total=?,processed_pages=processed_pages+1,
                  lock_expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 60 SECOND),heartbeat_at=UTC_TIMESTAMP(),
                  last_page_hash=?,last_http_status=?,updated_at=UTC_TIMESTAMP()
-             WHERE id=? AND locked_by=? AND lease_generation=? AND lock_expires_at>=UTC_TIMESTAMP()'
+             WHERE id=? AND company_id=? AND meli_account_id=? AND sync_sales_audit_run_id=?
+               AND locked_by=? AND lease_generation=? AND lock_expires_at>=UTC_TIMESTAMP()'
         );
             $advance->execute([
             $nextOffset,
@@ -457,6 +524,9 @@ final class SalesAuditRunService
             $pageHash,
             (int) $responseMeta['status'],
             (int) $job['id'],
+            (int) $job['company_id'],
+            (int) $job['meli_account_id'],
+            (int) $job['sync_sales_audit_run_id'],
             $worker,
             (int) $job['lease_generation'],
             ]);
@@ -489,18 +559,23 @@ final class SalesAuditRunService
         ];
     }
 
-    private function finalizeRun(int $runId): void
+    private function finalizeRun(int $runId, int $companyId, int $accountId): void
     {
         $pdo = Database::connectionFresh();
-        $runStmt = $pdo->prepare('SELECT * FROM sync_sales_audit_runs WHERE id=?');
-        $runStmt->execute([$runId]);
+        $runStmt = $pdo->prepare('SELECT * FROM sync_sales_audit_runs WHERE id=? AND company_id=? AND meli_account_id=?');
+        $runStmt->execute([$runId, $companyId, $accountId]);
         $run = $runStmt->fetch(PDO::FETCH_ASSOC);
         if (!$run) {
             throw new \RuntimeException('Ejecución de auditoría no encontrada.');
         }
 
-        $remote = $pdo->prepare('SELECT * FROM sync_sales_audit_run_orders WHERE sync_sales_audit_run_id=? ORDER BY id');
-        $remote->execute([$runId]);
+        $remote = $pdo->prepare(
+            'SELECT ro.* FROM sync_sales_audit_run_orders ro
+             INNER JOIN sync_sales_audit_runs r
+               ON r.id=ro.sync_sales_audit_run_id AND r.company_id=? AND r.meli_account_id=ro.meli_account_id
+             WHERE ro.sync_sales_audit_run_id=? AND ro.meli_account_id=? ORDER BY ro.id'
+        );
+        $remote->execute([$companyId, $runId, $accountId]);
         $remoteRows = $remote->fetchAll(PDO::FETCH_ASSOC);
         $byExternal = [];
         foreach ($remoteRows as $row) {
@@ -520,16 +595,20 @@ final class SalesAuditRunService
             'duplicate_accounts' => 0,
         ];
         $update = $pdo->prepare(
-            'UPDATE sync_sales_audit_run_orders
-             SET found_local_order_id=?,local_meli_account_id=?,local_date_created=?,
-                 local_date_created_local=?,classification=?,safe_explanation=?,checked_at=UTC_TIMESTAMP()
-             WHERE id=?'
+            'UPDATE sync_sales_audit_run_orders ro
+             INNER JOIN sync_sales_audit_runs r
+               ON r.id=ro.sync_sales_audit_run_id AND r.company_id=? AND r.meli_account_id=?
+             SET ro.found_local_order_id=?,ro.local_meli_account_id=?,ro.local_date_created=?,
+                 ro.local_date_created_local=?,ro.classification=?,ro.safe_explanation=?,ro.checked_at=UTC_TIMESTAMP()
+             WHERE ro.id=? AND ro.sync_sales_audit_run_id=? AND ro.meli_account_id=?'
         );
         foreach ($byExternal as $external => $remoteRow) {
             $local = $locals[$external] ?? null;
             [$classification, $explanation] = $this->classify($run, $remoteRow, $local);
             $counts[$classification] = ($counts[$classification] ?? 0) + 1;
             $update->execute([
+                $companyId,
+                $accountId,
                 $local['id'] ?? null,
                 $local['meli_account_id'] ?? null,
                 $local['date_created'] ?? null,
@@ -537,13 +616,15 @@ final class SalesAuditRunService
                 $classification,
                 $explanation,
                 (int) $remoteRow['id'],
+                $runId,
+                $accountId,
             ]);
         }
 
         $rangeFrom = new \DateTimeImmutable((string) $run['local_from']);
         $rangeTo = new \DateTimeImmutable((string) $run['local_to']);
-        $localPeriodTotal = $this->localCount((int) $run['meli_account_id'], $rangeFrom, $rangeTo);
-        $extra = $this->extraLocalIds((int) $run['meli_account_id'], $rangeFrom, $rangeTo, array_keys($byExternal));
+        $localPeriodTotal = $this->localCount($companyId, $accountId, $rangeFrom, $rangeTo);
+        $extra = $this->extraLocalIds($companyId, $accountId, $rangeFrom, $rangeTo, array_keys($byExternal));
         $this->persistDays($run, $runId, $extra);
 
         $temporalProblems = $counts['missing_normalized_date']
@@ -685,13 +766,20 @@ final class SalesAuditRunService
     }
 
     /** @return list<string> */
-    private function extraLocalIds(int $accountId, \DateTimeImmutable $from, \DateTimeImmutable $to, array $remoteIds): array
+    private function extraLocalIds(
+        int $companyId,
+        int $accountId,
+        \DateTimeImmutable $from,
+        \DateTimeImmutable $to,
+        array $remoteIds,
+    ): array
     {
         $stmt = Database::connectionFresh()->prepare(
-            'SELECT external_order_id FROM meli_orders
-             WHERE meli_account_id=? AND date_created_local>=? AND date_created_local<?'
+            'SELECT o.external_order_id FROM meli_orders o
+             INNER JOIN meli_accounts a ON a.company_id=? AND a.id=o.meli_account_id
+             WHERE o.meli_account_id=? AND o.date_created_local>=? AND o.date_created_local<?'
         );
-        $stmt->execute([$accountId, $from->format('Y-m-d H:i:s'), $to->format('Y-m-d H:i:s')]);
+        $stmt->execute([$companyId, $accountId, $from->format('Y-m-d H:i:s'), $to->format('Y-m-d H:i:s')]);
         $remoteMap = array_fill_keys($remoteIds, true);
         $extra = [];
         foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $external) {
@@ -705,7 +793,14 @@ final class SalesAuditRunService
     private function persistDays(array $run, int $runId, array $extraIds): void
     {
         $pdo = Database::connectionFresh();
-        $pdo->prepare('DELETE FROM sync_sales_audit_run_days WHERE sync_sales_audit_run_id=?')->execute([$runId]);
+        $companyId = (int) $run['company_id'];
+        $accountId = (int) $run['meli_account_id'];
+        $pdo->prepare(
+            'DELETE d FROM sync_sales_audit_run_days d
+             INNER JOIN sync_sales_audit_runs r
+               ON r.id=d.sync_sales_audit_run_id AND r.company_id=? AND r.meli_account_id=?
+             WHERE d.sync_sales_audit_run_id=?'
+        )->execute([$companyId, $accountId, $runId]);
         $range = new DatePeriod(
             new \DateTimeImmutable((string) $run['local_from']),
             new \DateInterval('P1D'),
@@ -717,11 +812,13 @@ final class SalesAuditRunService
                     SUM(classification="missing_remote") missing_total,
                     SUM(classification="shifted_date") shifted_total,
                     SUM(classification="missing_normalized_date") missing_normalized_total
-             FROM sync_sales_audit_run_orders WHERE sync_sales_audit_run_id=? AND audit_date=?'
+             FROM sync_sales_audit_run_orders
+             WHERE sync_sales_audit_run_id=? AND meli_account_id=? AND audit_date=?'
         );
         $localStmt = $pdo->prepare(
-            'SELECT COUNT(*) FROM meli_orders
-             WHERE meli_account_id=? AND date_created_local>=? AND date_created_local<?'
+            'SELECT COUNT(*) FROM meli_orders o
+             INNER JOIN meli_accounts a ON a.company_id=? AND a.id=o.meli_account_id
+             WHERE o.meli_account_id=? AND o.date_created_local>=? AND o.date_created_local<?'
         );
         $insert = $pdo->prepare(
             'INSERT INTO sync_sales_audit_run_days
@@ -734,10 +831,12 @@ final class SalesAuditRunService
             foreach (array_chunk($extraIds, 100) as $chunk) {
                 $placeholders = implode(',', array_fill(0, count($chunk), '?'));
                 $stmt = $pdo->prepare(
-                    'SELECT external_order_id,DATE(date_created_local) audit_date
-                     FROM meli_orders WHERE meli_account_id=? AND external_order_id IN (' . $placeholders . ')'
+                    'SELECT o.external_order_id,DATE(o.date_created_local) audit_date
+                     FROM meli_orders o
+                     INNER JOIN meli_accounts a ON a.company_id=? AND a.id=o.meli_account_id
+                     WHERE o.meli_account_id=? AND o.external_order_id IN (' . $placeholders . ')'
                 );
-                $stmt->execute(array_merge([(int) $run['meli_account_id']], $chunk));
+                $stmt->execute(array_merge([$companyId, $accountId], $chunk));
                 foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
                     $day = (string) ($row['audit_date'] ?? '');
                     $extraByDay[$day] = ($extraByDay[$day] ?? 0) + 1;
@@ -746,11 +845,12 @@ final class SalesAuditRunService
         }
         foreach ($range as $day) {
             $date = $day->format('Y-m-d');
-            $remoteStmt->execute([$runId, $date]);
+            $remoteStmt->execute([$runId, $accountId, $date]);
             $counts = $remoteStmt->fetch(PDO::FETCH_ASSOC) ?: [];
             $next = $day->modify('+1 day');
             $localStmt->execute([
-                (int) $run['meli_account_id'],
+                $companyId,
+                $accountId,
                 $day->format('Y-m-d H:i:s'),
                 $next->format('Y-m-d H:i:s'),
             ]);
@@ -777,12 +877,13 @@ final class SalesAuditRunService
     {
         $pdo = Database::connectionFresh();
         $stmt = $pdo->prepare(
-            'UPDATE sync_sales_audits
-             SET remote_total=?,local_total=?,difference_count=?,
-                 daily_remote_sum=?,daily_local_sum=?,exact_missing_total=?,exact_shifted_total=?,
-                 exact_extra_total=?,audit_consistency_status=?,status=?,last_exact_audit_at=UTC_TIMESTAMP(),
-                 recommendation=?,checked_at=UTC_TIMESTAMP()
-             WHERE meli_account_id=? AND period_year=? AND period_month=?'
+            'UPDATE sync_sales_audits s
+             INNER JOIN meli_accounts a ON a.company_id=? AND a.id=s.meli_account_id
+             SET s.remote_total=?,s.local_total=?,s.difference_count=?,
+                  s.daily_remote_sum=?,s.daily_local_sum=?,s.exact_missing_total=?,s.exact_shifted_total=?,
+                  s.exact_extra_total=?,s.audit_consistency_status=?,s.status=?,s.last_exact_audit_at=UTC_TIMESTAMP(),
+                  s.recommendation=?,s.checked_at=UTC_TIMESTAMP()
+             WHERE s.meli_account_id=? AND s.period_year=? AND s.period_month=?'
         );
         $temporal = (int) $counts['missing_normalized_date'] + (int) $counts['shifted_date'] + (int) $counts['other_account'];
         $consistency = $ready
@@ -796,6 +897,7 @@ final class SalesAuditRunService
                 ? 'Recalcule las fechas normalizadas antes de considerar completa esta auditoría.'
                 : 'Revise las diferencias agrupadas y ejecute únicamente la acción recomendada.');
         $stmt->execute([
+            (int) $run['company_id'],
             $remote,
             $local,
             $remote - $local,
@@ -813,38 +915,62 @@ final class SalesAuditRunService
         ]);
     }
 
-    private function localCount(int $accountId, \DateTimeImmutable $from, \DateTimeImmutable $to): int
+    private function localCount(
+        int $companyId,
+        int $accountId,
+        \DateTimeImmutable $from,
+        \DateTimeImmutable $to,
+    ): int
     {
         $stmt = Database::connectionFresh()->prepare(
-            'SELECT COUNT(*) FROM meli_orders
-             WHERE meli_account_id=? AND date_created_local>=? AND date_created_local<?'
+            'SELECT COUNT(*) FROM meli_orders o
+             INNER JOIN meli_accounts a ON a.company_id=? AND a.id=o.meli_account_id
+             WHERE o.meli_account_id=? AND o.date_created_local>=? AND o.date_created_local<?'
         );
-        $stmt->execute([$accountId, $from->format('Y-m-d H:i:s'), $to->format('Y-m-d H:i:s')]);
+        $stmt->execute([$companyId, $accountId, $from->format('Y-m-d H:i:s'), $to->format('Y-m-d H:i:s')]);
         return (int) $stmt->fetchColumn();
     }
 
-    private function release(array $job, string $worker, string $status, ?string $reason, ?Throwable $error, ?string $diagnostic = null): void
+    private function release(
+        array $job,
+        string $worker,
+        string $status,
+        ?string $reason,
+        ?Throwable $error,
+        ?string $nextSafeAt = null,
+        bool $nonFailure = false,
+        ?string $diagnostic = null,
+    ): void
     {
-        $delay = $status === 'waiting_budget' ? 300 : ($status === 'error' ? 120 : 5);
+        $fallbackDelay = $status === 'waiting_budget' ? 60 : ($status === 'error' ? 120 : 5);
+        $timestamp = $nextSafeAt === null ? false : strtotime($nextSafeAt . ' UTC');
+        $availableAt = gmdate('Y-m-d H:i:s', $timestamp === false ? time() + $fallbackDelay : max(time() + 1, $timestamp));
         $safeMessage = $error ? 'La comprobación se interrumpió de forma segura y se reintentará.' : null;
         $pdo = Database::connectionFresh();
         $update = $pdo->prepare(
             'UPDATE sync_sales_audit_jobs
-             SET status=?,next_run_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL ' . $delay . ' SECOND),
+             SET status=?,next_run_at=?,
                  locked_by=NULL,lock_expires_at=NULL,
                  consecutive_failures=CASE WHEN ?="error" THEN consecutive_failures+1 ELSE consecutive_failures END,
+                 attempts=CASE WHEN ?=1 THEN GREATEST(attempts-1,0) ELSE attempts END,
                  safe_error_message=?,diagnostic_id=?,updated_at=UTC_TIMESTAMP(),
                  last_error_class=?,last_error_retryable=?,heartbeat_at=NULL
-             WHERE id=? AND locked_by=? AND lease_generation=?'
+             WHERE id=? AND company_id=? AND meli_account_id=? AND sync_sales_audit_run_id=?
+               AND locked_by=? AND lease_generation=?'
         );
         $update->execute([
             $status,
+            $availableAt,
             $status,
+            $nonFailure ? 1 : 0,
             $safeMessage,
             $diagnostic,
-            $error ? $error::class : null,
+            $error ? mb_substr($error::class, 0, 40) : null,
             $error ? 1 : 0,
             (int) $job['id'],
+            (int) $job['company_id'],
+            (int) $job['meli_account_id'],
+            (int) $job['sync_sales_audit_run_id'],
             $worker,
             (int) $job['lease_generation'],
         ]);
@@ -852,8 +978,9 @@ final class SalesAuditRunService
             return;
         }
         $pdo->prepare(
-            'UPDATE sync_sales_audit_runs SET status=?,safe_error_message=?,diagnostic_id=?,updated_at=UTC_TIMESTAMP() WHERE id=?'
-        )->execute([$status === 'error' ? 'error' : 'running', $safeMessage, $diagnostic, (int) $job['sync_sales_audit_run_id']]);
+            'UPDATE sync_sales_audit_runs SET status=?,safe_error_message=?,diagnostic_id=?,updated_at=UTC_TIMESTAMP()
+             WHERE id=? AND company_id=? AND meli_account_id=?'
+        )->execute([$status === 'error' ? 'error' : 'running', $safeMessage, $diagnostic, (int) $job['sync_sales_audit_run_id'], (int) $job['company_id'], (int) $job['meli_account_id']]);
     }
 
     private function complete(array $job, string $worker): void
@@ -863,9 +990,10 @@ final class SalesAuditRunService
              SET status="complete",locked_by=NULL,lock_expires_at=NULL,consecutive_failures=0,
                  safe_error_message=NULL,diagnostic_id=NULL,completed_at=UTC_TIMESTAMP(),updated_at=UTC_TIMESTAMP(),
                  heartbeat_at=NULL,last_error_class=NULL,last_error_retryable=0
-             WHERE id=? AND locked_by=? AND lease_generation=?'
+             WHERE id=? AND company_id=? AND meli_account_id=? AND sync_sales_audit_run_id=?
+               AND locked_by=? AND lease_generation=?'
         );
-        $update->execute([(int) $job['id'], $worker, (int) $job['lease_generation']]);
+        $update->execute([(int) $job['id'], (int) $job['company_id'], (int) $job['meli_account_id'], (int) $job['sync_sales_audit_run_id'], $worker, (int) $job['lease_generation']]);
         if ($update->rowCount() !== 1) {
             throw new \RuntimeException('La reserva temporal cambió antes de completar la auditoría.');
         }
@@ -892,9 +1020,10 @@ final class SalesAuditRunService
         $stmt = Database::connectionFresh()->prepare(
             'SELECT COUNT(*) FROM sync_sales_audit_jobs
              WHERE id=? AND locked_by=? AND lease_generation=?
+               AND company_id=? AND meli_account_id=? AND sync_sales_audit_run_id=?
                AND status="running" AND lock_expires_at>=UTC_TIMESTAMP()'
         );
-        $stmt->execute([(int) $job['id'], $worker, (int) $job['lease_generation']]);
+        $stmt->execute([(int) $job['id'], $worker, (int) $job['lease_generation'], (int) $job['company_id'], (int) $job['meli_account_id'], (int) $job['sync_sales_audit_run_id']]);
         return (int) $stmt->fetchColumn() === 1;
     }
 }

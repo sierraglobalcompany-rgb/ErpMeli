@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__);
+$expectedVersion = trim((string) (getenv('ERP_INVENTORY_CONTRACT_VERSION') ?: '2.38.4'));
 $checks = 0;
 $assert = static function (bool $condition, string $label) use (&$checks): void {
     $checks++;
@@ -19,7 +20,7 @@ $read = static function (string $path) use ($root): string {
 };
 
 try {
-    $assert(trim($read('VERSION')) === '2.38.4', 'version');
+    $assert(trim($read('VERSION')) === $expectedVersion, 'version');
     $migration = $read('database/migrations/295_inventory_warehouse_v1_2_38_0.sql');
     foreach (['inventory_warehouses', 'inventory_balances', 'inventory_movements', 'inventory_reviews'] as $table) {
         $assert(str_contains($migration, 'CREATE TABLE IF NOT EXISTS ' . $table), 'migration_table:' . $table);
@@ -98,6 +99,6 @@ try {
         'raw_storage_touched' => false,
     ], JSON_UNESCAPED_SLASHES), PHP_EOL;
 } catch (Throwable $error) {
-    fwrite(STDERR, 'Inventory contract 2.38.0: FAIL ' . $error->getMessage() . PHP_EOL);
+    fwrite(STDERR, 'Inventory contract ' . $expectedVersion . ': FAIL ' . $error->getMessage() . PHP_EOL);
     exit(1);
 }

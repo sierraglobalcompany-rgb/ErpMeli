@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.38.4.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.38.5.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -41,10 +41,10 @@ final class ManagedRuntimePublicationPolicy
     ];
     public const BASE_COMMIT = 'c40d073705833c94911c254ec633bf8eb231375e';
     public const INSTALLED_BASE_COMMIT = '1eef380afc6ceb42d8955b2def1a439eb4d579fe';
-    public const VERSION = '2.38.4';
-    public const BUILD_ID = 'erp-meli-2.38.4-queue-v4-oauth-real-path-containment-rc1-20260813';
-    public const BUILT_AT = '2026-08-13T21:00:00Z';
-    public const MINIMUM_MIGRATION = '296_queue_v4_clean_oauth_control_plane_2_38_3.sql';
+    public const VERSION = '2.38.5';
+    public const BUILD_ID = 'erp-meli-2.38.5-queue-v4-transport-sales-api-health-rc1-20260813';
+    public const BUILT_AT = '2026-08-13T23:30:00Z';
+    public const MINIMUM_MIGRATION = '297_queue_v4_transport_sales_api_health_2_38_5.sql';
     private const INVENTORY_MINIMUM_MIGRATION = '295_inventory_warehouse_v1_2_38_0.sql';
     private const QUEUE_V4_MINIMUM_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';
     private const LEGACY_MINIMUM_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
@@ -154,6 +154,11 @@ final class ManagedRuntimePublicationPolicy
             'build_id' => 'erp-meli-2.38.3-queue-v4-automatic-oauth-control-plane-rc1-20260813',
             'minimum_migration' => self::MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.38.3.json',
+        ],
+        '2.38.4' => [
+            'build_id' => 'erp-meli-2.38.4-queue-v4-oauth-real-path-containment-rc1-20260813',
+            'minimum_migration' => '296_queue_v4_clean_oauth_control_plane_2_38_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.38.4.json',
         ],
         self::VERSION => [
             'build_id' => self::BUILD_ID,

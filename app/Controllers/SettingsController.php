@@ -1952,7 +1952,10 @@ final class SettingsController
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
         try {
-            $snapshot = (new \App\Services\CronV3OperationalSnapshotService())->snapshot();
+            $access = (new \App\Services\ApiHealthAccessScope())->snapshot();
+            $snapshot = (new \App\QueueV4Clean\QueueV4CleanHealthSnapshotService(
+                \App\Core\Database::connectionFresh()
+            ))->snapshot(null, $access['company_ids'], $access['account_ids']);
             $state = (string) ($snapshot['snapshot_state'] ?? 'unavailable');
             if ($state === 'unavailable') {
                 http_response_code(503);
@@ -1964,14 +1967,15 @@ final class SettingsController
                 'measured_at' => $snapshot['measured_at'] ?? gmdate('Y-m-d H:i:s'),
                 'mercado_libre' => [
                     'state' => 'separate_api_health',
-                    'message' => 'La disponibilidad remota se conserva en Salud API; este bloque sincroniza automatización/backlog con V3.',
+                    'label' => 'Evidencia remota separada',
+                    'message' => 'La disponibilidad remota se conserva en Salud API; este bloque usa exclusivamente Queue V4.',
                 ],
                 'automation' => [
                     'state' => $snapshot['state'] ?? 'unavailable',
                     'label' => $snapshot['state_label'] ?? 'No se pudo comprobar',
                     'message' => $snapshot['state_message'] ?? '',
                 ],
-                'backlog' => $snapshot['totals'] ?? [],
+                'backlog' => ($snapshot['totals'] ?? []) + ['sales_audit' => $snapshot['sales_audit'] ?? []],
                 'runtime' => $snapshot['runtime'] ?? [],
             ]);
         } catch (\App\Core\HttpException $e) {

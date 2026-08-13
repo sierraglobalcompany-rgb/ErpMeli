@@ -51,6 +51,9 @@ final class QueueV4CleanScheduler
                     'worker' => ['skipped' => true],
                 ];
             }
+            // OAuth provenance must not leak into later producer/worker
+            // diagnostics in the same long-lived PHP process.
+            QueueV4CleanOAuthStageContext::reset();
             $producer = (new QueueV4CleanProducer($this->pdo, $repository))->produce();
             $worker = (new QueueV4CleanWorker($this->pdo, $repository))->run('scheduler', $maxJobs, $runtimeSeconds);
             $this->pdo->exec(

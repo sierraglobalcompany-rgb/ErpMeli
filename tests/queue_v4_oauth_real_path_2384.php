@@ -167,6 +167,49 @@ $assert($blocked['status'] === 'oauth_control_plane_blocked' && $blocked['claime
     && $blocked['abort_scheduler'] === true && $row['state'] === 'SCHEDULED'
     && (int) $row['remote_attempt_count'] === 0, 'curl_missing_claimed_or_dispatched');
 
+// Un Throwable del propio inspector también queda contenido antes del claim.
+$reset(1012);
+(new QueueV4CleanOAuthOperationRepository($pdo))->schedule(
+    (int) $target['company_id'], (int) $target['id'], (string) $target['meli_user_id'], 1012
+);
+$brokenInspector = new MeliCliRuntimeCapabilityService(
+    static fn (): array => throw new TypeError('runtime_inspector_fault')
+);
+$preclaimFailure = (new QueueV4CleanOAuthSupervisor(
+    $pdo,
+    new QueueV4CleanOAuthOperationRepository($pdo),
+    new AppSettingsService(),
+    static fn (): array => throw new RuntimeException('must_not_claim'),
+    null,
+    $brokenInspector,
+))->run($schedulerOwner);
+$preclaimRow = $latest();
+$assert($preclaimFailure['status'] === 'oauth_control_plane_blocked'
+    && $preclaimFailure['claimed'] === 0
+    && $preclaimFailure['abort_scheduler'] === true
+    && ($preclaimFailure['diagnostic']['safe_stage'] ?? '') === QueueV4CleanOAuthStageContext::OAUTH_RUNTIME_PREFLIGHT
+    && $preclaimRow['state'] === 'SCHEDULED'
+    && (int) $preclaimRow['remote_attempt_count'] === 0,
+    'runtime_inspector_throwable_claimed_or_escaped');
+
+// La contención comienza inmediatamente después del COMMIT del claim. Una
+// falla local antes incluso de leer el contador nunca deja RUNNING huérfano.
+$reset(1015);
+QueueV4CleanOAuthStageContext::installTestHook(static function (string $stage): void {
+    if ($stage === QueueV4CleanOAuthStageContext::OAUTH_OPERATION_CLAIMED) {
+        throw new TypeError('post_claim_local_fence_fault');
+    }
+});
+$postClaim = $realRun(new QueueV4FakeOAuthTransport2384());
+QueueV4CleanOAuthStageContext::installTestHook(null);
+$postClaimRow = $latest();
+$assert($postClaim['status'] === 'oauth_unexpected_contained'
+    && $postClaim['abort_scheduler'] === true
+    && $postClaim['waiting'] === 1
+    && $postClaim['physical_posts'] === 0
+    && $postClaim['physical_posts_known'] === true
+    && $postClaimRow['state'] === 'WAITING', 'post_claim_throwable_left_running_or_unknown');
+
 // Fallos genéricos antes de dispatch nunca dejan RUNNING ni permiten HTTP.
 foreach ([
     QueueV4CleanOAuthStageContext::OAUTH_REFRESH_SERVICE,
@@ -260,6 +303,13 @@ foreach ([429 => 'WAITING', 503 => 'REMOTE_UNCERTAIN'] as $status => $expectedSt
     $realRun($transport);
     $assert($transport->physicalCalls === 1 && $latest()['state'] === $expectedState,
         'known_status_policy_invalid:' . $status);
+    if ($status === 429) {
+        $delay = (int) $pdo->query(
+            'SELECT TIMESTAMPDIFF(SECOND,UTC_TIMESTAMP(3),next_attempt_at)
+             FROM oauth_refresh_operations ORDER BY id DESC LIMIT 1'
+        )->fetchColumn();
+        $assert($delay >= 240, 'known_429_did_not_preserve_canonical_backoff');
+    }
 }
 $reset(1400);
 $malformed = new class implements MeliHttpTransportInterface {
@@ -352,6 +402,37 @@ $assert(!str_contains($source, "str_contains(\$error->getMessage(), 'recovery')"
 $assert(str_contains($source, 'catch (Throwable $error)') && str_contains($source, 'containUnexpected'), 'final_throwable_containment_missing');
 $launcher = (string) file_get_contents($root . '/jobs/queue_v4_clean.php');
 $assert(str_contains($launcher, 'diagnostic_id=') && !str_contains($launcher, '$error->getMessage()'), 'cli_diagnostic_not_sanitized');
+$schedulerSource = (string) file_get_contents($root . '/app/QueueV4Clean/QueueV4CleanScheduler.php');
+$oauthAbortOffset = strpos($schedulerSource, "if ((\$oauth['abort_scheduler'] ?? false) === true)");
+$stageResetOffset = strpos($schedulerSource, 'QueueV4CleanOAuthStageContext::reset();', (int) $oauthAbortOffset + 1);
+$producerOffset = strpos($schedulerSource, 'new QueueV4CleanProducer', (int) $oauthAbortOffset + 1);
+$assert($oauthAbortOffset !== false && $stageResetOffset !== false && $producerOffset !== false
+    && $oauthAbortOffset < $stageResetOffset && $stageResetOffset < $producerOffset,
+    'oauth_stage_not_reset_before_producer');
+$assert(str_contains($source, "'QUEUE_V4_CLEAN_OAUTH_PRECLAIM_FAILED'")
+    && str_contains($source, 'knownRateLimitNextAttemptAt()')
+    && str_contains($source, 'conservativeRateLimitNextSafeAt()'),
+    'preclaim_or_canonical_429_containment_missing');
+$normalCountOffset = strpos($source, '$after = $this->remoteAttemptCount($operation);');
+$outerCatchOffset = strpos($source, '} catch (Throwable $error) {', (int) $normalCountOffset);
+$assert($normalCountOffset !== false && $outerCatchOffset !== false && $normalCountOffset < $outerCatchOffset,
+    'final_post_count_outside_throwable_containment');
+$knownSuccessBody = substr(
+    $source,
+    (int) strpos($source, 'private function reconcileKnownSuccess'),
+    (int) strpos($source, 'private function clearCommittedEscrowBestEffort')
+        - (int) strpos($source, 'private function reconcileKnownSuccess')
+);
+$assert(strpos($knownSuccessBody, '$this->operations->complete') !== false
+    && strpos($knownSuccessBody, '$this->clearCommittedEscrowBestEffort') !== false
+    && strpos($knownSuccessBody, '$this->operations->complete')
+        < strpos($knownSuccessBody, '$this->clearCommittedEscrowBestEffort'),
+    'committed_generation_depended_on_escrow_cleanup');
+$refreshSource = (string) file_get_contents($root . '/app/Services/OAuthTokenRefreshService.php');
+$assert(str_contains($refreshSource, 'clearCommittedQueueRecoveryBestEffort')
+    && str_contains($refreshSource, '} catch (Throwable $error) {')
+    && str_contains($refreshSource, 'QUEUE_V4_OAUTH_ESCROW_CLEANUP_DEFERRED'),
+    'committed_queue_escrow_cleanup_not_best_effort');
 
 fwrite(STDOUT, 'QUEUE_V4_OAUTH_REAL_PATH_2384=PASS checks=' . $checks
     . ' real_meli_http=0 business_writes=0 raw_storage_touched=false' . PHP_EOL);

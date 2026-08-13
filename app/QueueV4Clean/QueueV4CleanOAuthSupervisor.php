@@ -7,6 +7,7 @@ namespace App\QueueV4Clean;
 use App\Services\ApiBudgetExhaustedException;
 use App\Services\ApiExecutionMetadataContext;
 use App\Services\ApiRhythmDeferredException;
+use App\Services\ApiRhythmPolicyService;
 use App\Services\AppSettingsService;
 use App\Services\CronDeadlineDeferredException;
 use App\Services\MeliApiClient;
@@ -52,46 +53,60 @@ final class QueueV4CleanOAuthSupervisor
     {
         QueueV4CleanOAuthStageContext::reset();
         $summary = ['scheduled' => 0, 'claimed' => 0, 'completed' => 0, 'waiting' => 0, 'uncertain' => 0, 'reconnect' => 0, 'failed' => 0, 'physical_posts' => 0, 'physical_posts_known' => true, 'abort_scheduler' => false];
-        QueueV4CleanOAuthStageContext::set(QueueV4CleanOAuthStageContext::OAUTH_OPERATION_REPAIR);
-        $this->reconcileStaleEscrows();
-        $this->operations->repairStale();
-        QueueV4CleanOAuthStageContext::set(QueueV4CleanOAuthStageContext::OAUTH_RUNTIME_PREFLIGHT);
-        $capabilities = $this->runtimeCapabilities->inspect();
-        if (!$this->runtimeCapabilities->oauthReady($capabilities)) {
-            $diagnostic = $this->diagnostics->capture(
-                new RuntimeException('queue_v4_clean_oauth_runtime_capability_missing'),
-                QueueV4CleanOAuthStageContext::OAUTH_RUNTIME_PREFLIGHT,
-                'QUEUE_V4_CLEAN_OAUTH_RUNTIME_BLOCKED'
-            );
+        try {
+            QueueV4CleanOAuthStageContext::set(QueueV4CleanOAuthStageContext::OAUTH_OPERATION_REPAIR);
+            $this->reconcileStaleEscrows();
+            $this->operations->repairStale();
+            QueueV4CleanOAuthStageContext::set(QueueV4CleanOAuthStageContext::OAUTH_RUNTIME_PREFLIGHT);
+            $capabilities = $this->runtimeCapabilities->inspect();
+            if (!$this->runtimeCapabilities->oauthReady($capabilities)) {
+                $diagnostic = $this->diagnostics->capture(
+                    new RuntimeException('queue_v4_clean_oauth_runtime_capability_missing'),
+                    QueueV4CleanOAuthStageContext::OAUTH_RUNTIME_PREFLIGHT,
+                    'QUEUE_V4_CLEAN_OAUTH_RUNTIME_BLOCKED'
+                );
+                return array_replace($summary, [
+                    'status' => 'oauth_control_plane_blocked',
+                    'abort_scheduler' => true,
+                    'diagnostic' => $diagnostic,
+                    'runtime_capabilities' => $capabilities,
+                ]);
+            }
+            $summary['scheduled'] = $this->scheduleDue();
+            $owner = bin2hex(random_bytes(16));
+            QueueV4CleanOAuthStageContext::set(QueueV4CleanOAuthStageContext::OAUTH_OPERATION_CLAIM);
+            $operation = $this->operations->claimOne($owner);
+        } catch (Throwable $error) {
             return array_replace($summary, [
                 'status' => 'oauth_control_plane_blocked',
                 'abort_scheduler' => true,
-                'diagnostic' => $diagnostic,
-                'runtime_capabilities' => $capabilities,
+                'diagnostic' => $this->diagnostics->capture(
+                    $error,
+                    QueueV4CleanOAuthStageContext::current(),
+                    'QUEUE_V4_CLEAN_OAUTH_PRECLAIM_FAILED'
+                ),
             ]);
         }
-        $summary['scheduled'] = $this->scheduleDue();
-        $owner = bin2hex(random_bytes(16));
-        QueueV4CleanOAuthStageContext::set(QueueV4CleanOAuthStageContext::OAUTH_OPERATION_CLAIM);
-        $operation = $this->operations->claimOne($owner);
         if ($operation === null) {
             return $summary;
         }
         $summary['claimed'] = 1;
-        $context = [
-            'source' => 'queue_v4_clean_oauth',
-            'job_type' => 'oauth',
-            'company_id' => (int) $operation['company_id'],
-            'account_id' => (int) $operation['meli_account_id'],
-            'expected_meli_user_id' => (string) $operation['expected_meli_user_id'],
-            'expected_refresh_version' => (int) $operation['expected_refresh_version'],
-            'oauth_operation_id' => (int) $operation['id'],
-            'oauth_lease_owner' => (string) $operation['lease_owner'],
-            'oauth_lease_generation' => (int) $operation['lease_generation'],
-            'scheduler_lease_owner' => $schedulerOwner,
-        ];
-        $before = $this->remoteAttemptCount($operation);
+        $before = null;
         try {
+            QueueV4CleanOAuthStageContext::set(QueueV4CleanOAuthStageContext::OAUTH_OPERATION_CLAIMED);
+            $context = [
+                'source' => 'queue_v4_clean_oauth',
+                'job_type' => 'oauth',
+                'company_id' => (int) $operation['company_id'],
+                'account_id' => (int) $operation['meli_account_id'],
+                'expected_meli_user_id' => (string) $operation['expected_meli_user_id'],
+                'expected_refresh_version' => (int) $operation['expected_refresh_version'],
+                'oauth_operation_id' => (int) $operation['id'],
+                'oauth_lease_owner' => (string) $operation['lease_owner'],
+                'oauth_lease_generation' => (int) $operation['lease_generation'],
+                'scheduler_lease_owner' => $schedulerOwner,
+            ];
+            $before = $this->remoteAttemptCount($operation);
             try {
                 QueueV4CleanOAuthStageContext::set(QueueV4CleanOAuthStageContext::OAUTH_REFRESH_SERVICE);
                 $token = ApiExecutionMetadataContext::run(
@@ -134,7 +149,7 @@ final class QueueV4CleanOAuthSupervisor
                 $summary['uncertain'] = 1;
             } catch (MeliApiException $error) {
                 if ($error->httpStatus === 429) {
-                    $this->operations->wait($operation, 'http_429', gmdate('Y-m-d H:i:s', time() + 60));
+                    $this->operations->wait($operation, 'http_429', $this->knownRateLimitNextAttemptAt());
                     $summary['waiting'] = 1;
                 } elseif (($error->httpStatus ?? 0) >= 500) {
                     $this->operations->terminal($operation, 'REMOTE_UNCERTAIN', 'http_5xx');
@@ -147,25 +162,29 @@ final class QueueV4CleanOAuthSupervisor
                     $summary['failed'] = 1;
                 }
             }
+            $after = $this->remoteAttemptCount($operation);
+            $summary['physical_posts'] = max(0, $after - $before);
+            if ($summary['physical_posts'] > self::MAX_PHYSICAL_POSTS_PER_RUN) {
+                throw new RuntimeException('queue_v4_clean_oauth_physical_post_limit_exceeded');
+            }
         } catch (Throwable $error) {
             return $this->containUnexpected($operation, $summary, $before, $error);
-        }
-        $after = $this->remoteAttemptCount($operation);
-        $summary['physical_posts'] = max(0, $after - $before);
-        if ($summary['physical_posts'] > self::MAX_PHYSICAL_POSTS_PER_RUN) {
-            throw new RuntimeException('queue_v4_clean_oauth_physical_post_limit_exceeded');
         }
         return $summary;
     }
 
     /** @param array<string,mixed> $operation @param array<string,mixed> $summary @return array<string,mixed> */
-    private function containUnexpected(array $operation, array $summary, int $before, Throwable $error): array
+    private function containUnexpected(array $operation, array $summary, ?int $before, Throwable $error): array
     {
         $diagnostic = $this->diagnostics->capture($error);
+        $fencePosts = null;
         try {
             $fence = QueueV4CleanOAuthDispatchFence::state($operation);
             $state = (string) $fence['dispatch_state'];
             $status = $fence['http_status'];
+            $fencePosts = $state === 'NOT_DISPATCHED'
+                ? 0
+                : (in_array($state, ['MAY_HAVE_DISPATCHED', 'RESPONSE_KNOWN'], true) ? 1 : null);
             $errorClass = $this->failureClass($error);
             if ($state === 'NOT_DISPATCHED') {
                 $this->operations->wait($operation, $errorClass, gmdate('Y-m-d H:i:s', time() + 60));
@@ -174,7 +193,7 @@ final class QueueV4CleanOAuthSupervisor
                 $this->operations->terminal($operation, 'REMOTE_UNCERTAIN', $errorClass);
                 $summary['uncertain'] = 1;
             } elseif ($state === 'RESPONSE_KNOWN' && $status === 429) {
-                $this->operations->wait($operation, 'http_429', gmdate('Y-m-d H:i:s', time() + 60));
+                $this->operations->wait($operation, 'http_429', $this->knownRateLimitNextAttemptAt());
                 $summary['waiting'] = 1;
             } elseif ($state === 'RESPONSE_KNOWN' && $status !== null && $status >= 200 && $status < 300) {
                 if (!$this->reconcileKnownSuccess($operation, $summary)) {
@@ -200,21 +219,12 @@ final class QueueV4CleanOAuthSupervisor
             $summary['status'] = 'oauth_containment_failed';
             $summary['diagnostic'] = $diagnostic;
             $summary['containment_diagnostic'] = $containmentDiagnostic;
-            try {
-                $after = $this->remoteAttemptCount($operation);
-                $summary['physical_posts'] = max(0, $after - $before);
-            } catch (Throwable) {
-                // A failed authority read must stay explicitly unknown. Zero
-                // would incorrectly assert that no request crossed the wire.
-                $summary['physical_posts'] = null;
-                $summary['physical_posts_known'] = false;
-            }
+            $this->recordContainedPhysicalPosts($summary, $operation, $before, $fencePosts);
             return $summary;
         }
 
         try {
-            $after = $this->remoteAttemptCount($operation);
-            $summary['physical_posts'] = max(0, $after - $before);
+            $this->recordContainedPhysicalPosts($summary, $operation, $before, $fencePosts);
         } catch (Throwable $countError) {
             $summary['abort_scheduler'] = true;
             $summary['status'] = 'oauth_containment_failed';
@@ -232,6 +242,33 @@ final class QueueV4CleanOAuthSupervisor
         $summary['status'] = 'oauth_unexpected_contained';
         $summary['diagnostic'] = $diagnostic;
         return $summary;
+    }
+
+    /** @param array<string,mixed> $summary @param array<string,mixed> $operation */
+    private function recordContainedPhysicalPosts(
+        array &$summary,
+        array $operation,
+        ?int $before,
+        ?int $fencePosts,
+    ): void {
+        if ($before !== null) {
+            try {
+                $after = $this->remoteAttemptCount($operation);
+                $summary['physical_posts'] = max(0, $after - $before);
+                $summary['physical_posts_known'] = true;
+                return;
+            } catch (Throwable) {
+                // The persisted dispatch fence below is the independent
+                // authority when the counter cannot be re-read.
+            }
+        }
+        if ($fencePosts !== null) {
+            $summary['physical_posts'] = $fencePosts;
+            $summary['physical_posts_known'] = true;
+            return;
+        }
+        $summary['physical_posts'] = null;
+        $summary['physical_posts_known'] = false;
     }
 
     private function scheduleDue(): int
@@ -290,12 +327,15 @@ final class QueueV4CleanOAuthSupervisor
             $currentVersion = (int) $row['refresh_version'];
             $expected = (int) $row['expected_refresh_version'];
             if ($currentVersion > $expected) {
-                $store->clear((int) $row['meli_account_id'], $expected + 1);
-                $this->pdo->prepare(
+                $completed = $this->pdo->prepare(
                     "UPDATE oauth_refresh_operations SET state='COMPLETED',lease_owner=NULL,lease_expires_at=NULL,
                             last_error_class='refresh_version_already_advanced',completed_at=UTC_TIMESTAMP(3)
                      WHERE id=? AND company_id=? AND meli_account_id=? AND state='RUNNING'"
-                )->execute([(int) $row['id'], (int) $row['company_id'], (int) $row['meli_account_id']]);
+                );
+                $completed->execute([(int) $row['id'], (int) $row['company_id'], (int) $row['meli_account_id']]);
+                if ($completed->rowCount() === 1) {
+                    $this->clearCommittedEscrowBestEffort((int) $row['meli_account_id'], $expected + 1);
+                }
                 continue;
             }
             if ((string) $row['remote_dispatch_state'] === 'RESPONSE_KNOWN'
@@ -369,8 +409,8 @@ final class QueueV4CleanOAuthSupervisor
         }
         $expected = (int) $operation['expected_refresh_version'];
         if ((int) $current > $expected) {
-            (new QueueOAuthDurableRecoveryStore())->clear((int) $operation['meli_account_id'], $expected + 1);
             $this->operations->complete($operation, 'refresh_version_already_advanced');
+            $this->clearCommittedEscrowBestEffort((int) $operation['meli_account_id'], $expected + 1);
             $summary['completed'] = 1;
             return true;
         }
@@ -397,6 +437,24 @@ final class QueueV4CleanOAuthSupervisor
         $this->operations->waitForDurableRecovery($operation);
         $summary['waiting'] = 1;
         return true;
+    }
+
+    private function clearCommittedEscrowBestEffort(int $accountId, int $targetVersion): void
+    {
+        try {
+            (new QueueOAuthDurableRecoveryStore())->clear($accountId, $targetVersion);
+        } catch (Throwable $error) {
+            $this->diagnostics->capture(
+                $error,
+                QueueV4CleanOAuthStageContext::TOKEN_ESCROW,
+                'QUEUE_V4_OAUTH_ESCROW_CLEANUP_DEFERRED'
+            );
+        }
+    }
+
+    private function knownRateLimitNextAttemptAt(): string
+    {
+        return (new ApiRhythmPolicyService())->conservativeRateLimitNextSafeAt();
     }
 
     private function failureClass(Throwable $error): string

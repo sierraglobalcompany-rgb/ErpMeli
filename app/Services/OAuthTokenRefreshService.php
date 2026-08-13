@@ -227,10 +227,7 @@ final class OAuthTokenRefreshService
                         $previousRefreshVersion + 1
                     );
                 } else {
-                    (new QueueOAuthDurableRecoveryStore())->clear(
-                        $this->accountId,
-                        $previousRefreshVersion + 1
-                    );
+                    $this->clearCommittedQueueRecoveryBestEffort($previousRefreshVersion + 1);
                 }
             }
 
@@ -379,7 +376,11 @@ final class OAuthTokenRefreshService
             throw new RuntimeException('La recuperación OAuth pendiente tiene una generación inválida.');
         }
         if ($currentVersion >= $targetVersion) {
-            $this->clearDurableRecovery($manualExpectedMeliUserId !== null, $targetVersion);
+            if ($manualExpectedMeliUserId !== null) {
+                $this->clearDurableRecovery(true, $targetVersion);
+            } else {
+                $this->clearCommittedQueueRecoveryBestEffort($targetVersion);
+            }
             $current['emergency_recovery_applied'] = $manualExpectedMeliUserId !== null;
             $current['queue_recovery_applied'] = $manualExpectedMeliUserId === null;
             return $current;
@@ -439,7 +440,11 @@ final class OAuthTokenRefreshService
             throw $error;
         }
 
-        $this->clearDurableRecovery($manualExpectedMeliUserId !== null, $targetVersion);
+        if ($manualExpectedMeliUserId !== null) {
+            $this->clearDurableRecovery(true, $targetVersion);
+        } else {
+            $this->clearCommittedQueueRecoveryBestEffort($targetVersion);
+        }
         $current['access_token_encrypted'] = (string) $recovery['access_token_encrypted'];
         $current['refresh_token_encrypted'] = (string) $recovery['refresh_token_encrypted'];
         $current['expires_at'] = (string) $recovery['expires_at'];
@@ -523,5 +528,18 @@ final class OAuthTokenRefreshService
             return;
         }
         (new QueueOAuthDurableRecoveryStore())->clear($this->accountId, $targetVersion);
+    }
+
+    private function clearCommittedQueueRecoveryBestEffort(int $targetVersion): void
+    {
+        try {
+            (new QueueOAuthDurableRecoveryStore())->clear($this->accountId, $targetVersion);
+        } catch (Throwable $error) {
+            (new \App\QueueV4Clean\QueueV4CleanSafeDiagnosticService())->capture(
+                $error,
+                \App\QueueV4Clean\QueueV4CleanOAuthStageContext::TOKEN_ESCROW,
+                'QUEUE_V4_OAUTH_ESCROW_CLEANUP_DEFERRED'
+            );
+        }
     }
 }

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "authority_id": "oauth-aware-sales-audit-2.38.7-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "5d238cbbf8cb20d85ca756aa114611f2e1ce0f758d2b1fe11f9ba3ea135f755a",
-  "coverage_base_commit": "ce234142ad34cab7b37fbc16eb923e2e97b1efcd",
+  "runtime_manifest_paths_sha256": "6bfebe954a5f627e80a39a50cc5573c778932c709835b46a0602495a5cb49cfd",
+  "coverage_base_commit": "b7bb9a33607cfe5725a02ac0a96dd0f41019ceeb",
   "classifications": {
     "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",
     "RUNTIME_OPTIONAL_FAIL_CLOSED": "Optional capacity that fails closed when absent.",

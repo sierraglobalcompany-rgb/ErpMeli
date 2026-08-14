@@ -9,12 +9,16 @@ if ($dsn === '') {
 }
 
 $root = dirname(__DIR__);
-$private = sys_get_temp_dir() . '/erp-qv4-oauth-2384-' . bin2hex(random_bytes(6));
+$fixtureHome = sys_get_temp_dir() . '/erp-qv4-oauth-2384-' . bin2hex(random_bytes(6)) . '/home/user';
+$private = $fixtureHome . '/.erp-meli-private';
+$installation = $fixtureHome . '/domains/example.test/public_html/erp-meli';
 mkdir($private, 0700, true);
+mkdir($installation, 0700, true);
 define('ERP_TEST_RUNTIME', true);
-define('ERP_INSTALLATION_ROOT', dirname($private));
-define('ERP_SHARED_ROOT', dirname($private));
+define('ERP_INSTALLATION_ROOT', $installation);
+define('ERP_SHARED_ROOT', $installation . '/shared');
 define('ERP_RELEASE_ROOT', $root);
+$_SERVER['DOCUMENT_ROOT'] = $fixtureHome;
 putenv('ERP_PRIVATE_PATH=' . $private);
 putenv('APP_KEY=queue-v4-oauth-2384-local-only');
 putenv('ML_WRITE_ENABLED=false');
@@ -74,7 +78,7 @@ foreach ([
 }
 AppSettingsService::clearCache();
 
-$reset = static function (int $version = 1000) use ($pdo, $accounts, $target, $schedulerOwner): void {
+$reset = static function (int $version = 1000) use ($pdo, $target, $schedulerOwner): void {
     QueueV4CleanOAuthStageContext::installTestHook(null);
     $pdo->exec('DELETE FROM oauth_refresh_operations');
     foreach (['api_remote_permits', 'api_budget_windows', 'api_rhythm_penalties', 'api_request_logs', 'api_error_logs', 'api_rhythm_states'] as $table) {
@@ -144,6 +148,16 @@ $assert($transport->physicalCalls === 1 && $summary['completed'] === 1
     'real_meli_client_path_failed:' . json_encode(['calls' => $transport->physicalCalls, 'summary' => $summary, 'row' => $row]));
 $assert((int) $pdo->query('SELECT refresh_version FROM meli_tokens WHERE meli_account_id=' . (int) $target['id'])->fetchColumn() === 1002,
     'real_path_refresh_version_not_advanced');
+
+// El mismo servicio real debe ignorar DOCUMENT_ROOT vacío sin depender del CWD.
+$_SERVER['DOCUMENT_ROOT'] = '';
+$reset(1003);
+$emptyDocumentTransport = new QueueV4FakeOAuthTransport2384();
+$emptyDocumentSummary = $realRun($emptyDocumentTransport);
+$assert($emptyDocumentTransport->physicalCalls === 1 && $emptyDocumentSummary['completed'] === 1
+    && $emptyDocumentSummary['physical_posts'] === 1 && $latest()['state'] === 'COMPLETED',
+    'empty_document_root_real_oauth_path_failed');
+$_SERVER['DOCUMENT_ROOT'] = $fixtureHome;
 
 // Sin cURL: no se reclama ninguna operación y se aborta todo el ciclo.
 $reset(1010);
@@ -339,13 +353,23 @@ QueueV4CleanOAuthStageContext::installTestHook(static function (string $stage): 
 });
 $knownSuccessFailure = $realRun($transport);
 QueueV4CleanOAuthStageContext::installTestHook(null);
+$escrowPath = $private . '/queue-oauth-recovery/account-' . (int) $target['id'] . '.json';
+$versionAfterFailure = (int) $pdo->query(
+    'SELECT refresh_version FROM meli_tokens WHERE meli_account_id=' . (int) $target['id']
+)->fetchColumn();
 $assert($transport->physicalCalls === 1 && $knownSuccessFailure['waiting'] === 1
-    && $latest()['state'] === 'WAITING' && $latest()['last_error_class'] === 'durable_recovery_pending',
+    && $latest()['state'] === 'WAITING' && $latest()['last_error_class'] === 'durable_recovery_pending'
+    && is_file($escrowPath) && !is_link($escrowPath) && $versionAfterFailure === 1410,
     'known_2xx_escrow_not_queued_for_local_recovery');
 $noSecondPost = new QueueV4FakeOAuthTransport2384();
 $recovered = $realRun($noSecondPost);
+$versionAfterRecovery = (int) $pdo->query(
+    'SELECT refresh_version FROM meli_tokens WHERE meli_account_id=' . (int) $target['id']
+)->fetchColumn();
 $assert($noSecondPost->physicalCalls === 0 && $recovered['completed'] === 1
-    && $latest()['state'] === 'COMPLETED', 'known_2xx_escrow_recovery_repeated_post');
+    && $latest()['state'] === 'COMPLETED' && $versionAfterRecovery === 1411
+    && !file_exists($escrowPath) && !is_link($escrowPath),
+    'known_2xx_escrow_recovery_repeated_post');
 
 // Si la propia autoridad de contención no puede leerse, no se adivina NOT_DISPATCHED.
 $reset(1420);

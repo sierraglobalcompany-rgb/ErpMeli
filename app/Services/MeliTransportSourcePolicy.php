@@ -11,6 +11,7 @@ final class MeliTransportSourcePolicy
 {
     public const QUEUE_V4_OAUTH = 'queue_v4_clean_oauth';
     public const QUEUE_V4_SALES_AUDIT = 'queue_v4_clean_sales_audit';
+    public const QUEUE_V4_SALES_REPAIR = 'queue_v4_clean_sales_repair';
 
     /** @return array{known:bool,single_dispatch:bool,blocks_redirects:bool,queue_rate_limit_deferral:bool,current_oauth_fence:bool} */
     public static function capabilities(string $source): array
@@ -22,6 +23,7 @@ final class MeliTransportSourcePolicy
             'queue_core_webhook' => [true, true, true, false],
             'queue_v4_clean' => [true, true, true, false],
             self::QUEUE_V4_SALES_AUDIT => [true, true, true, false],
+            self::QUEUE_V4_SALES_REPAIR => [true, true, true, false],
             'queue_v4_clean_readiness' => [true, true, true, false],
             'cron_v3_remote' => [true, true, false, false],
             'cron_v3' => [true, true, false, false],
@@ -60,6 +62,12 @@ final class MeliTransportSourcePolicy
         if ($source === self::QUEUE_V4_SALES_AUDIT) {
             if (strtoupper($method) !== 'GET' || !hash_equals('/orders/search', $path)) {
                 throw new RuntimeException('queue_v4_clean_sales_transport_capability_denied');
+            }
+            return;
+        }
+        if ($source === self::QUEUE_V4_SALES_REPAIR) {
+            if (strtoupper($method) !== 'GET' || preg_match('#^/orders/[0-9]+$#D', $path) !== 1) {
+                throw new RuntimeException('queue_v4_clean_sales_repair_transport_capability_denied');
             }
             return;
         }

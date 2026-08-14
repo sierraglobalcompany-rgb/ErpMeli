@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "authority_id": "simple-exact-sales-repair-2.38.8-runtime-dependencies",
+  "runtime_manifest_paths_sha256": "6bfebe954a5f627e80a39a50cc5573c778932c709835b46a0602495a5cb49cfd",
+  "coverage_base_commit": "0ce4afe5269eb282734e36a0913fb2bf0f871088",
+  "classifications": {
+    "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",
+    "RUNTIME_OPTIONAL_FAIL_CLOSED": "Optional capacity that fails closed when absent.",
+    "MIGRATION_DEPLOY_REQUIRED": "Tracked migration required by the runtime.",
+    "RELEASE_BUILD_INPUT": "Build and release authority.",
+    "TEST_ONLY": "Local QA only.",
+    "DEVELOPMENT_TOOL": "Local development tool.",
+    "DOCUMENTATION": "Non-runtime documentation.",
+    "FRONTEND_STATIC": "Runtime frontend asset.",
+    "OTHER_EXPLICIT": "Explicitly classified tracked path."
+  },
+  "classification_rules": [
+    {
+      "id": "runtime-notification-topics",
+      "classification": "RUNTIME_REQUIRED",
+      "kind": "exact",
+      "values": ["resources/mercadolibre-api/generated/notification-topics.json"]
+    },
+    {
+      "id": "runtime-release-authorities",
+      "classification": "RUNTIME_REQUIRED",
+      "kind": "regex",
+      "value": "#^resources/release/[A-Za-z0-9._-]+\\.json$#D"
+    },
+    {
+      "id": "runtime-php",
+      "classification": "RUNTIME_REQUIRED",
+      "kind": "regex",
+      "value": "#^(?:app|jobs)/.+\\.php$#D"
+    },
+    {
+      "id": "deploy-migrations",
+      "classification": "MIGRATION_DEPLOY_REQUIRED",
+      "kind": "regex",
+      "value": "#^database/migrations/.+\\.sql$#D"
+    },
+    {
+      "id": "release-build-authorities",
+      "classification": "RELEASE_BUILD_INPUT",
+      "kind": "exact",
+      "values": [
+        ".gitattributes", ".gitignore", "VERSION",
+        "bin/build_runtime_manifest_b21.php", "bin/build_managed_runtime_release.php",
+        "bin/build_update_package.php", "bin/queue_core_dependency_check.php",
+        "composer.json", "resources/runtime-manifest.json"
+      ]
+    },
+    {
+      "id": "tests",
+      "classification": "TEST_ONLY",
+      "kind": "regex",
+      "value": "#^tests/.+\\.php$#D"
+    },
+    {
+      "id": "release-artifact-builders",
+      "classification": "DEVELOPMENT_TOOL",
+      "kind": "regex",
+      "value": "#^bin/build_release_[0-9]+_artifacts\\.php$#D"
+    },
+    {
+      "id": "documentation",
+      "classification": "DOCUMENTATION",
+      "kind": "regex",
+      "value": "#^docs/.+$#D"
+    }
+  ],
+  "runtime_dependencies": [
+    {
+      "id": "managed-runtime-dependency-registry",
+      "path": "resources/release/managed-runtime-dependencies-2.38.8.json",
+      "classification": "RUNTIME_REQUIRED",
+      "required_in_runtime_manifest": true,
+      "consumers": [{
+        "source_path": "app/Services/ManagedRuntimePublicationPolicy.php",
+        "symbol": "App\\Services\\ManagedRuntimePublicationPolicy::installedManifestIssues",
+        "path_literal": "resources/release/managed-runtime-dependencies-2.38.8.json"
+      }],
+      "provenance": {"kind": "static_tracked_release_authority", "generator": "2.38.8 Simple Exact Sales Repair runtime classification"},
+      "missing_effect": "Runtime manifest completeness fails closed."
+    },
+    {
+      "id": "frozen-updater-dependency-registry",
+      "path": "resources/release/queue-core-runtime-dependencies.json",
+      "classification": "RUNTIME_REQUIRED",
+      "required_in_runtime_manifest": true,
+      "consumers": [{
+        "source_path": "app/Services/RuntimePublicationPolicy.php",
+        "symbol": "App\\Services\\RuntimePublicationPolicy::installedManifestIssues",
+        "path_literal": "resources/release/queue-core-runtime-dependencies.json"
+      }],
+      "provenance": {"kind": "frozen_updater_authority", "base_commit": "0cb5ddab368d033e15bdb040b53bb8592248246c"},
+      "missing_effect": "Frozen updater integrity fails closed."
+    },
+    {
+      "id": "queue-v4-canonical-db-contract",
+      "path": "resources/release/queue-v4-canonical-db-contract-2.38.8.json",
+      "classification": "RUNTIME_REQUIRED",
+      "required_in_runtime_manifest": true,
+      "consumers": [{
+        "source_path": "app/QueueV4Clean/QueueV4CleanDatabaseContract.php",
+        "symbol": "App\\QueueV4Clean\\QueueV4CleanDatabaseContract::issues",
+        "path_literal": "resources/release/queue-v4-canonical-db-contract-2.38.8.json"
+      }],
+      "provenance": {"kind": "generated_information_schema_authority", "database_version_family": "MariaDB 11.8.8", "migration_range": "001-297"},
+      "missing_effect": "Queue V4 readiness fails closed."
+    },
+    {
+      "id": "notification-topics",
+      "path": "resources/mercadolibre-api/generated/notification-topics.json",
+      "classification": "RUNTIME_REQUIRED",
+      "required_in_runtime_manifest": true,
+      "consumers": [{
+        "source_path": "app/Services/MeliNotificationTopicRegistry.php",
+        "symbol": "App\\Services\\MeliNotificationTopicRegistry::rules",
+        "path_literal": "resources/mercadolibre-api/generated/notification-topics.json"
+      }],
+      "provenance": {"kind": "static_tracked_authority", "last_contract_change": "2026-08-09"},
+      "missing_effect": "Notification topics fail closed."
+    },
+    {
+      "id": "runtime-manifest",
+      "path": "resources/runtime-manifest.json",
+      "classification": "RELEASE_BUILD_INPUT",
+      "required_in_runtime_manifest": false,
+      "consumers": [{
+        "source_path": "app/Services/ReleaseIntegrityService.php",
+        "symbol": "App\\Services\\ReleaseIntegrityService",
+        "path_literal": "resources/runtime-manifest.json"
+      }],
+      "provenance": {"kind": "generated_release_authority", "generator": "bin/build_runtime_manifest_b21.php"}
+    },
+    {
+      "id": "version-authority",
+      "path": "VERSION",
+      "classification": "RELEASE_BUILD_INPUT",
+      "required_in_runtime_manifest": false,
+      "consumers": [{
+        "source_path": "app/Services/AppVersionService.php",
+        "symbol": "App\\Services\\AppVersionService::fileVersion",
+        "path_literal": "VERSION"
+      }],
+      "provenance": {"kind": "release_authority", "generator": "release publication"}
+    }
+  ]
+}

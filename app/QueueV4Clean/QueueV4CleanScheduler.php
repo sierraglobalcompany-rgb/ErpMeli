@@ -6,6 +6,7 @@ namespace App\QueueV4Clean;
 
 use App\Core\Env;
 use App\Services\EmergencyControlService;
+use App\Services\SalesAuditExactRepairService;
 use PDO;
 
 final class QueueV4CleanScheduler
@@ -72,10 +73,15 @@ final class QueueV4CleanScheduler
                     'http_budget' => QueueV4CleanCycleBudget::snapshot(),
                 ];
             }
-            $producer = (new QueueV4CleanProducer($this->pdo, $repository))->produce();
             $oauthClaimed = (int) ($oauth['claimed'] ?? 0);
             $salesClaimed = (int) ($salesAudit['claimed'] ?? 0);
-            $remainingJobs = max(0, min(10, $maxJobs) - $oauthClaimed - $salesClaimed);
+            $salesRepair = $oauthClaimed + $salesClaimed < min(10, $maxJobs)
+                && microtime(true) < $deadline - 3.0
+                ? (new SalesAuditExactRepairService())->processDue(1)
+                : ['processed' => 0, 'jobs' => 0, 'status' => 'deferred'];
+            $producer = (new QueueV4CleanProducer($this->pdo, $repository))->produce();
+            $repairClaimed = (int) ($salesRepair['jobs'] ?? 0);
+            $remainingJobs = max(0, min(10, $maxJobs) - $oauthClaimed - $salesClaimed - $repairClaimed);
             $remaining = min(45, (int) floor($deadline - microtime(true)));
             // Reserve a small local-only window for the incident read model.
             // HTTP/business work remains bounded by the shared cycle budget.
@@ -96,9 +102,10 @@ final class QueueV4CleanScheduler
                 'recovery' => $recovery,
                 'maintenance' => $maintenance,
                 'sales_audit' => $salesAudit,
+                'sales_repair' => $salesRepair,
                 'producer' => $producer,
                 'worker' => $worker,
-                'claimed_total' => $oauthClaimed + $salesClaimed + (int) ($worker['claimed'] ?? 0),
+                'claimed_total' => $oauthClaimed + $salesClaimed + $repairClaimed + (int) ($worker['claimed'] ?? 0),
                 'http_budget' => QueueV4CleanCycleBudget::snapshot(),
             ];
         } finally {

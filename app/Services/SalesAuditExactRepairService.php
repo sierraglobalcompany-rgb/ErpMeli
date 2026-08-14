@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Core\Auth;
 use App\Core\Database;
+use App\QueueV4Clean\QueueV4CleanCycleBudget;
 use PDO;
 use Throwable;
 
@@ -17,6 +18,17 @@ use Throwable;
  */
 final class SalesAuditExactRepairService
 {
+    /** @var \Closure(int):OrderSyncService */
+    private \Closure $orderSyncFactory;
+
+    /** @param null|callable(int):OrderSyncService $orderSyncFactory */
+    public function __construct(?callable $orderSyncFactory = null)
+    {
+        $this->orderSyncFactory = $orderSyncFactory !== null
+            ? \Closure::fromCallable($orderSyncFactory)
+            : static fn(int $accountId): OrderSyncService => new OrderSyncService($accountId);
+    }
+
     public function available(): bool
     {
         $schema = new SchemaInspectorService();
@@ -174,7 +186,7 @@ final class SalesAuditExactRepairService
     /** @return array<string,mixed> */
     public function processDue(int $limit = 5): array
     {
-        return $this->processSelected($limit, null);
+        return $this->processSelected($limit, null, true, true);
     }
 
     /** @return array<string,mixed> */
@@ -185,11 +197,16 @@ final class SalesAuditExactRepairService
 
     public function processManualExact(int $jobId): array
     {
-        return $this->processSelected(1,$jobId,false);
+        return $this->processSelected(1, $jobId, false);
     }
 
     /** @return array<string,mixed> */
-    private function processSelected(int $limit, ?int $jobId, bool $allowContinuation=true): array
+    private function processSelected(
+        int $limit,
+        ?int $jobId,
+        bool $allowContinuation = true,
+        bool $queueV4 = false,
+    ): array
     {
         if (!$this->available()) {
             return ['processed' => 0, 'jobs' => 0, 'status' => 'empty'];
@@ -202,13 +219,16 @@ final class SalesAuditExactRepairService
         }
 
         $items = Database::connectionFresh()->prepare(
-            'SELECT * FROM sync_sales_repair_job_items
-             WHERE sync_sales_repair_job_id=?
-               AND status IN ("pending","retry","waiting_budget")
-               AND (next_run_at IS NULL OR next_run_at<=UTC_TIMESTAMP())
-             ORDER BY id ASC LIMIT ' . $limit
+            'SELECT i.* FROM sync_sales_repair_job_items i
+             INNER JOIN sync_sales_repair_jobs j
+               ON j.id=i.sync_sales_repair_job_id AND j.company_id=? AND j.meli_account_id=?
+              AND j.source_kind="exact"
+             WHERE i.sync_sales_repair_job_id=?
+               AND i.status IN ("pending","retry","waiting_budget")
+               AND (i.next_run_at IS NULL OR i.next_run_at<=UTC_TIMESTAMP())
+             ORDER BY i.id ASC LIMIT ' . $limit
         );
-        $items->execute([(int) $job['id']]);
+        $items->execute([(int) $job['company_id'], (int) $job['meli_account_id'], (int) $job['id']]);
         $rows = $items->fetchAll(PDO::FETCH_ASSOC);
         if ($rows === []) {
             return $this->finalizeOrRelease($job, $worker);
@@ -222,50 +242,86 @@ final class SalesAuditExactRepairService
             }
             $itemId = (int) $item['id'];
             $externalId = (string) $item['external_order_id'];
-            $this->startItem($itemId);
+            $this->startItem($job, $itemId);
+            $cycleBudgetClaimed = false;
             try {
-                $existingOrder = $this->localOrderId((int) $job['meli_account_id'], $externalId);
+                $existingOrder = $this->localOrderId(
+                    (int) $job['company_id'],
+                    (int) $job['meli_account_id'],
+                    $externalId,
+                );
                 if ($existingOrder > 0) {
                     $orderIds[] = $existingOrder;
-                    $this->finishItem($itemId, 'already_present', null, null);
+                    $this->finishItem($job, $itemId, 'already_present', null, null);
                 } else {
-                    $sync=new OrderSyncService((int)$job['meli_account_id']);
+                    $sync = ($this->orderSyncFactory)((int) $job['meli_account_id']);
                     $meta=[
                         'job_type' => 'sales_repair',
-                        'source' => 'cron',
-                        'source_queue_key' => 'sales_repair',
-                        'source_work_id' => (string) $job['id'],
+                        'source' => $queueV4 ? MeliTransportSourcePolicy::QUEUE_V4_SALES_REPAIR : 'cron',
+                        'company_id' => (int) $job['company_id'],
+                        'account_id' => (int) $job['meli_account_id'],
+                        'source_queue_key' => 'sync_sales_repair_jobs',
+                        'source_work_id' => (string) $itemId,
                         'bulk' => false,
                     ];
-                    $orderId=$allowContinuation?$sync->syncOrderById($externalId,$meta):$sync->syncOrderByIdForManual($externalId,$meta);
+                    if ($queueV4) {
+                        QueueV4CleanCycleBudget::claim();
+                        $cycleBudgetClaimed = true;
+                        $orderId = $sync->syncOrderByIdForQueueV4Clean($externalId, $meta);
+                    } else {
+                        $orderId = $allowContinuation
+                            ? $sync->syncOrderById($externalId, $meta)
+                            : $sync->syncOrderByIdForManual($externalId, $meta);
+                    }
                     if ($orderId > 0) {
                         $orderIds[] = $orderId;
                     }
                     if (!$this->ownsLease($job, $worker)) {
                         return ['processed' => $processed, 'jobs' => 1, 'status' => 'lease_lost'];
                     }
-                    $this->finishItem($itemId, 'complete', null, null);
+                    $this->finishItem($job, $itemId, 'complete', null, null);
                 }
                 $processed++;
+            } catch (OAuthRefreshRequiredException $error) {
+                if ($cycleBudgetClaimed) {
+                    QueueV4CleanCycleBudget::releaseBeforeTransport();
+                }
+                $next = gmdate('Y-m-d H:i:s', time() + 60);
+                $this->deferItem($job, $itemId, 'waiting_budget', $next, 'Esperando renovación OAuth automática.', null, true);
+                $this->releaseJob($job, $worker, 'waiting_budget', $next, null, null);
+                return ['processed' => $processed, 'jobs' => 1, 'status' => 'waiting_oauth'];
+            } catch (QueueV4PreTransportDeferredException $error) {
+                if ($cycleBudgetClaimed) {
+                    QueueV4CleanCycleBudget::releaseBeforeTransport();
+                }
+                $this->deferItem($job, $itemId, 'waiting_budget', $error->nextSafeAt, 'Esperando la próxima oportunidad segura.', null, true);
+                $this->releaseJob($job, $worker, 'waiting_budget', $error->nextSafeAt, null, null);
+                return ['processed' => $processed, 'jobs' => 1, 'status' => 'waiting_budget'];
             } catch (ApiBudgetExhaustedException $error) {
+                if ($cycleBudgetClaimed && (!$error instanceof ApiRhythmDeferredException || !$error->reachedRemote)) {
+                    QueueV4CleanCycleBudget::releaseBeforeTransport();
+                }
                 $next = $error->nextSafeAt ?: gmdate('Y-m-d H:i:s', time() + 900);
-                $this->deferItem($itemId, 'waiting_budget', $next, 'Esperando presupuesto seguro de consultas.', null);
+                $this->deferItem($job, $itemId, 'waiting_budget', $next, 'Esperando presupuesto seguro de consultas.', null, true);
                 $this->releaseJob($job, $worker, 'waiting_budget', $next, null, null);
                 return ['processed' => $processed, 'jobs' => 1, 'status' => 'waiting_budget'];
             } catch (ApiManualPauseException $error) {
+                if ($cycleBudgetClaimed) {
+                    QueueV4CleanCycleBudget::releaseBeforeTransport();
+                }
                 $next = $error->resumeAt ?: gmdate('Y-m-d H:i:s', time() + 900);
-                $this->deferItem($itemId, 'waiting_budget', $next, 'Las consultas están pausadas preventivamente.', null);
+                $this->deferItem($job, $itemId, 'waiting_budget', $next, 'Las consultas están pausadas preventivamente.', null, true);
                 $this->releaseJob($job, $worker, 'waiting_budget', $next, null, null);
                 return ['processed' => $processed, 'jobs' => 1, 'status' => 'waiting_budget'];
             } catch (MeliApiException $error) {
-                $this->handleApiFailure($item, $error);
+                $this->handleApiFailure($job, $item, $error);
             } catch (Throwable $error) {
                 $safe = SafeErrorPresenter::report($error, 'No fue posible incorporar esta orden.', [
                     'module' => 'sales_repair',
                     'job_id' => (int) $job['id'],
                     'item_id' => $itemId,
                 ]);
-                $this->retryOrFail($item, $safe['message'], $safe['reference']);
+                $this->retryOrFail($job, $item, $safe['message'], $safe['reference']);
             }
             $this->heartbeat($job, $worker);
         }
@@ -382,15 +438,19 @@ final class SalesAuditExactRepairService
         $pdo = Database::connectionFresh();
         $pdo->beginTransaction();
         try {
-            $reservationGuard = ManualCampaignReservationGuard::sql('sales_repair', 'sync_sales_repair_jobs.id');
+            $reservationGuard = ManualCampaignReservationGuard::sql('sales_repair', 'j.id');
             $stmt = $pdo->prepare(
-                'SELECT * FROM sync_sales_repair_jobs
-                 WHERE source_kind="exact"
-                   AND status IN ("pending","retry","waiting_budget")
-                   AND (next_run_at IS NULL OR next_run_at<=UTC_TIMESTAMP())
-                   AND (lock_expires_at IS NULL OR lock_expires_at<UTC_TIMESTAMP())
-                   AND (? IS NULL OR id=?)' . $reservationGuard . '
-                 ORDER BY created_at ASC,id ASC LIMIT 1 FOR UPDATE'
+                'SELECT j.* FROM sync_sales_repair_jobs j
+                 INNER JOIN sync_sales_audit_runs r
+                   ON r.id=j.sync_sales_audit_run_id AND r.company_id=j.company_id
+                  AND r.meli_account_id=j.meli_account_id
+                 INNER JOIN meli_accounts a ON a.id=j.meli_account_id AND a.company_id=j.company_id
+                 WHERE j.source_kind="exact"
+                   AND j.status IN ("pending","retry","waiting_budget")
+                   AND (j.next_run_at IS NULL OR j.next_run_at<=UTC_TIMESTAMP())
+                   AND (j.lock_expires_at IS NULL OR j.lock_expires_at<UTC_TIMESTAMP())
+                   AND (? IS NULL OR j.id=?)' . $reservationGuard . '
+                 ORDER BY j.created_at ASC,j.id ASC LIMIT 1 FOR UPDATE'
             );
             $stmt->execute([$jobId, $jobId]);
             $job = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -404,8 +464,13 @@ final class SalesAuditExactRepairService
                  SET status="running",lock_owner=?,lock_expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL ' . $seconds . ' SECOND),
                       heartbeat_at=UTC_TIMESTAMP(),lease_generation=lease_generation+1,
                       started_at=COALESCE(started_at,UTC_TIMESTAMP())
-                 WHERE id=?'
-            )->execute([$worker, (int) $job['id']]);
+                 WHERE id=? AND company_id=? AND meli_account_id=? AND source_kind="exact"'
+            )->execute([
+                $worker,
+                (int) $job['id'],
+                (int) $job['company_id'],
+                (int) $job['meli_account_id'],
+            ]);
             $pdo->commit();
             $job['lock_owner'] = $worker;
             $job['lease_generation'] = ((int) ($job['lease_generation'] ?? 0)) + 1;
@@ -423,10 +488,17 @@ final class SalesAuditExactRepairService
     {
         $stmt = Database::connectionFresh()->prepare(
             'SELECT COUNT(*) FROM sync_sales_repair_jobs
-             WHERE id=? AND lock_owner=? AND lease_generation=?
+             WHERE id=? AND company_id=? AND meli_account_id=? AND source_kind="exact"
+               AND lock_owner=? AND lease_generation=?
                AND status="running" AND lock_expires_at>=UTC_TIMESTAMP()'
         );
-        $stmt->execute([(int) $job['id'], $worker, (int) $job['lease_generation']]);
+        $stmt->execute([
+            (int) $job['id'],
+            (int) $job['company_id'],
+            (int) $job['meli_account_id'],
+            $worker,
+            (int) $job['lease_generation'],
+        ]);
         return (int) $stmt->fetchColumn() === 1;
     }
 
@@ -437,47 +509,95 @@ final class SalesAuditExactRepairService
         Database::connectionFresh()->prepare(
             'UPDATE sync_sales_repair_jobs
              SET heartbeat_at=UTC_TIMESTAMP(),lock_expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL ' . $seconds . ' SECOND)
-             WHERE id=? AND lock_owner=? AND lease_generation=?'
-        )->execute([(int) $job['id'], $worker, (int) $job['lease_generation']]);
+             WHERE id=? AND company_id=? AND meli_account_id=? AND source_kind="exact"
+               AND lock_owner=? AND lease_generation=?'
+        )->execute([
+            (int) $job['id'],
+            (int) $job['company_id'],
+            (int) $job['meli_account_id'],
+            $worker,
+            (int) $job['lease_generation'],
+        ]);
     }
 
-    private function startItem(int $itemId): void
+    /** @param array<string,mixed> $job */
+    private function startItem(array $job, int $itemId): void
     {
         Database::connectionFresh()->prepare(
-            'UPDATE sync_sales_repair_job_items
-             SET status="running",attempts=attempts+1,safe_error_message=NULL,diagnostic_id=NULL
-             WHERE id=?'
-        )->execute([$itemId]);
+            'UPDATE sync_sales_repair_job_items i
+             INNER JOIN sync_sales_repair_jobs j ON j.id=i.sync_sales_repair_job_id
+             SET i.status="running",i.attempts=i.attempts+1,i.safe_error_message=NULL,i.diagnostic_id=NULL
+             WHERE i.id=? AND j.id=? AND j.company_id=? AND j.meli_account_id=? AND j.source_kind="exact"'
+        )->execute([$itemId, (int) $job['id'], (int) $job['company_id'], (int) $job['meli_account_id']]);
     }
 
-    private function finishItem(int $itemId, string $status, ?string $message, ?string $diagnostic): void
+    /** @param array<string,mixed> $job */
+    private function finishItem(
+        array $job,
+        int $itemId,
+        string $status,
+        ?string $message,
+        ?string $diagnostic,
+    ): void
     {
         Database::connectionFresh()->prepare(
-            'UPDATE sync_sales_repair_job_items
-             SET status=?,safe_error_message=?,diagnostic_id=?,processed_at=UTC_TIMESTAMP()
-             WHERE id=?'
-        )->execute([$status, $message, $diagnostic, $itemId]);
+            'UPDATE sync_sales_repair_job_items i
+             INNER JOIN sync_sales_repair_jobs j ON j.id=i.sync_sales_repair_job_id
+             SET i.status=?,i.safe_error_message=?,i.diagnostic_id=?,i.processed_at=UTC_TIMESTAMP()
+             WHERE i.id=? AND j.id=? AND j.company_id=? AND j.meli_account_id=? AND j.source_kind="exact"'
+        )->execute([
+            $status,
+            $message,
+            $diagnostic,
+            $itemId,
+            (int) $job['id'],
+            (int) $job['company_id'],
+            (int) $job['meli_account_id'],
+        ]);
     }
 
-    private function deferItem(int $itemId, string $status, string $nextRunAt, string $message, ?string $diagnostic): void
+    /** @param array<string,mixed> $job */
+    private function deferItem(
+        array $job,
+        int $itemId,
+        string $status,
+        string $nextRunAt,
+        string $message,
+        ?string $diagnostic,
+        bool $refundAttempt = false,
+    ): void
     {
         Database::connectionFresh()->prepare(
-            'UPDATE sync_sales_repair_job_items
-             SET status=?,next_run_at=?,safe_error_message=?,diagnostic_id=?
-             WHERE id=?'
-        )->execute([$status, $nextRunAt, $message, $diagnostic, $itemId]);
+            'UPDATE sync_sales_repair_job_items i
+             INNER JOIN sync_sales_repair_jobs j ON j.id=i.sync_sales_repair_job_id
+             SET i.status=?,i.next_run_at=?,i.safe_error_message=?,i.diagnostic_id=?,
+                 i.attempts=GREATEST(i.attempts-?,0)
+             WHERE i.id=? AND j.id=? AND j.company_id=? AND j.meli_account_id=? AND j.source_kind="exact"'
+        )->execute([
+            $status,
+            $nextRunAt,
+            $message,
+            $diagnostic,
+            $refundAttempt ? 1 : 0,
+            $itemId,
+            (int) $job['id'],
+            (int) $job['company_id'],
+            (int) $job['meli_account_id'],
+        ]);
     }
 
-    private function handleApiFailure(array $item, MeliApiException $error): void
+    /** @param array<string,mixed> $job @param array<string,mixed> $item */
+    private function handleApiFailure(array $job, array $item, MeliApiException $error): void
     {
         $status = (int) ($error->httpStatus ?? 0);
         if ($status === 404) {
-            $this->finishItem((int) $item['id'], 'unavailable', 'Mercado Libre indicó que la orden ya no está disponible.', $error->requestId);
+            $this->finishItem($job, (int) $item['id'], 'unavailable', 'Mercado Libre indicó que la orden ya no está disponible.', $error->requestId);
             return;
         }
         if ($status === 429) {
             $retryAfter = max(60, (int) ($error->response['retry_after'] ?? 900));
             $this->deferItem(
+                $job,
                 (int) $item['id'],
                 'retry',
                 gmdate('Y-m-d H:i:s', time() + $retryAfter),
@@ -488,6 +608,7 @@ final class SalesAuditExactRepairService
         }
         if ($status === 403 || str_contains(mb_strtolower($error->getMessage()), 'invalid_grant')) {
             $this->finishItem(
+                $job,
                 (int) $item['id'],
                 'error',
                 $status === 403
@@ -497,19 +618,20 @@ final class SalesAuditExactRepairService
             );
             return;
         }
-        $this->retryOrFail($item, 'Mercado Libre no permitió completar la consulta.', $error->requestId);
+        $this->retryOrFail($job, $item, 'Mercado Libre no permitió completar la consulta.', $error->requestId);
     }
 
-    private function retryOrFail(array $item, string $message, ?string $diagnostic): void
+    /** @param array<string,mixed> $job @param array<string,mixed> $item */
+    private function retryOrFail(array $job, array $item, string $message, ?string $diagnostic): void
     {
         $attempts = (int) $item['attempts'] + 1;
         $max = max(1, min(10, (new AppSettingsService())->int('sales_audit.repair_max_attempts', 3)));
         if ($attempts < $max) {
             $delay = min(3600, 60 * (2 ** max(0, $attempts - 1)) + random_int(1, 30));
-            $this->deferItem((int) $item['id'], 'retry', gmdate('Y-m-d H:i:s', time() + $delay), $message, $diagnostic);
+            $this->deferItem($job, (int) $item['id'], 'retry', gmdate('Y-m-d H:i:s', time() + $delay), $message, $diagnostic);
             return;
         }
-        $this->finishItem((int) $item['id'], 'error', $message, $diagnostic);
+        $this->finishItem($job, (int) $item['id'], 'error', $message, $diagnostic);
     }
 
     /** @return array<string,mixed> */
@@ -518,14 +640,17 @@ final class SalesAuditExactRepairService
         $pdo = Database::connectionFresh();
         $stmt = $pdo->prepare(
             'SELECT
-               SUM(status IN ("complete","already_present")) success_items,
-               SUM(status="unavailable") unavailable_items,
-               SUM(status="error") error_items,
-               SUM(status IN ("pending","running","waiting_budget","retry")) active_items,
-               MIN(CASE WHEN status IN ("pending","waiting_budget","retry") THEN next_run_at END) next_run_at
-             FROM sync_sales_repair_job_items WHERE sync_sales_repair_job_id=?'
+               SUM(i.status IN ("complete","already_present")) success_items,
+               SUM(i.status="unavailable") unavailable_items,
+               SUM(i.status="error") error_items,
+               SUM(i.status IN ("pending","running","waiting_budget","retry")) active_items,
+               MIN(CASE WHEN i.status IN ("pending","waiting_budget","retry") THEN i.next_run_at END) next_run_at
+             FROM sync_sales_repair_job_items i
+             INNER JOIN sync_sales_repair_jobs j ON j.id=i.sync_sales_repair_job_id
+             WHERE i.sync_sales_repair_job_id=? AND j.company_id=? AND j.meli_account_id=?
+               AND j.source_kind="exact"'
         );
-        $stmt->execute([(int) $job['id']]);
+        $stmt->execute([(int) $job['id'], (int) $job['company_id'], (int) $job['meli_account_id']]);
         $counts = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
         $success = (int) ($counts['success_items'] ?? 0);
         $unavailable = (int) ($counts['unavailable_items'] ?? 0);
@@ -566,8 +691,14 @@ final class SalesAuditExactRepairService
                 (int) $job['company_id']
             );
             $pdo->prepare(
-                'UPDATE sync_sales_repair_jobs SET verification_audit_job_id=? WHERE id=?'
-            )->execute([$verificationJobId, (int) $job['id']]);
+                'UPDATE sync_sales_repair_jobs SET verification_audit_job_id=?
+                 WHERE id=? AND company_id=? AND meli_account_id=? AND source_kind="exact"'
+            )->execute([
+                $verificationJobId,
+                (int) $job['id'],
+                (int) $job['company_id'],
+                (int) $job['meli_account_id'],
+            ]);
         } catch (Throwable $error) {
             SafeErrorPresenter::report($error, 'La reparación terminó, pero la comprobación final quedó pendiente.', [
                 'module' => 'sales_repair',
@@ -603,7 +734,8 @@ final class SalesAuditExactRepairService
                  consecutive_failures=IF(? IN ("error","partial"),consecutive_failures+1,0),
                  lock_owner=NULL,lock_expires_at=NULL,heartbeat_at=NULL,
                  completed_at=IF(?,UTC_TIMESTAMP(),completed_at)
-              WHERE id=? AND lock_owner=? AND lease_generation=?'
+               WHERE id=? AND company_id=? AND meli_account_id=? AND source_kind="exact"
+                 AND lock_owner=? AND lease_generation=?'
         )->execute([
             $status,
             $nextRunAt,
@@ -616,17 +748,21 @@ final class SalesAuditExactRepairService
             $status,
             $finished ? 1 : 0,
             (int) $job['id'],
+            (int) $job['company_id'],
+            (int) $job['meli_account_id'],
             $worker,
             (int) $job['lease_generation'],
         ]);
     }
 
-    private function localOrderId(int $accountId, string $externalOrderId): int
+    private function localOrderId(int $companyId, int $accountId, string $externalOrderId): int
     {
         $stmt = Database::connectionFresh()->prepare(
-            'SELECT id FROM meli_orders WHERE meli_account_id=? AND external_order_id=? LIMIT 1'
+            'SELECT o.id FROM meli_orders o
+             INNER JOIN meli_accounts a ON a.id=o.meli_account_id AND a.company_id=?
+             WHERE o.meli_account_id=? AND o.external_order_id=? LIMIT 1'
         );
-        $stmt->execute([$accountId, $externalOrderId]);
+        $stmt->execute([$companyId, $accountId, $externalOrderId]);
         return (int) $stmt->fetchColumn();
     }
 

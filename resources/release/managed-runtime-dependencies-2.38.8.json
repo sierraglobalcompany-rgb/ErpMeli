@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "simple-exact-sales-repair-2.38.8-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "6bfebe954a5f627e80a39a50cc5573c778932c709835b46a0602495a5cb49cfd",
+  "runtime_manifest_paths_sha256": "2f77767f624ab1ac5bf0e6155f26a0888d0e8f16bef18fe21f613258fa3b55fa",
   "coverage_base_commit": "0ce4afe5269eb282734e36a0913fb2bf0f871088",
   "classifications": {
     "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

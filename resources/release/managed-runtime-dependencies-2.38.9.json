@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "sales-repair-transport-authority-2.38.9-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "runtime_manifest_paths_sha256": "e89a1769d790369e2a104c3f6040db057526269c397c62cefc2e0d2fc1c068b7",
   "coverage_base_commit": "93ca572501e13124ae5fdb271e7a02a102b9147b",
   "classifications": {
     "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

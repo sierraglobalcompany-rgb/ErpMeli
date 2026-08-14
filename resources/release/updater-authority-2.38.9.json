@@ -276,7 +276,7 @@
         },
         {
             "path": "resources/release/managed-runtime-dependencies-2.38.9.json",
-            "sha256": "627287c7a8ad01e70bab60d700f1d63ec06bd10f82f12c2c59c7b1476c04b35b"
+            "sha256": "20a123febdec5e65fbcbac520d876c118830f081184386ed82a6fa769b649888"
         },
         {
             "path": "resources/release/queue-v4-canonical-db-contract-2.38.3.json",

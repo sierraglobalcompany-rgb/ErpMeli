@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 $root = dirname(__DIR__);
 $tests = [
-    'inventory_contract_2385.php',
-    'queue_v4_clean_contract_2385.php',
+    'inventory_contract_2386.php',
+    'queue_v4_clean_contract_2386.php',
     'oauth_refresh_isolated_2290.php',
     'notification_topic_registry_fail_closed_b21.php',
     'cron_api_read_performance_qa.php',

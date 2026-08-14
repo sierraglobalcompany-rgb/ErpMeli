@@ -265,6 +265,19 @@ QueueV4CleanCycleBudget::clear();
 $pdo->exec('DELETE FROM queue_v4_clean_recovery_events');
 $pdo->exec('DELETE FROM queue_v4_clean_attempts');
 $pdo->exec('DELETE FROM queue_v4_clean_jobs');
+// A malformed first candidate is quarantined once and cannot starve the two
+// valid historical GET recoveries that follow it.
+$pdo->prepare(
+    'INSERT INTO queue_v4_clean_jobs
+     (company_id,meli_account_id,job_type,resource_id,idempotency_key,state,attempt_count,max_attempts,payload_json,last_error_class,lease_generation)
+     VALUES (?,? ,"order_exact","80999","recover-invalid","review",3,3,?,"remote_result_uncertain",2)'
+)->execute([$companyId, $accountId, json_encode(['order_id' => '80999'], JSON_THROW_ON_ERROR)]);
+$invalidJobId = (int) $pdo->lastInsertId();
+$pdo->prepare(
+    'INSERT INTO queue_v4_clean_attempts
+     (job_id,run_id,company_id,meli_account_id,lease_owner,lease_generation,outcome,error_class)
+     VALUES (?,1,?,?,?,1,"review","remote_result_uncertain")'
+)->execute([$invalidJobId, $companyId, $accountId, 'old-invalid']);
 foreach ([81001, 81002] as $orderId) {
     $key = 'recover-' . $orderId;
     $pdo->prepare(
@@ -279,13 +292,21 @@ foreach ([81001, 81002] as $orderId) {
          VALUES (?,1,?,?,?,"review","remote_result_uncertain")'
     )->execute([$jobId, $companyId, $accountId, 'old-' . $orderId]);
 }
+$blockedFirst = (new QueueV4CleanUncertainReadRecoveryService($pdo))->recoverOne();
+$invalidState = (string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=' . $invalidJobId)->fetchColumn();
+$blockedEvents = (int) $pdo->query(
+    "SELECT COUNT(*) FROM queue_v4_clean_recovery_events
+     WHERE job_id=" . $invalidJobId . " AND recovery_class='blocked_invalid_evidence'"
+)->fetchColumn();
 $first = (new QueueV4CleanUncertainReadRecoveryService($pdo))->recoverOne();
 $waitingAfterFirst = (int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state='waiting'")->fetchColumn();
 $second = (new QueueV4CleanUncertainReadRecoveryService($pdo))->recoverOne();
 $waitingAfterSecond = (int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state='waiting'")->fetchColumn();
-$assert($first['recovered'] === 1 && $waitingAfterFirst === 1
+$assert($blockedFirst === ['eligible' => 1, 'recovered' => 0, 'blocked' => 1]
+    && $invalidState === 'review' && $blockedEvents === 1
+    && $first['recovered'] === 1 && $waitingAfterFirst === 1
     && $second['recovered'] === 1 && $waitingAfterSecond === 2,
-    'uncertain_recovery_not_one_per_cycle');
+    'uncertain_recovery_quarantine_or_progress_failed');
 
 // An invalid cross-tenant recovery chain is rejected by the physical FK.
 $foreign = $accounts[1];

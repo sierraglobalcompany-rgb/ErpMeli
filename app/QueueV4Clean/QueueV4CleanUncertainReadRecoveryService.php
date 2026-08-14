@@ -40,21 +40,31 @@ final class QueueV4CleanUncertainReadRecoveryService
                 return ['eligible' => 0, 'recovered' => 0, 'blocked' => 0];
             }
             $job = $row[0];
+            $companyId = (int) $job['company_id'];
+            $accountId = (int) $job['meli_account_id'];
             try {
                 if ((int) $job['lease_generation'] !== (int) $job['attempt_lease_generation']) {
                     throw new RuntimeException('queue_v4_clean_uncertain_recovery_generation_mismatch');
                 }
                 $this->assertReadOnlyPayload($job);
-                $companyId = (int) $job['company_id'];
-                $accountId = (int) $job['meli_account_id'];
                 $tenant = $this->pdo->prepare('SELECT 1 FROM meli_accounts WHERE company_id=? AND id=? LIMIT 1');
                 $tenant->execute([$companyId, $accountId]);
                 if ($tenant->fetchColumn() === false) {
                     throw new RuntimeException('queue_v4_clean_uncertain_recovery_tenant_mismatch');
                 }
-            } catch (RuntimeException) {
-                // Malformed historical evidence remains untouched for review,
-                // but it must not abort OAuth, sales or ordinary queue work.
+            } catch (RuntimeException $error) {
+                // Quarantine malformed historical evidence exactly once. The
+                // job remains untouched for manual review, while the durable
+                // event prevents it starving later eligible recoveries.
+                $blocked = $this->pdo->prepare(
+                    'INSERT INTO queue_v4_clean_recovery_events
+                     (job_id,attempt_id,company_id,meli_account_id,recovery_class,observed_dispatch_state)
+                     VALUES (?,?,?,?,?,?)'
+                );
+                $blocked->execute([
+                    (int) $job['job_id'], (int) $job['attempt_id'], $companyId, $accountId,
+                    'blocked_invalid_evidence', (string) $job['dispatch_state'],
+                ]);
                 $this->pdo->commit();
                 return ['eligible' => 1, 'recovered' => 0, 'blocked' => 1];
             }

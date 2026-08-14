@@ -28,6 +28,7 @@ $transportPolicy = $read('app/Services/MeliTransportSourcePolicy.php');
 $dispatchFence = $read('app/QueueV4Clean/QueueV4CleanOAuthDispatchFence.php');
 $readDispatchFence = $read('app/QueueV4Clean/QueueV4CleanDispatchFence.php');
 $transportJournal = $read('app/QueueV4Clean/QueueV4CleanTransportJournal.php');
+$uncertainRecovery = $read('app/QueueV4Clean/QueueV4CleanUncertainReadRecoveryService.php');
 $healthSnapshot = $read('app/QueueV4Clean/QueueV4CleanHealthSnapshotService.php');
 $apiHealth = $read('app/Services/ApiHealthService.php');
 $runtimeCapabilities = $read('app/Services/MeliCliRuntimeCapabilityService.php');
@@ -162,6 +163,9 @@ $assert(str_contains($transportJournal, 'company_id,meli_account_id,source_kind'
     && str_contains($healthSnapshot, 'FROM queue_v4_clean_transport_events t')
     && !str_contains($healthSnapshot, 'SUM(o.remote_attempt_count)'),
     'API Health physical HTTP authority is not exact');
+$assert(str_contains($uncertainRecovery, "'blocked_invalid_evidence'")
+    && str_contains($uncertainRecovery, 'prevents it starving later eligible recoveries'),
+    'invalid uncertain evidence is not durably quarantined');
 $assert(str_contains($healthSnapshot, 'observabilityFor(')
     && str_contains($oauthOperations, 'ra.company_id IN ({$companyTokens})')
     && str_contains($oauthOperations, 'ra.meli_account_id IN ({$accountTokens})'),

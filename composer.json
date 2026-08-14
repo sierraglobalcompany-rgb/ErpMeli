@@ -156,7 +156,14 @@
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/runtime_package_attestation_b21a.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/managed_runtime_package_2361.php"
     ],
-    "test": "@test:release-2386",
+    "test": "@test:release-2387",
+    "test:release-2387": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2387.php",
+    "test:release-2387-db": [
+      "@php -d error_reporting=-1 -d display_errors=1 tests/sales_audit_oauth_admission_2387.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_transport_sales_health_2385.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_oauth_real_path_2386.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_update_transition_2387.php"
+    ],
     "test:release-2384": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2384.php",
     "test:release-2384-db": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_oauth_real_path_2384.php",
     "test:release-2385": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2385.php",

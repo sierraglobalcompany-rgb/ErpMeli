@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.38.6.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.38.7.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -41,9 +41,9 @@ final class ManagedRuntimePublicationPolicy
     ];
     public const BASE_COMMIT = 'c40d073705833c94911c254ec633bf8eb231375e';
     public const INSTALLED_BASE_COMMIT = '1eef380afc6ceb42d8955b2def1a439eb4d579fe';
-    public const VERSION = '2.38.6';
-    public const BUILD_ID = 'erp-meli-2.38.6-private-filesystem-authority-oauth-escrow-rc1-20260814';
-    public const BUILT_AT = '2026-08-14T02:30:00Z';
+    public const VERSION = '2.38.7';
+    public const BUILD_ID = 'erp-meli-2.38.7-oauth-aware-sales-audit-hotfix-rc1-20260814';
+    public const BUILT_AT = '2026-08-14T04:00:00Z';
     public const MINIMUM_MIGRATION = '297_queue_v4_transport_sales_api_health_2_38_5.sql';
     private const INVENTORY_MINIMUM_MIGRATION = '295_inventory_warehouse_v1_2_38_0.sql';
     private const QUEUE_V4_MINIMUM_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';
@@ -164,6 +164,11 @@ final class ManagedRuntimePublicationPolicy
             'build_id' => 'erp-meli-2.38.5-queue-v4-transport-sales-api-health-rc1-20260813',
             'minimum_migration' => self::MINIMUM_MIGRATION,
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.38.5.json',
+        ],
+        '2.38.6' => [
+            'build_id' => 'erp-meli-2.38.6-private-filesystem-authority-oauth-escrow-rc1-20260814',
+            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.38.6.json',
         ],
         self::VERSION => [
             'build_id' => self::BUILD_ID,

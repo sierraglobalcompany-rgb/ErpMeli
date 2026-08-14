@@ -59,6 +59,19 @@ final class QueueV4CleanScheduler
             QueueV4CleanOAuthStageContext::reset();
             $recovery = (new QueueV4CleanUncertainReadRecoveryService($this->pdo))->recoverOne();
             $salesAudit = (new QueueV4CleanSalesAuditStage())->run($deadline);
+            if (($salesAudit['abort_scheduler'] ?? false) === true) {
+                return [
+                    'ok' => false,
+                    'status' => 'sales_audit_invariant_blocked',
+                    'oauth' => $oauth,
+                    'recovery' => $recovery,
+                    'sales_audit' => $salesAudit,
+                    'producer' => ['skipped' => true],
+                    'worker' => ['skipped' => true],
+                    'claimed_total' => (int) ($oauth['claimed'] ?? 0) + (int) ($salesAudit['claimed'] ?? 0),
+                    'http_budget' => QueueV4CleanCycleBudget::snapshot(),
+                ];
+            }
             $producer = (new QueueV4CleanProducer($this->pdo, $repository))->produce();
             $oauthClaimed = (int) ($oauth['claimed'] ?? 0);
             $salesClaimed = (int) ($salesAudit['claimed'] ?? 0);

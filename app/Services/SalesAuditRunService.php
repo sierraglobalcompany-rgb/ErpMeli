@@ -19,6 +19,9 @@ use Throwable;
  */
 final class SalesAuditRunService
 {
+    private const OAUTH_DEFER_CLASS = 'oauth_refresh_required';
+    private const LEGACY_OAUTH_ERROR_CLASS = 'App\\Services\\OAuthRefreshRequiredExcepti';
+
     /** @var \Closure(int):MeliApiClient */
     private \Closure $clientFactory;
 
@@ -175,11 +178,23 @@ final class SalesAuditRunService
         if (!$this->available()) {
             return ['processed' => 0, 'errors' => 0, 'status' => 'empty'];
         }
+        // The global legacy repair belongs to the automatic scheduler. A
+        // tenant-scoped manual `processExact()` request must never mutate
+        // unrelated accounts as a side effect.
+        $repair = $jobId === null
+            ? $this->repairLegacyOAuthFalseErrors()
+            : ['misclassified_oauth_repaired' => 0, 'abort_scheduler' => false];
+        if (($repair['abort_scheduler'] ?? false) === true) {
+            return $repair + ['claimed' => 0, 'processed' => 0, 'errors' => 0];
+        }
+        $repairCount = (int) ($repair['misclassified_oauth_repaired'] ?? 0);
         $pagesPerCycle = max(1, min(5, $pagesPerCycle));
         $worker = 'sales-audit-' . getmypid() . '-' . bin2hex(random_bytes(3));
-        $job = $this->claim($worker, $jobId);
+        $admission = null;
+        $job = $this->claim($worker, $jobId, $admission);
         if (!$job) {
-            return ['claimed' => 0, 'processed' => 0, 'errors' => 0, 'status' => 'empty'];
+            return ($admission ?? ['claimed' => 0, 'processed' => 0, 'errors' => 0, 'status' => 'empty'])
+                + ['misclassified_oauth_repaired' => $repairCount];
         }
 
         $processed = 0;
@@ -187,7 +202,7 @@ final class SalesAuditRunService
             for ($page = 0; $page < $pagesPerCycle; $page++) {
                 if ($deadline !== null && microtime(true) >= $deadline - 2.0) {
                     $this->release($job, $worker, 'pending', 'time_budget', null, gmdate('Y-m-d H:i:s', time() + 5), true);
-                    return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'time_budget'];
+                    return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'time_budget', 'misclassified_oauth_repaired' => $repairCount];
                 }
                 $result = $this->fetchPage($job, $worker);
                 $processed += $result['inserted'];
@@ -200,29 +215,32 @@ final class SalesAuditRunService
                         (int) $job['meli_account_id'],
                     );
                     $this->complete($job, $worker);
-                    return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'complete', 'run_id' => (int) $job['sync_sales_audit_run_id']];
+                    return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'complete', 'run_id' => (int) $job['sync_sales_audit_run_id'], 'misclassified_oauth_repaired' => $repairCount];
                 }
             }
             $this->release($job, $worker, 'pending', null, null, gmdate('Y-m-d H:i:s', time() + 5), true);
-            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'page_checkpoint'];
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'page_checkpoint', 'misclassified_oauth_repaired' => $repairCount];
         } catch (RemoteResultUncertainException $error) {
             $this->release(
                 $job, $worker, 'waiting_budget', 'remote_result_uncertain_safe_get', $error,
                 gmdate('Y-m-d H:i:s', time() + 60), true
             );
-            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'safe_get_uncertain'];
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'safe_get_uncertain', 'misclassified_oauth_repaired' => $repairCount];
         } catch (QueueV4PreTransportDeferredException $error) {
             $this->release($job, $worker, 'waiting_budget', 'pre_transport_deferred', $error, $error->nextSafeAt, true);
-            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'pre_transport'];
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'pre_transport', 'misclassified_oauth_repaired' => $repairCount];
         } catch (ApiRhythmDeferredException $error) {
             $this->release($job, $worker, 'waiting_budget', $error->blockingScope, $error, $error->nextSafeAt, true);
-            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => $error->blockingScope];
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => $error->blockingScope, 'misclassified_oauth_repaired' => $repairCount];
         } catch (ApiBudgetExhaustedException $error) {
             $this->release($job, $worker, 'waiting_budget', 'api_budget', $error, $error->nextSafeAt, true);
-            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'api_budget'];
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'api_budget', 'misclassified_oauth_repaired' => $repairCount];
         } catch (ApiManualPauseException $error) {
             $this->release($job, $worker, 'waiting_budget', 'api_pause', $error, $error->resumeAt, true);
-            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'api_pause'];
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'api_pause', 'misclassified_oauth_repaired' => $repairCount];
+        } catch (OAuthRefreshRequiredException $error) {
+            $deferred = $this->deferClaimedForOAuth($job, $worker, $error);
+            return $deferred + ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'misclassified_oauth_repaired' => $repairCount];
         } catch (Throwable $error) {
             $safe = SafeErrorPresenter::report($error, 'No fue posible continuar la auditoría exacta.', [
                 'module' => 'sales_audit',
@@ -236,6 +254,7 @@ final class SalesAuditRunService
                 'status' => 'error',
                 'diagnostic_id' => $safe['reference'],
                 'message' => $safe['message'],
+                'misclassified_oauth_repaired' => $repairCount,
             ];
         }
     }
@@ -330,23 +349,403 @@ final class SalesAuditRunService
         return $job;
     }
 
+    /** @return array<string,mixed> */
+    private function repairLegacyOAuthFalseErrors(): array
+    {
+        $pdo = Database::connectionFresh();
+        $pdo->beginTransaction();
+        try {
+            $candidates = $pdo->prepare(
+                "SELECT j.* FROM sync_sales_audit_jobs j
+                 INNER JOIN sync_sales_audit_runs r
+                   ON r.id=j.sync_sales_audit_run_id AND r.company_id=j.company_id
+                  AND r.meli_account_id=j.meli_account_id
+                 INNER JOIN meli_accounts a ON a.company_id=j.company_id AND a.id=j.meli_account_id
+                 WHERE j.status='error' AND j.last_error_class=?
+                   AND j.remote_dispatch_state='NOT_DISPATCHED' AND j.last_http_status IS NULL
+                   AND NOT EXISTS (
+                     SELECT 1 FROM queue_v4_clean_transport_events e
+                     WHERE e.source_kind='sales_audit' AND e.work_id=j.id
+                       AND e.company_id=j.company_id AND e.meli_account_id=j.meli_account_id
+                       AND e.lease_generation=j.lease_generation
+                   )
+                 ORDER BY j.company_id,j.meli_account_id,j.id
+                 LIMIT 100 FOR UPDATE"
+            );
+            $candidates->execute([self::LEGACY_OAUTH_ERROR_CLASS]);
+            $rows = $candidates->fetchAll(PDO::FETCH_ASSOC);
+            $repaired = 0;
+            $skew = max(30, min(600, (new AppSettingsService())->int('oauth.token_expiry_skew_seconds', 120)));
+            foreach ($rows as $row) {
+                $next = $this->nextOAuthOpportunity(
+                    $pdo,
+                    (int) $row['company_id'],
+                    (int) $row['meli_account_id'],
+                    true,
+                    $skew,
+                );
+                if ($next === null) {
+                    $pdo->rollBack();
+                    return $this->abortResult('oauth_dependency_authority_missing');
+                }
+                $update = $pdo->prepare(
+                    "UPDATE sync_sales_audit_jobs j
+                     SET j.status='waiting_budget',j.next_run_at=?,j.locked_by=NULL,j.lock_expires_at=NULL,
+                         j.attempts=GREATEST(j.attempts-1,0),
+                         j.consecutive_failures=GREATEST(j.consecutive_failures-1,0),
+                         j.diagnostic_id=NULL,j.safe_error_message=NULL,
+                         j.last_error_class=?,j.last_error_retryable=1,j.heartbeat_at=NULL,j.updated_at=UTC_TIMESTAMP()
+                     WHERE j.id=? AND j.company_id=? AND j.meli_account_id=? AND j.sync_sales_audit_run_id=?
+                       AND j.status='error' AND j.last_error_class=?
+                       AND j.remote_dispatch_state='NOT_DISPATCHED' AND j.last_http_status IS NULL
+                       AND NOT EXISTS (
+                         SELECT 1 FROM queue_v4_clean_transport_events e
+                         WHERE e.source_kind='sales_audit' AND e.work_id=j.id
+                           AND e.company_id=j.company_id AND e.meli_account_id=j.meli_account_id
+                           AND e.lease_generation=j.lease_generation
+                       )"
+                );
+                $update->execute([
+                    $next,
+                    self::OAUTH_DEFER_CLASS,
+                    (int) $row['id'],
+                    (int) $row['company_id'],
+                    (int) $row['meli_account_id'],
+                    (int) $row['sync_sales_audit_run_id'],
+                    self::LEGACY_OAUTH_ERROR_CLASS,
+                ]);
+                if ($update->rowCount() !== 1) {
+                    $pdo->rollBack();
+                    return $this->abortResult('sales_audit_oauth_repair_cas_lost');
+                }
+                $pdo->prepare(
+                    "UPDATE sync_sales_audit_runs r
+                     SET r.status='running',r.safe_error_message=NULL,r.diagnostic_id=NULL,r.updated_at=UTC_TIMESTAMP()
+                     WHERE r.id=? AND r.company_id=? AND r.meli_account_id=? AND r.status='error'
+                       AND r.diagnostic_id <=> ?
+                       AND NOT EXISTS (
+                         SELECT 1 FROM sync_sales_audit_jobs other
+                         WHERE other.sync_sales_audit_run_id=r.id AND other.company_id=r.company_id
+                           AND other.meli_account_id=r.meli_account_id AND other.status='error'
+                       )"
+                )->execute([
+                    (int) $row['sync_sales_audit_run_id'],
+                    (int) $row['company_id'],
+                    (int) $row['meli_account_id'],
+                    $row['diagnostic_id'] ?? null,
+                ]);
+                $repaired++;
+            }
+            $pdo->commit();
+            return ['misclassified_oauth_repaired' => $repaired, 'abort_scheduler' => false];
+        } catch (Throwable $error) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
+    /**
+     * @return array<string,mixed>|null
+     */
+    private function deferOldestOAuthBlockedBeforeClaim(
+        PDO $pdo,
+        string $reservationGuard,
+        int $skew,
+    ): ?array {
+        $blocked = $pdo->query(
+            'SELECT j.* FROM sync_sales_audit_jobs j
+             INNER JOIN sync_sales_audit_runs r
+               ON r.id=j.sync_sales_audit_run_id AND r.company_id=j.company_id
+              AND r.meli_account_id=j.meli_account_id
+             INNER JOIN meli_accounts a ON a.company_id=j.company_id AND a.id=j.meli_account_id
+             LEFT JOIN meli_tokens t ON t.meli_account_id=j.meli_account_id
+             WHERE j.status IN ("pending","waiting_budget")
+               AND j.next_run_at<=UTC_TIMESTAMP()
+               AND (j.lock_expires_at IS NULL OR j.lock_expires_at<UTC_TIMESTAMP())
+               AND NOT (
+                 LOWER(a.status) IN ("conectado","connected")
+                 AND COALESCE(t.access_token_encrypted,"")<>""
+                 AND t.expires_at>DATE_ADD(UTC_TIMESTAMP(),INTERVAL ' . $skew . ' SECOND)
+               )' . $reservationGuard . '
+             ORDER BY COALESCE(j.heartbeat_at,j.updated_at,j.created_at) ASC,
+                      j.company_id,j.meli_account_id,j.id
+             LIMIT 1 FOR UPDATE'
+        )->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($blocked)) {
+            return null;
+        }
+        $next = $this->nextOAuthOpportunity(
+            $pdo,
+            (int) $blocked['company_id'],
+            (int) $blocked['meli_account_id'],
+            false,
+            $skew,
+        );
+        if ($next === null) {
+            return $this->abortResult('oauth_dependency_authority_missing');
+        }
+        $update = $pdo->prepare(
+            "UPDATE sync_sales_audit_jobs
+             SET status='waiting_budget',next_run_at=?,locked_by=NULL,lock_expires_at=NULL,
+                 safe_error_message=NULL,diagnostic_id=NULL,last_error_class=?,last_error_retryable=1,
+                 heartbeat_at=NULL,updated_at=UTC_TIMESTAMP()
+             WHERE id=? AND company_id=? AND meli_account_id=? AND sync_sales_audit_run_id=?
+               AND status IN ('pending','waiting_budget')
+               AND (lock_expires_at IS NULL OR lock_expires_at<UTC_TIMESTAMP())"
+        );
+        $update->execute([
+            $next,
+            self::OAUTH_DEFER_CLASS,
+            (int) $blocked['id'],
+            (int) $blocked['company_id'],
+            (int) $blocked['meli_account_id'],
+            (int) $blocked['sync_sales_audit_run_id'],
+        ]);
+        if ($update->rowCount() !== 1) {
+            return $this->abortResult('sales_audit_oauth_admission_cas_lost');
+        }
+        return [
+            'claimed' => 0,
+            'processed' => 0,
+            'errors' => 0,
+            'status' => 'deferred',
+            'stop_reason' => self::OAUTH_DEFER_CLASS,
+            'abort_scheduler' => false,
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function deferClaimedForOAuth(
+        array $job,
+        string $worker,
+        OAuthRefreshRequiredException $error,
+    ): array {
+        $pdo = Database::connectionFresh();
+        $pdo->beginTransaction();
+        try {
+            $current = $pdo->prepare(
+                "SELECT j.remote_dispatch_state,j.last_http_status,j.lease_generation
+                 FROM sync_sales_audit_jobs j
+                 WHERE j.id=? AND j.company_id=? AND j.meli_account_id=? AND j.sync_sales_audit_run_id=?
+                   AND j.status='running' AND j.locked_by=? AND j.lease_generation=?
+                 FOR UPDATE"
+            );
+            $current->execute([
+                (int) $job['id'],
+                (int) $job['company_id'],
+                (int) $job['meli_account_id'],
+                (int) $job['sync_sales_audit_run_id'],
+                $worker,
+                (int) $job['lease_generation'],
+            ]);
+            $dispatch = $current->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($dispatch)) {
+                $pdo->rollBack();
+                return $this->abortResult('sales_audit_oauth_refund_cas_lost');
+            }
+            $tenant = $pdo->prepare('SELECT 1 FROM meli_accounts WHERE company_id=? AND id=?');
+            $tenant->execute([(int) $job['company_id'], (int) $job['meli_account_id']]);
+            if ($error->accountId !== (int) $job['meli_account_id'] || (int) $tenant->fetchColumn() !== 1) {
+                return $this->markClaimedInvariant($pdo, $job, $worker, 'sales_audit_oauth_tenant_fence_failed');
+            }
+            $transport = $pdo->prepare(
+                "SELECT COUNT(*) FROM queue_v4_clean_transport_events
+                 WHERE source_kind='sales_audit' AND work_id=? AND company_id=? AND meli_account_id=?
+                   AND lease_generation=?"
+            );
+            $transport->execute([
+                (int) $job['id'],
+                (int) $job['company_id'],
+                (int) $job['meli_account_id'],
+                (int) $job['lease_generation'],
+            ]);
+            if ((string) ($dispatch['remote_dispatch_state'] ?? '') !== 'NOT_DISPATCHED'
+                || $dispatch['last_http_status'] !== null
+                || (int) $transport->fetchColumn() !== 0) {
+                return $this->markClaimedInvariant($pdo, $job, $worker, 'sales_audit_dispatch_fence_failed');
+            }
+            $next = $this->nextOAuthOpportunity(
+                $pdo,
+                (int) $job['company_id'],
+                (int) $job['meli_account_id'],
+                false,
+                max(30, min(600, (new AppSettingsService())->int('oauth.token_expiry_skew_seconds', 120))),
+            );
+            if ($next === null) {
+                return $this->markClaimedInvariant($pdo, $job, $worker, 'oauth_dependency_authority_missing');
+            }
+            $update = $pdo->prepare(
+                "UPDATE sync_sales_audit_jobs j
+                 SET j.status='waiting_budget',j.next_run_at=?,j.locked_by=NULL,j.lock_expires_at=NULL,
+                     j.attempts=GREATEST(j.attempts-1,0),j.safe_error_message=NULL,j.diagnostic_id=NULL,
+                     j.last_error_class=?,j.last_error_retryable=1,j.heartbeat_at=NULL,j.updated_at=UTC_TIMESTAMP()
+                 WHERE j.id=? AND j.company_id=? AND j.meli_account_id=? AND j.sync_sales_audit_run_id=?
+                   AND j.status='running' AND j.locked_by=? AND j.lease_generation=?
+                   AND j.remote_dispatch_state='NOT_DISPATCHED' AND j.last_http_status IS NULL
+                   AND NOT EXISTS (
+                     SELECT 1 FROM queue_v4_clean_transport_events e
+                     WHERE e.source_kind='sales_audit' AND e.work_id=j.id
+                       AND e.company_id=j.company_id AND e.meli_account_id=j.meli_account_id
+                       AND e.lease_generation=j.lease_generation
+                   )"
+            );
+            $update->execute([
+                $next,
+                self::OAUTH_DEFER_CLASS,
+                (int) $job['id'],
+                (int) $job['company_id'],
+                (int) $job['meli_account_id'],
+                (int) $job['sync_sales_audit_run_id'],
+                $worker,
+                (int) $job['lease_generation'],
+            ]);
+            if ($update->rowCount() !== 1) {
+                $pdo->rollBack();
+                return $this->abortResult('sales_audit_oauth_refund_cas_lost');
+            }
+            $pdo->prepare(
+                "UPDATE sync_sales_audit_runs SET status='running',safe_error_message=NULL,diagnostic_id=NULL,updated_at=UTC_TIMESTAMP()
+                 WHERE id=? AND company_id=? AND meli_account_id=? AND status<>'complete'"
+            )->execute([
+                (int) $job['sync_sales_audit_run_id'],
+                (int) $job['company_id'],
+                (int) $job['meli_account_id'],
+            ]);
+            $pdo->commit();
+            return [
+                'status' => 'deferred',
+                'stop_reason' => self::OAUTH_DEFER_CLASS,
+                'abort_scheduler' => false,
+            ];
+        } catch (Throwable $failure) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $failure;
+        }
+    }
+
+    /** @return array<string,mixed> */
+    private function markClaimedInvariant(
+        PDO $pdo,
+        array $job,
+        string $worker,
+        string $errorClass,
+    ): array {
+        $update = $pdo->prepare(
+            "UPDATE sync_sales_audit_jobs
+             SET status='error',locked_by=NULL,lock_expires_at=NULL,
+                 consecutive_failures=consecutive_failures+1,
+                 safe_error_message='La dependencia OAuth no pudo verificarse de forma segura.',
+                 diagnostic_id=NULL,last_error_class=?,last_error_retryable=0,heartbeat_at=NULL,updated_at=UTC_TIMESTAMP()
+             WHERE id=? AND company_id=? AND meli_account_id=? AND sync_sales_audit_run_id=?
+               AND status='running' AND locked_by=? AND lease_generation=?"
+        );
+        $update->execute([
+            mb_substr($errorClass, 0, 40),
+            (int) $job['id'],
+            (int) $job['company_id'],
+            (int) $job['meli_account_id'],
+            (int) $job['sync_sales_audit_run_id'],
+            $worker,
+            (int) $job['lease_generation'],
+        ]);
+        if ($update->rowCount() !== 1) {
+            $pdo->rollBack();
+            return $this->abortResult('sales_audit_oauth_refund_cas_lost');
+        }
+        $pdo->prepare(
+            "UPDATE sync_sales_audit_runs
+             SET status='error',safe_error_message='La dependencia OAuth no pudo verificarse de forma segura.',
+                 diagnostic_id=NULL,updated_at=UTC_TIMESTAMP()
+             WHERE id=? AND company_id=? AND meli_account_id=?"
+        )->execute([
+            (int) $job['sync_sales_audit_run_id'],
+            (int) $job['company_id'],
+            (int) $job['meli_account_id'],
+        ]);
+        $pdo->commit();
+        return $this->abortResult($errorClass);
+    }
+
+    private function nextOAuthOpportunity(
+        PDO $pdo,
+        int $companyId,
+        int $accountId,
+        bool $allowAlreadyResolved,
+        int $skew,
+    ): ?string {
+        $operation = $pdo->prepare(
+            "SELECT next_attempt_at FROM oauth_refresh_operations
+             WHERE company_id=? AND meli_account_id=? AND state IN ('SCHEDULED','RUNNING','WAITING')
+             ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE"
+        );
+        $operation->execute([$companyId, $accountId]);
+        $value = $operation->fetchColumn();
+        if ($value === false) {
+            if (!$allowAlreadyResolved || !$this->businessTokenEligible($pdo, $companyId, $accountId, $skew)) {
+                return null;
+            }
+            return gmdate('Y-m-d H:i:s', time() + 1);
+        }
+        $timestamp = strtotime((string) $value . ' UTC');
+        return gmdate('Y-m-d H:i:s', $timestamp === false ? time() + 1 : max(time() + 1, $timestamp));
+    }
+
+    private function businessTokenEligible(PDO $pdo, int $companyId, int $accountId, int $skew): bool
+    {
+        $statement = $pdo->prepare(
+            'SELECT 1 FROM meli_accounts a
+             INNER JOIN meli_tokens t ON t.meli_account_id=a.id
+             WHERE a.company_id=? AND a.id=?
+               AND LOWER(a.status) IN ("conectado","connected")
+               AND COALESCE(t.access_token_encrypted,"")<>""
+               AND t.expires_at>DATE_ADD(UTC_TIMESTAMP(),INTERVAL ' . $skew . ' SECOND)'
+        );
+        $statement->execute([$companyId, $accountId]);
+        return (int) $statement->fetchColumn() === 1;
+    }
+
+    /** @return array<string,mixed> */
+    private function abortResult(string $reason, int $repaired = 0): array
+    {
+        return [
+            'status' => 'blocked',
+            'stop_reason' => mb_substr($reason, 0, 40),
+            'error_class' => mb_substr($reason, 0, 40),
+            'abort_scheduler' => true,
+            'misclassified_oauth_repaired' => $repaired,
+        ];
+    }
+
     /** @return array<string,mixed>|null */
-    private function claim(string $worker, ?int $jobId = null): ?array
+    private function claim(string $worker, ?int $jobId = null, ?array &$admission = null): ?array
     {
         $pdo = Database::connectionFresh();
         $pdo->beginTransaction();
         try {
             $reservationGuard = ManualCampaignReservationGuard::sql('sales_audit', 'j.id');
+            $automatic = $jobId === null;
+            $skew = max(30, min(600, (new AppSettingsService())->int('oauth.token_expiry_skew_seconds', 120)));
+            $eligibilityJoin = $automatic ? ' INNER JOIN meli_tokens t ON t.meli_account_id=j.meli_account_id' : '';
+            $eligibilityWhere = $automatic
+                ? ' AND LOWER(a.status) IN ("conectado","connected")'
+                    . ' AND COALESCE(t.access_token_encrypted,"")<>""'
+                    . ' AND t.expires_at>DATE_ADD(UTC_TIMESTAMP(),INTERVAL ' . $skew . ' SECOND)'
+                : '';
             $stmt = $pdo->prepare(
                 'SELECT j.* FROM sync_sales_audit_jobs j
                  INNER JOIN sync_sales_audit_runs r
                    ON r.id=j.sync_sales_audit_run_id AND r.company_id=j.company_id
                   AND r.meli_account_id=j.meli_account_id
-                 INNER JOIN meli_accounts a ON a.company_id=j.company_id AND a.id=j.meli_account_id
-                 WHERE j.status IN ("pending","waiting_budget")
+                  INNER JOIN meli_accounts a ON a.company_id=j.company_id AND a.id=j.meli_account_id
+                  ' . $eligibilityJoin . '
+                  WHERE j.status IN ("pending","waiting_budget")
                    AND j.next_run_at<=UTC_TIMESTAMP()
                    AND (j.lock_expires_at IS NULL OR j.lock_expires_at<UTC_TIMESTAMP())
-                   AND (? IS NULL OR j.id=?)' . $reservationGuard . '
+                    AND (? IS NULL OR j.id=?)' . $eligibilityWhere . $reservationGuard . '
                  ORDER BY COALESCE(j.heartbeat_at,j.updated_at,j.created_at) ASC,
                           j.company_id,j.meli_account_id,j.id
                  LIMIT 1 FOR UPDATE'
@@ -354,6 +753,9 @@ final class SalesAuditRunService
             $stmt->execute([$jobId, $jobId]);
             $job = $stmt->fetch(PDO::FETCH_ASSOC);
             if (!$job) {
+                if ($automatic) {
+                    $admission = $this->deferOldestOAuthBlockedBeforeClaim($pdo, $reservationGuard, $skew);
+                }
                 $pdo->commit();
                 return null;
             }

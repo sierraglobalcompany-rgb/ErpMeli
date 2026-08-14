@@ -9,7 +9,7 @@ use RuntimeException;
 
 final class QueueV4CleanDatabaseContract
 {
-    private const CONTRACT = 'resources/release/queue-v4-canonical-db-contract-2.38.6.json';
+    private const CONTRACT = 'resources/release/queue-v4-canonical-db-contract-2.38.7.json';
     private int $metadataQueryCount = 0;
 
     public function __construct(private readonly PDO $pdo)

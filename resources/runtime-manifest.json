@@ -1,16 +1,16 @@
 {
     "product": "erp-meli",
-    "version": "2.38.8",
-    "build_id": "erp-meli-2.38.8-simple-exact-sales-repair-hotfix-rc1-20260814",
-    "built_at": "2026-08-14T06:30:00Z",
-    "minimum_migration": "297_queue_v4_transport_sales_api_health_2_38_5.sql",
+    "version": "2.38.9",
+    "build_id": "erp-meli-2.38.9-sales-repair-transport-authority-hotfix-rc1-20260814",
+    "built_at": "2026-08-14T14:30:00Z",
+    "minimum_migration": "298_queue_v4_sales_repair_transport_authority_2_38_9.sql",
     "publication_policy": {
         "base_commit": "c40d073705833c94911c254ec633bf8eb231375e",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 918,
-        "component_count": 917,
-        "paths_sha256": "2f77767f624ab1ac5bf0e6155f26a0888d0e8f16bef18fe21f613258fa3b55fa",
-        "dependency_registry_sha256": "9c424eba73fb097649136c4d20d79d073a329a9c346e357cc59b7dc0ca61ab19",
+        "package_file_count": 922,
+        "component_count": 921,
+        "paths_sha256": "8ae87b7f994bf74ae33ca45ea6f50963ae281210f7b058347a79e8fddb8375cf",
+        "dependency_registry_sha256": "20a123febdec5e65fbcbac520d876c118830f081184386ed82a6fa769b649888",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -24,8 +24,8 @@
         },
         "runtime_version": {
             "path": "VERSION",
-            "sha256": "61a1e394a06557d1d0299b51a93ad7c31180e4b9e57bad09cb96562b6e2bd926",
-            "sha256_lf": "61a1e394a06557d1d0299b51a93ad7c31180e4b9e57bad09cb96562b6e2bd926",
+            "sha256": "ebc3b3d76de9022437f4df47e799ffcd75dd80b0058d68078f760aa68018c829",
+            "sha256_lf": "ebc3b3d76de9022437f4df47e799ffcd75dd80b0058d68078f760aa68018c829",
             "text": true
         },
         "runtime_actualizar_php": {
@@ -1128,14 +1128,14 @@
         },
         "runtime_app_queuev4clean_queuev4cleandatabasecontract_php": {
             "path": "app/QueueV4Clean/QueueV4CleanDatabaseContract.php",
-            "sha256": "e092d670c8f1f53efbdc81e947803425e4ec3917713dabb1c071e3186d357a12",
-            "sha256_lf": "e092d670c8f1f53efbdc81e947803425e4ec3917713dabb1c071e3186d357a12",
+            "sha256": "f1fe179b47d7f2291618d1060cfe6b12c3564ce83f63f8d495e3b7f51d6878f8",
+            "sha256_lf": "f1fe179b47d7f2291618d1060cfe6b12c3564ce83f63f8d495e3b7f51d6878f8",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleandispatchfence_php": {
             "path": "app/QueueV4Clean/QueueV4CleanDispatchFence.php",
-            "sha256": "3bef4b6cfbc5834b956b81a5839dbed2bc9a4a87a45a179101b5121e3a94ba17",
-            "sha256_lf": "3bef4b6cfbc5834b956b81a5839dbed2bc9a4a87a45a179101b5121e3a94ba17",
+            "sha256": "225990c9e119d8e7a1f3580fa3006812850f980ed35e939e3c196f0532bf8687",
+            "sha256_lf": "225990c9e119d8e7a1f3580fa3006812850f980ed35e939e3c196f0532bf8687",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleanhealthsnapshotservice_php": {
@@ -1182,8 +1182,8 @@
         },
         "runtime_app_queuev4clean_queuev4cleanreadinessservice_php": {
             "path": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
-            "sha256": "264635ebbb22f6fe0a9e86fb54402259db34b40bcb3364accc547d49b6dd97e3",
-            "sha256_lf": "264635ebbb22f6fe0a9e86fb54402259db34b40bcb3364accc547d49b6dd97e3",
+            "sha256": "f99759dd20bb7079fd9c0f7cbc453e4c626827ab528385d203bd759362251ce8",
+            "sha256_lf": "f99759dd20bb7079fd9c0f7cbc453e4c626827ab528385d203bd759362251ce8",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleanrepository_php": {
@@ -1224,8 +1224,8 @@
         },
         "runtime_app_queuev4clean_queuev4cleantransportjournal_php": {
             "path": "app/QueueV4Clean/QueueV4CleanTransportJournal.php",
-            "sha256": "ee2d691a80ba8d65270d3de4eebbacfe44c6dddbfe83c8a0a11f2ca75d332eb2",
-            "sha256_lf": "ee2d691a80ba8d65270d3de4eebbacfe44c6dddbfe83c8a0a11f2ca75d332eb2",
+            "sha256": "be2e1487fa4cf82a9498d003cb8745fd61344ff4ec964b0ca08d302cc2310e77",
+            "sha256_lf": "be2e1487fa4cf82a9498d003cb8745fd61344ff4ec964b0ca08d302cc2310e77",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleanuncertainreadrecoveryservice_php": {
@@ -2442,8 +2442,8 @@
         },
         "runtime_app_services_managedruntimepublicationpolicy_php": {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "6ed77a4c98268c3ff320c43bfd85e266900a37defbf72e848a346223e89a62d8",
-            "sha256_lf": "6ed77a4c98268c3ff320c43bfd85e266900a37defbf72e848a346223e89a62d8",
+            "sha256": "229b47cc02147fe487755c11166b3db51bb6d1daecc075c7ff85552c6401f687",
+            "sha256_lf": "229b47cc02147fe487755c11166b3db51bb6d1daecc075c7ff85552c6401f687",
             "text": true
         },
         "runtime_app_services_manualcampaignadapter_php": {
@@ -2670,8 +2670,8 @@
         },
         "runtime_app_services_melitransportsourcepolicy_php": {
             "path": "app/Services/MeliTransportSourcePolicy.php",
-            "sha256": "8a1c70b25b7b3ca280ccada1ac4442b3459e06b56f290c058a6c5346c5db501a",
-            "sha256_lf": "8a1c70b25b7b3ca280ccada1ac4442b3459e06b56f290c058a6c5346c5db501a",
+            "sha256": "03bc3d74edc284a27f3f1345feec4c5362e16f4f1e890099d477eab9861ec061",
+            "sha256_lf": "03bc3d74edc284a27f3f1345feec4c5362e16f4f1e890099d477eab9861ec061",
             "text": true
         },
         "runtime_app_services_meliworkloadpolicyservice_php": {
@@ -3132,8 +3132,8 @@
         },
         "runtime_app_services_salesauditexactrepairservice_php": {
             "path": "app/Services/SalesAuditExactRepairService.php",
-            "sha256": "e214d4293946edea6388d20f278cff176ac04c007d9659a9ce8c732fc4a97955",
-            "sha256_lf": "e214d4293946edea6388d20f278cff176ac04c007d9659a9ce8c732fc4a97955",
+            "sha256": "17319d975f733815914a06d792e68a1b8735a134f057ea8401698732b8ddd9ab",
+            "sha256_lf": "17319d975f733815914a06d792e68a1b8735a134f057ea8401698732b8ddd9ab",
             "text": true
         },
         "runtime_app_services_salesauditrunservice_php": {
@@ -4440,8 +4440,8 @@
         },
         "runtime_composer_json": {
             "path": "composer.json",
-            "sha256": "81f9af6b3c3f5d97910844597c8c60e0f1651cf6a3e46093401160cb62f4d4b7",
-            "sha256_lf": "81f9af6b3c3f5d97910844597c8c60e0f1651cf6a3e46093401160cb62f4d4b7",
+            "sha256": "09f09ea478d2acd05121346755ec6e90cb5455b7cbdd7ec3bd81935bf75db32e",
+            "sha256_lf": "09f09ea478d2acd05121346755ec6e90cb5455b7cbdd7ec3bd81935bf75db32e",
             "text": true
         },
         "runtime_composer_lock": {
@@ -4562,6 +4562,12 @@
             "path": "database/migrations/297_queue_v4_transport_sales_api_health_2_38_5.sql",
             "sha256": "5f2bfc2b23e7fd4cc0fa5671850afb9903f8992ddd6da738991142180d6e9c56",
             "sha256_lf": "5f2bfc2b23e7fd4cc0fa5671850afb9903f8992ddd6da738991142180d6e9c56",
+            "text": true
+        },
+        "runtime_database_migrations_298_queue_v4_sales_repair_transport_authority_2_38_9_sql": {
+            "path": "database/migrations/298_queue_v4_sales_repair_transport_authority_2_38_9.sql",
+            "sha256": "509993108cdd3256ce5debae4246fa5f0fbd820f009af72d2a12b0bb96cdfa6d",
+            "sha256_lf": "509993108cdd3256ce5debae4246fa5f0fbd820f009af72d2a12b0bb96cdfa6d",
             "text": true
         },
         "runtime_index_php": {
@@ -5278,6 +5284,12 @@
             "sha256_lf": "9c424eba73fb097649136c4d20d79d073a329a9c346e357cc59b7dc0ca61ab19",
             "text": true
         },
+        "runtime_resources_release_managed_runtime_dependencies_2_38_9_json": {
+            "path": "resources/release/managed-runtime-dependencies-2.38.9.json",
+            "sha256": "20a123febdec5e65fbcbac520d876c118830f081184386ed82a6fa769b649888",
+            "sha256_lf": "20a123febdec5e65fbcbac520d876c118830f081184386ed82a6fa769b649888",
+            "text": true
+        },
         "runtime_resources_release_production_legacy_quarantine_2_36_1_json": {
             "path": "resources/release/production-legacy-quarantine-2.36.1.json",
             "sha256": "b6adf206e3d3857807d44d3ec0b2929535c2e184cf8fac07b975987bcc642f25",
@@ -5348,6 +5360,12 @@
             "path": "resources/release/queue-v4-canonical-db-contract-2.38.8.json",
             "sha256": "4b22d8ea13b2bfd2c16c39fbf6eb8da24343f833a1b86c2448f8b517e30768f6",
             "sha256_lf": "4b22d8ea13b2bfd2c16c39fbf6eb8da24343f833a1b86c2448f8b517e30768f6",
+            "text": true
+        },
+        "runtime_resources_release_queue_v4_canonical_db_contract_2_38_9_json": {
+            "path": "resources/release/queue-v4-canonical-db-contract-2.38.9.json",
+            "sha256": "9d360bd8fa4cd63c828267661e0e016ae3936b10736a7d0837fe6dc4f08069e9",
+            "sha256_lf": "9d360bd8fa4cd63c828267661e0e016ae3936b10736a7d0837fe6dc4f08069e9",
             "text": true
         },
         "runtime_resources_release_updater_authority_2_36_10_json": {
@@ -5498,6 +5516,12 @@
             "path": "resources/release/updater-authority-2.38.8.json",
             "sha256": "de373214205cdc5d100bbbf0b200fa38fc51edb6ee18ba5ceb9996cd4a764eb6",
             "sha256_lf": "de373214205cdc5d100bbbf0b200fa38fc51edb6ee18ba5ceb9996cd4a764eb6",
+            "text": true
+        },
+        "runtime_resources_release_updater_authority_2_38_9_json": {
+            "path": "resources/release/updater-authority-2.38.9.json",
+            "sha256": "1c3cf90f20dbc36d112d7b0ddef2115741313289faafbdbffb1ec3035a178c52",
+            "sha256_lf": "1c3cf90f20dbc36d112d7b0ddef2115741313289faafbdbffb1ec3035a178c52",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

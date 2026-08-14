@@ -4440,8 +4440,8 @@
         },
         "runtime_composer_json": {
             "path": "composer.json",
-            "sha256": "ea71a7dfaa6ada7450032bdb663c774a63bef450c13cff0fa9b3e42e7d1f7c12",
-            "sha256_lf": "ea71a7dfaa6ada7450032bdb663c774a63bef450c13cff0fa9b3e42e7d1f7c12",
+            "sha256": "81f9af6b3c3f5d97910844597c8c60e0f1651cf6a3e46093401160cb62f4d4b7",
+            "sha256_lf": "81f9af6b3c3f5d97910844597c8c60e0f1651cf6a3e46093401160cb62f4d4b7",
             "text": true
         },
         "runtime_composer_lock": {

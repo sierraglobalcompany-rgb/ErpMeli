@@ -170,8 +170,9 @@ $assert(($resultA['status'] ?? '') === 'deferred' && ($resultA['stop_reason'] ??
     && $clientA->calls === 0,
     'expired_only_not_deferred_safely:' . json_encode([$resultA, $rowA, $clientA->calls]));
 
-// B. A newer eligible account may advance while an older account waits for
-// OAuth; this selection is separate from the commercial FIFO.
+// B/K. A newer account made usable by the preceding OAuth control-plane stage
+// may advance one bounded Sales Audit page while an older account still waits.
+// This selection is separate from the commercial FIFO.
 $reset();
 $valid = $accounts[1];
 $setToken($expired, 30);
@@ -182,30 +183,37 @@ $scheduleOAuth($expired, 180);
 $pdo->exec('UPDATE sync_sales_audit_jobs SET created_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 10 MINUTE),updated_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 10 MINUTE) WHERE id=' . $olderExpiredJob);
 $clientB = new SalesAuditClient2387((int) $valid['id'], 'success');
 $resultB = (new SalesAuditRunService(static fn(int $id): object => $clientB))->processDue(1, microtime(true) + 20);
-$statesB = $pdo->query('SELECT id,status,attempts FROM sync_sales_audit_jobs ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+$statesB = $pdo->query('SELECT id,status,attempts,processed_pages FROM sync_sales_audit_jobs ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+$pagesB = (int) $pdo->query(
+    'SELECT COUNT(*) FROM sync_sales_audit_run_pages WHERE meli_account_id=' . (int) $valid['id']
+)->fetchColumn();
 $assert((int) ($resultB['claimed'] ?? 0) === 1 && ($resultB['status'] ?? '') === 'complete'
     && (int) $statesB[0]['id'] === $olderExpiredJob && $statesB[0]['status'] === 'pending' && (int) $statesB[0]['attempts'] === 0
     && (int) $statesB[1]['id'] === $newerValidJob && $statesB[1]['status'] === 'complete'
-    && $clientB->calls === 1,
-    'valid_account_not_selected_over_expired:' . json_encode([$resultB, $statesB]));
+    && (int) $statesB[1]['processed_pages'] === 1 && $pagesB === 1 && $clientB->calls === 1,
+    'valid_account_not_selected_or_one_page_not_bounded:' . json_encode([$resultB, $statesB, $pagesB]));
 
 // C. Token becomes unusable after claim: persisted NOT_DISPATCHED authority
 // permits a precise non-failure refund.
 $reset();
 $setToken($valid, 7200);
 $nextRace = $scheduleOAuth($valid, 240);
-[, $raceJob] = $seed($valid, 'pending', 4);
+[$raceRun, $raceJob] = $seed($valid, 'pending', 4);
 $pdo->exec('UPDATE sync_sales_audit_jobs SET attempts=3,consecutive_failures=2 WHERE id=' . $raceJob);
+$pdo->exec("UPDATE sync_sales_audit_runs SET diagnostic_id='preexisting-audit-evidence',safe_error_message='preexisting' WHERE id=" . $raceRun);
 $clientC = new SalesAuditClient2387((int) $valid['id'], 'oauth');
 $resultC = (new SalesAuditRunService(static fn(int $id): object => $clientC))->processDue(1, microtime(true) + 20);
 $rowC = $pdo->query('SELECT * FROM sync_sales_audit_jobs WHERE id=' . $raceJob)->fetch(PDO::FETCH_ASSOC);
+$runC = $pdo->query('SELECT status,diagnostic_id,safe_error_message FROM sync_sales_audit_runs WHERE id=' . $raceRun)
+    ->fetch(PDO::FETCH_ASSOC);
 $assert(($resultC['status'] ?? '') === 'deferred' && ($resultC['stop_reason'] ?? '') === 'oauth_refresh_required'
     && (int) ($resultC['claimed'] ?? 0) === 1 && (int) ($resultC['errors'] ?? -1) === 0
     && ($resultC['abort_scheduler'] ?? true) === false && $rowC['status'] === 'waiting_budget'
     && (int) $rowC['attempts'] === 3 && (int) $rowC['consecutive_failures'] === 2
     && $rowC['diagnostic_id'] === null && $rowC['last_error_class'] === 'oauth_refresh_required'
-    && $rowC['next_run_at'] === $nextRace,
-    'oauth_race_not_refunded:' . json_encode([$resultC, $rowC]));
+    && $rowC['next_run_at'] === $nextRace && $runC['status'] === 'running'
+    && $runC['diagnostic_id'] === 'preexisting-audit-evidence' && $runC['safe_error_message'] === 'preexisting',
+    'oauth_race_not_refunded_or_erased_evidence:' . json_encode([$resultC, $rowC, $runC]));
 
 // D. Cross-account exception provenance is an invariant failure and does not
 // refund the claimed attempt.

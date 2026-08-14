@@ -362,6 +362,7 @@ final class SalesAuditRunService
                   AND r.meli_account_id=j.meli_account_id
                  INNER JOIN meli_accounts a ON a.company_id=j.company_id AND a.id=j.meli_account_id
                  WHERE j.status='error' AND j.last_error_class=?
+                   AND j.attempts>=1 AND j.consecutive_failures>=1
                    AND j.remote_dispatch_state='NOT_DISPATCHED' AND j.last_http_status IS NULL
                    AND NOT EXISTS (
                      SELECT 1 FROM queue_v4_clean_transport_events e
@@ -397,6 +398,7 @@ final class SalesAuditRunService
                          j.last_error_class=?,j.last_error_retryable=1,j.heartbeat_at=NULL,j.updated_at=UTC_TIMESTAMP()
                      WHERE j.id=? AND j.company_id=? AND j.meli_account_id=? AND j.sync_sales_audit_run_id=?
                        AND j.status='error' AND j.last_error_class=?
+                       AND j.attempts>=1 AND j.consecutive_failures>=1
                        AND j.remote_dispatch_state='NOT_DISPATCHED' AND j.last_http_status IS NULL
                        AND NOT EXISTS (
                          SELECT 1 FROM queue_v4_clean_transport_events e
@@ -606,7 +608,7 @@ final class SalesAuditRunService
                 return $this->abortResult('sales_audit_oauth_refund_cas_lost');
             }
             $pdo->prepare(
-                "UPDATE sync_sales_audit_runs SET status='running',safe_error_message=NULL,diagnostic_id=NULL,updated_at=UTC_TIMESTAMP()
+                "UPDATE sync_sales_audit_runs SET status='running',updated_at=UTC_TIMESTAMP()
                  WHERE id=? AND company_id=? AND meli_account_id=? AND status<>'complete'"
             )->execute([
                 (int) $job['sync_sales_audit_run_id'],
@@ -678,7 +680,11 @@ final class SalesAuditRunService
         int $skew,
     ): ?string {
         $operation = $pdo->prepare(
-            "SELECT next_attempt_at FROM oauth_refresh_operations
+            "SELECT DATE_FORMAT(
+                        GREATEST(next_attempt_at,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 SECOND)),
+                        '%Y-%m-%d %H:%i:%s'
+                    ) effective_next_attempt_at
+             FROM oauth_refresh_operations
              WHERE company_id=? AND meli_account_id=? AND state IN ('SCHEDULED','RUNNING','WAITING')
              ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE"
         );
@@ -688,10 +694,11 @@ final class SalesAuditRunService
             if (!$allowAlreadyResolved || !$this->businessTokenEligible($pdo, $companyId, $accountId, $skew)) {
                 return null;
             }
-            return gmdate('Y-m-d H:i:s', time() + 1);
+            return (string) $pdo->query(
+                "SELECT DATE_FORMAT(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 SECOND),'%Y-%m-%d %H:%i:%s')"
+            )->fetchColumn();
         }
-        $timestamp = strtotime((string) $value . ' UTC');
-        return gmdate('Y-m-d H:i:s', $timestamp === false ? time() + 1 : max(time() + 1, $timestamp));
+        return (string) $value;
     }
 
     private function businessTokenEligible(PDO $pdo, int $companyId, int $accountId, int $skew): bool

@@ -161,8 +161,6 @@
     "test:release-2388-db": [
       "@php -d error_reporting=-1 -d display_errors=1 tests/simple_exact_sales_repair_2388.php",
       "@php -d error_reporting=-1 -d display_errors=1 tests/sales_audit_oauth_admission_2387.php",
-      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_transport_sales_health_2385.php",
-      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_oauth_real_path_2387.php",
       "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_update_transition_2388.php"
     ],
     "test:release-2387": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2387.php",

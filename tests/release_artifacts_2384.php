@@ -145,6 +145,18 @@ try {
             'resources/release/updater-authority-2.38.5.json',
             'resources/runtime-manifest.json',
         ];
+    } elseif ($targetVersion === '2.38.6') {
+        $requiredOverlayPaths = [
+            'VERSION',
+            'app/Core/PrivatePathAuthority.php',
+            'app/Services/ManagedRuntimePublicationPolicy.php',
+            'app/Services/QueueOAuthDurableRecoveryStore.php',
+            'jobs/queue_v4_runtime_self_check.php',
+            'resources/release/managed-runtime-dependencies-2.38.6.json',
+            'resources/release/queue-v4-canonical-db-contract-2.38.6.json',
+            'resources/release/updater-authority-2.38.6.json',
+            'resources/runtime-manifest.json',
+        ];
     }
     foreach (array_values(array_unique($requiredOverlayPaths)) as $requiredOverlay) {
         $assert(isset($overlay[$requiredOverlay]), 'required_overlay_path_missing:' . $requiredOverlay);

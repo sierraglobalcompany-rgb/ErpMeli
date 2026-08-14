@@ -19,7 +19,7 @@ use Throwable;
 
 final class QueueV4CleanReadinessService
 {
-    private const REQUIRED_MIGRATION = '297_queue_v4_transport_sales_api_health_2_38_5.sql';
+    private const REQUIRED_MIGRATION = '298_queue_v4_sales_repair_transport_authority_2_38_9.sql';
     /** @var \Closure(int):MeliReadClientInterface */
     private \Closure $clientFactory;
 
@@ -235,7 +235,7 @@ final class QueueV4CleanReadinessService
         );
         $migration->execute([self::REQUIRED_MIGRATION]);
         if ((int) $migration->fetchColumn() !== 1) {
-            $issues[] = 'migration_297_missing';
+            $issues[] = 'migration_298_missing';
         }
         $pending = (new Migrator($this->pdo, dirname(__DIR__, 2) . '/database/migrations'))->pendingCount();
         if ($pending !== 0) {

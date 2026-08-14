@@ -23,7 +23,7 @@ final class QueueV4CleanTransportJournal
         string $endpointKey,
     ): void {
         if ($companyId < 1 || $accountId < 1 || $workId < 1 || $generation < 1
-            || !in_array($source, ['queue', 'oauth', 'sales_audit'], true)
+            || !in_array($source, ['queue', 'oauth', 'sales_audit', 'sales_repair'], true)
             || $requestId === '' || !in_array($method, ['GET', 'POST'], true)
             || $endpointKey === '') {
             throw new RuntimeException('queue_v4_transport_journal_context_invalid');

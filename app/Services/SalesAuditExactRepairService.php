@@ -6,7 +6,7 @@ namespace App\Services;
 
 use App\Core\Auth;
 use App\Core\Database;
-use App\QueueV4Clean\QueueV4CleanCycleBudget;
+use App\QueueV4Clean\QueueV4CleanDispatchFence;
 use PDO;
 use Throwable;
 
@@ -243,7 +243,6 @@ final class SalesAuditExactRepairService
             $itemId = (int) $item['id'];
             $externalId = (string) $item['external_order_id'];
             $this->startItem($job, $itemId);
-            $cycleBudgetClaimed = false;
             try {
                 $existingOrder = $this->localOrderId(
                     (int) $job['company_id'],
@@ -262,12 +261,17 @@ final class SalesAuditExactRepairService
                         'account_id' => (int) $job['meli_account_id'],
                         'source_queue_key' => 'sync_sales_repair_jobs',
                         'source_work_id' => (string) $itemId,
+                        'sales_repair_job_id' => (int) $job['id'],
+                        'sales_repair_item_id' => $itemId,
+                        'sales_repair_lease_owner' => $worker,
+                        'sales_repair_lease_generation' => (int) $job['lease_generation'],
                         'bulk' => false,
                     ];
                     if ($queueV4) {
-                        QueueV4CleanCycleBudget::claim();
-                        $cycleBudgetClaimed = true;
-                        $orderId = $sync->syncOrderByIdForQueueV4Clean($externalId, $meta);
+                        $orderId = ApiExecutionMetadataContext::run(
+                            $meta,
+                            static fn(): int => $sync->syncOrderByIdForQueueV4Clean($externalId, $meta),
+                        );
                     } else {
                         $orderId = $allowContinuation
                             ? $sync->syncOrderById($externalId, $meta)
@@ -283,36 +287,46 @@ final class SalesAuditExactRepairService
                 }
                 $processed++;
             } catch (OAuthRefreshRequiredException $error) {
-                if ($cycleBudgetClaimed) {
-                    QueueV4CleanCycleBudget::releaseBeforeTransport();
-                }
                 $next = gmdate('Y-m-d H:i:s', time() + 60);
                 $this->deferItem($job, $itemId, 'waiting_budget', $next, 'Esperando renovación OAuth automática.', null, true);
                 $this->releaseJob($job, $worker, 'waiting_budget', $next, null, null);
                 return ['processed' => $processed, 'jobs' => 1, 'status' => 'waiting_oauth'];
             } catch (QueueV4PreTransportDeferredException $error) {
-                if ($cycleBudgetClaimed) {
-                    QueueV4CleanCycleBudget::releaseBeforeTransport();
-                }
                 $this->deferItem($job, $itemId, 'waiting_budget', $error->nextSafeAt, 'Esperando la próxima oportunidad segura.', null, true);
                 $this->releaseJob($job, $worker, 'waiting_budget', $error->nextSafeAt, null, null);
                 return ['processed' => $processed, 'jobs' => 1, 'status' => 'waiting_budget'];
             } catch (ApiBudgetExhaustedException $error) {
-                if ($cycleBudgetClaimed && (!$error instanceof ApiRhythmDeferredException || !$error->reachedRemote)) {
-                    QueueV4CleanCycleBudget::releaseBeforeTransport();
-                }
                 $next = $error->nextSafeAt ?: gmdate('Y-m-d H:i:s', time() + 900);
                 $this->deferItem($job, $itemId, 'waiting_budget', $next, 'Esperando presupuesto seguro de consultas.', null, true);
                 $this->releaseJob($job, $worker, 'waiting_budget', $next, null, null);
                 return ['processed' => $processed, 'jobs' => 1, 'status' => 'waiting_budget'];
             } catch (ApiManualPauseException $error) {
-                if ($cycleBudgetClaimed) {
-                    QueueV4CleanCycleBudget::releaseBeforeTransport();
-                }
                 $next = $error->resumeAt ?: gmdate('Y-m-d H:i:s', time() + 900);
                 $this->deferItem($job, $itemId, 'waiting_budget', $next, 'Las consultas están pausadas preventivamente.', null, true);
                 $this->releaseJob($job, $worker, 'waiting_budget', $next, null, null);
                 return ['processed' => $processed, 'jobs' => 1, 'status' => 'waiting_budget'];
+            } catch (RemoteResultUncertainException $error) {
+                $dispatch = QueueV4CleanDispatchFence::state($meta);
+                if (($dispatch['dispatch_state'] ?? 'NOT_DISPATCHED') === 'NOT_DISPATCHED') {
+                    $next = gmdate('Y-m-d H:i:s', time() + 60);
+                    $this->deferItem(
+                        $job,
+                        $itemId,
+                        'waiting_budget',
+                        $next,
+                        'Esperando la próxima oportunidad segura.',
+                        $error->requestId,
+                        true,
+                    );
+                    $this->releaseJob($job, $worker, 'waiting_budget', $next, null, null);
+                    return ['processed' => $processed, 'jobs' => 1, 'status' => 'waiting_budget'];
+                }
+                $this->retryOrFail(
+                    $job,
+                    $item,
+                    'La consulta fue iniciada y su resultado remoto no pudo confirmarse.',
+                    $error->requestId,
+                );
             } catch (MeliApiException $error) {
                 $this->handleApiFailure($job, $item, $error);
             } catch (Throwable $error) {

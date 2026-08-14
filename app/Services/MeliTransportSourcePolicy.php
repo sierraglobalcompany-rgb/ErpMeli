@@ -101,6 +101,8 @@ final class MeliTransportSourcePolicy
 
     public static function requiresQueueV4ReadFence(string $source): bool
     {
-        return $source === 'queue_v4_clean' || $source === self::QUEUE_V4_SALES_AUDIT;
+        return $source === 'queue_v4_clean'
+            || $source === self::QUEUE_V4_SALES_AUDIT
+            || $source === self::QUEUE_V4_SALES_REPAIR;
     }
 }

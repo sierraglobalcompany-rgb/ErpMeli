@@ -185,6 +185,23 @@ try {
             'resources/release/updater-authority-2.38.8.json',
             'resources/runtime-manifest.json',
         ];
+    } elseif ($targetVersion === '2.38.9') {
+        $requiredOverlayPaths = [
+            'VERSION',
+            'app/QueueV4Clean/QueueV4CleanDatabaseContract.php',
+            'app/QueueV4Clean/QueueV4CleanDispatchFence.php',
+            'app/QueueV4Clean/QueueV4CleanReadinessService.php',
+            'app/QueueV4Clean/QueueV4CleanTransportJournal.php',
+            'app/Services/ManagedRuntimePublicationPolicy.php',
+            'app/Services/MeliTransportSourcePolicy.php',
+            'app/Services/SalesAuditExactRepairService.php',
+            'composer.json',
+            'database/migrations/298_queue_v4_sales_repair_transport_authority_2_38_9.sql',
+            'resources/release/managed-runtime-dependencies-2.38.9.json',
+            'resources/release/queue-v4-canonical-db-contract-2.38.9.json',
+            'resources/release/updater-authority-2.38.9.json',
+            'resources/runtime-manifest.json',
+        ];
     }
     foreach (array_values(array_unique($requiredOverlayPaths)) as $requiredOverlay) {
         $assert(isset($overlay[$requiredOverlay]), 'required_overlay_path_missing:' . $requiredOverlay);

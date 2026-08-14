@@ -76,6 +76,21 @@ $pdo->prepare(
      (meli_account_id,access_token_encrypted,refresh_token_encrypted,expires_at,refresh_version)
      VALUES (?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 6 HOUR),1)'
 )->execute([$accountId, Crypto::encrypt('access-2388'), Crypto::encrypt('refresh-2388')]);
+for ($fixture = 2; $fixture <= 3; $fixture++) {
+    $pdo->prepare('INSERT INTO companies (name,nit,status) VALUES (?,?,1)')
+        ->execute(['Repair 2388 fixture ' . $fixture, '2388-' . $fixture]);
+    $fixtureCompanyId = (int) $pdo->lastInsertId();
+    $pdo->prepare(
+        'INSERT INTO meli_accounts
+         (company_id,account_name,meli_user_id,nickname,site_id,country_id,status)
+         VALUES (?,?,?,?,"MCO","CO","conectado")'
+    )->execute([
+        $fixtureCompanyId,
+        'Repair fixture ' . $fixture,
+        2388000 + $fixture,
+        'repair2388-' . $fixture,
+    ]);
+}
 
 $settings = new AppSettingsService();
 foreach ([

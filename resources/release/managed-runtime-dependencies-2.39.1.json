@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "legacy-reactivation-fail-closed-2.39.1-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "runtime_manifest_paths_sha256": "d157fefdb53cfcaa698c5a0fefd5696e4ad658cc84ff01754478f32b289a047f",
   "coverage_base_commit": "aa755117fadcd499908a7640724c639f5600b07c",
   "classifications": {
     "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

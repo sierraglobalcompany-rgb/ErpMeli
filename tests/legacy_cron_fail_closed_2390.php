@@ -89,9 +89,57 @@ try {
     }
     copy($root . '/jobs/process_sync_queue.php', $release . '/jobs/process_sync_queue.php');
     file_put_contents(
+        $release . '/jobs/_bootstrap.php',
+        <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\Services;
+
+final class CronDoctorService
+{
+    public function snapshot(string $source): array
+    {
+        return ['source' => $source, 'remote_http' => 0];
+    }
+
+    public function textReport(): string
+    {
+        return "DOCTOR_OK remote=false http=0\n";
+    }
+}
+PHP,
+    );
+    file_put_contents(
         $release . '/resources/runtime-manifest.json',
         json_encode(['version' => '2.39.0', 'build_id' => 'legacy-cut-test'], JSON_THROW_ON_ERROR),
     );
+
+    $doctor = $run([PHP_BINARY, $release . '/jobs/process_sync_queue.php', '--doctor'], $release);
+    $assert($doctor['exit'] === 0, 'process_sync_queue_doctor_exit_invalid');
+    $assert(trim($doctor['stdout']) === 'DOCTOR_OK remote=false http=0', 'process_sync_queue_doctor_output_invalid');
+    $assert($doctor['stderr'] === '', 'process_sync_queue_doctor_stderr_not_empty');
+
+    $qaBlocked = $run([PHP_BINARY, $release . '/jobs/process_sync_queue.php', '--qa-replay'], $release);
+    $qaBlockedPayload = json_decode($qaBlocked['stdout'], true, 16, JSON_THROW_ON_ERROR);
+    $assert($qaBlocked['exit'] === 2 && ($qaBlockedPayload['ok'] ?? null) === false,
+        'process_sync_queue_qa_without_fake_not_blocked');
+    $assert(($qaBlockedPayload['fake_transport'] ?? null) === false,
+        'process_sync_queue_qa_without_fake_authority_invalid');
+
+    $qaFake = $run([
+        PHP_BINARY,
+        $release . '/jobs/process_sync_queue.php',
+        '--qa-replay',
+        '--fake-transport',
+    ], $release);
+    $qaFakePayload = json_decode($qaFake['stdout'], true, 16, JSON_THROW_ON_ERROR);
+    $assert($qaFake['exit'] === 0 && ($qaFakePayload['ok'] ?? null) === true,
+        'process_sync_queue_qa_fake_not_allowed');
+    $assert(($qaFakePayload['fake_transport'] ?? null) === true,
+        'process_sync_queue_qa_fake_authority_invalid');
+
     $normalEnvironment = array_merge($_ENV, [
         'CRON_V3_ENABLED' => 'true',
         'CRON_V3_SHADOW_ENABLED' => 'false',

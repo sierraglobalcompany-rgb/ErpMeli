@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__);
+require $root . '/app/Services/MeliTransportSourcePolicy.php';
 $checks = 0;
 $assert = static function (bool $condition, string $message) use (&$checks): void {
     $checks++;
@@ -11,6 +12,7 @@ $assert = static function (bool $condition, string $message) use (&$checks): voi
     }
 };
 $read = static fn (string $path): string => (string) file_get_contents($root . '/' . $path);
+$assert(trim($read('VERSION')) === '2.39.3', 'version_authority_invalid');
 
 $migrationFiles = glob($root . '/database/migrations/299_*.sql') ?: [];
 $assert(count($migrationFiles) === 1, 'migration299_count_invalid');
@@ -60,6 +62,25 @@ $assert(str_contains($policy, 'QUEUE_V4_DOMAIN_EXACT')
 $assert(str_contains($fence, "'billing_orders'")
     && substr_count($fence, 'QueueV4CleanCycleBudget::claim()') === 1, 'domain_transport_budget_not_shared');
 $assert(!is_file($root . '/app/QueueV4Clean/QueueV4CleanDomainHandler.php'), 'parallel_domain_handler_class_created');
+
+$allowed = static function (string $source, string $method, string $path): bool {
+    try {
+        \App\Services\MeliTransportSourcePolicy::assertAllowed($source, $method, $path);
+        return true;
+    } catch (RuntimeException) {
+        return false;
+    }
+};
+$domain = \App\Services\MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT;
+$assert($allowed($domain, 'GET', '/billing/integration/group/ML/order/details'), 'domain_billing_get_denied');
+$assert(!$allowed($domain, 'POST', '/billing/integration/group/ML/order/details')
+    && !$allowed($domain, 'GET', '/orders/search')
+    && !$allowed($domain, 'GET', '/orders/1001')
+    && !$allowed($domain, 'GET', '/items/1001'), 'domain_transport_scope_expanded');
+$assert(!$allowed('queue_v4_clean', 'GET', '/billing/integration/group/ML/order/details')
+    && !$allowed(\App\Services\MeliTransportSourcePolicy::QUEUE_V4_SALES_AUDIT, 'GET', '/billing/integration/group/ML/order/details')
+    && !$allowed(\App\Services\MeliTransportSourcePolicy::QUEUE_V4_SALES_REPAIR, 'GET', '/billing/integration/group/ML/order/details'), 'legacy_queue_source_gained_billing');
+$assert(\App\Services\MeliTransportSourcePolicy::blocksRedirects($domain), 'domain_redirects_not_blocked');
 
 echo 'QUEUE_V4_CLEAN_CONTRACT_2393=PASS checks=' . $checks
     . ' schema=299 budget_claims=1 new_tables=0 new_columns=0' . PHP_EOL;

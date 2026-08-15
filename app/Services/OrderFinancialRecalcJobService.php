@@ -9,6 +9,7 @@ use App\Core\Database;
 use App\Core\HttpException;
 use DateTimeImmutable;
 use PDO;
+use RuntimeException;
 use Throwable;
 
 final class OrderFinancialRecalcJobService
@@ -108,6 +109,20 @@ final class OrderFinancialRecalcJobService
             $completedSql = $count > 0 ? 'NULL' : 'UTC_TIMESTAMP()';
             $pdo->prepare('UPDATE order_financial_recalc_jobs SET total_items=:total,status=:status_value,safe_message=:message,completed_at=' . $completedSql . ' WHERE id=:id')
                 ->execute(['total' => $count, 'status_value' => $status, 'message' => $message, 'id' => $jobId]);
+            if ($count > 0 && $sourceType === 'sales_repair') {
+                $receipt = (new CronAdmissionService($pdo))->submit(
+                    'financial_recalc',
+                    (int) $scope['company_id'],
+                    (int) $scope['meli_account_id'],
+                    $jobId,
+                    'source:' . $jobId,
+                );
+                if (($receipt['accepted'] ?? false) !== true) {
+                    throw new RuntimeException(
+                        'financial_recalc_cron_admission_failed:' . (string) ($receipt['reason'] ?? 'UNKNOWN')
+                    );
+                }
+            }
             $pdo->commit();
             return $jobId;
         } catch (Throwable $e) {

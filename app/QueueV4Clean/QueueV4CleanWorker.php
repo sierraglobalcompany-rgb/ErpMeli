@@ -13,10 +13,13 @@ use App\Services\CronDeadlineDeferredException;
 use App\Services\MeliApiClient;
 use App\Services\MeliApiException;
 use App\Services\MeliReadClientInterface;
+use App\Services\MeliTransportSourcePolicy;
 use App\Services\OAuthRefreshRequiredException;
+use App\Services\OrderFinancialRecalcJobService;
 use App\Services\OrderSyncService;
 use App\Services\QueueV4PreTransportDeferredException;
 use App\Services\RemoteResultUncertainException;
+use App\Services\SaleFinancialService;
 use PDO;
 use RuntimeException;
 use Throwable;
@@ -32,11 +35,14 @@ final class QueueV4CleanWorker
     private \Closure $syncFactory;
     /** @var null|\Closure(array<string,mixed>):void */
     private ?\Closure $jobHandler;
+    /** @var null|\Closure(string,int,int):void */
+    private ?\Closure $domainHandler;
 
     /**
      * @param null|callable(int):MeliReadClientInterface $clientFactory
      * @param null|callable(int):OrderSyncService $syncFactory
      * @param null|callable(array<string,mixed>):void $jobHandler Test-only/local fixture seam.
+     * @param null|callable(string,int,int):void $domainHandler Test-only domain source seam.
      */
     public function __construct(
         private readonly PDO $pdo,
@@ -44,6 +50,7 @@ final class QueueV4CleanWorker
         ?callable $clientFactory = null,
         ?callable $syncFactory = null,
         ?callable $jobHandler = null,
+        ?callable $domainHandler = null,
     ) {
         $this->clientFactory = $clientFactory !== null
             ? \Closure::fromCallable($clientFactory)
@@ -52,6 +59,7 @@ final class QueueV4CleanWorker
             ? \Closure::fromCallable($syncFactory)
             : static fn (int $accountId): OrderSyncService => new OrderSyncService($accountId);
         $this->jobHandler = $jobHandler !== null ? \Closure::fromCallable($jobHandler) : null;
+        $this->domainHandler = $domainHandler !== null ? \Closure::fromCallable($domainHandler) : null;
     }
 
     /** @return array{claimed:int,completed:int,deferred:int} */
@@ -81,7 +89,7 @@ final class QueueV4CleanWorker
                 }
                 $claimed++;
                 try {
-                    $this->handle($job);
+                    $outcome = $this->handle($job);
                 } catch (OAuthRefreshRequiredException) {
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
@@ -158,6 +166,28 @@ final class QueueV4CleanWorker
                     $deferred++;
                     continue;
                 }
+                if (($outcome['state'] ?? '') === 'waiting') {
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        (string) ($outcome['classification'] ?? 'domain_source_waiting'),
+                        isset($outcome['next_safe_at']) ? (string) $outcome['next_safe_at'] : null,
+                    );
+                    $deferred++;
+                    continue;
+                }
+                if (($outcome['state'] ?? '') === 'review') {
+                    $this->repository->review(
+                        $job,
+                        $runId,
+                        (string) ($outcome['classification'] ?? 'domain_source_review'),
+                    );
+                    $deferred++;
+                    continue;
+                }
+                if (($outcome['state'] ?? '') !== 'completed') {
+                    throw new RuntimeException('queue_v4_clean_worker_outcome_invalid');
+                }
                 $this->repository->complete($job, $runId);
                 $completed++;
             }
@@ -169,12 +199,15 @@ final class QueueV4CleanWorker
         }
     }
 
-    /** @param array<string,mixed> $job */
-    private function handle(array $job): void
+    /**
+     * @param array<string,mixed> $job
+     * @return array{state:string,classification?:string,next_safe_at?:?string}
+     */
+    private function handle(array $job): array
     {
         if ($this->jobHandler !== null) {
             ($this->jobHandler)($job);
-            return;
+            return ['state' => 'completed'];
         }
         $companyId = (int) $job['company_id'];
         $accountId = (int) $job['meli_account_id'];
@@ -263,7 +296,7 @@ final class QueueV4CleanWorker
                     throw new RuntimeException('queue_v4_clean_checkpoint_lost');
                 }
             }
-            return;
+            return ['state' => 'completed'];
         }
         if ($type === 'order_exact') {
             $orderId = trim((string) ($payload['order_id'] ?? $job['resource_id'] ?? ''));
@@ -277,9 +310,120 @@ final class QueueV4CleanWorker
                 'source_queue_key' => 'queue_v4_clean',
                 'source_work_id' => (string) $job['id'],
             ] + $this->transportMeta($job));
-            return;
+            return ['state' => 'completed'];
+        }
+        if ($type === 'domain_exact') {
+            return $this->handleDomainExact($job, $companyId, $accountId, $payload);
         }
         throw new RuntimeException('queue_v4_clean_payload_job_type');
+    }
+
+    /**
+     * @param array<string,mixed> $job
+     * @param array<string,mixed> $payload
+     * @return array{state:string,classification?:string,next_safe_at?:?string}
+     */
+    private function handleDomainExact(array $job, int $companyId, int $accountId, array $payload): array
+    {
+        $capability = trim((string) ($payload['capability'] ?? ''));
+        $sourceId = (int) ($payload['source_id'] ?? $job['resource_id'] ?? 0);
+        if (!in_array($capability, ['financial_recalc', 'financial_reconciliation'], true) || $sourceId < 1) {
+            return ['state' => 'review', 'classification' => 'domain_payload_invalid'];
+        }
+        $resourceId = trim((string) ($job['resource_id'] ?? ''));
+        if ($resourceId === '' || !ctype_digit($resourceId) || (int) $resourceId !== $sourceId) {
+            return ['state' => 'review', 'classification' => 'domain_payload_source_mismatch'];
+        }
+        if (!$this->domainTenantExists($companyId, $accountId)) {
+            return ['state' => 'review', 'classification' => 'domain_source_tenant_mismatch'];
+        }
+
+        $source = $this->domainSource($capability, $sourceId, $companyId, $accountId);
+        if ($source === null) {
+            return ['state' => 'review', 'classification' => 'domain_source_missing'];
+        }
+        $before = $this->domainOutcome($capability, $source);
+        if ($before['state'] !== 'waiting') {
+            return $before;
+        }
+
+        ApiExecutionMetadataContext::run(
+            [
+                'source' => MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT,
+                'job_type' => 'domain_exact',
+                'company_id' => $companyId,
+                'account_id' => $accountId,
+                'source_queue_key' => $capability,
+                'source_work_id' => (string) $sourceId,
+                'bulk' => false,
+            ] + $this->transportMeta($job),
+            function () use ($capability, $sourceId, $accountId): void {
+                if ($this->domainHandler !== null) {
+                    ($this->domainHandler)($capability, $sourceId, $accountId);
+                    return;
+                }
+                if ($capability === 'financial_recalc') {
+                    (new OrderFinancialRecalcJobService())->processExact($sourceId, $accountId, 1);
+                    return;
+                }
+                (new SaleFinancialService())->processExact($sourceId);
+            }
+        );
+
+        $source = $this->domainSource($capability, $sourceId, $companyId, $accountId);
+        if ($source === null) {
+            return ['state' => 'review', 'classification' => 'domain_source_missing_after_process'];
+        }
+        return $this->domainOutcome($capability, $source);
+    }
+
+    /** @return array<string,mixed>|null */
+    private function domainSource(string $capability, int $sourceId, int $companyId, int $accountId): ?array
+    {
+        $sql = $capability === 'financial_recalc'
+            ? 'SELECT id,company_id,meli_account_id,status,NULL next_run_at
+               FROM order_financial_recalc_jobs
+               WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1'
+            : 'SELECT id,company_id,meli_account_id,status,next_run_at
+               FROM sale_financial_reconciliation_jobs
+               WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1';
+        $statement = $this->pdo->prepare($sql);
+        $statement->execute([$sourceId, $companyId, $accountId]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        return is_array($row) ? $row : null;
+    }
+
+    private function domainTenantExists(int $companyId, int $accountId): bool
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT 1 FROM meli_accounts WHERE id=? AND company_id=? LIMIT 1'
+        );
+        $statement->execute([$accountId, $companyId]);
+        return $statement->fetchColumn() !== false;
+    }
+
+    /**
+     * @param array<string,mixed> $source
+     * @return array{state:string,classification?:string,next_safe_at?:?string}
+     */
+    private function domainOutcome(string $capability, array $source): array
+    {
+        $status = strtolower(trim((string) ($source['status'] ?? '')));
+        if ($status === 'complete') {
+            return ['state' => 'completed'];
+        }
+        if (in_array($status, ['pending', 'running', 'retry', 'awaiting_remote'], true)) {
+            $next = trim((string) ($source['next_run_at'] ?? ''));
+            return [
+                'state' => 'waiting',
+                'classification' => 'domain_source_waiting:' . $capability,
+                'next_safe_at' => $next !== '' ? $next : gmdate('Y-m-d H:i:s', time() + 5),
+            ];
+        }
+        return [
+            'state' => 'review',
+            'classification' => 'domain_source_' . ($status !== '' ? $this->safeToken($status) : 'unknown'),
+        ];
     }
 
     private function failureClass(Throwable $error): string

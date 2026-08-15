@@ -23,7 +23,7 @@ final class QueueV4CleanDispatchFence
         }
         $method = strtoupper($method);
         $path = '/' . ltrim($path, '/');
-        if ($method !== 'GET' || !self::allowedPath($path)) {
+        if ($method !== 'GET' || !self::allowedPath($source, $path)) {
             throw new RuntimeException('queue_v4_clean_dispatch_endpoint_invalid');
         }
         CronDeadlineContext::assertCanStartRemote(2.0);
@@ -354,14 +354,21 @@ final class QueueV4CleanDispatchFence
         };
     }
 
-    private static function allowedPath(string $path): bool
+    private static function allowedPath(string $source, string $path): bool
     {
+        if ($source === MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT) {
+            return hash_equals('/billing/integration/group/ML/order/details', $path);
+        }
         return hash_equals('/orders/search', $path) || preg_match('#^/orders/[0-9]+$#D', $path) === 1;
     }
 
     private static function endpointKey(string $path): string
     {
-        return hash_equals('/orders/search', $path) ? 'orders_search' : 'order_exact';
+        return match (true) {
+            hash_equals('/orders/search', $path) => 'orders_search',
+            hash_equals('/billing/integration/group/ML/order/details', $path) => 'billing_orders',
+            default => 'order_exact',
+        };
     }
 
     private static function status(int $status): int

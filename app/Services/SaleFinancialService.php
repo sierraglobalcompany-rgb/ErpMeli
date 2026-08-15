@@ -115,7 +115,7 @@ final class SaleFinancialService
     /** @return array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} */
     public function processExact(int $jobId): array
     {
-        return $this->processSelected(1, $jobId);
+        return $this->processSelected(1, $jobId, false, true);
     }
 
     public function processManualExact(int $jobId): array
@@ -124,7 +124,12 @@ final class SaleFinancialService
     }
 
     /** @return array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} */
-    private function processSelected(int $limit, ?int $jobId, bool $manualExact=false): array
+    private function processSelected(
+        int $limit,
+        ?int $jobId,
+        bool $manualExact = false,
+        bool $domainExact = false,
+    ): array
     {
         if (PHP_SAPI !== 'cli' && !$manualExact) {
             throw new HttpException(404, 'Esta operación solo está disponible para el lanzador CLI.');
@@ -142,7 +147,7 @@ final class SaleFinancialService
             $previousAccountId = (int) $job['meli_account_id'];
             $summary['processed']++;
             try {
-                $result = $this->captureAndReconcile($job, $jobId === null);
+                $result = $this->captureAndReconcile($job, $jobId === null || $domainExact, $domainExact);
                 $terminal = $result['status'] === 'reconciled' ? 'complete' : $result['status'];
                 if (!($result['finalized'] ?? false)) {
                     $this->finish($job, $terminal, (string) $result['message']);
@@ -273,7 +278,7 @@ final class SaleFinancialService
     }
 
     /** @param array<string,mixed> $job @return array{status:string,message:string,finalized:bool} */
-    private function captureAndReconcile(array $job, bool $allowSuccessor): array
+    private function captureAndReconcile(array $job, bool $allowSuccessor, bool $domainSuccessor = false): array
     {
         $this->heartbeat($job);
         $pdo = Database::connectionFresh();
@@ -319,7 +324,7 @@ final class SaleFinancialService
                     (string) $job['external_sale_id'],
                     str_starts_with((string) $job['sale_key'], 'P:') ? 'pack' : 'order',
                     (string) ($orderRows[0]['currency_id'] ?? 'COP'),
-                    'input_changed',
+                    $domainSuccessor ? 'domain_input_changed' : 'input_changed',
                     (int) $job['id'],
                     (int) $job['priority_tier'],
                     null,
@@ -929,20 +934,39 @@ final class SaleFinancialService
                 mb_substr($originType, 0, 40), $originId, $createdBy,
             ]);
             $jobId = (int) $pdo->lastInsertId();
+            $created = $stmt->rowCount() === 1;
             $pdo->prepare(
                 'UPDATE sale_financial_state
                  SET official_status=IF(official_status="complete","complete","queued")
                  WHERE company_id=? AND meli_account_id=? AND sale_key=? AND input_version=?'
             )->execute([$companyId, $accountId, $saleKey, $inputVersion]);
+            $domainOrigin = in_array($originType, ['financial_recalc_local', 'domain_input_changed'], true);
+            if ($domainOrigin && $created) {
+                $receipt = (new CronAdmissionService($pdo))->submit(
+                    'financial_reconciliation',
+                    $companyId,
+                    $accountId,
+                    $jobId,
+                    'source:' . $jobId,
+                );
+                if (($receipt['accepted'] ?? false) !== true) {
+                    throw new \RuntimeException(
+                        'financial_reconciliation_cron_admission_failed:'
+                        . (string) ($receipt['reason'] ?? 'UNKNOWN')
+                    );
+                }
+            }
             $pdo->commit();
-            (new CronV3ProducerService())->saleBillingCapture(
-                $companyId,
-                $accountId,
-                $jobId,
-                $saleKey,
-                $inputVersion,
-                $priorityTier
-            );
+            if (!$domainOrigin) {
+                (new CronV3ProducerService())->saleBillingCapture(
+                    $companyId,
+                    $accountId,
+                    $jobId,
+                    $saleKey,
+                    $inputVersion,
+                    $priorityTier
+                );
+            }
             return $jobId;
         } catch (Throwable $error) {
             if ($pdo->inTransaction()) {

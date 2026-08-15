@@ -355,21 +355,6 @@ final class SalesAuditExactRepairService
                     'job_id' => (int) $job['id'],
                 ]);
             }
-            try {
-                if ((new AppSettingsService())->bool('sales_financial.auto_queue_repairs', true)) {
-                    (new SaleFinancialService())->queueFromOrderIds(
-                        array_values(array_unique($orderIds)),
-                        'sales_repair',
-                        (int) $job['id'],
-                        30
-                    );
-                }
-            } catch (Throwable $error) {
-                SafeErrorPresenter::report($error, 'Las órdenes se incorporaron, pero la conciliación oficial quedó pendiente.', [
-                    'module' => 'sales_repair',
-                    'job_id' => (int) $job['id'],
-                ]);
-            }
         }
         $result = $this->finalizeOrRelease($job, $worker);
         $result['processed'] = $processed;

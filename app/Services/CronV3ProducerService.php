@@ -13,6 +13,8 @@ use Throwable;
  */
 final class CronV3ProducerService
 {
+    private const CLAIMS_SEARCH_ADMISSION_ENABLED = false;
+
     /** @var Closure(string,string):bool */
     private readonly Closure $owns;
 
@@ -89,6 +91,9 @@ final class CronV3ProducerService
         string $requestVersion,
         int $priority = 20,
     ): bool {
+        if (!self::CLAIMS_SEARCH_ADMISSION_ENABLED) {
+            return false;
+        }
         if ($requestVersion === '') {
             return false;
         }

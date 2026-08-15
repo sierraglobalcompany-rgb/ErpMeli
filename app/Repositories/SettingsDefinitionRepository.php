@@ -63,8 +63,8 @@ final class SettingsDefinitionRepository
                 $this->number('api.logs.raw_retention_days', 'Retención técnica ampliada', 365, 1, 1825, 'días', 'No incluye secretos; use solo si necesita auditoría prolongada.', true),
             ]),
             'communications' => $this->sectionDefinition('Preguntas, reclamos y notificaciones', 'Frecuencia y límites de atención y eventos.', 'bell', [
-                $this->bool('questions.sync_enabled', 'Revisar preguntas con cron', false, 'Activa la lectura periódica de preguntas.'),
-                $this->bool('questions.endpoint_confirmed', 'Endpoint de preguntas habilitado', false, 'Solo active si la cuenta tiene soporte confirmado.'),
+                $this->bool('questions.sync_enabled', 'Sincronización general retirada', false, 'Debe permanecer apagada: no existe consumidor automático vigente.'),
+                $this->bool('questions.endpoint_confirmed', 'Búsqueda general retirada', false, 'Debe permanecer apagada. Las preguntas exactas notificadas conservan su ruta segura.'),
                 $this->number('questions.page_limit', 'Preguntas por consulta', 50, 1, 100, 'preguntas', 'Límite por página.'),
                 $this->number('questions.lookback_hours', 'Ventana de revisión', 48, 1, 720, 'horas', 'Revisa preguntas recientes y reduce duplicados.'),
                 $this->bool('questions.email_enabled', 'Enviar alertas por correo', false, 'Requiere que el servidor permita enviar correo.'),

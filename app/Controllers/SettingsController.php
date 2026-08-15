@@ -296,6 +296,12 @@ final class SettingsController
     {
         $this->requireAdminPermanent();
         Csrf::validate($_POST['_token'] ?? null);
+        if (isset($_POST['questions_sync_enabled']) || isset($_POST['questions_endpoint_confirmed'])) {
+            throw new \App\Core\HttpException(
+                410,
+                'La sincronización general de preguntas está retirada. No se cambió la configuración.'
+            );
+        }
         $settings = new AppSettingsService();
         foreach ([
             'sync.max_manual_range_days' => 'sync',
@@ -388,8 +394,8 @@ final class SettingsController
         $settings->set('api.guard.enabled', isset($_POST['api_guard_enabled']) ? '1' : '0', 'api_guard');
         $settings->set('api.budget.enabled', isset($_POST['api_budget_enabled']) ? '1' : '0', 'api_guard');
         $settings->set('api.cron.priority_budget_enabled', isset($_POST['api_cron_priority_budget_enabled']) ? '1' : '0', 'api_guard');
-        $settings->set('questions.sync_enabled', isset($_POST['questions_sync_enabled']) ? '1' : '0', 'questions');
-        $settings->set('questions.endpoint_confirmed', isset($_POST['questions_endpoint_confirmed']) ? '1' : '0', 'questions');
+        $settings->set('questions.sync_enabled', '0', 'questions');
+        $settings->set('questions.endpoint_confirmed', '0', 'questions');
         $settings->set('questions.email_enabled', isset($_POST['questions_email_enabled']) ? '1' : '0', 'questions');
         if (isset($_POST['questions_email_to'])) {
             $settings->set('questions.email_to', trim((string) $_POST['questions_email_to']), 'questions');

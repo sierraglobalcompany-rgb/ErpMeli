@@ -30,6 +30,7 @@ final class SettingsSectionService
 
     public function save(string $sectionKey, array $submitted, bool $restoreRecommended = false): array
     {
+        $this->assertRetiredQuestionAdmission($sectionKey, $submitted);
         $section = $this->requireSection($sectionKey);
         $before = $this->values($sectionKey);
         $after = $before;
@@ -60,6 +61,20 @@ final class SettingsSectionService
             throw $e;
         }
         return $after;
+    }
+
+    private function assertRetiredQuestionAdmission(string $sectionKey, array $submitted): void
+    {
+        if ($sectionKey !== 'communications') {
+            return;
+        }
+        foreach (['questions.sync_enabled', 'questions.endpoint_confirmed'] as $key) {
+            if (in_array(strtolower(trim((string) ($submitted[$key] ?? '0'))), ['1', 'true', 'on', 'yes'], true)) {
+                throw new \RuntimeException(
+                    'La sincronización general de preguntas está retirada. No se cambió la configuración.'
+                );
+            }
+        }
     }
 
     private function validate(array $field, mixed $raw): string

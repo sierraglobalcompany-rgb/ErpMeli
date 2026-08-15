@@ -223,10 +223,7 @@ $label = static fn (string $value): string => match ($value) {
           <h2>Recuperación del historial</h2>
           <p>Primero clasifica localmente y agrupa recursos. Solo después, con su aprobación, encola lo que falta.</p>
         </div>
-        <form method="post" action="<?= View::e($base) ?>/notifications/backfill/analyze">
-          <input type="hidden" name="_token" value="<?= Csrf::token() ?>">
-          <button type="submit" class="btn">Analizar historial sin API</button>
-        </form>
+        <span class="muted">La admisión automática está retirada; el historial existente permanece visible.</span>
       </header>
       <?php if (!$backfillRuns): ?><div class="empty">No se ha ejecutado una recuperación histórica.</div><?php endif; ?>
       <?php foreach ($backfillRuns as $run): ?>
@@ -236,20 +233,7 @@ $label = static fn (string $value): string => match ($value) {
             <span class="badge <?= in_array($run['status'], ['complete', 'ready'], true) ? 'green' : ($run['status'] === 'error' ? 'red' : 'amber') ?>"><?= View::e(UiLabelPresenter::status($run['status'] ?? null)) ?></span>
             <p>Analizados <?= (int) $run['analyzed_count'] ?> de <?= (int) $run['source_total'] ?> · Ya satisfechos <?= (int) $run['satisfied_local_count'] ?> · Encolados <?= (int) $run['queued_count'] ?> · Informativos <?= (int) $run['ignored_count'] ?></p>
           </div>
-          <div class="row-actions">
-            <?php if (in_array($run['status'], ['ready', 'paused'], true)): ?>
-              <form method="post" action="<?= View::e($base) ?>/notifications/backfill/start">
-                <input type="hidden" name="_token" value="<?= Csrf::token() ?>"><input type="hidden" name="run_id" value="<?= (int) $run['id'] ?>">
-                <button type="submit" class="btn primary">Iniciar recuperación segura</button>
-              </form>
-            <?php endif; ?>
-            <?php if (in_array($run['status'], ['analyzing', 'running'], true)): ?>
-              <form method="post" action="<?= View::e($base) ?>/notifications/backfill/pause">
-                <input type="hidden" name="_token" value="<?= Csrf::token() ?>"><input type="hidden" name="run_id" value="<?= (int) $run['id'] ?>">
-                <button type="submit" class="btn">Pausar</button>
-              </form>
-            <?php endif; ?>
-          </div>
+          <div class="row-actions"><span class="muted">Sólo lectura</span></div>
         </article>
       <?php endforeach; ?>
     </section>

@@ -41,11 +41,7 @@ $stateLabels = [
     <span><strong data-module-queue-value="expired_leases">—</strong> reservas vencidas</span>
     <span><strong data-module-queue-value="orphan_events">—</strong> eventos sin trabajo</span>
   </div>
-    <form method="post" action="<?= View::e($base) ?>/settings/modules/events/reconcile"
-          data-module-reconcile-form hidden>
-      <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
-      <button class="btn btn-secondary" type="submit">Reconciliar eventos locales</button>
-    </form>
+    <p class="muted" data-module-reconcile-form hidden>La reconciliación automática está retirada; no se crearán trabajos nuevos.</p>
 </section>
 <div class="module-admin-grid">
 <?php foreach ($modules as $module): ?>

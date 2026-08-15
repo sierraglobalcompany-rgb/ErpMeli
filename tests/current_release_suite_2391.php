@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 $root = dirname(__DIR__);
 $tests = [
+    'orphan_admission_fail_closed_2391.php',
+    'cron_v3_producers_2290.php',
     'legacy_reactivation_fail_closed_2391.php',
     'legacy_cron_fail_closed_2390.php',
     'single_launcher_local_maintenance_2265.php',

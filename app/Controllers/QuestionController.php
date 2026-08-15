@@ -41,14 +41,11 @@ final class QuestionController
     {
         Auth::requireRole('admin', 'operador');
         Csrf::validate($_POST['_token'] ?? null);
-        try {
-            $accountId = (int) ($_POST['account_id'] ?? 0);
-            Session::flash('info', 'La revisión de preguntas se preparará como trabajo CLI. Esta página no consultó Mercado Libre.');
-            $this->redirect('/settings/manual-processing?scope=sales&account_id=' . max(0, $accountId) . '&origin=questions');
-        } catch (\Throwable $e) {
-            Session::flash('error', \App\Services\SafeErrorPresenter::message($e, 'No fue posible preparar la revisión de preguntas.'));
-        }
-        $this->redirect('/questions');
+        Session::flash(
+            'info',
+            'La búsqueda general de preguntas está retirada porque no tiene consumidor vigente. No se creó trabajo ni se consultó Mercado Libre.'
+        );
+        $this->redirect('/questions?account_id=' . max(0, (int) ($_POST['account_id'] ?? 0)));
     }
 
     private function redirect(string $path): never

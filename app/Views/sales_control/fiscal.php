@@ -1,5 +1,5 @@
 <?php
-use App\Core\Csrf; use App\Core\Env; use App\Core\View;
+use App\Core\Env; use App\Core\View;
 $base=rtrim(Env::get('APP_URL',''),'/'); $accountId=(int)$account['id']; $companyId=(int)$account['company_id']; $active='fiscal';
 ?>
 <header class="sales-control-header compact"><div><a class="muted" href="<?= View::e($base) ?>/sales-control/month?account_id=<?= $accountId ?>&year=<?= (int)$year ?>&month=<?= (int)$month ?>">← Volver al mes</a><div class="eyebrow">Datos fiscales</div><h1><?= View::e($monthRow['name']) ?> de <?= (int)$year ?></h1><p>El ERP organiza la información para revisión. No emite facturas ni declara cumplimiento legal.</p></div></header>
@@ -11,7 +11,6 @@ $base=rtrim(Env::get('APP_URL',''),'/'); $accountId=(int)$account['id']; $compan
 </section>
 <?php if (!$run): ?><section class="empty-state"><h2>Primero debe comprobar las ventas</h2><p>Los datos fiscales solo se solicitan para ventas confirmadas dentro de una comprobación exacta.</p></section>
 <?php elseif ((int)$fiscal['missing'] > 0): ?>
-<section class="sales-conclusion"><div><h2>Completar datos fiscales pendientes</h2><p>Se consultarán únicamente ventas fiscalmente elegibles. Identificación, nombre y dirección quedarán cifrados.</p><p class="operation-note">La consulta es de solo lectura hacia Mercado Libre.</p></div>
-<form method="post" action="<?= View::e($base) ?>/sales-control/prepare-fiscal"><input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>"><input type="hidden" name="account_id" value="<?= $accountId ?>"><input type="hidden" name="company_id" value="<?= $companyId ?>"><input type="hidden" name="year" value="<?= (int)$year ?>"><input type="hidden" name="month" value="<?= (int)$month ?>"><button class="btn primary" type="submit">Preparar datos fiscales</button></form></section>
+<section class="sales-conclusion"><div><h2>Datos fiscales pendientes</h2><p>La preparación automática está retirada porque no tiene consumidor vigente. No se crearán trabajos nuevos.</p></div></section>
 <?php else: ?><p class="success-note">No hay consultas fiscales pendientes para este mes.</p><?php endif; ?>
 <section class="privacy-note"><strong>Protección de datos</strong><p>Esta vista solo muestra cantidades. Los datos personales no se incluyen en logs, ayudas, diagnósticos ni HTML general.</p></section>

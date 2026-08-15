@@ -58,12 +58,7 @@ $moduleEnabled = ($state['status'] ?? '') === 'enabled';
             <p><?= View::e($current['description']) ?></p>
         </div>
         <?php if ($moduleEnabled && in_array(Auth::role(), ['admin', 'operator'], true)): ?>
-            <form method="post" action="<?= View::e($base) ?>/meli-growth/refresh">
-                <input type="hidden" name="_token" value="<?= View::e($csrfToken) ?>">
-                <input type="hidden" name="page" value="<?= View::e($page) ?>">
-                <input type="hidden" name="meli_account_id" value="<?= (int) $filters['account_id'] ?>">
-                <button class="btn btn-primary" type="submit">Programar actualización</button>
-            </form>
+            <span class="muted">Actualización automática retirada; no se crearán trabajos nuevos.</span>
         <?php endif; ?>
     </header>
 
@@ -248,8 +243,6 @@ $moduleEnabled = ($state['status'] ?? '') === 'enabled';
                                 <input type="hidden" name="meli_account_id" value="<?= (int) $job['meli_account_id'] ?>">
                                 <input type="hidden" name="page" value="<?= View::e($page) ?>">
                                 <?php if (in_array($job['status'], ['pending', 'retry'], true)): ?><button class="btn btn-tertiary" name="action" value="pause" type="submit">Pausar</button><?php endif; ?>
-                                <?php if (in_array($job['status'], ['paused', 'failed'], true)): ?><button class="btn btn-secondary" name="action" value="resume" type="submit">Continuar</button><?php endif; ?>
-                                <?php if ($job['status'] === 'failed'): ?><button class="btn btn-secondary" name="action" value="retry" type="submit">Reintentar</button><?php endif; ?>
                                 <?php if (in_array($job['status'], ['pending', 'retry', 'paused'], true)): ?><button class="btn btn-tertiary" name="action" value="cancel" type="submit">Cancelar</button><?php endif; ?>
                             </form>
                         <?php endif; ?>

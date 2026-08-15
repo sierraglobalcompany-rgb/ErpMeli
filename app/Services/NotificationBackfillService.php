@@ -11,6 +11,8 @@ use Throwable;
 
 final class NotificationBackfillService
 {
+    private const AUTOMATIC_ADMISSION_ENABLED = false;
+
     private ?bool $uniqueResourceTableAvailable = null;
     /** @var array<string,bool> */
     private array $tableExistsCache = [];
@@ -21,6 +23,12 @@ final class NotificationBackfillService
 
     public function createAnalysis(int $accountId = 0, int $companyId = 0): int
     {
+        if (!self::AUTOMATIC_ADMISSION_ENABLED) {
+            throw new \RuntimeException(
+                'La recuperación automática de notificaciones está retirada. No se creó ningún trabajo.'
+            );
+        }
+
         $this->assertAvailable();
         $scope = $this->requestedScope($accountId, $companyId);
         $accountId = $scope['meli_account_id'];
@@ -59,6 +67,12 @@ final class NotificationBackfillService
 
     public function start(int $runId, int $companyId = 0, int $accountId = 0): void
     {
+        if (!self::AUTOMATIC_ADMISSION_ENABLED) {
+            throw new \RuntimeException(
+                'La recuperación automática de notificaciones está retirada. No se inició ningún trabajo.'
+            );
+        }
+
         $run = $this->scopedRun($runId, $companyId, $accountId, true);
         $companyId = (int) $run['company_id'];
         $accountId = (int) $run['meli_account_id'];

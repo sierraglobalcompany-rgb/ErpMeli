@@ -12,6 +12,8 @@ use Throwable;
 
 final class RecurringSyncService
 {
+    private const AUTOMATIC_ADMISSION_ENABLED = false;
+
     /** @param list<int> $accountIds */
     public function rules(array $accountIds): array
     {
@@ -34,6 +36,14 @@ final class RecurringSyncService
     /** @param array<int|string,mixed> $rows @param list<int> $accountIds */
     public function save(array $rows, array $accountIds): void
     {
+        foreach ($accountIds as $accountId) {
+            if (!self::AUTOMATIC_ADMISSION_ENABLED && !empty($rows[$accountId]['enabled'])) {
+                throw new \RuntimeException(
+                    'La programación recurrente automática está retirada. No se creó trabajo nuevo.'
+                );
+            }
+        }
+
         $allowed = array_fill_keys($accountIds, true);
         $pdo = Database::connection();
         $stmt = $pdo->prepare(
@@ -63,6 +73,15 @@ final class RecurringSyncService
 
     public function processDue(): array
     {
+        if (!self::AUTOMATIC_ADMISSION_ENABLED) {
+            return [
+                'enabled' => false,
+                'enqueued' => 0,
+                'skipped' => true,
+                'reason' => 'legacy_automation_retired',
+            ];
+        }
+
         $settings = new AppSettingsService();
         if (!$settings->bool('sync.daily_enabled', false)) {
             return ['enabled' => false, 'enqueued' => 0, 'skipped' => true];

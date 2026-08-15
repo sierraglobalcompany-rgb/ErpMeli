@@ -14,9 +14,17 @@ final class ManualProcessingService
     /** @return array<string,list<string>> */
     public function scopes(): array
     {
+        $retiredWithoutExactConsumer = [
+            'notification_backfill',
+            'recurring_sync',
+            'questions',
+            'sales_fiscal',
+            'module_jobs',
+            'claims_search_page',
+        ];
         $all = array_values(array_diff(
             array_keys((new WorkQueueRegistry())->definitionsByKey()),
-            ['notification_spool']
+            array_merge(['notification_spool'], $retiredWithoutExactConsumer)
         ));
         return [
             // Selección inicial: trabajo comercial útil y reparaciones seguras.
@@ -24,11 +32,9 @@ final class ManualProcessingService
             // una elección explícita del administrador.
             'recommended' => [
                 'notification_fallback',
-                'notification_backfill',
                 'orders_sync',
                 'order_enrichment',
                 'sale_pack_reconciliation',
-                'questions',
                 'financial_recalc',
                 'sale_financial_reconciliation',
                 'sales_repair',
@@ -37,12 +43,12 @@ final class ManualProcessingService
             // Entrada webhook y ventas recién notificadas permanecen siempre
             // reservadas para el worker urgente, incluso en "todo".
             'all' => $all,
-            'sales' => ['notification_fallback','orders_sync','order_enrichment','sale_pack_reconciliation','notification_backfill'],
+            'sales' => ['notification_fallback','orders_sync','order_enrichment','sale_pack_reconciliation'],
             'finance' => ['financial_recalc','sale_financial_reconciliation'],
             'audits' => ['sales_audit','sales_repair','order_date_repair'],
             'products' => ['items_sync'],
             'descriptions' => ['catalog_descriptions'],
-            'modules' => ['module_jobs'],
+            'modules' => [],
             // La entrada temporal de webhooks y la programación recurrente son
             // reservas del cron: no deben quedar congeladas por el navegador.
             'local' => ['operational_maintenance','order_date_repair','financial_recalc'],

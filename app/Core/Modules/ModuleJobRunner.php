@@ -13,6 +13,8 @@ use Throwable;
 
 final class ModuleJobRunner
 {
+    private const AUTOMATIC_ADMISSION_ENABLED = false;
+
     private const ACTIVE_STATUSES = ['pending', 'running', 'retry', 'paused'];
 
     public function __construct(private readonly ?ModuleRegistry $registry = null)
@@ -124,6 +126,8 @@ final class ModuleJobRunner
 
     public function enqueue(string $moduleId, string $jobType, ?int $accountId, array $payload, int $priority = 100): int
     {
+        $this->assertAdmissionEnabled();
+
         $registry = $this->registry ?? new ModuleRegistry();
         $provider = $registry->provider($moduleId);
         if ($provider === null
@@ -185,6 +189,7 @@ final class ModuleJobRunner
 
     public function enqueueScoped(string $moduleId, string $jobType, int $companyId, int $accountId, array $payload, int $priority = 100): int
     {
+        $this->assertAdmissionEnabled();
         $stmt = Database::connection()->prepare('SELECT COUNT(*) FROM meli_accounts WHERE id=? AND company_id=?');
         $stmt->execute([$accountId, $companyId]);
         if ((int) $stmt->fetchColumn() !== 1) {
@@ -200,6 +205,9 @@ final class ModuleJobRunner
 
     public function resume(int $jobId): bool
     {
+        if (!self::AUTOMATIC_ADMISSION_ENABLED) {
+            return false;
+        }
         return $this->transition($jobId, ['paused', 'failed'], 'pending', 'queued', true);
     }
 
@@ -210,6 +218,9 @@ final class ModuleJobRunner
 
     public function retry(int $jobId): bool
     {
+        if (!self::AUTOMATIC_ADMISSION_ENABLED) {
+            return false;
+        }
         return $this->transition($jobId, ['failed'], 'pending', 'queued', true);
     }
 
@@ -220,6 +231,9 @@ final class ModuleJobRunner
 
     public function resumeScoped(int $jobId, int $companyId, int $accountId): bool
     {
+        if (!self::AUTOMATIC_ADMISSION_ENABLED) {
+            return false;
+        }
         return $this->transitionScoped($jobId, $companyId, $accountId, ['paused', 'failed'], 'pending', 'queued', true);
     }
 
@@ -230,6 +244,9 @@ final class ModuleJobRunner
 
     public function retryScoped(int $jobId, int $companyId, int $accountId): bool
     {
+        if (!self::AUTOMATIC_ADMISSION_ENABLED) {
+            return false;
+        }
         return $this->transitionScoped($jobId, $companyId, $accountId, ['failed'], 'pending', 'queued', true);
     }
 
@@ -249,6 +266,10 @@ final class ModuleJobRunner
 
     public function reconcilePendingEvents(int $limit = 50, ?ModuleRegistry $registry = null): int
     {
+        if (!self::AUTOMATIC_ADMISSION_ENABLED) {
+            return 0;
+        }
+
         $registry ??= $this->registry ?? new ModuleRegistry();
         $limit = max(1, min(500, $limit));
         try {
@@ -576,6 +597,16 @@ final class ModuleJobRunner
             'job_type' => (string) ($job['job_type'] ?? 'unknown'),
             'status' => 'lease_lost',
         ];
+    }
+
+    private function assertAdmissionEnabled(): void
+    {
+        if (!self::AUTOMATIC_ADMISSION_ENABLED) {
+            throw new \App\Core\HttpException(
+                410,
+                'La automatización de módulos está retirada. No se creó ningún trabajo.'
+            );
+        }
     }
 
     private function json(mixed $value): string

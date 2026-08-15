@@ -71,5 +71,3 @@ $assert(!is_file($root . '/app/QueueV4Clean/SalesRepairDispatchFence.php'), 'par
 
 echo 'QUEUE_V4_CLEAN_CONTRACT_2390=PASS checks=' . $checks
     . ' schema=298 budget_claims=1 new_tables=0 new_columns=0' . PHP_EOL;
-
-

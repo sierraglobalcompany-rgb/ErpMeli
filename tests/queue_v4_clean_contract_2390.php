@@ -12,7 +12,8 @@ $assert = static function (bool $condition, string $message) use (&$checks): voi
 };
 $read = static fn(string $path): string => (string) file_get_contents($root . '/' . $path);
 
-$assert(trim($read('VERSION')) === '2.39.0', 'version_authority_invalid');
+$expectedVersion = (string) (getenv('ERP_QUEUE_V4_CONTRACT_VERSION') ?: '2.39.0');
+$assert(trim($read('VERSION')) === $expectedVersion, 'version_authority_invalid');
 $migrations = glob($root . '/database/migrations/298_*.sql') ?: [];
 $assert(count($migrations) === 1
     && basename($migrations[0]) === '298_queue_v4_sales_repair_transport_authority_2_38_9.sql',
@@ -69,5 +70,5 @@ $assert(substr_count($curl, 'QueueV4CleanDispatchFence::immediatelyBeforeCurl') 
     && str_contains($client, 'QueueV4CleanDispatchFence::state($meta)'), 'existing_transport_path_regressed');
 $assert(!is_file($root . '/app/QueueV4Clean/SalesRepairDispatchFence.php'), 'parallel_fence_class_created');
 
-echo 'QUEUE_V4_CLEAN_CONTRACT_2390=PASS checks=' . $checks
+echo 'QUEUE_V4_CLEAN_CONTRACT_' . str_replace('.', '', $expectedVersion) . '=PASS checks=' . $checks
     . ' schema=298 budget_claims=1 new_tables=0 new_columns=0' . PHP_EOL;

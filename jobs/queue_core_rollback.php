@@ -5,6 +5,11 @@ declare(strict_types=1);
 use App\Core\Database;
 use App\Services\QueueCoreRollbackService;
 
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit(2);
+}
+
 require dirname(__DIR__) . '/bootstrap.php';
 
 $rawArguments = $_SERVER['argv'] ?? [];

@@ -7,6 +7,29 @@ if (PHP_SAPI !== 'cli') {
     exit(2);
 }
 
+$arguments = is_array($_SERVER['argv'] ?? null) ? array_map('strval', $_SERVER['argv']) : [];
+$option = static function (string $name) use ($arguments): ?string {
+    $prefix = '--' . $name . '=';
+    foreach ($arguments as $argument) {
+        if (str_starts_with($argument, $prefix)) {
+            return trim(substr($argument, strlen($prefix)));
+        }
+    }
+    return null;
+};
+$desired = $option('set');
+$readiness = $option('readiness');
+if ($readiness !== null || ($desired !== null && $desired !== 'disabled')) {
+    echo json_encode([
+        'ok' => false,
+        'status' => 'legacy_engine_activation_retired',
+        'component' => 'queue_engine_control',
+        'remote' => false,
+        'http' => 0,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+    exit(0);
+}
+
 require dirname(__DIR__) . '/bootstrap.php';
 
 $result = (new \App\QueueCore\QueueEngineControlCli())->run(

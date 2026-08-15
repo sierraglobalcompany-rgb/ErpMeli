@@ -7,6 +7,5 @@ if (PHP_SAPI !== 'cli') {
     exit(2);
 }
 
-require __DIR__ . '/_bootstrap.php';
-
-exit(\App\Services\CronV3Cli::run('local', is_array($_SERVER['argv'] ?? null) ? $_SERVER['argv'] : []));
+echo 'LEGACY_AUTOMATION_RETIRED component=cron_v3_local remote=false http=0' . PHP_EOL;
+exit(0);

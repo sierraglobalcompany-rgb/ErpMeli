@@ -2553,13 +2553,10 @@ final class SettingsController
 
     private function assertLegacyCronMutationDisabled(): void
     {
-        $version = trim((string) @file_get_contents(dirname(__DIR__, 2) . '/VERSION'));
-        if ($version === '2.37.0') {
-            throw new \App\Core\HttpException(
-                410,
-                'Cron V2/V3 y el readiness heredado fueron retirados. Use Queue V4.',
-            );
-        }
+        throw new \App\Core\HttpException(
+            410,
+            'Cron V3 fue retirado. Queue V4 es la única automatización disponible.',
+        );
     }
 
     private function manualProcessingMutation(string $action): void

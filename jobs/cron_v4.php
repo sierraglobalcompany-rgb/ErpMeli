@@ -1,7 +1,11 @@
 <?php
+
 declare(strict_types=1);
-if(PHP_SAPI!=='cli'){http_response_code(404);exit;}
-require dirname(__DIR__).'/bootstrap.php';
-$result=(new \App\QueueCore\CronV4Cli())->run($argv??[]);
-echo json_encode($result,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES).PHP_EOL;
-exit(!empty($result['ok'])?0:2);
+
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit(2);
+}
+
+echo 'LEGACY_AUTOMATION_RETIRED component=queue_core_cron_v4 remote=false http=0' . PHP_EOL;
+exit(0);

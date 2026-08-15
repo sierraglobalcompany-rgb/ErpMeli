@@ -1,16 +1,16 @@
 {
     "product": "erp-meli",
-    "version": "2.39.1",
-    "build_id": "erp-meli-2.39.1-legacy-reactivation-fail-closed-rc1-20260815",
-    "built_at": "2026-08-15T07:00:00Z",
+    "version": "2.39.2",
+    "build_id": "erp-meli-2.39.2-b1-stop-orphan-admission-rc1-20260815",
+    "built_at": "2026-08-15T16:00:00Z",
     "minimum_migration": "298_queue_v4_sales_repair_transport_authority_2_38_9.sql",
     "publication_policy": {
         "base_commit": "c40d073705833c94911c254ec633bf8eb231375e",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 926,
-        "component_count": 925,
-        "paths_sha256": "d157fefdb53cfcaa698c5a0fefd5696e4ad658cc84ff01754478f32b289a047f",
-        "dependency_registry_sha256": "d2b40c492277bcaba999b93363274c7003802772b5c48f315be4de809b998378",
+        "package_file_count": 928,
+        "component_count": 927,
+        "paths_sha256": "db924f2f8157806c1deafd327f9e772c2018b4b39a8501aa05bd27603eba630b",
+        "dependency_registry_sha256": "817cf44477a527a383c5ce18d6a7e8d61d914e4ede0ebf219e06073e54a66be0",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -24,8 +24,8 @@
         },
         "runtime_version": {
             "path": "VERSION",
-            "sha256": "a6280c974340a34de6f426aa7b5523a317c23626efbde24f363f3e31e84d22f5",
-            "sha256_lf": "a6280c974340a34de6f426aa7b5523a317c23626efbde24f363f3e31e84d22f5",
+            "sha256": "68ad675d2b9e462de92458bffe37d2f4d285ad17e5a543c2171f0b595e02b51b",
+            "sha256_lf": "68ad675d2b9e462de92458bffe37d2f4d285ad17e5a543c2171f0b595e02b51b",
             "text": true
         },
         "runtime_actualizar_php": {
@@ -96,8 +96,8 @@
         },
         "runtime_app_controllers_claimcontroller_php": {
             "path": "app/Controllers/ClaimController.php",
-            "sha256": "74b9f47482cee1171447b97f6b56e0d6817c33bb0e3700fc84e6c30a871810d0",
-            "sha256_lf": "74b9f47482cee1171447b97f6b56e0d6817c33bb0e3700fc84e6c30a871810d0",
+            "sha256": "b697684b30fbb7395beabb67c28cb079976416d9961f83acc4f9ab26b4dd55c3",
+            "sha256_lf": "b697684b30fbb7395beabb67c28cb079976416d9961f83acc4f9ab26b4dd55c3",
             "text": true
         },
         "runtime_app_controllers_companycontroller_php": {
@@ -192,8 +192,8 @@
         },
         "runtime_app_controllers_moduleadmincontroller_php": {
             "path": "app/Controllers/ModuleAdminController.php",
-            "sha256": "72073b1d202241ac5504eeea94f4bdca2a2d3afb6750c9f57aab930f1366d580",
-            "sha256_lf": "72073b1d202241ac5504eeea94f4bdca2a2d3afb6750c9f57aab930f1366d580",
+            "sha256": "396353c0fb757fc475c74c387b14af16ca32c482d40a279f3767c703d100c851",
+            "sha256_lf": "396353c0fb757fc475c74c387b14af16ca32c482d40a279f3767c703d100c851",
             "text": true
         },
         "runtime_app_controllers_monthlyreportcontroller_php": {
@@ -258,8 +258,8 @@
         },
         "runtime_app_controllers_questioncontroller_php": {
             "path": "app/Controllers/QuestionController.php",
-            "sha256": "0e049a79735b7b23d3efd3c5118b6c97038c655ff8ce0de5c5a855dc6cc1da21",
-            "sha256_lf": "0e049a79735b7b23d3efd3c5118b6c97038c655ff8ce0de5c5a855dc6cc1da21",
+            "sha256": "0dcc1ebf5142ce4e8faee1b427ec4dcf0524ae1b9754be841014c48e00acd084",
+            "sha256_lf": "0dcc1ebf5142ce4e8faee1b427ec4dcf0524ae1b9754be841014c48e00acd084",
             "text": true
         },
         "runtime_app_controllers_salecontroller_php": {
@@ -270,14 +270,14 @@
         },
         "runtime_app_controllers_salescontrolcontroller_php": {
             "path": "app/Controllers/SalesControlController.php",
-            "sha256": "5a5e284f52cea29adab2a702589b73c5509b0dc24c0c3300022aa1f3fd590d18",
-            "sha256_lf": "5a5e284f52cea29adab2a702589b73c5509b0dc24c0c3300022aa1f3fd590d18",
+            "sha256": "cdcec749c3ed28d8524a7cd2b1258fee0a30bea3345aa5efc9195af03322a5ad",
+            "sha256_lf": "cdcec749c3ed28d8524a7cd2b1258fee0a30bea3345aa5efc9195af03322a5ad",
             "text": true
         },
         "runtime_app_controllers_settingscontroller_php": {
             "path": "app/Controllers/SettingsController.php",
-            "sha256": "e8f5d713599d4dc73acbd9f3b16f25327dff7e07b3769d97ecec3a5a905c9aee",
-            "sha256_lf": "e8f5d713599d4dc73acbd9f3b16f25327dff7e07b3769d97ecec3a5a905c9aee",
+            "sha256": "65579b6aa66924e0ad83e62f4b8bc82f962eb62ae9450ed42e1119c86b79dbf7",
+            "sha256_lf": "65579b6aa66924e0ad83e62f4b8bc82f962eb62ae9450ed42e1119c86b79dbf7",
             "text": true
         },
         "runtime_app_controllers_settingssectioncontroller_php": {
@@ -300,8 +300,8 @@
         },
         "runtime_app_controllers_synccontroller_php": {
             "path": "app/Controllers/SyncController.php",
-            "sha256": "811c3285b4041d57841d71c672a2928931f79d0113c853ecac02e9a4e7b22961",
-            "sha256_lf": "811c3285b4041d57841d71c672a2928931f79d0113c853ecac02e9a4e7b22961",
+            "sha256": "e62e9d60dc2013dd27c4edf8d488076697d326ccb2ed4d4665605eca4be16784",
+            "sha256_lf": "e62e9d60dc2013dd27c4edf8d488076697d326ccb2ed4d4665605eca4be16784",
             "text": true
         },
         "runtime_app_controllers_unlinkedproductcontroller_php": {
@@ -390,8 +390,8 @@
         },
         "runtime_app_core_modules_moduleeventdispatcher_php": {
             "path": "app/Core/Modules/ModuleEventDispatcher.php",
-            "sha256": "8d83df68b8f25acbdf678dcde0d570c9b90655a1ffbf9d6c4be7bb0d5a6fb999",
-            "sha256_lf": "8d83df68b8f25acbdf678dcde0d570c9b90655a1ffbf9d6c4be7bb0d5a6fb999",
+            "sha256": "b788d986f18e76bd077135d68b5c2ba43611588f184378aef383025e28f7626a",
+            "sha256_lf": "b788d986f18e76bd077135d68b5c2ba43611588f184378aef383025e28f7626a",
             "text": true
         },
         "runtime_app_core_modules_modulehealthservice_php": {
@@ -414,8 +414,8 @@
         },
         "runtime_app_core_modules_modulejobrunner_php": {
             "path": "app/Core/Modules/ModuleJobRunner.php",
-            "sha256": "137dce05da9ad25ec90bd1b5b6832d6085d7eb2355ff38ba0ea521137c219177",
-            "sha256_lf": "137dce05da9ad25ec90bd1b5b6832d6085d7eb2355ff38ba0ea521137c219177",
+            "sha256": "cb285e348b16d6fde13f9786ba08958afe201e4c4c6684b811c1fc3c384d3bc8",
+            "sha256_lf": "cb285e348b16d6fde13f9786ba08958afe201e4c4c6684b811c1fc3c384d3bc8",
             "text": true
         },
         "runtime_app_core_modules_modulekernel_php": {
@@ -522,8 +522,8 @@
         },
         "runtime_app_modules_meligrowth_controllers_dashboardcontroller_php": {
             "path": "app/Modules/MeliGrowth/Controllers/DashboardController.php",
-            "sha256": "5476f7f8dfed06658617776832f95b1438cfabaf6a92969f6053a665c3b04afc",
-            "sha256_lf": "5476f7f8dfed06658617776832f95b1438cfabaf6a92969f6053a665c3b04afc",
+            "sha256": "34100d959cf0c4c5952a6bff26a8efca5ee9ee711d159964a66b1131276dc96d",
+            "sha256_lf": "34100d959cf0c4c5952a6bff26a8efca5ee9ee711d159964a66b1131276dc96d",
             "text": true
         },
         "runtime_app_modules_meligrowth_moduleprovider_php": {
@@ -546,14 +546,14 @@
         },
         "runtime_app_modules_meligrowth_views_index_php": {
             "path": "app/Modules/MeliGrowth/Views/index.php",
-            "sha256": "b1d41c48e66a5160125fa7b3784962dfab837cc43f856e9ef3ed7b5079444ee7",
-            "sha256_lf": "b1d41c48e66a5160125fa7b3784962dfab837cc43f856e9ef3ed7b5079444ee7",
+            "sha256": "70ba49cd6895a41e7a7c6d9def873837736b5ad553b98697dddc7970051cb6ab",
+            "sha256_lf": "70ba49cd6895a41e7a7c6d9def873837736b5ad553b98697dddc7970051cb6ab",
             "text": true
         },
         "runtime_app_modules_meliinsights_controllers_dashboardcontroller_php": {
             "path": "app/Modules/MeliInsights/Controllers/DashboardController.php",
-            "sha256": "2feac2db102f8ccdb72132403cea58ae22fd50f9c9521bf05cce5b7d5d65f575",
-            "sha256_lf": "2feac2db102f8ccdb72132403cea58ae22fd50f9c9521bf05cce5b7d5d65f575",
+            "sha256": "348b57a4f880c9c811bffa4530f45dee5e02900f9bdc6a44891f3aa2f008e633",
+            "sha256_lf": "348b57a4f880c9c811bffa4530f45dee5e02900f9bdc6a44891f3aa2f008e633",
             "text": true
         },
         "runtime_app_modules_meliinsights_moduleprovider_php": {
@@ -576,8 +576,8 @@
         },
         "runtime_app_modules_meliinsights_views_index_php": {
             "path": "app/Modules/MeliInsights/Views/index.php",
-            "sha256": "d1a5bc8cc2e6ef736de42b902b1bc0083c29456a5df0ad00f3b552e61ba6babe",
-            "sha256_lf": "d1a5bc8cc2e6ef736de42b902b1bc0083c29456a5df0ad00f3b552e61ba6babe",
+            "sha256": "1cea81ba8127f468ad47ee0dc370c2cf72d22c2fd7b82d21ed949a111db1a403",
+            "sha256_lf": "1cea81ba8127f468ad47ee0dc370c2cf72d22c2fd7b82d21ed949a111db1a403",
             "text": true
         },
         "runtime_app_modules_melilogistics_controllers_dashboardcontroller_php": {
@@ -660,8 +660,8 @@
         },
         "runtime_app_modules_shared_controllers_moduledashboardcontroller_php": {
             "path": "app/Modules/Shared/Controllers/ModuleDashboardController.php",
-            "sha256": "d06df74b7fc0a1a28d8d3b3ee0a543ae6995e913fdea579dce80db1ba941a6f5",
-            "sha256_lf": "d06df74b7fc0a1a28d8d3b3ee0a543ae6995e913fdea579dce80db1ba941a6f5",
+            "sha256": "4c32a5d948a275c4f8f44fc6e4d974dcefbabcb321869b9f9c8179c10622bc52",
+            "sha256_lf": "4c32a5d948a275c4f8f44fc6e4d974dcefbabcb321869b9f9c8179c10622bc52",
             "text": true
         },
         "runtime_app_modules_shared_gateways_corereadgateway_php": {
@@ -690,8 +690,8 @@
         },
         "runtime_app_modules_shared_views_dashboard_php": {
             "path": "app/Modules/Shared/Views/dashboard.php",
-            "sha256": "6579229867a4c473d3a9df3cfcb32dbb82ccba2679e10b5dce46c8fa6f5503f9",
-            "sha256_lf": "6579229867a4c473d3a9df3cfcb32dbb82ccba2679e10b5dce46c8fa6f5503f9",
+            "sha256": "69d937d331c739e79ab1d45ae0aea771166295ff2d07d64128bed1182a05101f",
+            "sha256_lf": "69d937d331c739e79ab1d45ae0aea771166295ff2d07d64128bed1182a05101f",
             "text": true
         },
         "runtime_app_queuecore_abstractwebhookexacthandler_php": {
@@ -1278,8 +1278,8 @@
         },
         "runtime_app_repositories_settingsdefinitionrepository_php": {
             "path": "app/Repositories/SettingsDefinitionRepository.php",
-            "sha256": "21618f482fd92744aea22e1004cd89ee330e9ed5042511d5a6f24d5558be4f0a",
-            "sha256_lf": "21618f482fd92744aea22e1004cd89ee330e9ed5042511d5a6f24d5558be4f0a",
+            "sha256": "53ee49a72d4de839a7f825564162bd6d611c24588e09aa5184ef3a060c0fe8d3",
+            "sha256_lf": "53ee49a72d4de839a7f825564162bd6d611c24588e09aa5184ef3a060c0fe8d3",
             "text": true
         },
         "runtime_app_services_administrativereauthenticationservice_php": {
@@ -2028,8 +2028,8 @@
         },
         "runtime_app_services_cronv3maintenanceproducer_php": {
             "path": "app/Services/CronV3MaintenanceProducer.php",
-            "sha256": "5d8826317e568e91fd5fddf4273913cd5b9a3159f7990a1520a3b3490425422e",
-            "sha256_lf": "5d8826317e568e91fd5fddf4273913cd5b9a3159f7990a1520a3b3490425422e",
+            "sha256": "e9ccd46352542105ab137ca11b9c4abc225bcdfd0744fa47baa16c5b96b1f844",
+            "sha256_lf": "e9ccd46352542105ab137ca11b9c4abc225bcdfd0744fa47baa16c5b96b1f844",
             "text": true
         },
         "runtime_app_services_cronv3operationalcutoverservice_php": {
@@ -2064,8 +2064,8 @@
         },
         "runtime_app_services_cronv3producerservice_php": {
             "path": "app/Services/CronV3ProducerService.php",
-            "sha256": "8a40508cf045098c86b46d0d8302001d2abe7ccc77083812be2f2d350ca5eea7",
-            "sha256_lf": "8a40508cf045098c86b46d0d8302001d2abe7ccc77083812be2f2d350ca5eea7",
+            "sha256": "ea246e35a8e31e4853becabebbf48ff882a3a452886fc9cc319b990eac72beed",
+            "sha256_lf": "ea246e35a8e31e4853becabebbf48ff882a3a452886fc9cc319b990eac72beed",
             "text": true
         },
         "runtime_app_services_cronv3rategate_php": {
@@ -2442,8 +2442,8 @@
         },
         "runtime_app_services_managedruntimepublicationpolicy_php": {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "edd478b637c1e5c6a6b8e3a9282ff8bd94be7eadfdf0222cd29be30819bff4db",
-            "sha256_lf": "edd478b637c1e5c6a6b8e3a9282ff8bd94be7eadfdf0222cd29be30819bff4db",
+            "sha256": "991787f29a8cd9709a674b4719d3628bd6024fbd09282db320fcb61a02ac6a7c",
+            "sha256_lf": "991787f29a8cd9709a674b4719d3628bd6024fbd09282db320fcb61a02ac6a7c",
             "text": true
         },
         "runtime_app_services_manualcampaignadapter_php": {
@@ -2514,8 +2514,8 @@
         },
         "runtime_app_services_manualprocessingservice_php": {
             "path": "app/Services/ManualProcessingService.php",
-            "sha256": "8491922d8687bb968253d70a5d96ea5635b5e89379252a477344a6725ab322e8",
-            "sha256_lf": "8491922d8687bb968253d70a5d96ea5635b5e89379252a477344a6725ab322e8",
+            "sha256": "f2659e0f6068267eefa3870500e658bd43121f235e06dc02ede60d6a6bedb63d",
+            "sha256_lf": "f2659e0f6068267eefa3870500e658bd43121f235e06dc02ede60d6a6bedb63d",
             "text": true
         },
         "runtime_app_services_manualqueueexecutionservice_php": {
@@ -2736,8 +2736,8 @@
         },
         "runtime_app_services_notificationbackfillservice_php": {
             "path": "app/Services/NotificationBackfillService.php",
-            "sha256": "c4164b0855eebe8ba3f8cd2a92a7b87f81c8bf9bff053ccb96da59e5de468e24",
-            "sha256_lf": "c4164b0855eebe8ba3f8cd2a92a7b87f81c8bf9bff053ccb96da59e5de468e24",
+            "sha256": "5d54cbe45a6a8251849320f8982747b210f36d892e05ce4c6d6431180fa9082b",
+            "sha256_lf": "5d54cbe45a6a8251849320f8982747b210f36d892e05ce4c6d6431180fa9082b",
             "text": true
         },
         "runtime_app_services_notificationcoalescerservice_php": {
@@ -2934,8 +2934,8 @@
         },
         "runtime_app_services_questionsyncservice_php": {
             "path": "app/Services/QuestionSyncService.php",
-            "sha256": "d6359fef17697f3baa6f5b8d4eaab95167420a7b8ca16fd0cab0a7a9e4121cc7",
-            "sha256_lf": "d6359fef17697f3baa6f5b8d4eaab95167420a7b8ca16fd0cab0a7a9e4121cc7",
+            "sha256": "2cabeaf527460fe2bffa4086c333f0a466b8d6539872a99bc2c194c551725dac",
+            "sha256_lf": "2cabeaf527460fe2bffa4086c333f0a466b8d6539872a99bc2c194c551725dac",
             "text": true
         },
         "runtime_app_services_queuecoredeploymentgateservice_php": {
@@ -2982,8 +2982,8 @@
         },
         "runtime_app_services_recurringsyncservice_php": {
             "path": "app/Services/RecurringSyncService.php",
-            "sha256": "14911d78af34b5767420f13e4fcbb1a27b2b709a03a47eb198ebb8f04c1c43b3",
-            "sha256_lf": "14911d78af34b5767420f13e4fcbb1a27b2b709a03a47eb198ebb8f04c1c43b3",
+            "sha256": "556dc7c93deab1b13369d5227ee32ef79555085cf26d3c3aa50fd28d58a21502",
+            "sha256_lf": "556dc7c93deab1b13369d5227ee32ef79555085cf26d3c3aa50fd28d58a21502",
             "text": true
         },
         "runtime_app_services_registeredmanualcampaignadapter_php": {
@@ -3168,8 +3168,8 @@
         },
         "runtime_app_services_salesfiscalpreparationservice_php": {
             "path": "app/Services/SalesFiscalPreparationService.php",
-            "sha256": "05e1c09e5fde8329b62f7b1197a1a6b84c8dcc00e735f1a2180c431c816320fe",
-            "sha256_lf": "05e1c09e5fde8329b62f7b1197a1a6b84c8dcc00e735f1a2180c431c816320fe",
+            "sha256": "06b5a6aebd541bd39797c972a2b9ad8876d68cc49b8991509dbe48e115f212a4",
+            "sha256_lf": "06b5a6aebd541bd39797c972a2b9ad8876d68cc49b8991509dbe48e115f212a4",
             "text": true
         },
         "runtime_app_services_salesimportstatusservice_php": {
@@ -3216,8 +3216,8 @@
         },
         "runtime_app_services_settingssectionservice_php": {
             "path": "app/Services/SettingsSectionService.php",
-            "sha256": "eec610e6f279f8b58cc92b40f169a85e4bd4af0183ffd128c3e25ba3b96852fa",
-            "sha256_lf": "eec610e6f279f8b58cc92b40f169a85e4bd4af0183ffd128c3e25ba3b96852fa",
+            "sha256": "aabd6d4257966c03792fcbf8bb10b8093d97499e1a711a08f4f005a45f8e4040",
+            "sha256_lf": "aabd6d4257966c03792fcbf8bb10b8093d97499e1a711a08f4f005a45f8e4040",
             "text": true
         },
         "runtime_app_services_shipmentqueryservice_php": {
@@ -3786,8 +3786,8 @@
         },
         "runtime_app_views_notifications_index_php": {
             "path": "app/Views/notifications/index.php",
-            "sha256": "b90cf0f6b7d968f476a9197fcc0e889f4fb624bc3c80c1cc192956671ba45ca3",
-            "sha256_lf": "b90cf0f6b7d968f476a9197fcc0e889f4fb624bc3c80c1cc192956671ba45ca3",
+            "sha256": "db8689396f282888d4f4676382dbabcd68b798c03a8b3f494ec13b24df09e465",
+            "sha256_lf": "db8689396f282888d4f4676382dbabcd68b798c03a8b3f494ec13b24df09e465",
             "text": true
         },
         "runtime_app_views_notifications_missed_php": {
@@ -3942,8 +3942,8 @@
         },
         "runtime_app_views_sales_claims_index_php": {
             "path": "app/Views/sales/claims/index.php",
-            "sha256": "528fec387b2ad1735910fc6055d5ebc44ef5e341ff2ab3aaa4627a45e65b6aa8",
-            "sha256_lf": "528fec387b2ad1735910fc6055d5ebc44ef5e341ff2ab3aaa4627a45e65b6aa8",
+            "sha256": "798bb91d40d39344fc888447a8e04bc98cfb3ccef3f5992e2744820f2f25ad58",
+            "sha256_lf": "798bb91d40d39344fc888447a8e04bc98cfb3ccef3f5992e2744820f2f25ad58",
             "text": true
         },
         "runtime_app_views_sales_index_php": {
@@ -3978,8 +3978,8 @@
         },
         "runtime_app_views_sales_questions_index_php": {
             "path": "app/Views/sales/questions/index.php",
-            "sha256": "8616716996341188720ccbfa9e875e6d276c841d50148260773ee503731128f1",
-            "sha256_lf": "8616716996341188720ccbfa9e875e6d276c841d50148260773ee503731128f1",
+            "sha256": "a29dbc43feeb93dbc821f97d60d1799e7e7d41ee8601ee2fdf63d7f9cba0def2",
+            "sha256_lf": "a29dbc43feeb93dbc821f97d60d1799e7e7d41ee8601ee2fdf63d7f9cba0def2",
             "text": true
         },
         "runtime_app_views_sales_shipments_table_php": {
@@ -4014,8 +4014,8 @@
         },
         "runtime_app_views_sales_control_fiscal_php": {
             "path": "app/Views/sales_control/fiscal.php",
-            "sha256": "270d2ab68f92d6061b18109d63e7e69251c542ddce7051f7b9c3aeda0ccf6870",
-            "sha256_lf": "270d2ab68f92d6061b18109d63e7e69251c542ddce7051f7b9c3aeda0ccf6870",
+            "sha256": "06d6c02d1bccfe22854715ea24ae732007dde15869a0909b0bb696517adabd6c",
+            "sha256_lf": "06d6c02d1bccfe22854715ea24ae732007dde15869a0909b0bb696517adabd6c",
             "text": true
         },
         "runtime_app_views_sales_control_index_php": {
@@ -4278,14 +4278,14 @@
         },
         "runtime_app_views_settings_modules_php": {
             "path": "app/Views/settings/modules.php",
-            "sha256": "8508e60e858a509154eb08b3aae05e4b845db23d3a1ab73b15b685fa6f8b1ffc",
-            "sha256_lf": "8508e60e858a509154eb08b3aae05e4b845db23d3a1ab73b15b685fa6f8b1ffc",
+            "sha256": "fcd34bac167f03edcf4087de2dde6846d4cd0648d076a96da847fb023d9d6185",
+            "sha256_lf": "fcd34bac167f03edcf4087de2dde6846d4cd0648d076a96da847fb023d9d6185",
             "text": true
         },
         "runtime_app_views_settings_section_php": {
             "path": "app/Views/settings/section.php",
-            "sha256": "2a156ef3ca7f82481d2bcfac3e153b4ac37454abc201c4131e8e45d81e23dab5",
-            "sha256_lf": "2a156ef3ca7f82481d2bcfac3e153b4ac37454abc201c4131e8e45d81e23dab5",
+            "sha256": "2249e791d296c049e10a37d950cffa13835be12bd03e335b941f0b60e4ad1ca5",
+            "sha256_lf": "2249e791d296c049e10a37d950cffa13835be12bd03e335b941f0b60e4ad1ca5",
             "text": true
         },
         "runtime_app_views_settings_support_diagnostic_php": {
@@ -4350,8 +4350,8 @@
         },
         "runtime_app_views_sync_recurring_php": {
             "path": "app/Views/sync/recurring.php",
-            "sha256": "8a7a711228787391a929e5214be38faa05074cd619077dca77473815357c6e9d",
-            "sha256_lf": "8a7a711228787391a929e5214be38faa05074cd619077dca77473815357c6e9d",
+            "sha256": "0cb22fe09ff7f135c8641d78ae18ec4227dc8dbe767eb14cce93da77b7232809",
+            "sha256_lf": "0cb22fe09ff7f135c8641d78ae18ec4227dc8dbe767eb14cce93da77b7232809",
             "text": true
         },
         "runtime_app_views_sync_schedule_php": {
@@ -4440,8 +4440,8 @@
         },
         "runtime_composer_json": {
             "path": "composer.json",
-            "sha256": "3ecbc8763ab8e87a0852dac828619640027180852d297100027b25b7439480d0",
-            "sha256_lf": "3ecbc8763ab8e87a0852dac828619640027180852d297100027b25b7439480d0",
+            "sha256": "0fdab9b8fb3716a03bcfd11093c3d04890b92b6fa3c6defb5b4c0d2dca5cad27",
+            "sha256_lf": "0fdab9b8fb3716a03bcfd11093c3d04890b92b6fa3c6defb5b4c0d2dca5cad27",
             "text": true
         },
         "runtime_composer_lock": {
@@ -5302,6 +5302,12 @@
             "sha256_lf": "d2b40c492277bcaba999b93363274c7003802772b5c48f315be4de809b998378",
             "text": true
         },
+        "runtime_resources_release_managed_runtime_dependencies_2_39_2_json": {
+            "path": "resources/release/managed-runtime-dependencies-2.39.2.json",
+            "sha256": "817cf44477a527a383c5ce18d6a7e8d61d914e4ede0ebf219e06073e54a66be0",
+            "sha256_lf": "817cf44477a527a383c5ce18d6a7e8d61d914e4ede0ebf219e06073e54a66be0",
+            "text": true
+        },
         "runtime_resources_release_production_legacy_quarantine_2_36_1_json": {
             "path": "resources/release/production-legacy-quarantine-2.36.1.json",
             "sha256": "b6adf206e3d3857807d44d3ec0b2929535c2e184cf8fac07b975987bcc642f25",
@@ -5546,6 +5552,12 @@
             "path": "resources/release/updater-authority-2.39.1.json",
             "sha256": "ff8196f1b4217f67017794c48b650d8df864006b7a6e2c7dfb236b1ee9cb9e12",
             "sha256_lf": "ff8196f1b4217f67017794c48b650d8df864006b7a6e2c7dfb236b1ee9cb9e12",
+            "text": true
+        },
+        "runtime_resources_release_updater_authority_2_39_2_json": {
+            "path": "resources/release/updater-authority-2.39.2.json",
+            "sha256": "ba8e42b4a0e253ca64acaf7b2ddbb989c35476b06aa27107a18cae92f69babf5",
+            "sha256_lf": "ba8e42b4a0e253ca64acaf7b2ddbb989c35476b06aa27107a18cae92f69babf5",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

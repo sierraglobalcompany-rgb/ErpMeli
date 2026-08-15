@@ -13,28 +13,6 @@ $qaReplayMode = in_array('--qa-replay', $args, true);
 $retentionStepMode = in_array('--retention-step', $args, true);
 $fullJsonOutput = in_array('--json', $args, true);
 
-function erp_cron_v3_operational_from_config(string $configPath): bool
-{
-    if (!is_file($configPath) || !is_readable($configPath)) {
-        return false;
-    }
-    $values = [];
-    foreach (file($configPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
-        $line = trim((string) $line);
-        if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) {
-            continue;
-        }
-        [$key, $value] = array_map('trim', explode('=', $line, 2));
-        if ($key === '') {
-            continue;
-        }
-        $values[$key] = trim($value, "\"'");
-    }
-    $enabled = filter_var((string) ($values['CRON_V3_ENABLED'] ?? ''), FILTER_VALIDATE_BOOL);
-    $shadow = filter_var((string) ($values['CRON_V3_SHADOW_ENABLED'] ?? ''), FILTER_VALIDATE_BOOL);
-    return $enabled === true && $shadow === false;
-}
-
 if ($doctorMode) {
     require __DIR__ . DIRECTORY_SEPARATOR . '_bootstrap' . '.php';
     $doctor = new \App\Services\CronDoctorService();
@@ -115,18 +93,6 @@ if (function_exists('ob_flush')) {
 }
 flush();
 
-if (erp_cron_v3_operational_from_config(dirname(__DIR__) . '/config.env')) {
-    cron_entry_state_write('v3_operational_skip', $runtimeVersion, $runtimeBuild, [
-        'result' => 'skipped',
-        'remote' => false,
-    ]);
-    echo 'ERP_CRON_SKIP component=process_sync_queue'
-        . ' version=' . preg_replace('/[^A-Za-z0-9_.-]/', '_', $runtimeVersion)
-        . ' build=' . preg_replace('/[^A-Za-z0-9_.-]/', '_', $runtimeBuild)
-        . ' reason=v3_operational' . PHP_EOL;
-    exit(0);
-}
-
 require __DIR__ . '/_automation_emergency_stop.php';
 $earlyRuntimeState = erp_prebootstrap_runtime_state();
 $localBackupRequest = $earlyRuntimeState['backup_requested'];
@@ -170,6 +136,17 @@ if ($retentionStepMode && $earlyRuntimeMode !== 'normal') {
 }
 if ($earlyRuntimeMode === 'local_maintenance' && !defined('ERP_LOCAL_MAINTENANCE_ONLY')) {
     define('ERP_LOCAL_MAINTENANCE_ONLY', true);
+}
+if (!$retentionStepMode && !defined('ERP_LOCAL_MAINTENANCE_ONLY')) {
+    cron_entry_state_write('finished', $runtimeVersion, $runtimeBuild, [
+        'result' => 'skipped',
+        'reason' => 'LEGACY_AUTOMATION_RETIRED',
+        'remote' => false,
+        'http' => 0,
+    ]);
+    echo 'ERP_CRON_SKIP component=process_sync_queue'
+        . ' reason=LEGACY_AUTOMATION_RETIRED remote=false http=0' . PHP_EOL;
+    exit(0);
 }
 require __DIR__ . '/_meli_emergency_stop.php';
 
@@ -218,41 +195,6 @@ require __DIR__ . '/_bootstrap.php';
 define('ERP_CRON_BOOTSTRAP_LOADED', true);
 \App\Services\ApiExecutionMetadataContext::resetRemoteDispatchCount();
 cron_entry_state_write('bootstrap_loaded', $runtimeVersion, $runtimeBuild, ['result' => 'running']);
-
-if (\App\QueueCore\QueueCoreOwnershipGuard::v4OwnsWebhook(\App\Core\Database::connectionFresh())) {
-    cron_entry_state_write('v4_owner_skip', $runtimeVersion, $runtimeBuild, [
-        'result' => 'skipped',
-        'reason' => 'SKIPPED_V4_OWNER',
-        'remote' => false,
-        'http' => 0,
-    ]);
-    echo 'ERP_CRON_SKIP component=process_sync_queue'
-        . ' version=' . preg_replace('/[^A-Za-z0-9_.-]/', '_', $runtimeVersion)
-        . ' build=' . preg_replace('/[^A-Za-z0-9_.-]/', '_', $runtimeBuild)
-        . ' reason=SKIPPED_V4_OWNER remote=false http=0' . PHP_EOL;
-    exit(0);
-}
-
-if ((new \App\Services\CronV3OperationalModeService())->enabled()) {
-    cron_entry_state_write('v3_operational_skip', $runtimeVersion, $runtimeBuild, [
-        'result' => 'skipped',
-        'remote' => false,
-    ]);
-    try {
-        (new \App\Services\CronEntryStateService())->record('v3_operational_skip', $runtimeVersion, $runtimeBuild, [
-            'result' => 'skipped',
-            'reason' => 'v3_operational',
-            'remote' => false,
-        ]);
-    } catch (\Throwable) {
-        // La salida CLI es la autoridad mínima si la observabilidad de base no está disponible.
-    }
-    echo 'ERP_CRON_SKIP component=process_sync_queue'
-        . ' version=' . preg_replace('/[^A-Za-z0-9_.-]/', '_', $runtimeVersion)
-        . ' build=' . preg_replace('/[^A-Za-z0-9_.-]/', '_', $runtimeBuild)
-        . ' reason=v3_operational' . PHP_EOL;
-    exit(0);
-}
 
 if ($retentionStepMode) {
     $result = (new \App\Services\TechnicalRetentionCliService())->runStep(500);

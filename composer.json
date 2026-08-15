@@ -156,7 +156,8 @@
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/runtime_package_attestation_b21a.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/managed_runtime_package_2361.php"
     ],
-    "test": "@test:release-2389",
+    "test": "@test:release-2390",
+    "test:release-2390": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2390.php",
     "test:release-2389": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2389.php",
     "test:release-2389-db": [
       "@php -d error_reporting=-1 -d display_errors=1 tests/sales_repair_transport_authority_2389.php",

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "legacy-cron-fail-closed-2.39.0-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "PLACEHOLDER_PATH_INVENTORY_SHA256",
+  "runtime_manifest_paths_sha256": "6592018c9b83b3e1fc268acbf6adf7cc370c928959d864d14f1fe13b180e0329",
   "coverage_base_commit": "d6ff54d5907a631529e270f0c950ddbd5c1c0c42",
   "classifications": {
     "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

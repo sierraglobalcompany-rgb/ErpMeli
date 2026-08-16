@@ -304,12 +304,19 @@ final class QueueV4CleanWorker
                 throw new RuntimeException('queue_v4_clean_payload_order_identity');
             }
             $sync = ($this->syncFactory)($accountId);
-            $sync->syncOrderByIdForQueueV4Clean($orderId, [
+            $metadata = [
+                'source' => 'queue_v4_clean',
+                'job_type' => 'order_exact',
                 'company_id' => $companyId,
                 'account_id' => $accountId,
                 'source_queue_key' => 'queue_v4_clean',
                 'source_work_id' => (string) $job['id'],
-            ] + $this->transportMeta($job));
+                'bulk' => false,
+            ] + $this->transportMeta($job);
+            ApiExecutionMetadataContext::run(
+                $metadata,
+                static fn (): int => $sync->syncOrderByIdForQueueV4Clean($orderId, $metadata),
+            );
             return ['state' => 'completed'];
         }
         if ($type === 'domain_exact') {

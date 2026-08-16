@@ -22,7 +22,12 @@ if ($dsn === '' || !str_starts_with(strtolower($dsn), 'mysql:') || stripos($dsn,
     exit(2);
 }
 
-$root = dirname(__DIR__);
+$runtimeRoot = trim((string) getenv('ERP_H2_RUNTIME_ROOT'));
+$root = $runtimeRoot !== '' ? realpath($runtimeRoot) : dirname(__DIR__);
+if (!is_string($root) || !is_dir($root . '/app')) {
+    fwrite(STDERR, "ERROR: H2 runtime root inválido.\n");
+    exit(2);
+}
 $database = 'erp_h2_billing_' . bin2hex(random_bytes(5));
 $server = new PDO($dsn, $user, $pass, [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,

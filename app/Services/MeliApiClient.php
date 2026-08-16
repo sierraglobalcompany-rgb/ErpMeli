@@ -206,6 +206,13 @@ final class MeliApiClient implements MeliReadClientInterface
                         'rhythm_authority_unavailable'
                     );
                 }
+                if ($queueV4ReadContext && empty($rhythmPermit['enabled'])) {
+                    throw new ApiRhythmDeferredException(
+                        'Queue V4 no iniciará HTTP sin su autoridad persistente de ritmo.',
+                        gmdate('Y-m-d H:i:s', time() + 60),
+                        'rhythm_authority_unavailable'
+                    );
+                }
                 // Compatibilidad durante la ventana entre subir archivos y
                 // aplicar la migración que crea la autoridad persistente.
                 if (!$cronV3RemoteContext && empty($rhythmPermit['enabled'])) {

@@ -7,6 +7,10 @@ use App\QueueV4Clean\QueueV4CleanRepository;
 use App\QueueV4Clean\QueueV4CleanWorker;
 use App\Services\ApiRhythmDeferredException;
 use App\Services\ApiRhythmPolicyService;
+use App\Services\AppSettingsService;
+use App\Services\MeliApiClient;
+use App\Services\MeliHttpTransportInterface;
+use App\Services\MeliTransportSourcePolicy;
 use App\Services\SaleFinancialService;
 use App\Services\SchemaInspectorService;
 
@@ -158,6 +162,16 @@ try {
         reduced_until DATETIME(3) NOT NULL,
         reason VARCHAR(80) NOT NULL,
         updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+    ) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE api_request_pacing_state(
+        scope_key VARCHAR(191) PRIMARY KEY,
+        meli_account_id BIGINT UNSIGNED NULL,
+        operation_key VARCHAR(120) NOT NULL,
+        effective_rpm INT UNSIGNED NOT NULL,
+        next_allowed_at DATETIME(6) NOT NULL,
+        last_reserved_at DATETIME(6) NULL,
+        last_wait_ms INT UNSIGNED NOT NULL DEFAULT 0,
+        updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
     ) ENGINE=InnoDB');
     $pdo->exec('CREATE TABLE api_request_logs(
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -401,13 +415,140 @@ try {
     $next60 = (string) $pdo->query('SELECT next_run_at FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $job60['id'])->fetchColumn();
     $assert((strtotime($next60 . ' UTC') ?: 0) >= time() + 3595, 't12_financial_later_retry_lost');
 
+    // C1.1: every Queue V4 read source fails closed if the persistent
+    // rhythm authority is unavailable. No pacing, budget or transport may
+    // be reached as an alternative authority.
+    $fakeTransport = new class implements MeliHttpTransportInterface {
+        public int $calls = 0;
+
+        public function request(
+            string $method,
+            string $url,
+            array $data,
+            array $headers,
+            bool $form,
+            array $timeouts,
+        ): array {
+            $this->calls++;
+            throw new RuntimeException('c11_transport_must_not_be_reached');
+        }
+    };
+    $send = new ReflectionMethod(MeliApiClient::class, 'send');
+    $schemaAvailable = new ReflectionProperty(ApiRhythmPolicyService::class, 'schemaAvailable');
+    $schemaAvailable->setValue(null, false);
+    (new AppSettingsService())->set('api.guard.enabled', '0', 'b429_c11_test');
+    AppSettingsService::clearCache();
+    $pdo->exec('DELETE FROM api_request_pacing_state');
+    $pacingBefore = (int) $pdo->query('SELECT COUNT(*) FROM api_request_pacing_state')->fetchColumn();
+    $cases = [
+        [MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT, '/billing/integration/group/ML/order/details', 'domain_exact'],
+        ['queue_v4_clean', '/orders/2393001', 'order_exact'],
+        [MeliTransportSourcePolicy::QUEUE_V4_SALES_AUDIT, '/orders/search', 'sales_audit'],
+        [MeliTransportSourcePolicy::QUEUE_V4_SALES_REPAIR, '/orders/2393002', 'sales_repair'],
+    ];
+    foreach ($cases as [$source, $path, $jobType]) {
+        $deferred = null;
+        try {
+            $send->invoke(
+                new MeliApiClient($accountA, $fakeTransport),
+                'GET',
+                'https://api.mercadolibre.com' . $path,
+                [],
+                [],
+                false,
+                false,
+                [
+                    'source' => $source,
+                    'job_type' => $jobType,
+                    'company_id' => 10,
+                    'account_id' => $accountA,
+                ]
+            );
+        } catch (Throwable $error) {
+            $deferred = $error;
+        }
+        $assert(
+            $deferred instanceof ApiRhythmDeferredException,
+            'c11_not_deferred:' . $source . ':' . ($deferred ? $deferred::class . ':' . $deferred->getMessage() : 'none')
+        );
+        $assert($deferred?->blockingScope === 'rhythm_authority_unavailable', 'c11_wrong_scope:' . $source);
+        $assert((strtotime((string) $deferred?->nextSafeAt . ' UTC') ?: 0) >= time() + 55, 'c11_next_safe_too_short:' . $source);
+    }
+    $assert($fakeTransport->calls === 0, 'c11_queue_v4_crossed_transport');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM api_request_pacing_state')->fetchColumn() === $pacingBefore, 'c11_pacing_fallback_reached');
+
+    $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
+    $pdo->exec('TRUNCATE TABLE queue_v4_clean_attempts');
+    $pdo->exec('TRUNCATE TABLE queue_v4_clean_runs');
+    $pdo->exec('TRUNCATE TABLE queue_v4_clean_jobs');
+    $pdo->exec('SET FOREIGN_KEY_CHECKS=1');
+    $pdo->prepare(
+        'INSERT INTO sale_financial_reconciliation_jobs
+         (company_id,meli_account_id,sale_key,external_sale_id,input_version,status,origin_type,next_run_at)
+         VALUES (10,?,"O:c11","c11",? ,"pending","fixture",UTC_TIMESTAMP())'
+    )->execute([$accountA, str_repeat('d', 64)]);
+    $c11SourceId = (int) $pdo->lastInsertId();
+    $pdo->prepare(
+        'INSERT INTO queue_v4_clean_jobs
+         (company_id,meli_account_id,job_type,resource_id,idempotency_key,state,available_at,max_attempts,payload_json)
+         VALUES (10,?,"domain_exact",?,"b429-c11-pointer","ready",UTC_TIMESTAMP(),3,?)'
+    )->execute([
+        $accountA,
+        (string) $c11SourceId,
+        json_encode(['capability' => 'financial_reconciliation', 'source_id' => $c11SourceId], JSON_THROW_ON_ERROR),
+    ]);
+    $pointerResult = (new QueueV4CleanWorker(
+        $pdo,
+        new QueueV4CleanRepository($pdo),
+        null,
+        null,
+        null,
+        static function (string $capability, int $sourceId, int $claimedAccount) use (
+            $send,
+            $fakeTransport,
+            $accountA,
+            $c11SourceId
+        ): void {
+            if ($capability !== 'financial_reconciliation'
+                || $sourceId !== $c11SourceId
+                || $claimedAccount !== $accountA) {
+                throw new RuntimeException('c11_pointer_scope_invalid');
+            }
+            $send->invoke(
+                new MeliApiClient($claimedAccount, $fakeTransport),
+                'GET',
+                'https://api.mercadolibre.com/billing/integration/group/ML/order/details',
+                [],
+                [],
+                false,
+                false,
+                [
+                    'source' => MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT,
+                    'job_type' => 'domain_exact',
+                    'company_id' => 10,
+                    'account_id' => $claimedAccount,
+                ]
+            );
+        }
+    ))->run('test', 1, 10);
+    $pointer = $pdo->query(
+        'SELECT state,attempt_count,last_error_class FROM queue_v4_clean_jobs WHERE idempotency_key="b429-c11-pointer"'
+    )->fetch(PDO::FETCH_ASSOC) ?: [];
+    $assert((int) ($pointerResult['claimed'] ?? 0) === 1, 'c11_pointer_not_claimed');
+    $assert((string) ($pointer['state'] ?? '') === 'waiting', 'c11_pointer_not_waiting');
+    $assert((int) ($pointer['attempt_count'] ?? -1) === 0, 'c11_pointer_penalized');
+    $assert(str_contains((string) ($pointer['last_error_class'] ?? ''), 'rhythm_authority_unavailable'), 'c11_pointer_scope_missing');
+    $assert($fakeTransport->calls === 0, 'c11_pointer_crossed_transport');
+    $schemaAvailable->setValue(null, null);
+
     $policySource = (string) file_get_contents($root . '/app/Services/ApiRhythmPolicyService.php');
     $financialSource = (string) file_get_contents($root . '/app/Services/SaleFinancialService.php');
     $assert(str_contains($policySource, 'BILLING_MIN_INTERVAL_SECONDS = 900'), 'billing_interval_contract_missing');
     $assert(str_contains($financialSource, 'if ($error instanceof ApiRhythmDeferredException)'), 'financial_rhythm_catch_missing');
 
     fwrite(STDOUT, 'BILLING_REMOTE_SAFETY_CONTAINMENT_2393=PASS checks=' . $checks
-        . ' interval=900 levels=30/60/120/240 physical_max=1 real_http=0' . PHP_EOL);
+        . ' interval=900 levels=30/60/120/240 physical_max=1 queue_v4_without_rhythm_http=0'
+        . ' pointer=waiting attempt_penalty=0 real_http=0' . PHP_EOL);
 } finally {
     $server->exec('DROP DATABASE IF EXISTS `' . $database . '`');
     @rmdir($temporary . DIRECTORY_SEPARATOR . 'storage');

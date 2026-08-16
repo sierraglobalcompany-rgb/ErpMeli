@@ -64,13 +64,14 @@ final class QueueV4CleanRepository
         ];
     }
 
-    public function hasOutstandingOperationalWork(int $companyId, int $accountId): bool
+    public function hasOutstandingFreshFrontierWork(int $companyId, int $accountId): bool
     {
         $this->assertTenant($companyId, $accountId);
         $statement = $this->pdo->prepare(
             "SELECT EXISTS(
                 SELECT 1 FROM queue_v4_clean_jobs
                 WHERE company_id=? AND meli_account_id=?
+                  AND job_type IN ('fresh_orders_discovery','order_exact')
                   AND state IN ('ready','running','waiting')
              )"
         );

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\QueueV4Clean;
 
 use App\Core\Env;
+use App\Services\CronDeadlineContext;
 use App\Services\EmergencyControlService;
 use App\Services\SalesAuditExactRepairService;
 use PDO;
@@ -75,20 +76,26 @@ final class QueueV4CleanScheduler
             }
             $oauthClaimed = (int) ($oauth['claimed'] ?? 0);
             $salesClaimed = (int) ($salesAudit['claimed'] ?? 0);
-            $salesRepair = $oauthClaimed + $salesClaimed < min(10, $maxJobs)
-                && microtime(true) < $deadline - 3.0
-                ? (new SalesAuditExactRepairService())->processDue(1)
-                : ['processed' => 0, 'jobs' => 0, 'status' => 'deferred'];
             $producer = (new QueueV4CleanProducer($this->pdo, $repository))->produce();
-            $repairClaimed = (int) ($salesRepair['jobs'] ?? 0);
-            $remainingJobs = max(0, min(10, $maxJobs) - $oauthClaimed - $salesClaimed - $repairClaimed);
+            $capacity = self::functionalCapacity($maxJobs, $oauthClaimed, $salesClaimed, 0);
+            $availableWorkerSlots = $capacity['worker_slots'];
             $remaining = min(45, (int) floor($deadline - microtime(true)));
             // Reserve a small local-only window for the incident read model.
             // HTTP/business work remains bounded by the shared cycle budget.
             $workerRuntime = $remaining >= 8 ? $remaining - 3 : $remaining;
-            $worker = $remaining >= 5 && $remainingJobs > 0
-                ? (new QueueV4CleanWorker($this->pdo, $repository))->run('scheduler', $remainingJobs, $workerRuntime)
+            $worker = $remaining >= 5 && $availableWorkerSlots > 0
+                ? (new QueueV4CleanWorker($this->pdo, $repository))->run('scheduler', $availableWorkerSlots, $workerRuntime)
                 : ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
+            $workerClaimed = (int) ($worker['claimed'] ?? 0);
+            $capacity = self::functionalCapacity($maxJobs, $oauthClaimed, $salesClaimed, $workerClaimed);
+            $salesRepair = $capacity['remaining_slots'] > 0 && CronDeadlineContext::canAcceptWork(3)
+                ? (new SalesAuditExactRepairService())->processDue(1)
+                : ['processed' => 0, 'jobs' => 0, 'status' => 'deferred'];
+            $repairClaimed = (int) ($salesRepair['jobs'] ?? 0);
+            $claimedTotal = $oauthClaimed + $salesClaimed + $workerClaimed + $repairClaimed;
+            if ($repairClaimed > 1 || $claimedTotal > $capacity['limit']) {
+                throw new \RuntimeException('queue_v4_clean_functional_capacity_exceeded');
+            }
             $maintenance = microtime(true) < $deadline - 1.0
                 ? (new QueueV4CleanMaintenanceService())->run(100)
                 : ['materialized' => 0, 'retained' => 0, 'warnings' => 0, 'deferred' => true];
@@ -105,7 +112,7 @@ final class QueueV4CleanScheduler
                 'sales_repair' => $salesRepair,
                 'producer' => $producer,
                 'worker' => $worker,
-                'claimed_total' => $oauthClaimed + $salesClaimed + $repairClaimed + (int) ($worker['claimed'] ?? 0),
+                'claimed_total' => $claimedTotal,
                 'http_budget' => QueueV4CleanCycleBudget::snapshot(),
             ];
         } finally {
@@ -117,5 +124,22 @@ final class QueueV4CleanScheduler
             $release->execute([$owner]);
             QueueV4CleanCycleBudget::clear();
         }
+    }
+
+    /** @return array{limit:int,worker_slots:int,remaining_slots:int} */
+    private static function functionalCapacity(
+        int $maxJobs,
+        int $oauthClaimed,
+        int $salesAuditClaimed,
+        int $workerClaimed,
+    ): array {
+        $limit = min(10, max(1, $maxJobs));
+        $workerSlots = max(0, $limit - max(0, $oauthClaimed) - max(0, $salesAuditClaimed));
+        $remainingSlots = max(0, $workerSlots - max(0, $workerClaimed));
+        return [
+            'limit' => $limit,
+            'worker_slots' => $workerSlots,
+            'remaining_slots' => $remainingSlots,
+        ];
     }
 }

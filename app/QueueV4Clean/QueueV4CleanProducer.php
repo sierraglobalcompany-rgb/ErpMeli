@@ -77,7 +77,7 @@ final class QueueV4CleanProducer
                 // exact-order work is operational. Do not mint a new remote
                 // discovery round while the tenant still has FIFO work from
                 // the previous one (or another bounded local source).
-                if ($this->repository->hasOutstandingOperationalWork($companyId, $accountId)) {
+                if ($this->repository->hasOutstandingFreshFrontierWork($companyId, $accountId)) {
                     $this->pdo->commit();
                     continue;
                 }

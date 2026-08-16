@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.39.4.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.39.5.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -41,9 +41,9 @@ final class ManagedRuntimePublicationPolicy
     ];
     public const BASE_COMMIT = 'c40d073705833c94911c254ec633bf8eb231375e';
     public const INSTALLED_BASE_COMMIT = '1eef380afc6ceb42d8955b2def1a439eb4d579fe';
-    public const VERSION = '2.39.4';
-    public const BUILD_ID = 'erp-meli-2.39.4-f2b-b429-rhythm-fail-closed-rc1-20260816';
-    public const BUILT_AT = '2026-08-16T06:00:00Z';
+    public const VERSION = '2.39.5';
+    public const BUILD_ID = 'erp-meli-2.39.5-h1-order-exact-context-rc1-20260816';
+    public const BUILT_AT = '2026-08-16T17:00:00Z';
     public const MINIMUM_MIGRATION = '299_queue_v4_domain_exact_admission_2_39_3.sql';
     private const INVENTORY_MINIMUM_MIGRATION = '295_inventory_warehouse_v1_2_38_0.sql';
     private const QUEUE_V4_MINIMUM_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';
@@ -199,6 +199,11 @@ final class ManagedRuntimePublicationPolicy
             'build_id' => 'erp-meli-2.39.3-domain-exact-finance-rc1-20260815',
             'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.3.json',
+        ],
+        '2.39.4' => [
+            'build_id' => 'erp-meli-2.39.4-f2b-b429-rhythm-fail-closed-rc1-20260816',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.4.json',
         ],
         self::VERSION => [
             'build_id' => self::BUILD_ID,

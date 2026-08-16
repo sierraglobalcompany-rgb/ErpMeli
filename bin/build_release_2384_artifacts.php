@@ -277,9 +277,9 @@ try {
         '4. Abra actualizar.php y complete ' . $releaseUpgradeFrom . ' → ' . $version . '; ' . $releaseMigrationNote . '.',
         '5. Confirme VERSION, app.version y marker ' . $version . '; schema ' . $releaseSchema . ' y pendientes 0.',
         '6. ' . $releaseInstruction,
-        '7. Verifique el estado operativo antes de habilitar el único Cron.',
+        '7. Verifique el estado operativo sin cambiar la configuración física del único Cron.',
         '',
-        'La instalación no crea Cron Hostinger, no ejecuta OAuth, no cambia Queue V4 Clean y no ejecuta readiness automáticamente.',
+        'La instalación no crea Cron Hostinger, no ejecuta OAuth ni Queue V4 Clean y no ejecuta readiness automáticamente.',
         '',
     ]));
 

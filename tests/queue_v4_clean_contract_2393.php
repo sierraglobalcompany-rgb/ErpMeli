@@ -12,7 +12,8 @@ $assert = static function (bool $condition, string $message) use (&$checks): voi
     }
 };
 $read = static fn (string $path): string => (string) file_get_contents($root . '/' . $path);
-$assert(trim($read('VERSION')) === '2.39.3', 'version_authority_invalid');
+$expectedVersion = trim((string) (getenv('ERP_QUEUE_V4_CONTRACT_VERSION') ?: '2.39.3'));
+$assert(trim($read('VERSION')) === $expectedVersion, 'version_authority_invalid');
 
 $migrationFiles = glob($root . '/database/migrations/299_*.sql') ?: [];
 $assert(count($migrationFiles) === 1, 'migration299_count_invalid');
@@ -82,5 +83,5 @@ $assert(!$allowed('queue_v4_clean', 'GET', '/billing/integration/group/ML/order/
     && !$allowed(\App\Services\MeliTransportSourcePolicy::QUEUE_V4_SALES_REPAIR, 'GET', '/billing/integration/group/ML/order/details'), 'legacy_queue_source_gained_billing');
 $assert(\App\Services\MeliTransportSourcePolicy::blocksRedirects($domain), 'domain_redirects_not_blocked');
 
-echo 'QUEUE_V4_CLEAN_CONTRACT_2393=PASS checks=' . $checks
+echo 'QUEUE_V4_CLEAN_CONTRACT_' . str_replace('.', '', $expectedVersion) . '=PASS checks=' . $checks
     . ' schema=299 budget_claims=1 new_tables=0 new_columns=0' . PHP_EOL;

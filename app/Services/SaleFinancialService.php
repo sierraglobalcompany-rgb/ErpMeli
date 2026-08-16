@@ -677,10 +677,9 @@ final class SaleFinancialService
                  lock_owner=NULL,lease_expires_at=NULL,heartbeat_at=NULL
              WHERE id=:id AND status="running" AND lock_owner=:owner AND lease_generation=:generation'
         );
-        $stmt->execute([
+        $parameters = [
             'status' => $status,
             'message' => mb_substr($message, 0, 500),
-            'delay' => $this->retryDelayMinutes((int) $job['attempts']),
             'deferred_since' => $deferred ? 1 : 0,
             'deferred_until' => $deferred ? 1 : 0,
             'retry_days' => $this->retryHorizonDays(),
@@ -689,7 +688,11 @@ final class SaleFinancialService
             'id' => (int) $job['id'],
             'owner' => (string) $job['lock_owner'],
             'generation' => (int) $job['lease_generation'],
-        ]);
+        ];
+        if ($deferred) {
+            $parameters['delay'] = $this->retryDelayMinutes((int) $job['attempts']);
+        }
+        $stmt->execute($parameters);
         if ($stmt->rowCount() !== 1) {
             throw new \RuntimeException('La conciliación perdió su reserva antes de aprobar el resultado.');
         }

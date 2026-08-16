@@ -163,6 +163,20 @@ final class SaleFinancialService
                     $summary['stop_reason'] = 'manual_review';
                 }
             } catch (Throwable $error) {
+                if ($error instanceof ApiRhythmDeferredException) {
+                    $this->finish(
+                        $job,
+                        'retry',
+                        SafeErrorPresenter::message($error, 'Billing continuará en su próxima oportunidad segura.'),
+                        $error->nextSafeAt
+                    );
+                    $summary['deferred']++;
+                    $summary['stop_reason'] = $error->blockingScope;
+                    if ($domainExact) {
+                        throw $error;
+                    }
+                    break;
+                }
                 if ($error instanceof RemoteResultUncertainException) {
                     $this->finish($job, 'review', SafeErrorPresenter::message($error, 'Resultado remoto pendiente de revisión.'));
                     $summary['errors']++;
@@ -186,7 +200,7 @@ final class SaleFinancialService
                     break;
                 }
                 if ($error instanceof ApiBudgetExhaustedException) {
-                    $summary['stop_reason'] = $error instanceof ApiRhythmDeferredException ? 'api_rhythm' : 'api_budget';
+                    $summary['stop_reason'] = 'api_budget';
                     break;
                 }
             }
@@ -829,7 +843,12 @@ final class SaleFinancialService
     }
 
     /** @param array<string,mixed> $job */
-    private function finish(array $job, string $status, string $message): void
+    private function finish(
+        array $job,
+        string $status,
+        string $message,
+        ?string $minimumNextRunAt = null
+    ): void
     {
         $valid = ['retry', 'awaiting_remote', 'complete', 'partial', 'review', 'error'];
         if (!in_array($status, $valid, true)) {
@@ -837,7 +856,7 @@ final class SaleFinancialService
         }
         $deferred = in_array($status, ['retry', 'awaiting_remote'], true);
         $next = $deferred
-            ? 'DATE_ADD(UTC_TIMESTAMP(),INTERVAL :delay MINUTE)'
+            ? 'GREATEST(DATE_ADD(UTC_TIMESTAMP(),INTERVAL :delay MINUTE),COALESCE(:minimum_next_run_at,UTC_TIMESTAMP()))'
             : 'next_run_at';
         $stmt = Database::connectionFresh()->prepare(
             'UPDATE sale_financial_reconciliation_jobs
@@ -848,17 +867,26 @@ final class SaleFinancialService
                  lock_owner=NULL,lease_expires_at=NULL,heartbeat_at=NULL
              WHERE id=:id AND lock_owner=:owner AND lease_generation=:generation'
         );
-        $stmt->execute([
+        $parameters = [
             'status' => $status,
             'message' => mb_substr($message, 0, 500),
-            'delay' => $this->retryDelayMinutes((int) $job['attempts']),
             'deferred_since' => $deferred ? 1 : 0,
             'deferred_until' => $deferred ? 1 : 0,
             'retry_days' => $this->retryHorizonDays(),
             'terminal' => $status,
             'id' => (int) $job['id'], 'owner' => (string) $job['lock_owner'],
             'generation' => (int) $job['lease_generation'],
-        ]);
+        ];
+        if ($deferred) {
+            $minimumTimestamp = $minimumNextRunAt === null
+                ? false
+                : strtotime(trim($minimumNextRunAt) . ' UTC');
+            $parameters['delay'] = $this->retryDelayMinutes((int) $job['attempts']);
+            $parameters['minimum_next_run_at'] = $minimumTimestamp === false
+                ? null
+                : gmdate('Y-m-d H:i:s', $minimumTimestamp);
+        }
+        $stmt->execute($parameters);
         if ($stmt->rowCount() !== 1) {
             throw new \RuntimeException('La conciliación perdió su reserva y no pudo cerrarse.');
         }

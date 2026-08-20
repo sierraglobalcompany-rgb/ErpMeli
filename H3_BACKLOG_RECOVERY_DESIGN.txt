@@ -1,0 +1,63 @@
+ERP MELI 2.39.6 H3 — BACKLOG RECOVERY DESIGN ONLY
+
+Estado:
+- Diseño únicamente.
+- No es un script ejecutable.
+- No autoriza UPDATE/INSERT/DELETE en producción.
+- No despierta jobs, no resetea attempts, no cambia Cron, no cambia max-jobs y no cambia el gate Billing 900s.
+
+Objetivo futuro:
+Recuperar de forma controlada sólo la cohorte demostrada por C6.1:
+
+- queue_v4_clean_jobs.state = waiting
+- queue_v4_clean_jobs.job_type = domain_exact
+- payload capability = financial_reconciliation
+- source sale_financial_reconciliation_jobs.status = retry
+- source safe_message normalizado en:
+  - PACK_INCOMPLETE
+  - BILLING_CONTINUE_NEXT_SAFE_OPPORTUNITY
+- source/pointer tenant exacto por company_id y meli_account_id
+- source/pointer id coincidente
+- excluir completed, review, dead, running y cualquier estado no retry/waiting
+
+Pre-gates obligatorios antes de cualquier mutación futura:
+1. Re-ejecutar captura read-only equivalente a C6.1.
+2. Confirmar que la cohorte sigue siendo la misma clase de non-failure defer.
+3. Confirmar Queue V4 ACTIVE/CERTIFIED y OAuth 3/3.
+4. Confirmar NEW_REMOTE_429=0 en una ventana de observación acordada.
+5. Confirmar que H3 ya está instalado y que nuevos non-failure defer no incrementan attempts ni producen 6h/24h.
+6. Confirmar que no hay Cron duplicado ni legacy.
+
+Principio KISS:
+- No intentar usar 4 Billing/h por fuerza.
+- El gate 900s permanece como autoridad.
+- max-jobs=3 permanece intacto.
+- La recuperación no debe generar ráfagas.
+
+Forma de recuperación futura:
+1. Tomar un lote pequeño y tenant-exacto de la cohorte validada.
+2. Recalcular localmente si cada source sigue siendo PACK_INCOMPLETE o BILLING_CONTINUE_NEXT_SAFE_OPPORTUNITY.
+3. Si PACK_INCOMPLETE sigue incompleto, mover sólo a una próxima revisión corta y segura, no inmediata masiva.
+4. Si BILLING_CONTINUE_NEXT_SAFE_OPPORTUNITY sigue sujeto al gate remoto, respetar nextSafeAt del limitador.
+5. Si la fuente ya está complete/review/dead/running o su pointer no coincide, excluirla.
+6. Después de cada lote, observar:
+   - 429
+   - Waiting
+   - Review
+   - Dead
+   - Billing HTTP 2xx/429
+   - Queue heartbeat
+7. Detener ante cualquier 429 nuevo, review/dead nuevo, OAuth bad state o remote uncertain.
+
+Prohibido:
+- Reset global de attempts.
+- Reset global de next_run_at.
+- Re-enqueue masivo.
+- Procesar ahora.
+- Reactivar legacy.
+- Nueva tabla, nueva cola, nueva migración.
+- Cambiar Billing 900s o max-jobs para acelerar esta recuperación.
+
+Resultado esperado:
+Primero demostrar que H3 permite que el flujo natural use mejor la capacidad sin acumular penalización falsa.
+Sólo después considerar una recuperación por lotes, autorizada por separado y con evidencia pre/post.

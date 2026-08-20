@@ -15,6 +15,7 @@ use Throwable;
 final class SaleFinancialService
 {
     private const ENDPOINT = '/billing/integration/group/ML/order/details';
+    private const PACK_INCOMPLETE_RECHECK_MINUTES = 60;
 
     public function queue(int $accountId, string $saleId, ?int $createdBy = null): int
     {
@@ -164,9 +165,8 @@ final class SaleFinancialService
                 }
             } catch (Throwable $error) {
                 if ($error instanceof ApiRhythmDeferredException) {
-                    $this->finish(
+                    $this->deferWithoutAttemptPenalty(
                         $job,
-                        'retry',
                         SafeErrorPresenter::message($error, 'Billing continuará en su próxima oportunidad segura.'),
                         $error->nextSafeAt
                     );
@@ -316,10 +316,16 @@ final class SaleFinancialService
             );
             $pack->execute([(int) $job['meli_account_id'], (string) $job['external_sale_id']]);
             if ((string) ($pack->fetchColumn() ?: '') !== 'complete') {
+                $message = 'La venta agrupada todavía está completando sus órdenes. Se verificará nuevamente.';
+                $this->deferWithoutAttemptPenalty(
+                    $job,
+                    $message,
+                    gmdate('Y-m-d H:i:s', time() + self::PACK_INCOMPLETE_RECHECK_MINUTES * 60)
+                );
                 return [
                     'status' => 'retry',
-                    'message' => 'La venta agrupada todavía está completando sus órdenes. Se verificará nuevamente.',
-                    'finalized' => false,
+                    'message' => $message,
+                    'finalized' => true,
                 ];
             }
         }
@@ -695,6 +701,34 @@ final class SaleFinancialService
         $stmt->execute($parameters);
         if ($stmt->rowCount() !== 1) {
             throw new \RuntimeException('La conciliación perdió su reserva antes de aprobar el resultado.');
+        }
+    }
+
+    /** @param array<string,mixed> $job */
+    private function deferWithoutAttemptPenalty(array $job, string $message, string $nextRunAt): void
+    {
+        $timestamp = strtotime(trim($nextRunAt) . ' UTC');
+        if ($timestamp === false || $timestamp < time() - 5) {
+            throw new \RuntimeException('La conciliación recibió una fecha de reintento no segura.');
+        }
+        $stmt = Database::connectionFresh()->prepare(
+            'UPDATE sale_financial_reconciliation_jobs
+             SET status="retry",next_run_at=:next_run_at,safe_message=:message,
+                 lock_owner=NULL,lease_expires_at=NULL,heartbeat_at=NULL,
+                 attempts=GREATEST(attempts-1,0)
+             WHERE id=:id AND status="running" AND lock_owner=:owner
+               AND lease_generation=:generation AND attempts=:expected_attempts'
+        );
+        $stmt->execute([
+            'next_run_at' => gmdate('Y-m-d H:i:s', $timestamp),
+            'message' => mb_substr($message, 0, 500),
+            'id' => (int) $job['id'],
+            'owner' => (string) $job['lock_owner'],
+            'generation' => (int) $job['lease_generation'],
+            'expected_attempts' => (int) $job['attempts'],
+        ]);
+        if ($stmt->rowCount() !== 1) {
+            throw new \RuntimeException('La conciliación perdió su reserva antes de aplazar sin penalización.');
         }
     }
 

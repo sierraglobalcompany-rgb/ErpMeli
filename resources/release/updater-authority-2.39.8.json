@@ -259,6 +259,10 @@
             "sha256": "a696594174900bfd17524251212bbe89ccfd98766b01aec7619bd757ad4e6e22"
         },
         {
+            "path": "app/Services/OrderSyncService.php",
+            "sha256": "a71d9ebce2d969798ac95848b3b6d53dc82c75b3cb511b9019f144d97404b830"
+        },
+        {
             "path": "app/Services/QuestionSyncService.php",
             "sha256": "2cabeaf527460fe2bffa4086c333f0a466b8d6539872a99bc2c194c551725dac"
         },

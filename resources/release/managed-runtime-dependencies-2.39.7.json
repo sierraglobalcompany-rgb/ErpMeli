@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "h3-financial-nonfailure-defer-2.39.7-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "runtime_manifest_paths_sha256": "727ff9c146082eab7e06d3fda1f0b41f2bfbf6e4063308f9c5e74329efe6985b",
   "coverage_base_commit": "54b6280c6eb67bea21ed651fa68fffe965d49330",
   "classifications": {
     "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

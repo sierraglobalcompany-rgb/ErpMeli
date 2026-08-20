@@ -156,8 +156,9 @@
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/runtime_package_attestation_b21a.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/managed_runtime_package_2361.php"
     ],
-    "test": "@test:release-2397",
+    "test": "@test:release-2398",
     "test:release-2397": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2397.php",
+    "test:release-2398": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2398.php",
     "test:release-2396": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2396.php",
     "test:release-2395": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2395.php",
     "test:release-2394": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2394.php",

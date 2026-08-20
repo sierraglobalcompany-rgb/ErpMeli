@@ -1,0 +1,63 @@
+ERP MELI 2.39.8 — H4 HISTORICAL PACK INTEGRITY BACKFILL DESIGN
+
+Purpose
+-------
+Provide a separate, explicitly authorized local tool to close historical pack
+integrity rows that can be proven complete from already-persisted local data.
+The release itself does not execute this backfill and does not replay any
+historical backlog.
+
+Authority
+---------
+Tool:
+  tools/ERP_MELI_2.39.8_PACK_INTEGRITY_BACKFILL.php
+
+Modes:
+  --plan      read-only transaction, computes deterministic eligible batch.
+  --dry-run   read-only transaction, same selection as plan.
+  --execute   mutating mode, requires:
+              --authorization-token=H4_PACK_INTEGRITY_BACKFILL_EXPLICITLY_AUTHORIZED
+              --expected-plan-sha256=<sha from the approved plan>
+
+Eligibility
+-----------
+A pack is eligible only when all of the following are true:
+
+1. meli_packs.integrity_status is not complete.
+2. expected_orders_json is valid, non-empty, deduplicated and sorted.
+3. The locally linked order set, calculated from meli_pack_orders joined to
+   meli_orders by the same meli_account_id and external_pack_id, is exactly
+   equal to the expected order set.
+4. No missing order, extra order, invalid expectation, empty expectation, or
+   tenant ambiguity is present.
+
+Mutation boundary
+-----------------
+The only columns that execute mode may update are:
+
+  meli_packs.linked_orders_count
+  meli_packs.integrity_status
+  meli_packs.integrity_message
+  meli_packs.orders_fingerprint
+  meli_packs.verified_at
+
+The tool must not update Queue V4, finance, Billing, attempts, status,
+next_run_at, available_at, OAuth, inventory, notifications or Cron state.
+It performs zero Mercado Libre HTTP.
+
+CAS / fail-closed behavior
+--------------------------
+Execute mode recalculates the approved plan, compares the current plan SHA with
+the expected plan SHA, locks each pack with FOR UPDATE, revalidates the exact
+local order set inside the transaction, and updates only when the pack id,
+account, external pack id, integrity status and expected_orders_json remain
+unchanged.
+
+If any row drifts, execution rolls back and reports BLOCKED.
+
+Release boundary
+----------------
+ERP MELI 2.39.8 is a code-only H4 release over schema 299. It publishes the H4
+runtime correction in OrderSyncService and ships this tooling for later audited
+use. The updater does not run the tool, does not apply migration 300, and does
+not alter historical pack/queue/finance/backlog data.

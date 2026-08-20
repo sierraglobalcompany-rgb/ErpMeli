@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-putenv('ERP_RELEASE_BASE_REF=7cfc6ef6d06d478b3eb74dec150c855032096233');
+putenv('ERP_RELEASE_BASE_REF=609fea570d9268e7aea94374e5bac7d4cd95e73d');
 putenv('ERP_RELEASE_ID=erp-meli-2.39.8-h4-pack-integrity-release');
 putenv('ERP_RELEASE_SEQUENCE=23908');
 putenv('ERP_RELEASE_UPGRADE_FROM=2.39.7');

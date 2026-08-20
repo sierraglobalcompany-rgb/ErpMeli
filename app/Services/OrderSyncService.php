@@ -980,12 +980,109 @@ final class OrderSyncService
         $pdo->prepare('INSERT IGNORE INTO meli_pack_orders (meli_pack_id,meli_order_id) VALUES (?,?)')
             ->execute([$packId, $orderId]);
         if ($columnsAvailable) {
+            $this->refreshLocalPackIntegrity($pdo, $packId, $this->accountId);
+        }
+    }
+
+    private function refreshLocalPackIntegrity(PDO $pdo, int $packId, int $accountId): void
+    {
+        $pack = $pdo->prepare(
+            'SELECT id,external_pack_id,expected_orders_json
+             FROM meli_packs
+             WHERE id=? AND meli_account_id=?
+             LIMIT 1
+             FOR UPDATE'
+        );
+        $pack->execute([$packId, $accountId]);
+        $row = $pack->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return;
+        }
+
+        $externalPackId = trim((string) ($row['external_pack_id'] ?? ''));
+        if ($externalPackId === '') {
+            return;
+        }
+
+        $linked = $pdo->prepare(
+            'SELECT DISTINCT o.external_order_id
+             FROM meli_pack_orders po
+             INNER JOIN meli_orders o
+                ON o.id=po.meli_order_id
+               AND o.meli_account_id=?
+               AND o.external_pack_id=?
+             WHERE po.meli_pack_id=?
+             ORDER BY o.external_order_id'
+        );
+        $linked->execute([$accountId, $externalPackId, $packId]);
+        $linkedIds = [];
+        foreach ($linked->fetchAll(PDO::FETCH_COLUMN) as $externalOrderId) {
+            $value = trim((string) $externalOrderId);
+            if ($value !== '') {
+                $linkedIds[$value] = $value;
+            }
+        }
+        $linkedIds = array_values($linkedIds);
+        sort($linkedIds, SORT_STRING);
+        $linkedCount = count($linkedIds);
+
+        $expected = null;
+        $expectedRaw = trim((string) ($row['expected_orders_json'] ?? ''));
+        if ($expectedRaw !== '') {
+            try {
+                $decoded = json_decode($expectedRaw, true, 64, JSON_THROW_ON_ERROR);
+                if (is_array($decoded)) {
+                    $expected = [];
+                    foreach ($decoded as $externalOrderId) {
+                        if (!is_scalar($externalOrderId)) {
+                            $expected = null;
+                            break;
+                        }
+                        $value = trim((string) $externalOrderId);
+                        if ($value === '') {
+                            $expected = null;
+                            break;
+                        }
+                        $expected[$value] = $value;
+                    }
+                    if ($expected !== null) {
+                        $expected = array_values($expected);
+                        sort($expected, SORT_STRING);
+                    }
+                }
+            } catch (Throwable) {
+                $expected = null;
+            }
+        }
+
+        if ($expected === null || $expected === []) {
             $pdo->prepare(
                 'UPDATE meli_packs
-                 SET linked_orders_count=(SELECT COUNT(*) FROM meli_pack_orders WHERE meli_pack_id=?)
-                 WHERE id=?'
-            )->execute([$packId, $packId]);
+                 SET linked_orders_count=?
+                 WHERE id=? AND meli_account_id=?'
+            )->execute([$linkedCount, $packId, $accountId]);
+            return;
         }
+
+        $status = $expected === $linkedIds ? 'complete' : 'partial';
+        $pdo->prepare(
+            'UPDATE meli_packs
+             SET linked_orders_count=?,
+                 integrity_status=?,
+                 integrity_message=?,
+                 orders_fingerprint=?,
+                 verified_at=UTC_TIMESTAMP()
+             WHERE id=? AND meli_account_id=?'
+        )->execute([
+            $linkedCount,
+            $status,
+            $status === 'complete'
+                ? 'Todas las órdenes esperadas están enlazadas.'
+                : 'Faltan órdenes del paquete por recuperar.',
+            hash('sha256', implode('|', $expected)),
+            $packId,
+            $accountId,
+        ]);
     }
 
     /**

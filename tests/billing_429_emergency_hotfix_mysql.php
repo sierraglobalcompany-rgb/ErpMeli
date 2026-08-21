@@ -308,7 +308,7 @@ try {
     $assert(!empty($freshPermit['permit_token']), 'HISTORICAL_ACCOUNT_BLOCK_DOES_NOT_BLOCK_FRESH');
     (new ApiRhythmPolicyService())->release($freshPermit);
     $billingBlocked = $blocked(new ApiRhythmPolicyService(), $accountA);
-    $assert($billingBlocked->blockingScope === 'retry_after', 'BILLING_ENDPOINT_BLOCK_REMAINS_DURABLE');
+    $assert($billingBlocked->blockingScope === 'billing_429_backoff', 'BILLING_ENDPOINT_BLOCK_REMAINS_DURABLE');
     $assert($deltaSeconds($billingBlocked->nextSafeAt) >= (12 * 3600) - 90, 'BILLING_ENDPOINT_BLOCK_REMAINS_12H');
 
     $resetRhythm();

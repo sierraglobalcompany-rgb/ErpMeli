@@ -67,35 +67,6 @@ try {
         throw new RuntimeException('No se persistió la clave estable del incidente.');
     }
 
-    $present = new ReflectionMethod(App\Services\ApiHealthService::class, 'presentIncident');
-    $present->setAccessible(true);
-    $health = new App\Services\ApiHealthService();
-    $localDelay = $present->invoke($health, [
-        'outcome_class' => 'policy_delay',
-        'last_seen_at' => gmdate('Y-m-d H:i:s'),
-        'http_status' => null,
-        'reached_remote' => 0,
-        'safe_message' => 'Aplazado por política local',
-    ]);
-    if (($localDelay['transport_class'] ?? '') !== 'LOCAL_RATE_LIMITED_PRETRANSPORT'
-        || ($localDelay['transport_label'] ?? '') !== 'Pausa preventiva local · sin HTTP remoto') {
-        throw new RuntimeException('Una pausa local no quedó clasificada de forma inequívoca.');
-    }
-    $remote429 = $present->invoke($health, [
-        'outcome_class' => 'remote_error',
-        'last_seen_at' => gmdate('Y-m-d H:i:s'),
-        'http_status' => 429,
-        'reached_remote' => 1,
-        'safe_message' => 'Rate limit remoto',
-    ]);
-    if (($remote429['transport_class'] ?? '') !== 'REMOTE_HTTP_429') {
-        throw new RuntimeException('Un HTTP 429 remoto no quedó clasificado de forma inequívoca.');
-    }
-    $healthSource = (string) file_get_contents($root . '/app/Services/ApiHealthService.php');
-    if (str_contains($healthSource, 'MAX(l.reached_remote) reached_remote')
-        || !str_contains($healthSource, 'GROUP_CONCAT(COALESCE(l.reached_remote,0) ORDER BY l.created_at DESC,l.id DESC')) {
-        throw new RuntimeException('El fallback de incidentes no conserva reached_remote del último evento.');
-    }
 
     $login($partial, 'health-partial@example.invalid');
     $partialScope = (new App\Services\ApiHealthAccessScope())->snapshot();

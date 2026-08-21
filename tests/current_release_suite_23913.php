@@ -31,7 +31,7 @@ $tests = [
     'financial_nonfailure_defer_h3_mysql.php',
     'h4_annual_sales_pack_mysql.php',
     'h4_pack_integrity_backfill_mysql.php',
-    'api_health_incident_truth_22824_mysql_integration.php',
+    'api_health_transport_truth_23913.php',
     'queue_v4_bulk_parity_convergence_2399.php',
     'domain_exact_finance_admission_2393_mysql.php',
     'queue_v4_update_transition_23913.php',

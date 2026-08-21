@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
     "authority_id": "v4-authority-b429-observability-release-2.39.12-runtime-dependencies",
-    "runtime_manifest_paths_sha256": "4e526b9b48a08d6607a4414a2e23f9555c55ba36cbcbdc655d11b4bcd5a8a9bd",
+    "runtime_manifest_paths_sha256": "4caae2bb2896e72a61572f737bf737bcddbd572538171da095bbc7a22b82920f",
     "coverage_base_commit": "99203c97931aadc3c511cf2dc0d18cd0e12ae2d6",
     "classifications": {
         "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

@@ -1404,8 +1404,8 @@
         },
         "runtime_app_services_apilogriskpresenter_php": {
             "path": "app/Services/ApiLogRiskPresenter.php",
-            "sha256": "962f171a99119dbab885a1439a4d8871d15f815d168d7869892ec8c2b3d59d6a",
-            "sha256_lf": "962f171a99119dbab885a1439a4d8871d15f815d168d7869892ec8c2b3d59d6a",
+            "sha256": "d8042328afb5dc418d88fd0ac3ae405be715d87710b8a9045e312b36c6a4b421",
+            "sha256_lf": "d8042328afb5dc418d88fd0ac3ae405be715d87710b8a9045e312b36c6a4b421",
             "text": true
         },
         "runtime_app_services_apimanualpauseexception_php": {
@@ -5646,8 +5646,8 @@
         },
         "runtime_resources_release_updater_authority_2_39_12_json": {
             "path": "resources/release/updater-authority-2.39.12.json",
-            "sha256": "5d228bef0a4c093f9be536f5c5e17048cc289347280831b89ffc56c9cfa6da2b",
-            "sha256_lf": "5d228bef0a4c093f9be536f5c5e17048cc289347280831b89ffc56c9cfa6da2b",
+            "sha256": "120fbae0733176589af6b13a8e187769faa5fd7f6bb6843d655309245cf2f3ca",
+            "sha256_lf": "120fbae0733176589af6b13a8e187769faa5fd7f6bb6843d655309245cf2f3ca",
             "text": true
         },
         "runtime_resources_release_updater_authority_2_39_2_json": {

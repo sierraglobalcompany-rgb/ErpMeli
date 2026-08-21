@@ -272,8 +272,8 @@ try {
     $assert(!empty($other['permit_token']), 't2_other_endpoint_blocked');
     (new ApiRhythmPolicyService())->release($other);
 
-    // T3-T6: progressive, application-wide backoff comes from durable 24-hour logs.
-    foreach ([1 => 1800, 2 => 3600, 3 => 7200, 4 => 14400] as $count => $minimum) {
+    // T3-T6: progressive, application-wide backoff comes from durable physical Billing 429 logs.
+    foreach ([1 => 43200, 2 => 86400, 3 => 172800, 4 => 259200] as $count => $minimum) {
         $reset();
         for ($i = $count; $i >= 1; $i--) {
             $seed429($accountA, $i === 1 ? 5 : 60 + $i);
@@ -547,7 +547,7 @@ try {
     $assert(str_contains($financialSource, 'if ($error instanceof ApiRhythmDeferredException)'), 'financial_rhythm_catch_missing');
 
     fwrite(STDOUT, 'BILLING_REMOTE_SAFETY_CONTAINMENT_2393=PASS checks=' . $checks
-        . ' interval=900 levels=30/60/120/240 physical_max=1 queue_v4_without_rhythm_http=0'
+        . ' interval=900 levels=12/24/48/72h physical_max=1 queue_v4_without_rhythm_http=0'
         . ' pointer=waiting attempt_penalty=0 real_http=0' . PHP_EOL);
 } finally {
     $server->exec('DROP DATABASE IF EXISTS `' . $database . '`');

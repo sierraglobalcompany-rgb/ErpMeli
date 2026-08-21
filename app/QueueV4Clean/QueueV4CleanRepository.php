@@ -280,6 +280,33 @@ final class QueueV4CleanRepository
         }
     }
 
+    /**
+     * Move every non-running financial Billing pointer behind the global
+     * Billing gate without claiming it. This is intentionally global because
+     * Billing's physical gate is endpoint-wide, not tenant-wide.
+     */
+    public function parkFinancialReconciliationUntil(string $nextSafeAt, ?int $exceptJobId = null): int
+    {
+        $availableAt = $this->safeUtcDateTime($nextSafeAt);
+        $whereExcept = $exceptJobId !== null && $exceptJobId > 0 ? ' AND id<>?' : '';
+        $statement = $this->pdo->prepare(
+            "UPDATE queue_v4_clean_jobs
+             SET state='waiting',
+                 available_at=GREATEST(available_at, ?)
+             WHERE job_type='domain_exact'
+               AND state IN ('ready','waiting')
+               AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.capability'))='financial_reconciliation'
+               AND available_at < ?"
+            . $whereExcept
+        );
+        $parameters = [$availableAt, $availableAt];
+        if ($whereExcept !== '') {
+            $parameters[] = (int) $exceptJobId;
+        }
+        $statement->execute($parameters);
+        return $statement->rowCount();
+    }
+
     public function review(array $job, int $runId, string $errorClass): void
     {
         $this->finish($job, $runId, 'review', 'review', $errorClass, null);

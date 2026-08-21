@@ -22,6 +22,7 @@ final class ApiRhythmPolicyService
     private const BILLING_ENDPOINT = 'billing_orders';
     private const BILLING_PATH = '/billing/integration/group/ML/order/details';
     private const BILLING_MIN_INTERVAL_SECONDS = 900;
+    private const BILLING_429_ESCALATION_WINDOW_HOURS = 72;
     private static ?bool $schemaAvailable = null;
 
     /** @var array<string,int> */
@@ -849,16 +850,16 @@ final class ApiRhythmPolicyService
                     (SELECT COUNT(*)
                        FROM api_request_logs
                       WHERE endpoint_path=? AND http_status=429 AND reached_remote=1
-                        AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 24 HOUR)) rate_count,
+                        AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)) rate_count,
                     (SELECT UNIX_TIMESTAMP(created_at)
                        FROM api_request_logs
                       WHERE endpoint_path=? AND http_status=429 AND reached_remote=1
-                        AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 24 HOUR)
+                        AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)
                       ORDER BY created_at DESC,id DESC LIMIT 1) last_rate_epoch,
                     (SELECT COALESCE(retry_after_seconds,0)
                        FROM api_request_logs
                       WHERE endpoint_path=? AND http_status=429 AND reached_remote=1
-                        AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 24 HOUR)
+                        AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)
                       ORDER BY created_at DESC,id DESC LIMIT 1) last_retry_after,
                     (SELECT UNIX_TIMESTAMP(blocked_until)
                        FROM api_rhythm_penalties
@@ -886,10 +887,10 @@ final class ApiRhythmPolicyService
         $lastRate = (float) ($row['last_rate_epoch'] ?? 0);
         if ($rateCount > 0 && $lastRate > 0) {
             $policySeconds = match ($rateCount) {
-                1 => 30 * 60,
-                2 => 60 * 60,
-                3 => 120 * 60,
-                default => 240 * 60,
+                1 => 12 * 60 * 60,
+                2 => 24 * 60 * 60,
+                3 => 48 * 60 * 60,
+                default => 72 * 60 * 60,
             };
             $retryAfter = max(
                 0,

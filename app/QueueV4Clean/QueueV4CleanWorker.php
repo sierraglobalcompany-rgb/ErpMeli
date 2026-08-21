@@ -109,6 +109,12 @@ final class QueueV4CleanWorker
                         'rate_limit_deferred:' . $this->safeToken($error->blockingScope),
                         $error->nextSafeAt,
                     );
+                    if ($this->shouldParkFinancialReconciliation($job, $error)) {
+                        $this->repository->parkFinancialReconciliationUntil(
+                            $error->nextSafeAt,
+                            (int) ($job['id'] ?? 0),
+                        );
+                    }
                     $deferred++;
                     continue;
                 } catch (ApiBudgetExhaustedException $error) {
@@ -453,6 +459,19 @@ final class QueueV4CleanWorker
     private function safeToken(string $value): string
     {
         return substr(preg_replace('/[^a-z0-9_]+/', '_', strtolower($value)) ?: 'rhythm', 0, 70);
+    }
+
+    /** @param array<string,mixed> $job */
+    private function shouldParkFinancialReconciliation(array $job, ApiRhythmDeferredException $error): bool
+    {
+        if (!in_array($error->blockingScope, ['billing_endpoint_interval', 'billing_429_backoff'], true)) {
+            return false;
+        }
+        if ((string) ($job['job_type'] ?? '') !== 'domain_exact') {
+            return false;
+        }
+        $payload = is_array($job['payload'] ?? null) ? $job['payload'] : [];
+        return (string) ($payload['capability'] ?? '') === 'financial_reconciliation';
     }
 
     /** @param array<string,mixed> $job @return array<string,mixed> */

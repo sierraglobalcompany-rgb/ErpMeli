@@ -20,6 +20,7 @@ use App\Services\OrderSyncService;
 use App\Services\QueueV4PreTransportDeferredException;
 use App\Services\RemoteResultUncertainException;
 use App\Services\SaleFinancialService;
+use App\Services\SyncSettingsService;
 use PDO;
 use RuntimeException;
 use Throwable;
@@ -235,7 +236,7 @@ final class QueueV4CleanWorker
             }
             $client = ($this->clientFactory)($accountId);
             $offset = max(0, (int) ($payload['offset'] ?? 0));
-            $limit = max(1, min(20, (int) ($payload['limit'] ?? 20)));
+            $limit = (new SyncSettingsService())->pageLimit();
             $response = ApiExecutionMetadataContext::run(
                 [
                     'source' => 'queue_v4_clean',
@@ -256,20 +257,13 @@ final class QueueV4CleanWorker
                 ])
             );
             $results = is_array($response['results'] ?? null) ? $response['results'] : [];
+            $sync = ($this->syncFactory)($accountId);
             foreach ($results as $order) {
                 $id = trim((string) ($order['id'] ?? ''));
                 if ($id === '' || !ctype_digit($id)) {
                     continue;
                 }
-                $this->repository->enqueue(
-                    $companyId,
-                    $accountId,
-                    'order_exact',
-                    $id,
-                    'order:' . $id,
-                    ['order_id' => $id],
-                    3,
-                );
+                $sync->persistSearchSnapshotForQueueV4Clean($order, $companyId);
             }
             $total = max(0, (int) ($response['paging']['total'] ?? count($results)));
             $responseOffset = max(0, (int) ($response['paging']['offset'] ?? $offset));

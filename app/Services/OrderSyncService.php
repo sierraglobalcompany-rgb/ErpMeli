@@ -172,8 +172,43 @@ final class OrderSyncService
         if ($companyId < 1 || $accountId !== $this->accountId) {
             throw new \RuntimeException('Queue V4 no entregó una autoridad tenant válida para inventario.');
         }
-        (new OrderInventoryService(Database::connection()))->project($companyId, $accountId, $orderId);
+        $this->projectInventoryForQueueV4Clean($companyId, $accountId, $orderId);
         return $orderId;
+    }
+
+    /**
+     * Persiste una orden ya recibida desde `/orders/search` dentro de Queue V4.
+     *
+     * Mantiene la misma semántica local de `syncRange()` —upsert de orden,
+     * items y pagos embebidos— sin crear fanout legacy ni consultar
+     * `/orders/{id}`. La proyección de inventario sigue siendo local y
+     * tenant-scoped.
+     *
+     * @param array<string,mixed> $order
+     */
+    public function persistSearchSnapshotForQueueV4Clean(
+        array $order,
+        int $companyId,
+        ?callable $beforePersist = null,
+    ): int {
+        if ($companyId < 1) {
+            throw new \RuntimeException('Queue V4 no entregó una empresa válida para persistir la orden.');
+        }
+        $tenant = Database::connection()->prepare(
+            'SELECT 1 FROM meli_accounts WHERE company_id=? AND id=? LIMIT 1'
+        );
+        $tenant->execute([$companyId, $this->accountId]);
+        if ($tenant->fetchColumn() === false) {
+            throw new \RuntimeException('Queue V4 no entregó una autoridad tenant válida para persistir la orden.');
+        }
+        $orderId = $this->persistOrder($order, false, $beforePersist, false, false);
+        $this->projectInventoryForQueueV4Clean($companyId, $this->accountId, $orderId);
+        return $orderId;
+    }
+
+    private function projectInventoryForQueueV4Clean(int $companyId, int $accountId, int $orderId): void
+    {
+        (new OrderInventoryService(Database::connection()))->project($companyId, $accountId, $orderId);
     }
 
     /** Un paso web exacto: persiste la orden y no crea trabajo posterior. */

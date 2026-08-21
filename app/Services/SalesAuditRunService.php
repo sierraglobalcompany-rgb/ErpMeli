@@ -188,13 +188,17 @@ final class SalesAuditRunService
             return $repair + ['claimed' => 0, 'processed' => 0, 'errors' => 0];
         }
         $repairCount = (int) ($repair['misclassified_oauth_repaired'] ?? 0);
+        $retryableReadmitted = $jobId === null ? $this->readmitRetryableNotDispatchedErrors() : 0;
         $pagesPerCycle = max(1, min(5, $pagesPerCycle));
         $worker = 'sales-audit-' . getmypid() . '-' . bin2hex(random_bytes(3));
         $admission = null;
         $job = $this->claim($worker, $jobId, $admission);
         if (!$job) {
             return ($admission ?? ['claimed' => 0, 'processed' => 0, 'errors' => 0, 'status' => 'empty'])
-                + ['misclassified_oauth_repaired' => $repairCount];
+                + [
+                    'misclassified_oauth_repaired' => $repairCount,
+                    'retryable_not_dispatched_readmitted' => $retryableReadmitted,
+                ];
         }
 
         $processed = 0;
@@ -202,7 +206,7 @@ final class SalesAuditRunService
             for ($page = 0; $page < $pagesPerCycle; $page++) {
                 if ($deadline !== null && microtime(true) >= $deadline - 2.0) {
                     $this->release($job, $worker, 'pending', 'time_budget', null, gmdate('Y-m-d H:i:s', time() + 5), true);
-                    return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'time_budget', 'misclassified_oauth_repaired' => $repairCount];
+                    return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'time_budget', 'misclassified_oauth_repaired' => $repairCount, 'retryable_not_dispatched_readmitted' => $retryableReadmitted];
                 }
                 $result = $this->fetchPage($job, $worker);
                 $processed += $result['inserted'];
@@ -215,32 +219,32 @@ final class SalesAuditRunService
                         (int) $job['meli_account_id'],
                     );
                     $this->complete($job, $worker);
-                    return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'complete', 'run_id' => (int) $job['sync_sales_audit_run_id'], 'misclassified_oauth_repaired' => $repairCount];
+                    return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'complete', 'run_id' => (int) $job['sync_sales_audit_run_id'], 'misclassified_oauth_repaired' => $repairCount, 'retryable_not_dispatched_readmitted' => $retryableReadmitted];
                 }
             }
             $this->release($job, $worker, 'pending', null, null, gmdate('Y-m-d H:i:s', time() + 5), true);
-            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'page_checkpoint', 'misclassified_oauth_repaired' => $repairCount];
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'page_checkpoint', 'misclassified_oauth_repaired' => $repairCount, 'retryable_not_dispatched_readmitted' => $retryableReadmitted];
         } catch (RemoteResultUncertainException $error) {
             $this->release(
                 $job, $worker, 'waiting_budget', 'remote_result_uncertain_safe_get', $error,
                 gmdate('Y-m-d H:i:s', time() + 60), true
             );
-            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'safe_get_uncertain', 'misclassified_oauth_repaired' => $repairCount];
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'safe_get_uncertain', 'misclassified_oauth_repaired' => $repairCount, 'retryable_not_dispatched_readmitted' => $retryableReadmitted];
         } catch (QueueV4PreTransportDeferredException $error) {
             $this->release($job, $worker, 'waiting_budget', 'pre_transport_deferred', $error, $error->nextSafeAt, true);
-            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'pre_transport', 'misclassified_oauth_repaired' => $repairCount];
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'pre_transport', 'misclassified_oauth_repaired' => $repairCount, 'retryable_not_dispatched_readmitted' => $retryableReadmitted];
         } catch (ApiRhythmDeferredException $error) {
             $this->release($job, $worker, 'waiting_budget', $error->blockingScope, $error, $error->nextSafeAt, true);
-            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => $error->blockingScope, 'misclassified_oauth_repaired' => $repairCount];
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => $error->blockingScope, 'misclassified_oauth_repaired' => $repairCount, 'retryable_not_dispatched_readmitted' => $retryableReadmitted];
         } catch (ApiBudgetExhaustedException $error) {
             $this->release($job, $worker, 'waiting_budget', 'api_budget', $error, $error->nextSafeAt, true);
-            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'api_budget', 'misclassified_oauth_repaired' => $repairCount];
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'api_budget', 'misclassified_oauth_repaired' => $repairCount, 'retryable_not_dispatched_readmitted' => $retryableReadmitted];
         } catch (ApiManualPauseException $error) {
             $this->release($job, $worker, 'waiting_budget', 'api_pause', $error, $error->resumeAt, true);
-            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'api_pause', 'misclassified_oauth_repaired' => $repairCount];
+            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'api_pause', 'misclassified_oauth_repaired' => $repairCount, 'retryable_not_dispatched_readmitted' => $retryableReadmitted];
         } catch (OAuthRefreshRequiredException $error) {
             $deferred = $this->deferClaimedForOAuth($job, $worker, $error);
-            return $deferred + ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'misclassified_oauth_repaired' => $repairCount];
+            return $deferred + ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'misclassified_oauth_repaired' => $repairCount, 'retryable_not_dispatched_readmitted' => $retryableReadmitted];
         } catch (Throwable $error) {
             $safe = SafeErrorPresenter::report($error, 'No fue posible continuar la auditoría exacta.', [
                 'module' => 'sales_audit',
@@ -255,6 +259,7 @@ final class SalesAuditRunService
                 'diagnostic_id' => $safe['reference'],
                 'message' => $safe['message'],
                 'misclassified_oauth_repaired' => $repairCount,
+                'retryable_not_dispatched_readmitted' => $retryableReadmitted,
             ];
         }
     }
@@ -440,6 +445,72 @@ final class SalesAuditRunService
             }
             $pdo->commit();
             return ['misclassified_oauth_repaired' => $repaired, 'abort_scheduler' => false];
+        } catch (Throwable $error) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
+    private function readmitRetryableNotDispatchedErrors(): int
+    {
+        $pdo = Database::connectionFresh();
+        $pdo->beginTransaction();
+        try {
+            $candidates = $pdo->prepare(
+                "SELECT j.id,j.company_id,j.meli_account_id,j.sync_sales_audit_run_id
+                 FROM sync_sales_audit_jobs j
+                 INNER JOIN sync_sales_audit_runs r
+                   ON r.id=j.sync_sales_audit_run_id AND r.company_id=j.company_id
+                  AND r.meli_account_id=j.meli_account_id
+                 INNER JOIN meli_accounts a ON a.company_id=j.company_id AND a.id=j.meli_account_id
+                 WHERE j.status='error'
+                   AND COALESCE(j.last_error_retryable,0)=1
+                   AND COALESCE(j.processed_pages,0)=0
+                   AND j.remote_dispatch_state='NOT_DISPATCHED'
+                   AND j.last_http_status IS NULL
+                   AND j.next_run_at<=UTC_TIMESTAMP()
+                   AND j.attempts<=10
+                   AND LOWER(a.status) IN ('conectado','connected')
+                   AND (j.lock_expires_at IS NULL OR j.lock_expires_at<UTC_TIMESTAMP())
+                 ORDER BY j.company_id,j.meli_account_id,j.id
+                 LIMIT 25 FOR UPDATE"
+            );
+            $candidates->execute();
+            $rows = $candidates->fetchAll(PDO::FETCH_ASSOC);
+            if ($rows === []) {
+                $pdo->commit();
+                return 0;
+            }
+            $update = $pdo->prepare(
+                "UPDATE sync_sales_audit_jobs
+                 SET status='waiting_budget',
+                     next_run_at=UTC_TIMESTAMP(),
+                     locked_by=NULL,
+                     lock_expires_at=NULL,
+                     heartbeat_at=NULL,
+                     safe_error_message='La auditoría se reanudará automáticamente; el intento anterior no salió al transporte remoto.',
+                     updated_at=UTC_TIMESTAMP()
+                 WHERE id=? AND company_id=? AND meli_account_id=? AND sync_sales_audit_run_id=?
+                   AND status='error'
+                   AND COALESCE(last_error_retryable,0)=1
+                   AND COALESCE(processed_pages,0)=0
+                   AND remote_dispatch_state='NOT_DISPATCHED'
+                   AND last_http_status IS NULL"
+            );
+            $readmitted = 0;
+            foreach ($rows as $row) {
+                $update->execute([
+                    (int) $row['id'],
+                    (int) $row['company_id'],
+                    (int) $row['meli_account_id'],
+                    (int) $row['sync_sales_audit_run_id'],
+                ]);
+                $readmitted += $update->rowCount();
+            }
+            $pdo->commit();
+            return $readmitted;
         } catch (Throwable $error) {
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();

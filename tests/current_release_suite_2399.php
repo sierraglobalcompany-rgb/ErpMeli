@@ -30,6 +30,7 @@ $tests = [
     ['financial_nonfailure_defer_h3_mysql.php'],
     ['h4_annual_sales_pack_mysql.php'],
     ['h4_pack_integrity_backfill_mysql.php'],
+    ['queue_v4_bulk_parity_convergence_2399.php'],
     ['queue_v4_update_transition_2399.php'],
     ['runtime_publication_policy_2380.php'],
     ['managed_runtime_package_2361.php'],

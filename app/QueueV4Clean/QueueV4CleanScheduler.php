@@ -41,7 +41,7 @@ final class QueueV4CleanScheduler
         if ($lease->rowCount() !== 1) {
             return ['ok' => true, 'status' => 'busy', 'processed' => 0];
         }
-        QueueV4CleanCycleBudget::start(min(10, max(1, $maxJobs)));
+        QueueV4CleanCycleBudget::start(QueueV4CleanCycleBudget::CYCLE_HTTP_SAFETY_FUSE);
         try {
             $oauth = (new QueueV4CleanOAuthSupervisor(
                 $this->pdo,

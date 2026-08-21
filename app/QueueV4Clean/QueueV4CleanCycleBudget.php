@@ -9,12 +9,18 @@ use App\Services\ApiBudgetExhaustedException;
 /** In-process physical HTTP budget shared by all stages of one CLI cycle. */
 final class QueueV4CleanCycleBudget
 {
+    /**
+     * Safety fuse only. Physical HTTP pacing belongs to ApiRhythmPolicyService;
+     * this fuse prevents runaway loops without making --max-jobs an HTTP cap.
+     */
+    public const CYCLE_HTTP_SAFETY_FUSE = 1000;
+
     private static ?int $limit = null;
     private static int $used = 0;
 
     public static function start(int $limit): void
     {
-        self::$limit = max(1, min(10, $limit));
+        self::$limit = max(1, min(self::CYCLE_HTTP_SAFETY_FUSE, $limit));
         self::$used = 0;
     }
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\QueueV4Clean;
 
+use App\Services\SyncSettingsService;
 use PDO;
 use RuntimeException;
 use Throwable;
@@ -46,6 +47,7 @@ final class QueueV4CleanProducer
         $created = 0;
         $now = time();
         $windowSeconds = max(60, min(900, $windowSeconds));
+        $pageLimit = (new SyncSettingsService())->pageLimit();
         foreach ($accounts as $account) {
             $companyId = (int) $account['company_id'];
             $accountId = (int) $account['meli_account_id'];
@@ -103,7 +105,7 @@ final class QueueV4CleanProducer
                     'fresh_orders_discovery',
                     null,
                     'fresh:' . $key,
-                    ['from' => gmdate(DATE_ATOM, $from), 'to' => gmdate(DATE_ATOM, $to), 'offset' => 0, 'limit' => 20],
+                    ['from' => gmdate(DATE_ATOM, $from), 'to' => gmdate(DATE_ATOM, $to), 'offset' => 0, 'limit' => $pageLimit],
                     3,
                 );
                 $update = $this->pdo->prepare(

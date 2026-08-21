@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.39.8.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.39.9.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -39,11 +39,11 @@ final class ManagedRuntimePublicationPolicy
         'bin/queue_core_dependency_check.php',
         'bin/runtime_process_audit.php',
     ];
-    public const BASE_COMMIT = 'c40d073705833c94911c254ec633bf8eb231375e';
-    public const INSTALLED_BASE_COMMIT = '1eef380afc6ceb42d8955b2def1a439eb4d579fe';
-    public const VERSION = '2.39.8';
-    public const BUILD_ID = 'erp-meli-2.39.8-h4-pack-integrity-release-rc1-20260820';
-    public const BUILT_AT = '2026-08-20T18:00:00Z';
+    public const BASE_COMMIT = 'f41656558ddd334b9e49b9bd71f3525e61f995cb';
+    public const INSTALLED_BASE_COMMIT = 'f41656558ddd334b9e49b9bd71f3525e61f995cb';
+    public const VERSION = '2.39.9';
+    public const BUILD_ID = 'erp-meli-2.39.9-billing-429-emergency-hotfix-rc1-20260820';
+    public const BUILT_AT = '2026-08-20T23:59:00Z';
     public const MINIMUM_MIGRATION = '299_queue_v4_domain_exact_admission_2_39_3.sql';
     private const INVENTORY_MINIMUM_MIGRATION = '295_inventory_warehouse_v1_2_38_0.sql';
     private const QUEUE_V4_MINIMUM_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';
@@ -219,6 +219,11 @@ final class ManagedRuntimePublicationPolicy
             'build_id' => 'erp-meli-2.39.7-h3-financial-nonfailure-defer-rc1-20260820',
             'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.7.json',
+        ],
+        '2.39.8' => [
+            'build_id' => 'erp-meli-2.39.8-h4-pack-integrity-release-rc1-20260820',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.8.json',
         ],
         self::VERSION => [
             'build_id' => self::BUILD_ID,

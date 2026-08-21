@@ -500,7 +500,7 @@
         },
         {
             "path": "resources/release/managed-runtime-dependencies-2.39.13.json",
-            "sha256": "696dccee8b617e019bd671db292679f1f7030e368a62b10fc66978d9257f1cb7"
+            "sha256": "7b1b9f3671372df12ec86d919ebdfa955aafb749479c835767efab385019733b"
         },
         {
             "path": "resources/release/managed-runtime-dependencies-2.39.2.json",

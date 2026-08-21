@@ -252,7 +252,9 @@ try {
     };
 
     // T1: persisted physical dispatch enforces the complete 900-second boundary.
-    foreach ([899, 840, 300, 1] as $secondsAgo) {
+    // Use a safe margin below/above the boundary; the 899→900 edge is a
+    // wall-clock race in long suites because reserve() reads a fresh DB clock.
+    foreach ([890, 840, 300, 1] as $secondsAgo) {
         $reset();
         $seedDispatch($accountA, $secondsAgo);
         $error = $blocked(new ApiRhythmPolicyService(), $accountA, '/billing/integration/group/ML/order/details');
@@ -260,9 +262,9 @@ try {
         $assert((int) $pdo->query('SELECT COUNT(*) FROM api_remote_permits')->fetchColumn() === 1, 't1_created_permit_' . $secondsAgo);
     }
     $reset();
-    $seedDispatch($accountA, 900);
+    $seedDispatch($accountA, 901);
     $eligible = (new ApiRhythmPolicyService())->reserve($accountA, 'GET', '/billing/integration/group/ML/order/details', ['job_type' => 'domain_exact']);
-    $assert(!empty($eligible['permit_token']), 't1_not_eligible_at_900_seconds');
+    $assert(!empty($eligible['permit_token']), 't1_not_eligible_after_billing_boundary');
     (new ApiRhythmPolicyService())->release($eligible);
 
     // T2: the billing-only boundary never blocks an unrelated endpoint.

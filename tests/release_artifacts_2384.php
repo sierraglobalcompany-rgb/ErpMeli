@@ -385,7 +385,6 @@ try {
             'app/Services/ApiRhythmPolicyService.php',
             'app/Services/ManagedRuntimePublicationPolicy.php',
             'app/Views/settings/api_workload.php',
-            'composer.json',
             'resources/release/managed-runtime-dependencies-2.39.11.json',
             'resources/release/updater-authority-2.39.11.json',
             'resources/runtime-manifest.json',

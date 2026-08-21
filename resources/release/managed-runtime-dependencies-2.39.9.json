@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "billing-429-emergency-hotfix-release-2.39.9-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "runtime_manifest_paths_sha256": "0e802cca2053792f546ecfada2ff3e6879c5e445fe19605f870d84ee816c9d99",
   "coverage_base_commit": "f41656558ddd334b9e49b9bd71f3525e61f995cb",
   "classifications": {
     "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

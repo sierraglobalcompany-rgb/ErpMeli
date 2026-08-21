@@ -23,6 +23,8 @@ final class ApiRhythmPolicyService
     private const BILLING_PATH = '/billing/integration/group/ML/order/details';
     private const BILLING_MIN_INTERVAL_SECONDS = 900;
     private const BILLING_429_ESCALATION_WINDOW_HOURS = 72;
+    private const BILLING_429_BACKOFF_MIN_MINUTES = 5;
+    private const BILLING_429_BACKOFF_MAX_MINUTES = 720;
     private static ?bool $schemaAvailable = null;
 
     /** @var array<string,int> */
@@ -476,6 +478,7 @@ final class ApiRhythmPolicyService
         $current = $this->settings->int('api.rhythm.current_adaptive_limit', $ramp[0]);
         $current = max($ramp[0], min($target, $current));
         $minimumInterval = max(1000, min(60000, $this->settings->int('api.rhythm.minimum_interval_ms', 1000)));
+        $billing429Backoff = $this->billing429BackoffMinutes();
         return [
             'mode' => $profile,
             'profile' => $profile,
@@ -492,6 +495,11 @@ final class ApiRhythmPolicyService
             'ramp_p95_http_ms' => max(500, min(60000, $this->settings->int('api.rhythm.ramp_p95_http_ms', 5000))),
             'ramp_require_drainage' => $this->settings->bool('api.rhythm.ramp_require_drainage', true),
             'current_level_started_at' => trim((string) $this->settings->get('api.rhythm.current_level_started_at', '')),
+            'billing_429_backoff_minutes' => $billing429Backoff,
+            'billing_429_backoff_1_minutes' => $billing429Backoff[1],
+            'billing_429_backoff_2_minutes' => $billing429Backoff[2],
+            'billing_429_backoff_3_minutes' => $billing429Backoff[3],
+            'billing_429_backoff_max_minutes' => $billing429Backoff[4],
             // Compatibilidad de lectura con presentadores 2.28.15–2.28.30.
             'calls_per_block' => $target,
             'interval_ms' => $minimumInterval,
@@ -527,6 +535,25 @@ final class ApiRhythmPolicyService
         }
 
         return self::RAMPS[$target] ?? [min(15, $target), $target];
+    }
+
+    /** @return array{1:int,2:int,3:int,4:int} */
+    private function billing429BackoffMinutes(): array
+    {
+        $first = $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_1_minutes', 30);
+        $second = max($first, $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_2_minutes', 120));
+        $third = max($second, $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_3_minutes', 360));
+        $maximum = max($third, $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_max_minutes', 720));
+
+        return [1 => $first, 2 => $second, 3 => $third, 4 => $maximum];
+    }
+
+    private function billing429BackoffMinuteValue(string $key, int $default): int
+    {
+        return max(
+            self::BILLING_429_BACKOFF_MIN_MINUTES,
+            min(self::BILLING_429_BACKOFF_MAX_MINUTES, $this->settings->int($key, $default))
+        );
     }
 
     /** @return array<string,mixed> */
@@ -900,13 +927,10 @@ final class ApiRhythmPolicyService
             (float) ($row['last_log_rate_epoch'] ?? 0),
             (float) ($row['last_permit_rate_epoch'] ?? 0)
         );
+        $rateNext = 0.0;
         if ($rateCount > 0 && $lastRate > 0) {
-            $policySeconds = match ($rateCount) {
-                1 => 12 * 60 * 60,
-                2 => 24 * 60 * 60,
-                3 => 48 * 60 * 60,
-                default => 72 * 60 * 60,
-            };
+            $backoffMinutes = $this->billing429BackoffMinutes();
+            $policySeconds = ($backoffMinutes[min(4, $rateCount)] ?? $backoffMinutes[4]) * 60;
             $retryAfter = max(
                 0,
                 (int) ($row['last_retry_after'] ?? 0),
@@ -921,8 +945,11 @@ final class ApiRhythmPolicyService
 
         $persistedBlock = (float) ($row['persisted_block_epoch'] ?? 0);
         if ($persistedBlock > $next) {
-            $next = $persistedBlock;
-            $scope = 'billing_429_backoff';
+            $effectivePersistedBlock = $rateNext > 0.0 ? min($persistedBlock, $rateNext) : $persistedBlock;
+            if ($effectivePersistedBlock > $next) {
+                $next = $effectivePersistedBlock;
+                $scope = 'billing_429_backoff';
+            }
         }
         if ($next <= $now) {
             return null;

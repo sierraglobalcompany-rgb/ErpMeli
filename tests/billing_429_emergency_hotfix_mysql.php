@@ -249,6 +249,8 @@ try {
     $source = (string) file_get_contents($root . '/app/Services/ApiRhythmPolicyService.php');
     $assert(str_contains($source, 'BILLING_MIN_INTERVAL_SECONDS = 900'), 'NORMAL_BILLING_INTERVAL_900_PRESERVED');
     $assert(str_contains($source, 'BILLING_429_ESCALATION_WINDOW_HOURS = 72'), 'BILLING_ESCALATION_WINDOW_72H_MISSING');
+    $assert(str_contains($source, "api.rhythm.billing_429_backoff_1_minutes', 30"), 'BILLING_429_BACKOFF_1_CONFIG_MISSING');
+    $assert(str_contains($source, "api.rhythm.billing_429_backoff_max_minutes', 720"), 'BILLING_429_BACKOFF_MAX_CONFIG_MISSING');
 
     $resetRhythm();
     $seedDispatch($accountA, 300);
@@ -260,17 +262,17 @@ try {
     $assert(!empty($permit['permit_token']), 'NORMAL_BILLING_INTERVAL_900_PRESERVED_allow_at_900');
     (new ApiRhythmPolicyService())->release($permit);
 
-    foreach ([1 => 12 * 3600, 2 => 24 * 3600, 3 => 48 * 3600, 4 => 72 * 3600] as $count => $minimum) {
+    foreach ([1 => 30 * 60, 2 => 2 * 3600, 3 => 6 * 3600, 4 => 12 * 3600] as $count => $minimum) {
         $resetRhythm();
         for ($i = 1; $i <= $count; $i++) {
             $seed429($accountA, 60 + $i);
         }
         $error = $blocked(new ApiRhythmPolicyService(), $accountB);
         $label = match ($count) {
-            1 => 'FIRST_REMOTE_429_BLOCKS_12H',
-            2 => 'SECOND_REMOTE_429_BLOCKS_24H',
-            3 => 'THIRD_REMOTE_429_BLOCKS_48H',
-            default => 'FOURTH_REMOTE_429_BLOCKS_72H',
+            1 => 'FIRST_REMOTE_429_BLOCKS_30M',
+            2 => 'SECOND_REMOTE_429_BLOCKS_2H',
+            3 => 'THIRD_REMOTE_429_BLOCKS_6H',
+            default => 'FOURTH_REMOTE_429_BLOCKS_12H',
         };
         $assert($error->blockingScope === 'billing_429_backoff', $label . '_scope');
         $assert($deltaSeconds($error->nextSafeAt) >= $minimum - 90, $label . '_duration');
@@ -300,7 +302,8 @@ try {
     )->execute([$scopeKey]);
     $seed429($accountA, 10);
     $longer = $blocked(new ApiRhythmPolicyService(), $accountB);
-    $assert($deltaSeconds($longer->nextSafeAt) >= 80 * 3600 - 90, 'EXISTING_LONGER_BLOCK_NOT_REDUCED');
+    $longerDelta = $deltaSeconds($longer->nextSafeAt);
+    $assert($longerDelta >= 30 * 60 - 90 && $longerDelta < 45 * 60, 'OLD_PERSISTED_48H_DOES_NOT_OVERRIDE_NEW_POLICY');
 
     $resetRhythm();
     $seed429($accountA, 10);
@@ -555,13 +558,13 @@ try {
          WHERE q.job_type='domain_exact'
            AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,'$.capability'))='financial_reconciliation'"
     )->fetchColumn() === 1, 'FIRST_429_OTHER_FINANCE_NOT_CLAIMED_attempts');
-    $first429Minimum = time() + (12 * 3600) - 90;
+    $first429Minimum = time() + (30 * 60) - 90;
     $assert((int) $pdo->query(
         "SELECT COUNT(*) FROM queue_v4_clean_jobs
          WHERE job_type='domain_exact'
            AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.capability'))='financial_reconciliation'
            AND UNIX_TIMESTAMP(available_at) >= " . $first429Minimum
-    )->fetchColumn() === 10, 'FIRST_429_CURRENT_POINTER_NEXT_SAFE_GE_12H');
+    )->fetchColumn() === 10, 'FIRST_429_CURRENT_POINTER_NEXT_SAFE_GE_30M');
     $retryAfterMinimum = time() + 5400 - 90;
     $assert((int) $pdo->query(
         "SELECT COUNT(*) FROM queue_v4_clean_jobs
@@ -575,13 +578,13 @@ try {
         'BILLING_429_EMERGENCY_HOTFIX_MYSQL=PASS'
         . ' checks=' . $checks
         . ' NORMAL_BILLING_INTERVAL_900_PRESERVED=PASS'
-        . ' FIRST_REMOTE_429_BLOCKS_12H=PASS'
-        . ' SECOND_REMOTE_429_BLOCKS_24H=PASS'
-        . ' THIRD_REMOTE_429_BLOCKS_48H=PASS'
-        . ' FOURTH_REMOTE_429_BLOCKS_72H=PASS'
+        . ' FIRST_REMOTE_429_BLOCKS_30M=PASS'
+        . ' SECOND_REMOTE_429_BLOCKS_2H=PASS'
+        . ' THIRD_REMOTE_429_BLOCKS_6H=PASS'
+        . ' FOURTH_REMOTE_429_BLOCKS_12H=PASS'
         . ' LOCAL_DEFER_DOES_NOT_ESCALATE_429=PASS'
         . ' RETRY_AFTER_LONGER_WINS=PASS'
-        . ' EXISTING_LONGER_BLOCK_NOT_REDUCED=PASS'
+        . ' OLD_PERSISTED_48H_DOES_NOT_OVERRIDE_NEW_POLICY=PASS'
         . ' RESTART_PRESERVES_BREAKER=PASS'
         . ' AT_MOST_ONE_PROBE_AFTER_BREAKER=PASS'
         . ' SECOND_PROBE_PRETRANSPORT_BLOCKED=PASS'
@@ -592,7 +595,7 @@ try {
         . ' ORDER_EXACT_CAN_PROGRESS_DURING_BILLING_BLOCK=PASS'
         . ' FIFO_PRESERVED=PASS'
         . ' FIRST_429_DURABLE_DEFERRAL=PASS'
-        . ' FIRST_429_CURRENT_POINTER_NEXT_SAFE_GE_12H=PASS'
+        . ' FIRST_429_CURRENT_POINTER_NEXT_SAFE_GE_30M=PASS'
         . ' FIRST_429_GLOBAL_PARKING_SAME_CYCLE=PASS'
         . ' FIRST_429_OTHER_FINANCE_NOT_CLAIMED=PASS'
         . ' REMOTE_RETRY_AFTER_5400_NOT_TRUNCATED=PASS'

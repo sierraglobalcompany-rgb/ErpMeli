@@ -377,6 +377,19 @@ try {
             'resources/release/updater-authority-2.39.10.json',
             'resources/runtime-manifest.json',
         ];
+    } elseif ($targetVersion === '2.39.11') {
+        $requiredOverlayPaths = [
+            'VERSION',
+            'app/Controllers/SettingsController.php',
+            'app/Repositories/SettingsDefinitionRepository.php',
+            'app/Services/ApiRhythmPolicyService.php',
+            'app/Services/ManagedRuntimePublicationPolicy.php',
+            'app/Views/settings/api_workload.php',
+            'composer.json',
+            'resources/release/managed-runtime-dependencies-2.39.11.json',
+            'resources/release/updater-authority-2.39.11.json',
+            'resources/runtime-manifest.json',
+        ];
     }
     foreach (array_values(array_unique($requiredOverlayPaths)) as $requiredOverlay) {
         $assert(isset($overlay[$requiredOverlay]), 'required_overlay_path_missing:' . $requiredOverlay);

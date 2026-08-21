@@ -140,6 +140,11 @@ final class SettingsController
         $settings->set('api.rhythm.interval_ms', '1000', 'api_rhythm');
         $settings->set('api.rhythm.block_pause_ms', '0', 'api_rhythm');
         $settings->set('api.rhythm.adaptive_enabled', $adaptiveEnabled ? '1' : '0', 'api_rhythm');
+        $billingBackoff = $this->billing429BackoffMinutesFromPost();
+        $settings->set('api.rhythm.billing_429_backoff_1_minutes', (string) $billingBackoff[1], 'api_rhythm');
+        $settings->set('api.rhythm.billing_429_backoff_2_minutes', (string) $billingBackoff[2], 'api_rhythm');
+        $settings->set('api.rhythm.billing_429_backoff_3_minutes', (string) $billingBackoff[3], 'api_rhythm');
+        $settings->set('api.rhythm.billing_429_backoff_max_minutes', (string) $billingBackoff[4], 'api_rhythm');
         if ($profile === 'custom') {
             $steps = $this->sanitizeRampSteps((string) ($_POST['custom_ramp_steps'] ?? ''), $target);
             $settings->set('api.rhythm.ramp_steps', implode(',', $steps), 'api_rhythm');
@@ -164,6 +169,22 @@ final class SettingsController
         }
         Session::flash('success', 'Ritmo guardado. Los límites de Mercado Libre, cuenta, endpoint y presupuesto siguen prevaleciendo.');
         $this->redirect('/settings/cron/rhythm');
+    }
+
+    /** @return array{1:int,2:int,3:int,4:int} */
+    private function billing429BackoffMinutesFromPost(): array
+    {
+        $first = $this->boundedBilling429Minutes($_POST['billing_429_backoff_1_minutes'] ?? 30);
+        $second = max($first, $this->boundedBilling429Minutes($_POST['billing_429_backoff_2_minutes'] ?? 120));
+        $third = max($second, $this->boundedBilling429Minutes($_POST['billing_429_backoff_3_minutes'] ?? 360));
+        $maximum = max($third, $this->boundedBilling429Minutes($_POST['billing_429_backoff_max_minutes'] ?? 720));
+
+        return [1 => $first, 2 => $second, 3 => $third, 4 => $maximum];
+    }
+
+    private function boundedBilling429Minutes(mixed $value): int
+    {
+        return max(5, min(720, (int) $value));
     }
 
     /** @return list<int> */
@@ -339,6 +360,10 @@ final class SettingsController
             'api.logs.raw_retention_days' => 'api_guard',
             'api.guard.jitter_min_ms' => 'api_guard',
             'api.guard.jitter_max_ms' => 'api_guard',
+            'api.rhythm.billing_429_backoff_1_minutes' => 'api_rhythm',
+            'api.rhythm.billing_429_backoff_2_minutes' => 'api_rhythm',
+            'api.rhythm.billing_429_backoff_3_minutes' => 'api_rhythm',
+            'api.rhythm.billing_429_backoff_max_minutes' => 'api_rhythm',
             'questions.page_limit' => 'questions',
             'questions.lookback_hours' => 'questions',
             'notifications.max_events_per_run' => 'notifications',
@@ -371,6 +396,9 @@ final class SettingsController
                 }
                 if ($key === 'financial_recalc.time_budget_seconds') {
                     $value = max(5, min(120, $value));
+                }
+                if (str_starts_with($key, 'api.rhythm.billing_429_backoff_')) {
+                    $value = max(5, min(720, $value));
                 }
                 if ($key === 'sync.max_orders_per_run') {
                     $value = \App\Services\SyncSettingsService::clampOrdersPerRun($value);

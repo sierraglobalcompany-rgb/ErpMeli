@@ -544,8 +544,8 @@ try {
     $assert((int) $summary429['deferred'] === 1, 'BILLING_429_CURRENT_POINTER_DEFERRED');
     $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state="waiting"')->fetchColumn() === 60, 'BILLING_429_GLOBAL_PARKING_SAME_CYCLE');
     $assert((int) $pdo->query('SELECT COUNT(*) FROM api_remote_permits WHERE http_status=429')->fetchColumn() === 1, 'BILLING_429_REMOTE_PERMIT_RECORDED');
-    $assert((int) $pdo->query("SELECT COUNT(*) FROM api_rhythm_penalties WHERE reason='http_429' AND blocked_until>=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 11 HOUR)")->fetchColumn() >= 1, 'BILLING_429_DURABLE_PENALTY');
-    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state="waiting" AND available_at>=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 11 HOUR)')->fetchColumn() === 60, 'BILLING_429_POINTERS_GE_12H');
+    $assert((int) $pdo->query("SELECT COUNT(*) FROM api_rhythm_penalties WHERE reason='http_429' AND blocked_until>=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 29 MINUTE)")->fetchColumn() >= 1, 'BILLING_429_DURABLE_PENALTY');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state="waiting" AND available_at>=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 29 MINUTE)')->fetchColumn() === 60, 'BILLING_429_POINTERS_GE_30M');
 
     $resetBilling();
     $seedFinancial(101, 2, 'AMB');

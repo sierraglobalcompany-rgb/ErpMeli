@@ -275,7 +275,7 @@ try {
     (new ApiRhythmPolicyService())->release($other);
 
     // T3-T6: progressive, application-wide backoff comes from durable physical Billing 429 logs.
-    foreach ([1 => 43200, 2 => 86400, 3 => 172800, 4 => 259200] as $count => $minimum) {
+    foreach ([1 => 1800, 2 => 7200, 3 => 21600, 4 => 43200] as $count => $minimum) {
         $reset();
         for ($i = $count; $i >= 1; $i--) {
             $seed429($accountA, $i === 1 ? 5 : 60 + $i);
@@ -328,7 +328,8 @@ try {
     )->fetchColumn();
     $assert($persistedSeconds >= 21593, 't7_penalty_upsert_reduced_existing_block');
     $persistedLonger = $blocked(new ApiRhythmPolicyService(), $accountA, '/billing/integration/group/ML/order/details');
-    $assert((strtotime((string) $persistedLonger->nextSafeAt . ' UTC') ?: 0) - time() >= 21593, 't7_persisted_block_was_reduced');
+    $persistedLongerDelta = (strtotime((string) $persistedLonger->nextSafeAt . ' UTC') ?: 0) - time();
+    $assert($persistedLongerDelta >= 7193 && $persistedLongerDelta < 10800, 't7_old_persisted_block_does_not_override_new_policy');
 
     // T8: a new service instance reconstructs the same block from persisted evidence.
     $pdo->exec('DELETE FROM api_rhythm_penalties');
@@ -549,7 +550,7 @@ try {
     $assert(str_contains($financialSource, 'if ($error instanceof ApiRhythmDeferredException)'), 'financial_rhythm_catch_missing');
 
     fwrite(STDOUT, 'BILLING_REMOTE_SAFETY_CONTAINMENT_2393=PASS checks=' . $checks
-        . ' interval=900 levels=12/24/48/72h physical_max=1 queue_v4_without_rhythm_http=0'
+        . ' interval=900 levels=30m/2h/6h/12h physical_max=1 queue_v4_without_rhythm_http=0'
         . ' pointer=waiting attempt_penalty=0 real_http=0' . PHP_EOL);
 } finally {
     $server->exec('DROP DATABASE IF EXISTS `' . $database . '`');

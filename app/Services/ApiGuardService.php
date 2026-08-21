@@ -428,7 +428,7 @@ final class ApiGuardService
     public function retryDelaySeconds(int $attempt, int $status, ?int $retryAfter): int
     {
         if ($retryAfter && $retryAfter > 0) {
-            return min(300, max(1, $retryAfter));
+            return min(31536000, max(1, $retryAfter));
         }
         $base = $status === 429 ? 2 : 1;
         $delay = min(120, $base * (2 ** max(0, $attempt - 1)));

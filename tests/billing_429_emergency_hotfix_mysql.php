@@ -5,8 +5,13 @@ declare(strict_types=1);
 use App\Core\Database;
 use App\QueueV4Clean\QueueV4CleanRepository;
 use App\QueueV4Clean\QueueV4CleanWorker;
+use App\Services\ApiGuardService;
 use App\Services\ApiRhythmDeferredException;
 use App\Services\ApiRhythmPolicyService;
+use App\Services\AppSettingsService;
+use App\Services\MeliApiClient;
+use App\Services\MeliHttpTransportInterface;
+use App\Services\MeliTransportSourcePolicy;
 use App\Services\OrderSyncService;
 use App\Services\SchemaInspectorService;
 
@@ -418,6 +423,152 @@ try {
     $second = $worker->run('test', 3, 20);
     $assert((int) $second['claimed'] === 0, 'FINANCIAL_POINTERS_CLAIMED_before_next_safe');
 
+    $assert((new ApiGuardService())->retryDelaySeconds(1, 429, 5400) === 5400, 'REMOTE_RETRY_AFTER_5400_NOT_TRUNCATED');
+
+    $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
+    $pdo->exec('TRUNCATE TABLE queue_v4_clean_attempts');
+    $pdo->exec('TRUNCATE TABLE queue_v4_clean_runs');
+    $pdo->exec('TRUNCATE TABLE queue_v4_clean_jobs');
+    $pdo->exec('TRUNCATE TABLE sale_financial_reconciliation_jobs');
+    $pdo->exec('SET FOREIGN_KEY_CHECKS=1');
+    $resetRhythm();
+    (new AppSettingsService())->set('api.guard.enabled', '0', 'b429_final_amendment_test');
+    (new AppSettingsService())->set('api.budget.enabled', '0', 'b429_final_amendment_test');
+    AppSettingsService::clearCache();
+    $transport429 = new class implements MeliHttpTransportInterface {
+        public int $calls = 0;
+
+        public function request(
+            string $method,
+            string $url,
+            array $data,
+            array $headers,
+            bool $form,
+            array $timeouts,
+        ): array {
+            $this->calls++;
+            return [
+                'status' => 429,
+                'body' => ['message' => 'rate limited'],
+                'headers' => ['retry-after' => '5400'],
+                'curl_error' => '',
+                'duration_ms' => 7,
+                'wire_bytes' => 64,
+                'decoded_bytes' => 32,
+            ];
+        }
+    };
+    $send = new ReflectionMethod(MeliApiClient::class, 'send');
+    $directError = null;
+    try {
+        $send->invoke(
+            new MeliApiClient($accountA, $transport429),
+            'GET',
+            'https://api.mercadolibre.com/billing/integration/group/ML/order/details',
+            [],
+            [],
+            false,
+            false,
+            [
+                'source' => MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT,
+                'job_type' => 'domain_exact',
+                'company_id' => 10,
+                'account_id' => $accountA,
+            ]
+        );
+    } catch (Throwable $error) {
+        $directError = $error;
+    }
+    $assert(
+        $directError instanceof ApiRhythmDeferredException,
+        'FIRST_429_DIRECT_DURABLE_DEFERRAL:' . ($directError ? $directError::class . ':' . $directError->getMessage() : 'none')
+    );
+    $assert($directError?->blockingScope === 'billing_429_backoff', 'FIRST_429_DIRECT_SCOPE:' . (string) ($directError?->blockingScope ?? 'none'));
+    $resetRhythm();
+    $transport429->calls = 0;
+    for ($i = 1; $i <= 10; $i++) {
+        $pdo->prepare(
+            'INSERT INTO sale_financial_reconciliation_jobs
+             (company_id,meli_account_id,sale_key,external_sale_id,input_version,status,origin_type,next_run_at,attempts)
+             VALUES (10,?,?,?,?, "pending","fixture",UTC_TIMESTAMP(),8)'
+        )->execute([$accountA, 'E2E:' . $i, 'E2E' . $i, hash('sha256', 'E2E' . $i)]);
+        $sourceId = (int) $pdo->lastInsertId();
+        $payload = json_encode(['capability' => 'financial_reconciliation', 'source_id' => $sourceId], JSON_THROW_ON_ERROR);
+        $pdo->prepare(
+            'INSERT INTO queue_v4_clean_jobs
+             (company_id,meli_account_id,job_type,resource_id,idempotency_key,state,available_at,max_attempts,payload_json,attempt_count)
+             VALUES (10,?,"domain_exact",?, ?, "ready", UTC_TIMESTAMP(3), 3, ?, 8)'
+        )->execute([$accountA, (string) $sourceId, 'e2e-finance:' . $sourceId, $payload]);
+    }
+    $e2eWorker = new QueueV4CleanWorker(
+        $pdo,
+        new QueueV4CleanRepository($pdo),
+        null,
+        null,
+        null,
+        static function (string $capability, int $sourceId, int $claimedAccount) use (
+            $send,
+            $transport429,
+            $accountA
+        ): void {
+            if ($capability !== 'financial_reconciliation' || $claimedAccount !== $accountA || $sourceId < 1) {
+                throw new RuntimeException('e2e_financial_scope_invalid');
+            }
+            $send->invoke(
+                new MeliApiClient($claimedAccount, $transport429),
+                'GET',
+                'https://api.mercadolibre.com/billing/integration/group/ML/order/details',
+                [],
+                [],
+                false,
+                false,
+                [
+                    'source' => MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT,
+                    'job_type' => 'domain_exact',
+                    'company_id' => 10,
+                    'account_id' => $claimedAccount,
+                ]
+            );
+        }
+    );
+    $e2e = $e2eWorker->run('test', 3, 20);
+    $e2eClasses = $pdo->query(
+        "SELECT state,last_error_class,COUNT(*) jobs
+         FROM queue_v4_clean_jobs
+         WHERE job_type='domain_exact'
+           AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.capability'))='financial_reconciliation'
+         GROUP BY state,last_error_class ORDER BY state,last_error_class"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $assert((int) $e2e['claimed'] === 1, 'FIRST_429_OTHER_FINANCE_NOT_CLAIMED:' . json_encode([$e2e, $e2eClasses], JSON_THROW_ON_ERROR));
+    $assert((int) $e2e['deferred'] === 1, 'FIRST_429_CURRENT_POINTER_DEFERRED');
+    $assert($transport429->calls === 1, 'FIRST_429_FAKE_TRANSPORT_CALLS');
+    $assert((int) $pdo->query(
+        "SELECT COUNT(*) FROM queue_v4_clean_jobs
+         WHERE job_type='domain_exact'
+           AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.capability'))='financial_reconciliation'
+           AND state='waiting'"
+    )->fetchColumn() === 10, 'FIRST_429_GLOBAL_PARKING_SAME_CYCLE');
+    $assert((int) $pdo->query(
+        "SELECT COUNT(*) FROM queue_v4_clean_attempts a
+         INNER JOIN queue_v4_clean_jobs q ON q.id=a.job_id
+         WHERE q.job_type='domain_exact'
+           AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,'$.capability'))='financial_reconciliation'"
+    )->fetchColumn() === 1, 'FIRST_429_OTHER_FINANCE_NOT_CLAIMED_attempts');
+    $first429Minimum = time() + (12 * 3600) - 90;
+    $assert((int) $pdo->query(
+        "SELECT COUNT(*) FROM queue_v4_clean_jobs
+         WHERE job_type='domain_exact'
+           AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.capability'))='financial_reconciliation'
+           AND UNIX_TIMESTAMP(available_at) >= " . $first429Minimum
+    )->fetchColumn() === 10, 'FIRST_429_CURRENT_POINTER_NEXT_SAFE_GE_12H');
+    $retryAfterMinimum = time() + 5400 - 90;
+    $assert((int) $pdo->query(
+        "SELECT COUNT(*) FROM queue_v4_clean_jobs
+         WHERE job_type='domain_exact'
+           AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.capability'))='financial_reconciliation'
+           AND UNIX_TIMESTAMP(available_at) >= " . $retryAfterMinimum
+    )->fetchColumn() === 10, 'CURRENT_POINTER_NEXT_SAFE_GE_5400');
+
     fwrite(
         STDOUT,
         'BILLING_429_EMERGENCY_HOTFIX_MYSQL=PASS'
@@ -439,6 +590,12 @@ try {
         . ' NON_FINANCE_NOT_PARKED=PASS'
         . ' ORDER_EXACT_CAN_PROGRESS_DURING_BILLING_BLOCK=PASS'
         . ' FIFO_PRESERVED=PASS'
+        . ' FIRST_429_DURABLE_DEFERRAL=PASS'
+        . ' FIRST_429_CURRENT_POINTER_NEXT_SAFE_GE_12H=PASS'
+        . ' FIRST_429_GLOBAL_PARKING_SAME_CYCLE=PASS'
+        . ' FIRST_429_OTHER_FINANCE_NOT_CLAIMED=PASS'
+        . ' REMOTE_RETRY_AFTER_5400_NOT_TRUNCATED=PASS'
+        . ' CURRENT_POINTER_NEXT_SAFE_GE_5400=PASS'
         . ' REAL_HTTP=0'
         . PHP_EOL
     );

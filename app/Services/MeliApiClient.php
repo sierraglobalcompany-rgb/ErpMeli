@@ -625,6 +625,16 @@ final class MeliApiClient implements MeliReadClientInterface
             (new MeliOperationTelemetryService())->record($this->accountId, $requestId, $profile, $durationMs, $wireBytes, $decodedBytes, $status ?: null, true, $errorTelemetryMeta);
             $budget->recordResult($this->accountId, $method, $path, $status ?: null, $retryAfter, $meta, $classification);
             $rhythm->finalizeKnownResult($rhythmPermit, $status ?: null, $retryAfter);
+            if (MeliTransportSourcePolicy::usesQueueRateLimitDeferral($source) && $status === 429) {
+                throw new ApiRhythmDeferredException(
+                    'La cola respetará la autoridad durable del bloqueo remoto.',
+                    $rhythm->rateLimitNextSafeAt($rhythmPermit, $retryAfter),
+                    hash_equals('/billing/integration/group/ML/order/details', $path)
+                        ? 'billing_429_backoff'
+                        : 'retry_after',
+                    true
+                );
+            }
             if ($attempt < $attempts && ($status === 429 || $status >= 500 || $curlError !== '')) {
                 $delay = $guard->retryDelaySeconds($attempt, $status, $retryAfter);
                 if (($delay * 1000) > (int) $rhythm->configuration()['short_wait_ceiling_ms']) {

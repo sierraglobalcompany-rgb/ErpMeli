@@ -850,12 +850,19 @@ final class ApiRhythmPolicyService
                     (SELECT COUNT(*)
                        FROM api_request_logs
                       WHERE endpoint_path=? AND http_status=429 AND reached_remote=1
-                        AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)) rate_count,
-                    (SELECT UNIX_TIMESTAMP(created_at)
+                        AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)) log_rate_count,
+                    (SELECT COUNT(*)
+                       FROM api_remote_permits
+                      WHERE endpoint_key=? AND http_status=429 AND dispatched_at IS NOT NULL
+                        AND COALESCE(completed_at,dispatched_at)>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)) permit_rate_count,
+                    (SELECT UNIX_TIMESTAMP(MAX(created_at))
                        FROM api_request_logs
                       WHERE endpoint_path=? AND http_status=429 AND reached_remote=1
-                        AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)
-                      ORDER BY created_at DESC,id DESC LIMIT 1) last_rate_epoch,
+                        AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)) last_log_rate_epoch,
+                    (SELECT UNIX_TIMESTAMP(MAX(COALESCE(completed_at,dispatched_at)))
+                       FROM api_remote_permits
+                      WHERE endpoint_key=? AND http_status=429 AND dispatched_at IS NOT NULL
+                        AND COALESCE(completed_at,dispatched_at)>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)) last_permit_rate_epoch,
                     (SELECT COALESCE(retry_after_seconds,0)
                        FROM api_request_logs
                       WHERE endpoint_path=? AND http_status=429 AND reached_remote=1
@@ -869,7 +876,9 @@ final class ApiRhythmPolicyService
         $statement->execute([
             self::BILLING_ENDPOINT,
             self::BILLING_PATH,
+            self::BILLING_ENDPOINT,
             self::BILLING_PATH,
+            self::BILLING_ENDPOINT,
             self::BILLING_PATH,
             $this->endpointPenaltyKey(self::BILLING_ENDPOINT),
         ]);
@@ -883,8 +892,14 @@ final class ApiRhythmPolicyService
             $next = $lastDispatch + self::BILLING_MIN_INTERVAL_SECONDS;
         }
 
-        $rateCount = max(0, (int) ($row['rate_count'] ?? 0));
-        $lastRate = (float) ($row['last_rate_epoch'] ?? 0);
+        $rateCount = max(0, (int) max(
+            (int) ($row['log_rate_count'] ?? 0),
+            (int) ($row['permit_rate_count'] ?? 0)
+        ));
+        $lastRate = max(
+            (float) ($row['last_log_rate_epoch'] ?? 0),
+            (float) ($row['last_permit_rate_epoch'] ?? 0)
+        );
         if ($rateCount > 0 && $lastRate > 0) {
             $policySeconds = match ($rateCount) {
                 1 => 12 * 60 * 60,

@@ -20,6 +20,7 @@ $client = $read('app/Services/MeliApiClient.php');
 $controller = $read('app/Controllers/SettingsController.php');
 $workloadView = $read('app/Views/settings/api_workload.php');
 $settingsDefinitions = $read('app/Repositories/SettingsDefinitionRepository.php');
+$settingsSections = $read('app/Services/SettingsSectionService.php');
 
 $assert(str_contains($policy, 'BILLING_MIN_INTERVAL_SECONDS = 900'), 'billing_interval_900_missing');
 $assert(str_contains($policy, 'BILLING_429_ESCALATION_WINDOW_HOURS = 72'), 'billing_escalation_window_72h_missing');
@@ -42,7 +43,9 @@ foreach ([
 }
 $assert(str_contains($workloadView, 'No reduce Retry-After enviado por Mercado Libre'), 'settings_ui_retry_after_notice_missing');
 $assert(str_contains($workloadView, 'Sólo aplica a Billing 429 remoto real'), 'settings_ui_remote_only_notice_missing');
-$assert(str_contains($controller, 'max($first') && str_contains($controller, 'max($second') && str_contains($controller, 'max($third'), 'settings_save_normalization_missing');
+$assert(str_contains($controller, 'normalizePostedBilling429Backoff')
+    && str_contains($controller, 'persistBilling429Backoff')
+    && str_contains($settingsSections, 'normalizeBilling429BackoffMinutes'), 'settings_save_normalization_missing');
 
 $assert(str_contains($repository, 'parkFinancialReconciliationUntil'), 'finance_parking_method_missing');
 $parkingStart = strpos($repository, 'public function parkFinancialReconciliationUntil');

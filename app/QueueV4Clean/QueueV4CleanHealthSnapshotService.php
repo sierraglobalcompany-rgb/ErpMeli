@@ -32,6 +32,7 @@ final class QueueV4CleanHealthSnapshotService
                     COALESCE(SUM(j.state='waiting'),0) waiting,
                     COALESCE(SUM(j.state='review'),0) review,
                     COALESCE(SUM(j.state='dead'),0) dead,
+                    COALESCE(SUM(j.state='running' AND j.lease_expires_at < UTC_TIMESTAMP(3)),0) stale_running,
                     COALESCE(SUM(j.state='completed'),0) completed
              FROM queue_v4_clean_jobs j WHERE {$tenantSql}"
         );
@@ -132,6 +133,7 @@ final class QueueV4CleanHealthSnapshotService
             $engine !== 'ACTIVE' => 'stopped',
             $readiness !== 'CERTIFIED' => 'attention',
             !$schedulerConfigured || $age === null || $age > 180 => 'delayed',
+            (int) ($totals['dead'] ?? 0) > 0 || (int) ($totals['stale_running'] ?? 0) > 0 => 'attention',
             (int) ($oauthStates['REMOTE_UNCERTAIN'] ?? 0) > 0
                 || (int) ($oauthStates['RECONNECT_REQUIRED'] ?? 0) > 0
                 || (int) ($oauthStates['FAILED'] ?? 0) > 0 => 'attention',

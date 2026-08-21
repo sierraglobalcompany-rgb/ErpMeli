@@ -33,6 +33,11 @@ final class ApiLogRiskPresenter
                 'Mercado Libre rechazó el alcance de autorización de la aplicación.',
                 'Mantenga pausadas las consultas y revise la aplicación y sus permisos.', 'Crítico');
         }
+        if (!$reached && ($outcome === 'policy_delay' || (int) ($row['was_blocked'] ?? 0) === 1)) {
+            return $this->result('Bajo', 'blue', 'Pausa preventiva local', false, false,
+                'El ERP aplazó la operación antes del transporte; no llegó a Mercado Libre.',
+                'Espere la próxima oportunidad segura. Este evento no es una respuesta HTTP 429 remota.', 'Pausa preventiva local');
+        }
         if ($status === 429) {
             return $this->result('Alto', 'red', 'Pausa solicitada por Mercado Libre', true, true,
                 'Mercado Libre pidió reducir temporalmente las consultas.',

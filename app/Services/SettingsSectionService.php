@@ -40,9 +40,14 @@ final class SettingsSectionService
             foreach ($section['fields'] as $field) {
                 $key = $field['key'];
                 $raw = $restoreRecommended ? $field['recommended'] : ($submitted[$key] ?? null);
-                $value = $this->validate($field, $raw);
-                $this->settings->set($key, $value, $sectionKey);
-                $after[$key] = $value;
+                $after[$key] = $this->validate($field, $raw);
+            }
+            if ($sectionKey === 'mercadolibre') {
+                $this->normalizeBilling429Backoff($after);
+            }
+            foreach ($section['fields'] as $field) {
+                $key = $field['key'];
+                $this->settings->set($key, $after[$key], $sectionKey);
             }
             AuditService::record(
                 $restoreRecommended ? 'restore_recommended_settings' : 'update_settings_section',
@@ -123,6 +128,21 @@ final class SettingsSectionService
             throw new InvalidArgumentException('El correo indicado no es válido.');
         }
         return mb_substr($value, 0, 500);
+    }
+
+    /** @param array<string,string> $values */
+    private function normalizeBilling429Backoff(array &$values): void
+    {
+        $normalized = ApiRhythmPolicyService::normalizeBilling429BackoffMinutes([
+            $values['api.rhythm.billing_429_backoff_1_minutes'] ?? 30,
+            $values['api.rhythm.billing_429_backoff_2_minutes'] ?? 120,
+            $values['api.rhythm.billing_429_backoff_3_minutes'] ?? 360,
+            $values['api.rhythm.billing_429_backoff_max_minutes'] ?? 720,
+        ]);
+        $values['api.rhythm.billing_429_backoff_1_minutes'] = (string) $normalized[1];
+        $values['api.rhythm.billing_429_backoff_2_minutes'] = (string) $normalized[2];
+        $values['api.rhythm.billing_429_backoff_3_minutes'] = (string) $normalized[3];
+        $values['api.rhythm.billing_429_backoff_max_minutes'] = (string) $normalized[4];
     }
 
     private function requireSection(string $sectionKey): array

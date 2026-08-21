@@ -236,7 +236,7 @@ final class LogQueryService
         if ($risk === 'critical') {
             $where[] = '(l.outcome_class="blocked_signal" OR (l.http_status=401 AND LOWER(COALESCE(l.safe_message,"")) LIKE "%unauthorized_scopes%"))';
         } elseif ($risk === 'high') {
-            $where[] = 'l.http_status=429';
+            $where[] = 'l.http_status=429 AND l.reached_remote=1';
         } elseif ($risk === 'none') {
             $where[] = 'l.outcome_class IN ("success","expected_absence")';
         } elseif ($risk === 'review') {

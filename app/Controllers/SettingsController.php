@@ -59,30 +59,12 @@ final class SettingsController
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
         $rhythm = (new \App\Services\ApiRhythmPolicyService())->preview();
-        $snapshot = (new \App\Services\CronV3OperationalSnapshotService())->snapshot();
-        $totals = is_array($snapshot['totals'] ?? null) ? $snapshot['totals'] : [];
-        $backlog = max(0,
-            (int) ($totals['v3_ready'] ?? 0)
-            + (int) ($totals['v3_deferred'] ?? 0)
-            + (int) ($totals['v3_waiting_rate'] ?? 0)
-            + (int) ($totals['v3_waiting_budget'] ?? 0)
-            + (int) ($totals['v3_waiting_api'] ?? 0)
-        );
-        $rhythm['remote_backlog'] = $backlog;
-        $rhythm['backlog_measured_at'] = $snapshot['measured_at'] ?? null;
-        $rhythm['backlog_protocol'] = $snapshot['protocol'] ?? 'unavailable';
-        $rhythm['parked_backlog'] = (int) ($totals['v3_parked'] ?? 0);
-        $rhythm['legacy_visible_backlog'] = (int) ($totals['legacy_pending_visible'] ?? 0);
-        $rhythm['estimated_drain_minutes'] = (float) ($rhythm['effective_rpm'] ?? 0) > 0
-            ? (int) ceil($backlog / (float) $rhythm['effective_rpm'])
-            : null;
-        $increaseGate = $this->cronV3RhythmIncreaseGate();
+        $snapshot = $this->queueV4RhythmSnapshot();
+        $this->applyQueueV4RhythmSnapshot($rhythm, $snapshot);
+        $increaseGate = $this->queueV4RhythmIncreaseGate($snapshot);
         if (empty($increaseGate['allowed'])) {
             $rhythm['increase_blocker'] = $increaseGate['message'];
         }
-        $rhythm['cron_v3_rate_policy'] = (new \App\Services\CronV3RatePolicyService())->current(
-            max(1, min(300, (int) \App\Core\Env::get('CRON_V3_RATE_LIMIT', '10')))
-        );
         $rhythm['recent_rate_limit_incidents'] = $this->recentRateLimitIncidents();
         View::render('settings/api_workload', compact('rhythm'));
     }
@@ -110,13 +92,14 @@ final class SettingsController
             $target = 30;
         }
         $settings = new AppSettingsService();
+        $billingBackoff = $this->billing429BackoffMinutesFromPost();
         $previousProfile = (string) $settings->get('api.rhythm.profile', '');
         $previousTarget = $settings->int('api.rhythm.target_http_per_minute', $target);
         $previousCurrent = $settings->int('api.rhythm.current_adaptive_limit', min(15, $target));
         $previousAdaptive = $settings->bool('api.rhythm.adaptive_enabled', true);
         $adaptiveEnabled = isset($_POST['adaptive_enabled']);
         if ($target > $previousTarget) {
-            $gate = $this->cronV3RhythmIncreaseGate();
+            $gate = $this->queueV4RhythmIncreaseGate();
             if (empty($gate['allowed'])) {
                 Session::flash('error', 'No se subió el ritmo: ' . $gate['message']);
                 $this->redirect('/settings/cron/rhythm');
@@ -127,11 +110,6 @@ final class SettingsController
         $settings->set('api.rhythm.target_http_per_minute', (string) $target, 'api_rhythm');
         $settings->set('api.rhythm.minimum_interval_ms', '1000', 'api_rhythm');
         $settings->set('api.rhythm.rolling_window_seconds', '60', 'api_rhythm');
-        // Cron V3 usa esta misma autoridad persistida. CRON_V3_RATE_LIMIT
-        // queda únicamente como fallback de seguridad si la base no está
-        // disponible durante el arranque CLI.
-        $settings->set('cron_v3.rate_authority', 'api.rhythm', 'cron_v3');
-        $settings->set('cron_v3.remote_rate_limit', (string) $target, 'cron_v3');
         // Al reducir, el nuevo límite entra inmediatamente. Al aumentar se
         // conserva el nivel actual y la rampa exige evidencia antes de subir.
         $current = min($target, $previousCurrent);
@@ -140,11 +118,7 @@ final class SettingsController
         $settings->set('api.rhythm.interval_ms', '1000', 'api_rhythm');
         $settings->set('api.rhythm.block_pause_ms', '0', 'api_rhythm');
         $settings->set('api.rhythm.adaptive_enabled', $adaptiveEnabled ? '1' : '0', 'api_rhythm');
-        $billingBackoff = $this->billing429BackoffMinutesFromPost();
-        $settings->set('api.rhythm.billing_429_backoff_1_minutes', (string) $billingBackoff[1], 'api_rhythm');
-        $settings->set('api.rhythm.billing_429_backoff_2_minutes', (string) $billingBackoff[2], 'api_rhythm');
-        $settings->set('api.rhythm.billing_429_backoff_3_minutes', (string) $billingBackoff[3], 'api_rhythm');
-        $settings->set('api.rhythm.billing_429_backoff_max_minutes', (string) $billingBackoff[4], 'api_rhythm');
+        $this->persistBilling429Backoff($settings, $billingBackoff);
         if ($profile === 'custom') {
             $steps = $this->sanitizeRampSteps((string) ($_POST['custom_ramp_steps'] ?? ''), $target);
             $settings->set('api.rhythm.ramp_steps', implode(',', $steps), 'api_rhythm');
@@ -174,17 +148,61 @@ final class SettingsController
     /** @return array{1:int,2:int,3:int,4:int} */
     private function billing429BackoffMinutesFromPost(): array
     {
-        $first = $this->boundedBilling429Minutes($_POST['billing_429_backoff_1_minutes'] ?? 30);
-        $second = max($first, $this->boundedBilling429Minutes($_POST['billing_429_backoff_2_minutes'] ?? 120));
-        $third = max($second, $this->boundedBilling429Minutes($_POST['billing_429_backoff_3_minutes'] ?? 360));
-        $maximum = max($third, $this->boundedBilling429Minutes($_POST['billing_429_backoff_max_minutes'] ?? 720));
-
-        return [1 => $first, 2 => $second, 3 => $third, 4 => $maximum];
+        return $this->normalizePostedBilling429Backoff([
+            $_POST['billing_429_backoff_1_minutes'] ?? 30,
+            $_POST['billing_429_backoff_2_minutes'] ?? 120,
+            $_POST['billing_429_backoff_3_minutes'] ?? 360,
+            $_POST['billing_429_backoff_max_minutes'] ?? 720,
+        ]);
     }
 
-    private function boundedBilling429Minutes(mixed $value): int
+    /** @param list<mixed> $values @return array{1:int,2:int,3:int,4:int} */
+    private function normalizePostedBilling429Backoff(array $values): array
     {
-        return max(5, min(720, (int) $value));
+        foreach ($values as $value) {
+            if (!is_numeric($value) || (int) $value < 5 || (int) $value > 720) {
+                throw new \App\Core\HttpException(422, 'Cada pausa Billing 429 debe estar entre 5 y 720 minutos.');
+            }
+        }
+        return \App\Services\ApiRhythmPolicyService::normalizeBilling429BackoffMinutes($values);
+    }
+
+    /** @return array{1:int,2:int,3:int,4:int}|null */
+    private function billing429BackoffMinutesFromGeneralPost(AppSettingsService $settings): ?array
+    {
+        $keys = [
+            'api.rhythm.billing_429_backoff_1_minutes' => 30,
+            'api.rhythm.billing_429_backoff_2_minutes' => 120,
+            'api.rhythm.billing_429_backoff_3_minutes' => 360,
+            'api.rhythm.billing_429_backoff_max_minutes' => 720,
+        ];
+        $submitted = false;
+        $values = [];
+        foreach ($keys as $key => $default) {
+            $postKey = str_replace('.', '_', $key);
+            $submitted = $submitted || array_key_exists($postKey, $_POST);
+            $values[] = $_POST[$postKey] ?? $settings->get($key, (string) $default) ?? (string) $default;
+        }
+        return $submitted ? $this->normalizePostedBilling429Backoff($values) : null;
+    }
+
+    /** @param array{1:int,2:int,3:int,4:int} $billingBackoff */
+    private function persistBilling429Backoff(AppSettingsService $settings, array $billingBackoff): void
+    {
+        $pdo = Database::connection();
+        $pdo->beginTransaction();
+        try {
+            $settings->set('api.rhythm.billing_429_backoff_1_minutes', (string) $billingBackoff[1], 'api_rhythm');
+            $settings->set('api.rhythm.billing_429_backoff_2_minutes', (string) $billingBackoff[2], 'api_rhythm');
+            $settings->set('api.rhythm.billing_429_backoff_3_minutes', (string) $billingBackoff[3], 'api_rhythm');
+            $settings->set('api.rhythm.billing_429_backoff_max_minutes', (string) $billingBackoff[4], 'api_rhythm');
+            $pdo->commit();
+        } catch (\Throwable $error) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
+        }
     }
 
     /** @return list<int> */
@@ -210,33 +228,27 @@ final class SettingsController
     }
 
     /** @return array{allowed:bool,message:string} */
-    private function cronV3RhythmIncreaseGate(): array
+    private function queueV4RhythmIncreaseGate(?array $snapshot = null): array
     {
         try {
-            $snapshot = (new \App\Services\CronV3OperationalSnapshotService())->snapshot();
+            $snapshot ??= $this->queueV4RhythmSnapshot();
             $totals = is_array($snapshot['totals'] ?? null) ? $snapshot['totals'] : [];
-            $v3 = is_array($snapshot['v3'] ?? null) ? $snapshot['v3'] : [];
-            $v3Totals = is_array($v3['totals'] ?? null) ? $v3['totals'] : [];
-            if ((int) ($totals['waiting_capability_queues'] ?? 0) > 0) {
-                return ['allowed' => false, 'message' => 'hay colas críticas esperando capacidad V3. Primero cierre esas brechas.'];
+            if ((int) ($totals['dead'] ?? 0) > 0) {
+                return ['allowed' => false, 'message' => 'Queue V4 tiene trabajos muertos; resuelva ese diagnóstico antes de subir el ritmo.'];
             }
-            if ((int) ($totals['review_unsupported_queues'] ?? 0) > 0) {
-                return ['allowed' => false, 'message' => 'hay colas no soportadas que deben quedar explícitas antes de subir el ritmo.'];
+            if ((int) ($totals['stale_running'] ?? 0) > 0) {
+                return ['allowed' => false, 'message' => 'Queue V4 tiene leases vencidos; espere estabilidad antes de subir el ritmo.'];
             }
-            if ((int) ($v3Totals['review'] ?? 0) > 0 || (int) ($v3Totals['dead'] ?? 0) > 0) {
-                return ['allowed' => false, 'message' => 'existen trabajos V3 en revisión o muertos.'];
+            if ((string) ($snapshot['state'] ?? '') !== 'healthy') {
+                return ['allowed' => false, 'message' => 'Queue V4 no tiene una señal reciente y certificada para subir el ritmo.'];
             }
-            if ((int) ($v3Totals['expired_leases'] ?? 0) > 0) {
-                return ['allowed' => false, 'message' => 'hay leases vencidos; espere estabilidad antes de subir el ritmo.'];
-            }
-            $drainage = is_array($snapshot['drainage'] ?? null) ? $snapshot['drainage'] : [];
-            if (empty($drainage['can_claim_decreasing'])) {
-                return ['allowed' => false, 'message' => 'el drenaje todavía no demuestra que el backlog ejecutable baje con snapshots completos.'];
+            if ($this->recentRateLimitIncidents() !== []) {
+                return ['allowed' => false, 'message' => 'hay un 429 remoto reciente; respete la ventana de estabilidad antes de subir el ritmo.'];
             }
 
-            return ['allowed' => true, 'message' => 'Cron V3 tiene evidencia suficiente para subir el ritmo.'];
+            return ['allowed' => true, 'message' => 'Queue V4 tiene evidencia suficiente para subir el ritmo.'];
         } catch (\Throwable) {
-            return ['allowed' => false, 'message' => 'no se pudo comprobar la salud V3 con una lectura completa.'];
+            return ['allowed' => false, 'message' => 'no se pudo comprobar la salud de Queue V4 con una lectura completa.'];
         }
     }
 
@@ -246,24 +258,12 @@ final class SettingsController
         $this->releaseReadOnlySession();
         try {
             $preview = (new \App\Services\ApiRhythmPolicyService())->preview();
-            $snapshot = (new \App\Services\CronV3OperationalSnapshotService())->snapshot();
-            $totals = is_array($snapshot['totals'] ?? null) ? $snapshot['totals'] : [];
-            $backlog = max(0,
-                (int) ($totals['v3_ready'] ?? 0)
-                + (int) ($totals['v3_deferred'] ?? 0)
-                + (int) ($totals['v3_waiting_rate'] ?? 0)
-                + (int) ($totals['v3_waiting_budget'] ?? 0)
-                + (int) ($totals['v3_waiting_api'] ?? 0)
-            );
-            $preview['remote_backlog'] = $backlog;
-            $preview['parked_backlog'] = (int) ($totals['v3_parked'] ?? 0);
-            $preview['legacy_visible_backlog'] = (int) ($totals['legacy_pending_visible'] ?? 0);
-            $preview['estimated_drain_minutes'] = (float) ($preview['effective_rpm'] ?? 0) > 0
-                ? (int) ceil($backlog / (float) $preview['effective_rpm'])
-                : null;
-            $preview['cron_v3_rate_policy'] = (new \App\Services\CronV3RatePolicyService())->current(
-                max(1, min(300, (int) \App\Core\Env::get('CRON_V3_RATE_LIMIT', '10')))
-            );
+            $snapshot = $this->queueV4RhythmSnapshot();
+            $this->applyQueueV4RhythmSnapshot($preview, $snapshot);
+            $increaseGate = $this->queueV4RhythmIncreaseGate($snapshot);
+            if (empty($increaseGate['allowed'])) {
+                $preview['increase_blocker'] = $increaseGate['message'];
+            }
             $preview['recent_rate_limit_incidents'] = $this->recentRateLimitIncidents();
             $this->json(['ok' => true, 'preview' => $preview]);
         } catch (\App\Core\HttpException $e) {
@@ -272,6 +272,31 @@ final class SettingsController
             http_response_code(503);
             $this->json(['ok' => false, 'message' => 'No se pudo calcular el ritmo efectivo. No se modificó la configuración.']);
         }
+    }
+
+    /** @return array<string,mixed> */
+    private function queueV4RhythmSnapshot(): array
+    {
+        $access = (new \App\Services\ApiHealthAccessScope())->snapshot();
+        return (new \App\QueueV4Clean\QueueV4CleanHealthSnapshotService(
+            Database::connectionFresh()
+        ))->snapshot(null, $access['company_ids'], $access['account_ids']);
+    }
+
+    /** @param array<string,mixed> $rhythm @param array<string,mixed> $snapshot */
+    private function applyQueueV4RhythmSnapshot(array &$rhythm, array $snapshot): void
+    {
+        $totals = is_array($snapshot['totals'] ?? null) ? $snapshot['totals'] : [];
+        $rhythm['operational_backlog'] = max(0,
+            (int) ($totals['ready'] ?? 0)
+            + (int) ($totals['running'] ?? 0)
+            + (int) ($totals['waiting'] ?? 0)
+        );
+        $rhythm['review_backlog'] = max(0, (int) ($totals['review'] ?? 0));
+        $rhythm['completed_last_hour'] = max(0, (int) ($totals['completed_last_hour'] ?? 0));
+        $rhythm['backlog_measured_at'] = $snapshot['measured_at'] ?? null;
+        $rhythm['backlog_protocol'] = $snapshot['snapshot_state'] ?? 'unavailable';
+        $rhythm['queue_v4_state'] = $snapshot['state'] ?? 'unavailable';
     }
 
     public function index(): void
@@ -324,6 +349,7 @@ final class SettingsController
             );
         }
         $settings = new AppSettingsService();
+        $generalBillingBackoff = $this->billing429BackoffMinutesFromGeneralPost($settings);
         foreach ([
             'sync.max_manual_range_days' => 'sync',
             'sync.page_limit' => 'sync',
@@ -381,6 +407,9 @@ final class SettingsController
         ] as $key => $group) {
             $postKey = str_replace('.', '_', $key);
             if (isset($_POST[$postKey])) {
+                if (str_starts_with($key, 'api.rhythm.billing_429_backoff_')) {
+                    continue;
+                }
                 $value = max(0, (int) $_POST[$postKey]);
                 if ($key === 'sync.default_enqueue_delay_minutes' && !in_array($value, [0, 5, 30, 60], true)) {
                     $value = 5;
@@ -397,9 +426,6 @@ final class SettingsController
                 if ($key === 'financial_recalc.time_budget_seconds') {
                     $value = max(5, min(120, $value));
                 }
-                if (str_starts_with($key, 'api.rhythm.billing_429_backoff_')) {
-                    $value = max(5, min(720, $value));
-                }
                 if ($key === 'sync.max_orders_per_run') {
                     $value = \App\Services\SyncSettingsService::clampOrdersPerRun($value);
                 }
@@ -408,6 +434,9 @@ final class SettingsController
                 }
                 $settings->set($key, (string) $value, $group);
             }
+        }
+        if ($generalBillingBackoff !== null) {
+            $this->persistBilling429Backoff($settings, $generalBillingBackoff);
         }
         if (isset($_POST['sync_chunk_mode'])) {
             $mode = in_array($_POST['sync_chunk_mode'], ['daily', 'weekly', 'parts'], true) ? (string) $_POST['sync_chunk_mode'] : 'daily';

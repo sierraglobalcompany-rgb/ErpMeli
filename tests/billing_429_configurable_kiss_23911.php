@@ -14,6 +14,7 @@ $read = static fn (string $path): string => (string) file_get_contents($root . '
 
 $policy = $read('app/Services/ApiRhythmPolicyService.php');
 $controller = $read('app/Controllers/SettingsController.php');
+$settingsSections = $read('app/Services/SettingsSectionService.php');
 $view = $read('app/Views/settings/api_workload.php');
 $definitions = $read('app/Repositories/SettingsDefinitionRepository.php');
 $worker = $read('app/QueueV4Clean/QueueV4CleanWorker.php');
@@ -37,7 +38,7 @@ $assert(str_contains($policy, 'BILLING_MIN_INTERVAL_SECONDS = 900'), 'BILLING_90
 $assert(str_contains($policy, 'BILLING_429_ESCALATION_WINDOW_HOURS = 72'), 'BILLING_429_WINDOW_72H_UNCHANGED');
 $assert(str_contains($policy, 'max($policySeconds, $retryAfter)'), 'RETRY_AFTER_LONGER_WINS');
 $assert(str_contains($policy, 'min($persistedBlock, $rateNext)'), 'OLD_PERSISTED_48H_DOES_NOT_OVERRIDE_NEW_POLICY');
-$assert(str_contains($controller, 'max($first') && str_contains($controller, 'max($second') && str_contains($controller, 'max($third'), 'SETTINGS_ORDER_NORMALIZED_UPWARD');
+$assert(str_contains($controller, 'normalizeBilling429BackoffMinutes') && str_contains($settingsSections, 'normalizeBilling429BackoffMinutes'), 'SETTINGS_ORDER_NORMALIZED_UPWARD');
 $assert(str_contains($controller, 'billing_429_backoff_1_minutes') && str_contains($controller, 'api_rhythm'), 'SETTINGS_SAVE_NON_CUSTOM_PROFILE_PERSISTS_B429');
 $assert(str_contains($view, 'Protección ante errores peligrosos de Mercado Libre'), 'SETTINGS_UI_EXPOSES_B429_POLICY');
 $assert(str_contains($view, 'No reduce Retry-After enviado por Mercado Libre'), 'SETTINGS_UI_RETRY_AFTER_NOTICE');

@@ -540,12 +540,34 @@ final class ApiRhythmPolicyService
     /** @return array{1:int,2:int,3:int,4:int} */
     private function billing429BackoffMinutes(): array
     {
-        $first = $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_1_minutes', 30);
-        $second = max($first, $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_2_minutes', 120));
-        $third = max($second, $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_3_minutes', 360));
-        $maximum = max($third, $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_max_minutes', 720));
+        return self::normalizeBilling429BackoffMinutes([
+            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_1_minutes', 30),
+            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_2_minutes', 120),
+            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_3_minutes', 360),
+            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_max_minutes', 720),
+        ]);
+    }
+
+    /**
+     * Canonical form shared by every configuration surface. A lower later
+     * step is raised, never silently turned into a shorter prior protection.
+     *
+     * @param array{0?:mixed,1?:mixed,2?:mixed,3?:mixed} $values
+     * @return array{1:int,2:int,3:int,4:int}
+     */
+    public static function normalizeBilling429BackoffMinutes(array $values): array
+    {
+        $first = self::boundedBilling429BackoffMinutes($values[0] ?? 30);
+        $second = max($first, self::boundedBilling429BackoffMinutes($values[1] ?? 120));
+        $third = max($second, self::boundedBilling429BackoffMinutes($values[2] ?? 360));
+        $maximum = max($third, self::boundedBilling429BackoffMinutes($values[3] ?? 720));
 
         return [1 => $first, 2 => $second, 3 => $third, 4 => $maximum];
+    }
+
+    private static function boundedBilling429BackoffMinutes(mixed $value): int
+    {
+        return max(5, min(720, (int) $value));
     }
 
     private function billing429BackoffMinuteValue(string $key, int $default): int

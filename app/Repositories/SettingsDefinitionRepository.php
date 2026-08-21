@@ -56,7 +56,7 @@ final class SettingsDefinitionRepository
                 $this->number('api.guard.app_blocked_cooldown_minutes', 'Pausa por aplicación bloqueada', 1440, 30, 10080, 'min', 'Protección crítica de toda la aplicación.', true),
                 $this->number('api.guard.unauthorized_scopes_global_pause_minutes', 'Pausa por permisos críticos', 1440, 30, 10080, 'min', 'Evita insistir cuando la aplicación perdió permisos.', true),
                 $this->number('api.guard.max_retry_attempts', 'Reintentos máximos', 3, 1, 5, 'intentos', 'No aumenta el presupuesto; solo controla fallos transitorios.', true),
-                $this->number('api.rhythm.billing_429_backoff_1_minutes', 'Billing 429 · primera pausa', 30, 5, 720, 'min', 'Sólo para Billing 429 remoto real; Retry-After de Mercado Libre prevalece.', true),
+                $this->number('api.rhythm.billing_429_backoff_1_minutes', 'Billing 429 · primera pausa', 30, 5, 720, 'min', 'Sólo para Billing 429 remoto real; Retry-After de Mercado Libre prevalece. Al guardar, los cuatro niveles se ordenan de menor a mayor.', true),
                 $this->number('api.rhythm.billing_429_backoff_2_minutes', 'Billing 429 · segunda pausa', 120, 5, 720, 'min', 'Sólo para Billing 429 remoto real; Retry-After de Mercado Libre prevalece.', true),
                 $this->number('api.rhythm.billing_429_backoff_3_minutes', 'Billing 429 · tercera pausa', 360, 5, 720, 'min', 'Sólo para Billing 429 remoto real; Retry-After de Mercado Libre prevalece.', true),
                 $this->number('api.rhythm.billing_429_backoff_max_minutes', 'Billing 429 · pausa máxima', 720, 5, 720, 'min', 'Sólo para Billing 429 remoto real; Retry-After de Mercado Libre prevalece.', true),

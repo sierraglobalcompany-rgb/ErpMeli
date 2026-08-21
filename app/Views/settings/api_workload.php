@@ -62,9 +62,9 @@ $allowedRpm = isset($rhythm['allowed_rpm'])
 $observed15 = isset($rhythm['observed_http_15m']) ? max(0, (float) $rhythm['observed_http_15m']) : null;
 $observed60 = isset($rhythm['observed_http_60m']) ? max(0, (float) $rhythm['observed_http_60m']) : null;
 $resourcesPerHttp = isset($rhythm['resources_per_http']) ? max(0, (float) $rhythm['resources_per_http']) : null;
-$remoteBacklog = isset($rhythm['remote_backlog']) ? max(0, (int) $rhythm['remote_backlog']) : null;
-$parkedBacklog = isset($rhythm['parked_backlog']) ? max(0, (int) $rhythm['parked_backlog']) : null;
-$legacyVisibleBacklog = isset($rhythm['legacy_visible_backlog']) ? max(0, (int) $rhythm['legacy_visible_backlog']) : null;
+$operationalBacklog = isset($rhythm['operational_backlog']) ? max(0, (int) $rhythm['operational_backlog']) : null;
+$reviewBacklog = isset($rhythm['review_backlog']) ? max(0, (int) $rhythm['review_backlog']) : null;
+$completedLastHour = isset($rhythm['completed_last_hour']) ? max(0, (int) $rhythm['completed_last_hour']) : null;
 $rateLimitIncidents = array_values(array_filter(
     is_array($rhythm['recent_rate_limit_incidents'] ?? null) ? $rhythm['recent_rate_limit_incidents'] : [],
     static fn(array $incident): bool => !empty($incident['rate_limit_signal']) || (int) ($incident['http_status'] ?? 0) === 429
@@ -135,9 +135,9 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
     <p>Solo incluye respuestas con conteo certificado. Combina tipos de recurso y no equivale a recursos finalizados.</p>
   </article>
   <article>
-    <span>Fila remota lista</span>
-    <strong><?= $remoteBacklog === null ? 'Por comprobar' : number_format($remoteBacklog, 0, ',', '.') . ' ejecutables' ?></strong>
-    <p>Trabajo parqueado: <?= $parkedBacklog !== null ? number_format($parkedBacklog, 0, ',', '.') : 'por comprobar' ?> · <?= $legacyVisibleBacklog !== null ? number_format($legacyVisibleBacklog, 0, ',', '.') . ' visibles legacy.' : 'La estimación dependerá del rendimiento observado.' ?></p>
+    <span>Backlog operativo Queue V4</span>
+    <strong><?= $operationalBacklog === null ? 'Por comprobar' : number_format($operationalBacklog, 0, ',', '.') . ' trabajos' ?></strong>
+    <p>En revisión: <?= $reviewBacklog !== null ? number_format($reviewBacklog, 0, ',', '.') : 'por comprobar' ?> · Cron no drena la revisión automáticamente. Completados última hora: <?= $completedLastHour !== null ? number_format($completedLastHour, 0, ',', '.') : 'por comprobar' ?>.</p>
   </article>
   <article>
     <span>Intervalo mínimo</span>

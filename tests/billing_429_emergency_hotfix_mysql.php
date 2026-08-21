@@ -294,6 +294,24 @@ try {
     $assert($deltaSeconds($retryAfter->nextSafeAt) >= 15 * 3600 - 90, 'RETRY_AFTER_LONGER_WINS');
 
     $resetRhythm();
+    $billingScope = 'endpoint:shared:' . hash('sha256', 'billing_orders');
+    $pdo->prepare(
+        'INSERT INTO api_rhythm_penalties
+         (scope_key,reduced_limit_per_minute,blocked_until,reduced_until,reason)
+         VALUES (?,1,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 12 HOUR),DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 12 HOUR),"http_429"),
+                (?,1,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 12 HOUR),DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 12 HOUR),"http_429")'
+    )->execute(['account:' . $accountA, $billingScope]);
+    $orderPermit = (new ApiRhythmPolicyService())->reserve($accountA, 'GET', '/orders/23913', ['job_type' => 'order_exact']);
+    $assert(!empty($orderPermit['permit_token']), 'HISTORICAL_ACCOUNT_BLOCK_DOES_NOT_BLOCK_ORDER_EXACT');
+    (new ApiRhythmPolicyService())->release($orderPermit);
+    $freshPermit = (new ApiRhythmPolicyService())->reserve($accountA, 'GET', '/orders/search', ['job_type' => 'fresh_orders_discovery']);
+    $assert(!empty($freshPermit['permit_token']), 'HISTORICAL_ACCOUNT_BLOCK_DOES_NOT_BLOCK_FRESH');
+    (new ApiRhythmPolicyService())->release($freshPermit);
+    $billingBlocked = $blocked(new ApiRhythmPolicyService(), $accountA);
+    $assert($billingBlocked->blockingScope === 'retry_after', 'BILLING_ENDPOINT_BLOCK_REMAINS_DURABLE');
+    $assert($deltaSeconds($billingBlocked->nextSafeAt) >= (12 * 3600) - 90, 'BILLING_ENDPOINT_BLOCK_REMAINS_12H');
+
+    $resetRhythm();
     $scopeKey = 'endpoint:shared:' . hash('sha256', 'billing_orders');
     $pdo->prepare(
         'INSERT INTO api_rhythm_penalties
@@ -558,6 +576,16 @@ try {
          WHERE q.job_type='domain_exact'
            AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,'$.capability'))='financial_reconciliation'"
     )->fetchColumn() === 1, 'FIRST_429_OTHER_FINANCE_NOT_CLAIMED_attempts');
+    $accountPenaltySeconds = (int) $pdo->query(
+        "SELECT TIMESTAMPDIFF(SECOND,UTC_TIMESTAMP(3),blocked_until)
+         FROM api_rhythm_penalties WHERE scope_key=" . $pdo->quote('account:' . $accountA)
+    )->fetchColumn();
+    $endpointPenaltySeconds = (int) $pdo->query(
+        "SELECT TIMESTAMPDIFF(SECOND,UTC_TIMESTAMP(3),blocked_until)
+         FROM api_rhythm_penalties WHERE scope_key=" . $pdo->quote($billingScope)
+    )->fetchColumn();
+    $assert($accountPenaltySeconds <= 2, 'ACCOUNT_PENALTY_REDUCES_RATE_WITHOUT_HARD_BLOCK');
+    $assert($endpointPenaltySeconds >= 5400 - 90, 'ENDPOINT_PENALTY_PRESERVES_REMOTE_RETRY_AFTER');
     $first429Minimum = time() + (30 * 60) - 90;
     $assert((int) $pdo->query(
         "SELECT COUNT(*) FROM queue_v4_clean_jobs
@@ -584,6 +612,10 @@ try {
         . ' FOURTH_REMOTE_429_BLOCKS_12H=PASS'
         . ' LOCAL_DEFER_DOES_NOT_ESCALATE_429=PASS'
         . ' RETRY_AFTER_LONGER_WINS=PASS'
+        . ' HISTORICAL_ACCOUNT_BLOCK_DOES_NOT_BLOCK_ORDER_EXACT=PASS'
+        . ' HISTORICAL_ACCOUNT_BLOCK_DOES_NOT_BLOCK_FRESH=PASS'
+        . ' BILLING_ENDPOINT_BLOCK_REMAINS_DURABLE=PASS'
+        . ' ACCOUNT_PENALTY_REDUCES_RATE_WITHOUT_HARD_BLOCK=PASS'
         . ' OLD_PERSISTED_48H_DOES_NOT_OVERRIDE_NEW_POLICY=PASS'
         . ' RESTART_PRESERVES_BREAKER=PASS'
         . ' AT_MOST_ONE_PROBE_AFTER_BREAKER=PASS'

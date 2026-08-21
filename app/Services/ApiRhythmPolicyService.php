@@ -850,17 +850,27 @@ final class ApiRhythmPolicyService
                 'scope' => 'rhythm_penalty_state_unavailable',
             ];
         }
+        $now = microtime(true);
         foreach ($scopeRows as $row) {
+            $scopeKey = (string) $row['scope_key'];
+            $endpointScoped = str_starts_with($scopeKey, 'endpoint:');
             $blockedUntil = $this->timestampMicros($row['blocked_until'] ?? null);
-            if ($blockedUntil !== null && $blockedUntil > microtime(true)) {
+            // Un HTTP 429 puede detener el endpoint que lo recibió, pero no
+            // convertir una reducción adaptativa de cuenta en un apagado de
+            // Fresh, orders u OAuth. Las filas account:* históricas siguen
+            // aportando su límite reducido, nunca una frontera absoluta.
+            if ($endpointScoped && $blockedUntil !== null && $blockedUntil > $now) {
                 return [
                     'message' => 'Mercado Libre solicitó esperar antes de otra consulta para este alcance.',
                     'next_safe_at' => $this->formatTimestamp($blockedUntil),
                     'scope' => 'retry_after',
                 ];
             }
-            $scopeKey = (string) $row['scope_key'];
-            $kind = str_starts_with($scopeKey, 'endpoint:') ? 'endpoint_shared' : 'account';
+            $reducedUntil = $this->timestampMicros($row['reduced_until'] ?? null);
+            if ($reducedUntil === null || $reducedUntil <= $now) {
+                continue;
+            }
+            $kind = $endpointScoped ? 'endpoint_shared' : 'account';
             $count = $this->rollingCount(
                 $pdo,
                 $kind,
@@ -1024,10 +1034,13 @@ final class ApiRhythmPolicyService
         $stmt = $pdo->prepare(
             "SELECT scope_key,reduced_limit_per_minute,blocked_until,reduced_until
              FROM api_rhythm_penalties
-             WHERE scope_key IN (?,?) AND reduced_until>UTC_TIMESTAMP(3)"
+             WHERE scope_key IN (?,?)
+               AND (reduced_until>UTC_TIMESTAMP(3) OR blocked_until>UTC_TIMESTAMP(3))
+             ORDER BY CASE WHEN scope_key=? THEN 0 ELSE 1 END"
         );
         $stmt->execute([
             'account:' . $accountId,
+            $this->endpointPenaltyKey($endpointKey),
             $this->endpointPenaltyKey($endpointKey),
         ]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -1056,7 +1069,7 @@ final class ApiRhythmPolicyService
             $reduced = max(1, (int) floor($current / 2));
             $retry = $this->rateLimitDelaySeconds($permit, $retryAfterSeconds, $endpointKey);
             $stableMinutes = max(15, min(240, $this->settings->int('api.rhythm.ramp_stable_after_429_minutes', 60)));
-            $upsert = $pdo->prepare(
+            $endpointUpsert = $pdo->prepare(
                 "INSERT INTO api_rhythm_penalties
                  (scope_key,reduced_limit_per_minute,blocked_until,reduced_until,reason,updated_at)
                  VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND),
@@ -1067,9 +1080,24 @@ final class ApiRhythmPolicyService
                     reduced_until=GREATEST(reduced_until,VALUES(reduced_until)),
                     reason=VALUES(reason),updated_at=VALUES(updated_at)"
             );
-            foreach (['account:' . $accountId, $this->endpointPenaltyKey($endpointKey)] as $scopeKey) {
-                $upsert->execute([$scopeKey, $reduced, $retry, $stableMinutes]);
-            }
+            $endpointUpsert->execute([
+                $this->endpointPenaltyKey($endpointKey),
+                $reduced,
+                $retry,
+                $stableMinutes,
+            ]);
+            $accountUpsert = $pdo->prepare(
+                "INSERT INTO api_rhythm_penalties
+                 (scope_key,reduced_limit_per_minute,blocked_until,reduced_until,reason,updated_at)
+                 VALUES (?, ?, UTC_TIMESTAMP(3),
+                         DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? MINUTE),'http_429',UTC_TIMESTAMP(3))
+                 ON DUPLICATE KEY UPDATE
+                    reduced_limit_per_minute=LEAST(reduced_limit_per_minute,VALUES(reduced_limit_per_minute)),
+                    blocked_until=UTC_TIMESTAMP(3),
+                    reduced_until=GREATEST(reduced_until,VALUES(reduced_until)),
+                    reason=VALUES(reason),updated_at=VALUES(updated_at)"
+            );
+            $accountUpsert->execute(['account:' . $accountId, $reduced, $stableMinutes]);
         } catch (Throwable) {
             // El request remoto ya quedó contabilizado. La excepción que se
             // propaga conserva next_safe_at aunque no se pueda persistir la

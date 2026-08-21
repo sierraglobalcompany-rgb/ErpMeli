@@ -18,7 +18,7 @@ $severityClass = static fn(string $severity): string => match ($severity) {
 };
 $severitySummary = [
     'critical' => count(array_filter($incidents, static fn(array $incident): bool => (string) ($incident['severity'] ?? '') === 'critical')),
-    'rate_limit' => count(array_filter($incidents, static fn(array $incident): bool => !empty($incident['rate_limit_signal']) || (int) ($incident['http_status'] ?? 0) === 429)),
+    'rate_limit' => count(array_filter($incidents, static fn(array $incident): bool => ($incident['transport_class'] ?? '') === 'REMOTE_HTTP_429')),
     'permission' => count(array_filter($incidents, static fn(array $incident): bool => in_array((int) ($incident['http_status'] ?? 0), [401, 403], true))),
     'remote' => count(array_filter($incidents, static fn(array $incident): bool => !empty($incident['reached_remote']) && (int) ($incident['http_status'] ?? 0) >= 500)),
     'internal' => count(array_filter($incidents, static fn(array $incident): bool => empty($incident['reached_remote']) && (string) ($incident['outcome_class'] ?? '') !== 'policy_delay')),
@@ -75,6 +75,7 @@ require __DIR__ . '/_api_health_nav.php';
             <span><?= View::e((string) $incident['operation_label']) ?></span>
             <span>Última vez: <?= View::e(DateTimePresenter::formatQueue($incident['last_seen_at'])) ?></span>
             <span>Activo ahora: <strong><?= !empty($incident['active_now']) ? 'Sí' : 'No' ?></strong></span>
+            <span>Transporte: <strong><?= View::e((string) ($incident['transport_label'] ?? 'Sin clasificar')) ?></strong></span>
             <span>Señal: <strong><?= View::e((string) ($incident['signal_label'] ?? 'Sin clasificar')) ?></strong></span>
           </div>
         </div>

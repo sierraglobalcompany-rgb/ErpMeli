@@ -67,7 +67,7 @@ $reviewBacklog = isset($rhythm['review_backlog']) ? max(0, (int) $rhythm['review
 $completedLastHour = isset($rhythm['completed_last_hour']) ? max(0, (int) $rhythm['completed_last_hour']) : null;
 $rateLimitIncidents = array_values(array_filter(
     is_array($rhythm['recent_rate_limit_incidents'] ?? null) ? $rhythm['recent_rate_limit_incidents'] : [],
-    static fn(array $incident): bool => !empty($incident['rate_limit_signal']) || (int) ($incident['http_status'] ?? 0) === 429
+    static fn(array $incident): bool => ($incident['transport_class'] ?? '') === 'REMOTE_HTTP_429'
 ));
 $limitingScope = trim((string) ($rhythm['limiting_scope'] ?? ''));
 $increaseBlocker = trim((string) ($rhythm['increase_blocker'] ?? ''));

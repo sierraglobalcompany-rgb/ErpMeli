@@ -30,7 +30,7 @@ $apiHealthSection = 'incidents';
   <div class="incident-answer-grid">
     <article><span>¿Llegó a Mercado Libre?</span><strong><?= !empty($incident['reached_remote']) ? 'Sí' : 'No' ?></strong></article>
     <article><span>Activo ahora</span><strong><?= !empty($incident['active_now']) ? 'Sí' : 'No' ?></strong></article>
-    <article><span>Tipo de señal</span><strong><?= View::e((string) ($incident['signal_label'] ?? 'Sin clasificar')) ?></strong></article>
+    <article><span>Clase de transporte</span><strong><?= View::e((string) ($incident['transport_label'] ?? 'Sin clasificar')) ?></strong></article>
     <article><span>Cuentas afectadas</span><strong><?= (int) $incident['account_count'] ?></strong></article>
     <article><span>Última ocurrencia</span><strong><?= View::e(DateTimePresenter::formatQueue($incident['last_seen_at'])) ?></strong></article>
   </div>
@@ -100,6 +100,7 @@ $apiHealthSection = 'incidents';
     <dl class="definition-list">
       <div><dt>Identificador</dt><dd><code><?= View::e((string) $incident['incident_key']) ?></code></dd></div>
       <div><dt>Clasificación</dt><dd><code><?= View::e((string) $incident['outcome_class']) ?></code></dd></div>
+      <div><dt>Clase de transporte</dt><dd><code><?= View::e((string) ($incident['transport_class'] ?? 'OTHER')) ?></code></dd></div>
       <div><dt>Tipo</dt><dd><code><?= View::e((string) ($incident['error_type'] ?: '—')) ?></code></dd></div>
       <div><dt>HTTP</dt><dd><?= !empty($incident['http_status']) ? (int) $incident['http_status'] : 'No se envió' ?></dd></div>
       <div><dt>Mensaje seguro</dt><dd><?= View::e((string) ($incident['safe_message'] ?: '—')) ?></dd></div>

@@ -2484,7 +2484,7 @@ final class SettingsController
         header('Content-Type: text/csv; charset=UTF-8');
         header('Content-Disposition: attachment; filename="api-health-' . date('Ymd-His') . '.csv"');
         $out = fopen('php://output', 'w');
-        fputcsv($out, ['created_at', 'account_name', 'method', 'endpoint_path', 'http_status', 'error_type', 'error_code', 'retry_after_seconds', 'attempt', 'was_blocked', 'outcome_class', 'reached_remote', 'actionable', 'risk_signal', 'incident_key', 'safe_message'], ',', '"', '', "\n");
+        fputcsv($out, ['created_at', 'account_name', 'method', 'endpoint_path', 'http_status', 'error_type', 'error_code', 'retry_after_seconds', 'attempt', 'was_blocked', 'outcome_class', 'transport_class', 'reached_remote', 'actionable', 'risk_signal', 'incident_key', 'safe_message'], ',', '"', '', "\n");
         foreach ($rows as $row) {
             fputcsv($out, [
                 $row['created_at'] ?? '',
@@ -2498,6 +2498,7 @@ final class SettingsController
                 $row['attempt'] ?? '',
                 $row['was_blocked'] ?? '',
                 $row['outcome_class'] ?? '',
+                $row['transport_class'] ?? '',
                 $row['reached_remote'] ?? '',
                 $row['actionable'] ?? '',
                 $row['risk_signal'] ?? '',

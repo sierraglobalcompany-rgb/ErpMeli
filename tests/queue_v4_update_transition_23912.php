@@ -11,6 +11,9 @@ if ($dsn === '' || !str_starts_with(strtolower($dsn), 'mysql:') || stripos($dsn,
 }
 
 $root = dirname(__DIR__);
+$fromVersion = trim((string) (getenv('ERP_TRANSITION_BASE_VERSION') ?: '2.39.11'));
+$targetVersion = trim((string) (getenv('ERP_TRANSITION_TARGET_VERSION') ?: '2.39.12'));
+$targetLabel = str_replace('.', '', $targetVersion);
 $database = 'erp_r23912_transition_' . bin2hex(random_bytes(5));
 $private = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'erp-r23912-' . bin2hex(random_bytes(5));
 @mkdir($private . DIRECTORY_SEPARATOR . 'storage', 0770, true);
@@ -70,8 +73,8 @@ try {
         notes TEXT NULL,
         installed_at DATETIME NOT NULL
     ) ENGINE=InnoDB');
-    $pdo->exec("INSERT INTO app_settings VALUES ('app.version','2.39.11',0,'system')");
-    $pdo->exec("INSERT INTO app_versions(version,notes,installed_at) VALUES ('2.39.11','baseline',UTC_TIMESTAMP())");
+    $pdo->prepare("INSERT INTO app_settings VALUES ('app.version',?,0,'system')")->execute([$fromVersion]);
+    $pdo->prepare("INSERT INTO app_versions(version,notes,installed_at) VALUES (?,'baseline',UTC_TIMESTAMP())")->execute([$fromVersion]);
 
     $definitions = [
         'queue_v4_clean_jobs' => 'id BIGINT UNSIGNED PRIMARY KEY,state VARCHAR(20),attempt_count INT DEFAULT 0,next_run_at DATETIME NULL,payload_json JSON NULL',
@@ -148,10 +151,10 @@ try {
     }
 
     $marker = new \App\Services\InstalledVersionMarkerService();
-    $assert($marker->write('2.39.11', '299_queue_v4_domain_exact_admission_2_39_3.sql'), 'baseline_marker_failed');
+    $assert($marker->write($fromVersion, '299_queue_v4_domain_exact_admission_2_39_3.sql'), 'baseline_marker_failed');
     $promotion = (new \App\Services\DirectUpdateMetadataPromotionService())->promote(
         $pdo,
-        '2.39.12',
+        $targetVersion,
         '299_queue_v4_domain_exact_admission_2_39_3.sql',
         'Code-only V4 Bulk Parity convergence release.',
     );
@@ -175,18 +178,18 @@ try {
     $assert((string) $pdo->query('SELECT status FROM sale_financial_reconciliation_jobs WHERE id=2')->fetchColumn() === 'waiting', 'source_waiting_reactivated');
     $assert((string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=1')->fetchColumn() === 'completed', 'pointer_completed_reactivated');
     $assert((string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=2')->fetchColumn() === 'review', 'pointer_review_reactivated');
-    $assert($promotion['previous_version'] === '2.39.11', 'previous_version_invalid');
-    $assert($promotion['target_version'] === '2.39.12', 'target_version_invalid');
-    $assert((string) $pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === '2.39.12', 'app_version_not_promoted');
-    $assert($markerAfter['valid'] === true && $markerAfter['version'] === '2.39.12', 'marker_not_promoted');
+    $assert($promotion['previous_version'] === $fromVersion, 'previous_version_invalid');
+    $assert($promotion['target_version'] === $targetVersion, 'target_version_invalid');
+    $assert((string) $pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === $targetVersion, 'app_version_not_promoted');
+    $assert($markerAfter['valid'] === true && $markerAfter['version'] === $targetVersion, 'marker_not_promoted');
     $assert($markerAfter['last_migration'] === '299_queue_v4_domain_exact_admission_2_39_3.sql', 'marker_schema_drift');
 
-    echo 'UPDATE_23911_TO_23912=PASS checks=' . $checks
+    echo 'UPDATE_' . str_replace('.', '', $fromVersion) . '_TO_' . $targetLabel . '=PASS checks=' . $checks
         . ' schema_before=299 schema_after=299 migrations_applied=0 migration300_absent=yes'
         . ' business_data_preserved=yes queue_data_preserved=yes finance_data_preserved=yes'
         . ' packs_data_preserved=yes oauth_data_preserved=yes inventory_data_preserved=yes notification_data_preserved=yes'
         . ' attempts_preserved=yes next_run_at_preserved=yes api_429_history_preserved=yes'
-        . ' exact_fallback_marker_preserved=yes automatic_backlog_repair=no version_after=2.39.12 meli_http=0' . PHP_EOL;
+        . ' exact_fallback_marker_preserved=yes automatic_backlog_repair=no version_after=' . $targetVersion . ' meli_http=0' . PHP_EOL;
 } finally {
     $server->exec('DROP DATABASE IF EXISTS `' . $database . '`');
     @unlink($private . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'installed-release.json');

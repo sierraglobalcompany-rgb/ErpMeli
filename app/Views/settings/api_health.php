@@ -25,7 +25,7 @@ $priorityIncidents = array_values(array_filter(
         || !empty($incident['signal_requires_protection'])
         || in_array((string) ($incident['severity'] ?? ''), ['critical', 'high'], true)
 ));
-$rateLimitPriorityCount = count(array_filter($priorityIncidents, static fn(array $incident): bool => !empty($incident['rate_limit_signal']) || (int) ($incident['http_status'] ?? 0) === 429));
+$rateLimitPriorityCount = count(array_filter($priorityIncidents, static fn(array $incident): bool => ($incident['transport_class'] ?? '') === 'REMOTE_HTTP_429'));
 $apiHealthSection = 'overview';
 $apiHealthHours = (int) ($overview['hours'] ?? 24);
 $apiHealthCheckedAt = $overview['checked_at'] ?? null;

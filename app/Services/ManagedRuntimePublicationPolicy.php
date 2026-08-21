@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.39.12.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.39.13.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -39,11 +39,11 @@ final class ManagedRuntimePublicationPolicy
         'bin/queue_core_dependency_check.php',
         'bin/runtime_process_audit.php',
     ];
-    public const BASE_COMMIT = '99203c97931aadc3c511cf2dc0d18cd0e12ae2d6';
-    public const INSTALLED_BASE_COMMIT = '99203c97931aadc3c511cf2dc0d18cd0e12ae2d6';
-    public const VERSION = '2.39.12';
-    public const BUILD_ID = 'erp-meli-2.39.12-v4-authority-b429-observability-rc1-20260821';
-    public const BUILT_AT = '2026-08-21T20:00:00Z';
+    public const BASE_COMMIT = '99218574782e642e8ae3f9b5b95c8af531dcf56d';
+    public const INSTALLED_BASE_COMMIT = '99218574782e642e8ae3f9b5b95c8af531dcf56d';
+    public const VERSION = '2.39.13';
+    public const BUILD_ID = 'erp-meli-2.39.13-billing-endpoint-isolation-rc1-20260821';
+    public const BUILT_AT = '2026-08-21T22:00:00Z';
     public const MINIMUM_MIGRATION = '299_queue_v4_domain_exact_admission_2_39_3.sql';
     private const INVENTORY_MINIMUM_MIGRATION = '295_inventory_warehouse_v1_2_38_0.sql';
     private const QUEUE_V4_MINIMUM_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';

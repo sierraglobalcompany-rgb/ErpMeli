@@ -263,7 +263,7 @@ final class ApiHealthService
                         SUBSTRING_INDEX(GROUP_CONCAT(COALESCE(l.diagnostic_id,"") ORDER BY l.created_at DESC,l.id DESC SEPARATOR "\n"),"\n",1) diagnostic_id,
                         MIN(l.created_at) first_seen_at,
                         MAX(l.created_at) last_seen_at,COUNT(*) repetitions,
-                        MAX(l.reached_remote) reached_remote,MAX(l.actionable) actionable,
+                        CAST(SUBSTRING_INDEX(GROUP_CONCAT(COALESCE(l.reached_remote,0) ORDER BY l.created_at DESC,l.id DESC SEPARATOR ","),",",1) AS UNSIGNED) reached_remote,MAX(l.actionable) actionable,
                         MAX(l.risk_signal) risk_signal,' . $ackSelect . '
                         COUNT(DISTINCT CONCAT(COALESCE(l.scope_kind,"application"),":",COALESCE(l.meli_account_id,l.company_id,0))) account_count,
                         GROUP_CONCAT(DISTINCT CASE
@@ -682,6 +682,13 @@ final class ApiHealthService
             $stmt->execute();
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
             foreach ($rows as &$row) {
+                if ($classified) {
+                    $row['transport_class'] = $this->transportClass(
+                        (int) ($row['reached_remote'] ?? 0) === 1,
+                        (int) ($row['http_status'] ?? 0),
+                        (string) ($row['outcome_class'] ?? '')
+                    );
+                }
                 $row = Logger::redact($row);
                 $presented = (new ApiHealthSafeMessageService())->present(
                     (string) ($row['safe_message'] ?? ''),
@@ -856,7 +863,7 @@ final class ApiHealthService
                         SUBSTRING_INDEX(GROUP_CONCAT(COALESCE(l.diagnostic_id,"") ORDER BY l.created_at DESC,l.id DESC SEPARATOR "\n"),"\n",1) diagnostic_id,
                         MIN(l.created_at) first_seen_at,
                         MAX(l.created_at) last_seen_at,COUNT(*) repetitions,
-                        MAX(l.reached_remote) reached_remote,MAX(l.actionable) actionable,
+                        CAST(SUBSTRING_INDEX(GROUP_CONCAT(COALESCE(l.reached_remote,0) ORDER BY l.created_at DESC,l.id DESC SEPARATOR ","),",",1) AS UNSIGNED) reached_remote,MAX(l.actionable) actionable,
                         MAX(l.risk_signal) risk_signal,' . $ackSelect . '
                         COUNT(DISTINCT CONCAT(COALESCE(l.scope_kind,"application"),":",COALESCE(l.meli_account_id,l.company_id,0))) account_count,
                         GROUP_CONCAT(DISTINCT CASE
@@ -971,7 +978,8 @@ final class ApiHealthService
         $lower = mb_strtolower($message);
         $reachedRemote = (int) ($row['reached_remote'] ?? 0) === 1;
 
-        $isRateLimit = $reachedRemote && $httpStatus === 429;
+        $transportClass = $this->transportClass($reachedRemote, $httpStatus, $outcome);
+        $isRateLimit = $transportClass === 'REMOTE_HTTP_429';
         $isPermissionOrAuth = $reachedRemote && in_array($httpStatus, [401, 403], true);
         $isServerError = $reachedRemote && $httpStatus >= 500;
         $hasRiskSignal = (int) ($row['risk_signal'] ?? 0) === 1;
@@ -982,7 +990,7 @@ final class ApiHealthService
             $httpStatus === 401 => 'OAuth/autorización inválida',
             $httpStatus === 403 => 'Permiso o alcance no disponible',
             $isServerError => 'Falla temporal de Mercado Libre',
-            $outcome === 'policy_delay' => 'Protección preventiva del ERP',
+            $outcome === 'policy_delay' => 'Pausa preventiva local · sin HTTP remoto',
             $outcome === 'local_failure' => 'Fallo interno del ERP',
             $httpStatus === 404 => 'Recurso no encontrado',
             default => $reachedRemote ? 'Respuesta remota con error' : 'Evento interno',
@@ -1031,6 +1039,12 @@ final class ApiHealthService
             'blocking_risk' => $active && $hasRiskSignal,
             'signal_requires_protection' => $signalRequiresProtection,
             'rate_limit_signal' => $isRateLimit,
+            'transport_class' => $transportClass,
+            'transport_label' => match ($transportClass) {
+                'REMOTE_HTTP_429' => 'Mercado Libre respondió HTTP 429',
+                'LOCAL_RATE_LIMITED_PRETRANSPORT' => 'Pausa preventiva local · sin HTTP remoto',
+                default => $reachedRemote ? 'Respuesta remota' : 'Sin transporte remoto',
+            },
             'signal_label' => $signalLabel,
             'risk_explanation' => $signalRequiresProtection
                 ? ($active
@@ -1043,6 +1057,17 @@ final class ApiHealthService
             'safe_message' => $this->sanitize($message),
             'error_type' => $errorType,
         ]);
+    }
+
+    private function transportClass(bool $reachedRemote, int $httpStatus, string $outcome): string
+    {
+        if ($reachedRemote && $httpStatus === 429) {
+            return 'REMOTE_HTTP_429';
+        }
+        if (!$reachedRemote && $outcome === 'policy_delay') {
+            return 'LOCAL_RATE_LIMITED_PRETRANSPORT';
+        }
+        return 'OTHER';
     }
 
     private function supportsOutcomeClassification(): bool

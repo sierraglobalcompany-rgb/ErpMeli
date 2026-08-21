@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "v4-bulk-parity-convergence-release-2.39.10-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "0e802cca2053792f546ecfada2ff3e6879c5e445fe19605f870d84ee816c9d99",
+  "runtime_manifest_paths_sha256": "26ac64b8fed3fc9946c4c8987ac4b032a0e51f38a08947befe0c220fa24c1fab",
   "coverage_base_commit": "8d68d505d5e47e3ba0e69e688da7064e772b889a",
   "classifications": {
     "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

@@ -41,6 +41,8 @@ $presenter = new ApiLogRiskPresenter();
 $local = $presenter->present(['http_status' => 429, 'reached_remote' => 0, 'outcome_class' => 'policy_delay']);
 $assert($local['title'] === 'Pausa preventiva local', 'LOCAL_DELAY_PRESENTED_AS_REMOTE_429');
 $assert($local['reached_remote'] === false && $local['blocking'] === false, 'LOCAL_DELAY_REMOTE_FLAGS_INCORRECT');
+$localByError = $presenter->present(['http_status' => 429, 'reached_remote' => 0, 'error_type' => 'api_rhythm_deferred']);
+$assert($localByError['title'] === 'Pausa preventiva local', 'LOCAL_RHYTHM_ERROR_PRESENTED_AS_REMOTE_429');
 $remote = $presenter->present(['http_status' => 429, 'reached_remote' => 1, 'outcome_class' => 'remote_error']);
 $assert($remote['risk'] === 'Alto' && $remote['blocking'] === true, 'REMOTE_429_PRESENTATION_REGRESSION');
 

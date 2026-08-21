@@ -13,6 +13,7 @@ final class ApiLogRiskPresenter
         $outcome = (string) ($row['outcome_class'] ?? '');
         $path = strtolower((string) ($row['endpoint_path'] ?? ''));
         $message = strtolower((string) ($row['message'] ?? ''));
+        $errorType = strtolower((string) ($row['error_type'] ?? ''));
         $reached = (int) ($row['reached_remote'] ?? ($status > 0 ? 1 : 0)) === 1;
         $historicalPayment = str_contains($path, '/payments/');
         $descriptionMissing = $status === 404 && str_contains($path, '/description');
@@ -33,7 +34,10 @@ final class ApiLogRiskPresenter
                 'Mercado Libre rechazó el alcance de autorización de la aplicación.',
                 'Mantenga pausadas las consultas y revise la aplicación y sus permisos.', 'Crítico');
         }
-        if (!$reached && ($outcome === 'policy_delay' || (int) ($row['was_blocked'] ?? 0) === 1)) {
+        if (!$reached && ($outcome === 'policy_delay'
+            || $errorType === 'api_rhythm_deferred'
+            || $errorType === 'api_budget_exhausted'
+            || (int) ($row['was_blocked'] ?? 0) === 1)) {
             return $this->result('Bajo', 'blue', 'Pausa preventiva local', false, false,
                 'El ERP aplazó la operación antes del transporte; no llegó a Mercado Libre.',
                 'Espere la próxima oportunidad segura. Este evento no es una respuesta HTTP 429 remota.', 'Pausa preventiva local');

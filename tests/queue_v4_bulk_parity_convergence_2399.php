@@ -3,9 +3,14 @@
 declare(strict_types=1);
 
 use App\Core\Database;
+use App\Core\Crypto;
 use App\QueueV4Clean\QueueV4CleanCycleBudget;
 use App\QueueV4Clean\QueueV4CleanRepository;
 use App\QueueV4Clean\QueueV4CleanWorker;
+use App\Services\ApiRhythmDeferredException;
+use App\Services\MeliApiClient;
+use App\Services\MeliHttpTransportInterface;
+use App\Services\SaleFinancialService;
 
 $dsn = trim((string) getenv('ERP_MIGRATOR_TEST_DSN'));
 $user = (string) getenv('ERP_MIGRATOR_TEST_USER');
@@ -87,6 +92,10 @@ final class BulkParityFakeSync
 }
 
 try {
+    putenv('APP_KEY=queue-v4-bulk-parity-local-only');
+    $_ENV['APP_KEY'] = 'queue-v4-bulk-parity-local-only';
+    putenv('ML_WRITE_ENABLED=false');
+    $_ENV['ML_WRITE_ENABLED'] = 'false';
     define('ERP_SHARED_ROOT', $temporary);
     spl_autoload_register(static function (string $class) use ($root): void {
         if (!str_starts_with($class, 'App\\')) {
@@ -97,6 +106,64 @@ try {
             require $path;
         }
     });
+
+    final class BulkBillingFakeTransport implements MeliHttpTransportInterface
+    {
+        /** @var list<array{path:string,order_ids:list<string>}> */
+        public array $calls = [];
+        public string $mode = 'success';
+
+        public function request(
+            string $method,
+            string $url,
+            array $data,
+            array $headers,
+            bool $form,
+            array $timeouts
+        ): array {
+            $path = parse_url($url, PHP_URL_PATH) ?: $url;
+            $orderIds = array_values(array_filter(explode(',', (string) ($data['order_ids'] ?? ''))));
+            $this->calls[] = ['path' => $path, 'order_ids' => $orderIds];
+            if ($this->mode === '429') {
+                return [
+                    'status' => 429,
+                    'body' => ['message' => 'rate limited', 'error' => 'too_many_requests'],
+                    'headers' => [],
+                    'curl_error' => '',
+                    'duration_ms' => 12,
+                    'wire_bytes' => 1,
+                    'decoded_bytes' => 1,
+                ];
+            }
+            $results = [];
+            foreach ($orderIds as $orderId) {
+                $results[] = [
+                    'order_id' => $orderId,
+                    'details' => [
+                        ['detail_id' => 'fee-' . $orderId, 'detail_type' => 'SALE_FEE', 'detail_amount' => 10],
+                    ],
+                ];
+            }
+            if ($this->mode === 'ambiguous') {
+                $results[] = ['detail_id' => 'shared', 'detail_type' => 'SHIPPING', 'detail_amount' => 5];
+            }
+            if ($this->mode === 'processing') {
+                $last = end($orderIds);
+                if (is_string($last) && $last !== '') {
+                    $results[] = ['order_id' => $last, 'status' => 'processing'];
+                }
+            }
+            return [
+                'status' => 200,
+                'body' => ['results' => $results],
+                'headers' => [],
+                'curl_error' => '',
+                'duration_ms' => 12,
+                'wire_bytes' => 1,
+                'decoded_bytes' => 1,
+            ];
+        }
+    }
 
     $server = new PDO($dsn, $user, $pass, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -223,8 +290,284 @@ try {
     $orderExact = (int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE job_type='order_exact'")->fetchColumn();
     $assert($orderExact === 0, 'FRESH_DID_NOT_ENQUEUE_ORDER_EXACT');
 
+    $pdo->exec('CREATE TABLE meli_orders(
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        meli_account_id BIGINT UNSIGNED NOT NULL,
+        external_order_id VARCHAR(80) NOT NULL,
+        external_pack_id VARCHAR(80) NULL,
+        external_shipping_id VARCHAR(80) NULL,
+        date_created DATETIME NULL,
+        date_created_local DATETIME NULL,
+        status VARCHAR(40) NULL,
+        total_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
+        paid_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
+        currency_id VARCHAR(10) NULL,
+        enrichment_status VARCHAR(40) NULL,
+        UNIQUE KEY uq_order_account_external(meli_account_id,external_order_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE meli_order_items(
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        meli_order_id BIGINT UNSIGNED NOT NULL,
+        meli_account_id BIGINT UNSIGNED NOT NULL,
+        external_item_id VARCHAR(80) NOT NULL,
+        external_variation_id VARCHAR(80) NULL,
+        quantity DECIMAL(18,4) NOT NULL DEFAULT 1,
+        unit_price DECIMAL(18,2) NOT NULL DEFAULT 100,
+        full_unit_price DECIMAL(18,2) NULL,
+        sale_fee DECIMAL(18,2) NOT NULL DEFAULT 0
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE meli_payments(
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        meli_account_id BIGINT UNSIGNED NOT NULL,
+        meli_order_id BIGINT UNSIGNED NOT NULL,
+        external_payment_id VARCHAR(80) NOT NULL,
+        status VARCHAR(40) NULL,
+        status_detail VARCHAR(100) NULL,
+        transaction_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
+        shipping_cost DECIMAL(18,2) NOT NULL DEFAULT 0,
+        coupon_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
+        total_paid_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
+        marketplace_fee DECIMAL(18,2) NOT NULL DEFAULT 0,
+        date_approved_utc DATETIME NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE meli_shipments(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_account_id BIGINT UNSIGNED NOT NULL,external_shipment_id VARCHAR(80),status VARCHAR(40),substatus VARCHAR(40),logistic_type VARCHAR(40),gross_cost DECIMAL(18,2),seller_cost DECIMAL(18,2),buyer_cost DECIMAL(18,2),discounts DECIMAL(18,2)) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE meli_packs(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_account_id BIGINT UNSIGNED NOT NULL,external_pack_id VARCHAR(80) NOT NULL,integrity_status VARCHAR(40) NULL,UNIQUE KEY uq_pack(meli_account_id,external_pack_id)) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE meli_order_financials(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,company_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,meli_order_id BIGINT UNSIGNED NOT NULL,product_sold_amount DECIMAL(18,2) NOT NULL DEFAULT 100,local_estimated_net_amount DECIMAL(18,2) NULL,ml_net_amount DECIMAL(18,2) NULL) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE sale_financial_state(
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        company_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,
+        sale_key VARCHAR(191) NOT NULL,external_sale_id VARCHAR(191) NOT NULL,identity_type VARCHAR(20) NOT NULL,
+        input_version CHAR(64) NOT NULL,currency_id VARCHAR(8) NOT NULL,
+        commercial_status VARCHAR(30) NOT NULL,logistics_status VARCHAR(30) NOT NULL,provisional_status VARCHAR(30) NOT NULL,official_status VARCHAR(30) NOT NULL DEFAULT "missing",
+        products_amount DECIMAL(18,2) NULL,provisional_net_amount DECIMAL(18,2) NULL,official_net_amount DECIMAL(18,2) NULL,unknown_concepts_amount DECIMAL(18,2) NULL,official_capture_id BIGINT UNSIGNED NULL,
+        missing_flags_json LONGTEXT NULL,close_impact VARCHAR(40) NULL,sales_control_close_id BIGINT UNSIGNED NULL,projected_at DATETIME NULL,official_at DATETIME NULL,
+        UNIQUE KEY uq_sale_state(company_id,meli_account_id,sale_key)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE sale_financial_evidence(
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        company_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,sale_key VARCHAR(191) NOT NULL,input_version CHAR(64) NOT NULL,
+        evidence_type VARCHAR(60) NOT NULL,evidence_status VARCHAR(40) NOT NULL,source_id BIGINT UNSIGNED NULL,payload_hash CHAR(64) NOT NULL,
+        provisional_net_amount DECIMAL(18,2) NULL,official_net_amount DECIMAL(18,2) NULL,evidence_json LONGTEXT NOT NULL,
+        UNIQUE KEY uq_evidence(company_id,meli_account_id,sale_key,input_version,evidence_type,payload_hash)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE sale_financial_reconciliation_jobs(
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        company_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,
+        sale_key VARCHAR(191) NOT NULL,external_sale_id VARCHAR(191) NOT NULL,input_version CHAR(64) NOT NULL,
+        status VARCHAR(30) NOT NULL DEFAULT "pending",priority_tier INT NOT NULL DEFAULT 30,origin_type VARCHAR(40) NOT NULL,
+        origin_id BIGINT NULL,created_by BIGINT NULL,next_run_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
+        remote_pending_since DATETIME NULL,retry_until DATETIME NULL,last_remote_state VARCHAR(30) NULL,safe_message VARCHAR(500) NULL,
+        completed_at DATETIME NULL,lock_owner VARCHAR(96) NULL,lease_generation BIGINT UNSIGNED NOT NULL DEFAULT 0,lease_expires_at DATETIME NULL,heartbeat_at DATETIME NULL,
+        attempts INT NOT NULL DEFAULT 0,
+        UNIQUE KEY uq_sale_reconciliation(company_id,meli_account_id,sale_key,input_version)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE meli_billing_capture_runs(
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        company_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,sale_key VARCHAR(191) NOT NULL,external_sale_id VARCHAR(191) NOT NULL,input_version CHAR(64) NOT NULL,
+        source_mode VARCHAR(40) NOT NULL,requested_order_ids_json LONGTEXT NOT NULL,http_status INT NULL,response_class VARCHAR(40) NULL,response_hash CHAR(64) NULL,missing_fields_json LONGTEXT NULL,safe_message VARCHAR(500) NULL,captured_at DATETIME NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE meli_sale_financials(
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        company_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,sale_key VARCHAR(191) NOT NULL,external_sale_id VARCHAR(191) NOT NULL,identity_type VARCHAR(20) NOT NULL,currency_id VARCHAR(8) NOT NULL,
+        products_amount DECIMAL(18,2) NULL,sale_fee_amount DECIMAL(18,2) NULL,shipping_charge_amount DECIMAL(18,2) NULL,taxes_amount DECIMAL(18,2) NULL,discounts_amount DECIMAL(18,2) NULL,credits_amount DECIMAL(18,2) NULL,adjustments_amount DECIMAL(18,2) NULL,net_amount DECIMAL(18,2) NULL,
+        local_estimate_amount DECIMAL(18,2) NULL,legacy_difference_amount DECIMAL(18,2) NULL,source VARCHAR(40) NULL,capture_run_id BIGINT UNSIGNED NULL,reconciliation_status VARCHAR(30) NOT NULL,safe_message VARCHAR(500) NULL,reconciled_at DATETIME NULL,methodology_version VARCHAR(40) NULL,
+        UNIQUE KEY uq_sale_financial(meli_account_id,sale_key)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE meli_sale_financial_lines(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_sale_financial_id BIGINT UNSIGNED NOT NULL,meli_billing_capture_run_id BIGINT UNSIGNED NOT NULL,external_order_id VARCHAR(80) NULL,detail_id VARCHAR(120) NULL,line_group VARCHAR(40),line_type VARCHAR(80),line_subtype VARCHAR(80),description VARCHAR(500),amount DECIMAL(18,2),direction VARCHAR(20),is_shared TINYINT(1),source_status VARCHAR(40),line_hash CHAR(64),occurred_at DATETIME NULL) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE meli_sale_financial_allocations(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_sale_financial_id BIGINT UNSIGNED NOT NULL,meli_order_item_id BIGINT UNSIGNED NOT NULL,gross_amount DECIMAL(18,2),weight_basis VARCHAR(40),sale_fee_allocated DECIMAL(18,2),shipping_allocated DECIMAL(18,2),tax_allocated DECIMAL(18,2),discount_allocated DECIMAL(18,2),credit_allocated DECIMAL(18,2),other_allocated DECIMAL(18,2),net_allocated DECIMAL(18,2)) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE meli_sale_financial_history(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_sale_financial_id BIGINT UNSIGNED NOT NULL,revision_no INT NOT NULL,methodology_version VARCHAR(40),totals_json LONGTEXT,lines_summary_json LONGTEXT,allocations_summary_json LONGTEXT,source VARCHAR(40),safe_message VARCHAR(500)) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE manual_campaigns(id BIGINT UNSIGNED PRIMARY KEY,status VARCHAR(20) NOT NULL) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE manual_campaign_reservations(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,manual_campaign_id BIGINT UNSIGNED NOT NULL,queue_key VARCHAR(80) NOT NULL,source_id VARCHAR(80) NOT NULL,status VARCHAR(20) NOT NULL,expires_at DATETIME(3) NOT NULL) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE api_rhythm_states(scope_key VARCHAR(120) PRIMARY KEY,generation BIGINT UNSIGNED NOT NULL DEFAULT 1,calls_in_block INT UNSIGNED NOT NULL DEFAULT 0,block_started_at DATETIME(3) NULL,next_allowed_at DATETIME(3) NULL,block_pause_until DATETIME(3) NULL,last_dispatched_at DATETIME(3) NULL,updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE api_remote_permits(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,permit_token CHAR(40) NOT NULL,owner_token CHAR(32) NOT NULL,generation BIGINT UNSIGNED NOT NULL,run_token VARCHAR(100) NULL,work_key VARCHAR(120) NULL,company_id BIGINT UNSIGNED NULL,meli_account_id BIGINT UNSIGNED NULL,endpoint_key VARCHAR(120) NOT NULL,job_type VARCHAR(80) NOT NULL,method VARCHAR(10) NOT NULL,status ENUM("reserved","dispatched","completed","released","expired") NOT NULL DEFAULT "reserved",requested_interval_ms INT UNSIGNED NOT NULL,effective_interval_ms INT UNSIGNED NOT NULL,blocking_scope VARCHAR(80) NULL,http_status SMALLINT UNSIGNED NULL,created_at DATETIME(3) NOT NULL,dispatched_at DATETIME(3) NULL,completed_at DATETIME(3) NULL,released_at DATETIME(3) NULL,expires_at DATETIME(3) NOT NULL,updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),UNIQUE KEY uq_permit_token(permit_token),KEY idx_permit_active(status,expires_at),KEY idx_permit_endpoint_dispatch(endpoint_key,dispatched_at)) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE api_rhythm_penalties(scope_key VARCHAR(180) PRIMARY KEY,reduced_limit_per_minute SMALLINT UNSIGNED NOT NULL,blocked_until DATETIME(3) NULL,reduced_until DATETIME(3) NOT NULL,reason VARCHAR(80) NOT NULL,updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE api_circuit_breakers(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_account_id BIGINT UNSIGNED NULL,endpoint_path VARCHAR(255) NOT NULL,status VARCHAR(40) NOT NULL,blocked_until DATETIME NULL,reason VARCHAR(80) NULL) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE api_request_logs(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_account_id BIGINT UNSIGNED NULL,company_id BIGINT UNSIGNED NULL,method VARCHAR(10) NULL,endpoint_path VARCHAR(255) NULL,http_status INT NULL,retry_after_seconds INT NULL,error_type VARCHAR(80) NULL,outcome_class VARCHAR(80) NULL,reached_remote TINYINT(1) NULL,was_blocked TINYINT(1) NULL,created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),KEY idx_log_created(created_at),KEY idx_log_endpoint_status(endpoint_path,http_status,created_at)) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE api_budget_windows(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,scope VARCHAR(40) NOT NULL,scope_key VARCHAR(255) NOT NULL,meli_account_id BIGINT UNSIGNED NULL,endpoint_path VARCHAR(255) NULL,job_type VARCHAR(80) NULL,window_started_at DATETIME NOT NULL,window_seconds INT UNSIGNED NOT NULL DEFAULT 900,request_limit INT UNSIGNED NOT NULL DEFAULT 0,request_count INT UNSIGNED NOT NULL DEFAULT 0,error_400_count INT UNSIGNED NOT NULL DEFAULT 0,error_401_count INT UNSIGNED NOT NULL DEFAULT 0,error_403_count INT UNSIGNED NOT NULL DEFAULT 0,error_429_count INT UNSIGNED NOT NULL DEFAULT 0,error_5xx_count INT UNSIGNED NOT NULL DEFAULT 0,last_request_at DATETIME NULL,cooldown_until DATETIME NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,UNIQUE KEY uq_api_budget_window(scope_key,window_started_at,window_seconds)) ENGINE=InnoDB');
+    $pdo->prepare('INSERT INTO meli_tokens(meli_account_id,access_token_encrypted,refresh_token_encrypted,expires_at,refresh_version) VALUES (?,?,?,?,0)')->execute([101, Crypto::encrypt('bulk-access'), Crypto::encrypt('bulk-refresh'), gmdate('Y-m-d H:i:s', time() + 3600)]);
+    $pdo->exec("INSERT INTO meli_accounts(id,company_id,meli_user_id,account_name,status) VALUES (102,10,102001,'Bulk B','conectado')");
+    $pdo->prepare('INSERT INTO meli_tokens(meli_account_id,access_token_encrypted,refresh_token_encrypted,expires_at,refresh_version) VALUES (?,?,?,?,0)')->execute([102, Crypto::encrypt('bulk-access-b'), Crypto::encrypt('bulk-refresh-b'), gmdate('Y-m-d H:i:s', time() + 3600)]);
+
+    $resetBilling = static function () use ($pdo): void {
+        foreach ([
+            'queue_v4_clean_attempts', 'queue_v4_clean_runs', 'queue_v4_clean_jobs',
+            'sale_financial_reconciliation_jobs', 'sale_financial_state', 'sale_financial_evidence',
+            'meli_billing_capture_runs', 'meli_sale_financial_lines', 'meli_sale_financial_allocations',
+            'meli_sale_financial_history', 'meli_sale_financials', 'meli_order_financials',
+            'meli_order_items', 'meli_payments', 'meli_orders', 'manual_campaign_reservations', 'manual_campaigns', 'api_remote_permits',
+            'api_rhythm_states', 'api_rhythm_penalties', 'api_circuit_breakers', 'api_request_logs', 'api_budget_windows',
+        ] as $table) {
+            $pdo->exec('DELETE FROM ' . $table);
+        }
+    };
+    $resetRhythm = static function () use ($pdo): void {
+        foreach (['api_remote_permits', 'api_rhythm_states', 'api_rhythm_penalties', 'api_request_logs', 'api_budget_windows'] as $table) {
+            $pdo->exec('DELETE FROM ' . $table);
+        }
+    };
+    $resetRhythmAuthorityOnly = static function () use ($pdo): void {
+        foreach (['api_remote_permits', 'api_rhythm_states', 'api_rhythm_penalties'] as $table) {
+            $pdo->exec('DELETE FROM ' . $table);
+        }
+    };
+    $seedFinancial = static function (int $accountId, int $n, string $prefix = 'A') use ($pdo): array {
+        $ids = [];
+        $namespace = abs((int) crc32($prefix)) % 1000;
+        for ($i = 1; $i <= $n; $i++) {
+            $external = sprintf('%d%03d%05d', $accountId, $namespace, $i);
+            $pdo->prepare('INSERT INTO meli_orders(meli_account_id,external_order_id,date_created,date_created_local,status,total_amount,paid_amount,currency_id) VALUES (?,?,UTC_TIMESTAMP(),UTC_TIMESTAMP(),"paid",100,100,"COP")')
+                ->execute([$accountId, $external]);
+            $orderId = (int) $pdo->lastInsertId();
+            $pdo->prepare('INSERT INTO meli_order_items(meli_order_id,meli_account_id,external_item_id,quantity,unit_price,sale_fee) VALUES (?,?,?,1,100,10)')
+                ->execute([$orderId, $accountId, 'ITEM-' . $external]);
+            $pdo->prepare('INSERT INTO meli_payments(meli_order_id,meli_account_id,external_payment_id,status,transaction_amount,total_paid_amount,marketplace_fee) VALUES (?,?,?,"approved",100,100,10)')
+                ->execute([$orderId, $accountId, 'PAY-' . $external]);
+            $pdo->prepare('INSERT INTO meli_order_financials(company_id,meli_account_id,meli_order_id,product_sold_amount,local_estimated_net_amount) VALUES (10,?,?,100,90)')
+                ->execute([$accountId, $orderId]);
+            $saleKey = 'O:' . $external;
+            $state = (new \App\Services\SaleFinancialStateService())->projectSale(10, $accountId, $saleKey);
+            $inputVersion = (string) ($state['input_version'] ?? '');
+            $pdo->prepare('INSERT INTO sale_financial_reconciliation_jobs(company_id,meli_account_id,sale_key,external_sale_id,input_version,status,origin_type,next_run_at,attempts) VALUES (10,?,?,?,?, "pending", "bulk_fixture", UTC_TIMESTAMP(), 0)')
+                ->execute([$accountId, $saleKey, $external, $inputVersion]);
+            $sourceId = (int) $pdo->lastInsertId();
+            $payload = json_encode(['capability' => 'financial_reconciliation', 'source_id' => $sourceId], JSON_THROW_ON_ERROR);
+            $pdo->prepare('INSERT INTO queue_v4_clean_jobs(company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,state,available_at,max_attempts) VALUES (10,?,"domain_exact",?,?,?,"ready",UTC_TIMESTAMP(3),3)')
+                ->execute([$accountId, (string) $sourceId, $prefix . ':finance:' . $sourceId, $payload]);
+            $ids[] = $sourceId;
+        }
+        return $ids;
+    };
+    $runBilling = static function (BulkBillingFakeTransport $transport, int $maxJobs = 1) use ($pdo): array {
+        $repo = new QueueV4CleanRepository($pdo);
+        $service = new SaleFinancialService(
+            static fn (int $accountId): MeliApiClient => new MeliApiClient($accountId, $transport)
+        );
+        $worker = new QueueV4CleanWorker(
+            $pdo,
+            $repo,
+            null,
+            null,
+            null,
+            null,
+            static fn (): SaleFinancialService => $service,
+        );
+        return $worker->run('test', $maxJobs, 45);
+    };
+
+    $resetBilling();
+    $singleIds = $seedFinancial(101, 1, 'DIRECT1');
+    $transportDirect = new BulkBillingFakeTransport();
+    $directService = new SaleFinancialService(
+        static fn (int $accountId): MeliApiClient => new MeliApiClient($accountId, $transportDirect)
+    );
+    try {
+        $directService->processDomainExactBatch($singleIds, 10, 101);
+    } catch (Throwable $error) {
+        throw new RuntimeException('BILLING_DIRECT_SERVICE_EXCEPTION ' . $error->getMessage(), 0, $error);
+    }
+    $assert(count($transportDirect->calls) === 1, 'BILLING_DIRECT_SERVICE_ONE_HTTP calls=' . count($transportDirect->calls));
+
+    $resetRhythm();
+    $pdo->exec(
+        "INSERT INTO app_settings(setting_key,setting_value,is_encrypted) VALUES
+            ('api.budget.global_requests_per_15m','1',0),
+            ('api.budget.account_requests_per_15m','1',0),
+            ('api.budget.job_type_requests_per_15m','1',0)
+         ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),is_encrypted=VALUES(is_encrypted)"
+    );
+    $settingsReflection = new ReflectionClass(\App\Services\AppSettingsService::class);
+    $settingsReflection->setStaticPropertyValue('cache', []);
+    $settingsReflection->setStaticPropertyValue('loaded', []);
+    $transportBudget = new BulkBillingFakeTransport();
+    $budgetClient = new MeliApiClient(101, $transportBudget);
+    $budgetMeta = [
+        'source' => 'queue_v4_clean',
+        'job_type' => 'fresh_orders_discovery',
+        'company_id' => 10,
+        'source_work_id' => 'budget-authority-1',
+    ];
+    $budgetClient->get('/orders/search', ['seller' => '101'], $budgetMeta);
+    $resetRhythmAuthorityOnly();
+    $budgetMeta['source_work_id'] = 'budget-authority-2';
+    $budgetClient->get('/orders/search', ['seller' => '101'], $budgetMeta);
+    $assert(count($transportBudget->calls) === 2, 'RHYTHM_PRIMARY_AUTHORITY_DYNAMIC_CANONICAL');
+
+    $resetBilling();
+    $seedFinancial(101, 60, 'A60');
+    $transport60 = new BulkBillingFakeTransport();
+    $summary60 = $runBilling($transport60);
+    $states60 = $pdo->query(
+        'SELECT q.state,q.last_error_class,s.status,s.safe_message,COUNT(*) jobs
+           FROM queue_v4_clean_jobs q
+           JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED)
+          GROUP BY q.state,q.last_error_class,s.status,s.safe_message
+          ORDER BY jobs DESC'
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $assert(count($transport60->calls) === 1, 'BILLING_60_ONE_HTTP calls=' . count($transport60->calls) . ' summary=' . json_encode($summary60) . ' states=' . json_encode($states60));
+    $assert(count($transport60->calls[0]['order_ids']) === 60 && count(array_unique($transport60->calls[0]['order_ids'])) === 60, 'BILLING_60_ORDER_IDS_SENT');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE status="complete"')->fetchColumn() === 60, 'BILLING_60_SOURCE_COMPLETE');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state="completed"')->fetchColumn() === 60, 'BILLING_60_QUEUE_POINTER_COMPLETE');
+
+    $resetBilling();
+    $seedFinancial(101, 61, 'A61');
+    $transport61 = new BulkBillingFakeTransport();
+    $runBilling($transport61);
+    $resetRhythm();
+    $runBilling($transport61);
+    $assert(array_map('count', array_column($transport61->calls, 'order_ids')) === [60, 1], 'BILLING_61_60_PLUS_1 calls=' . json_encode($transport61->calls));
+
+    $resetBilling();
+    $seedFinancial(101, 1, 'FIFO1');
+    $pdo->prepare('INSERT INTO queue_v4_clean_jobs(company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,state,available_at,max_attempts) VALUES (10,102,"order_exact","999","fifo:order",?,"ready",UTC_TIMESTAMP(3),3)')
+        ->execute([json_encode(['order_id' => '999'], JSON_THROW_ON_ERROR)]);
+    $seedFinancial(101, 1, 'FIFO3');
+    $transportFifo = new BulkBillingFakeTransport();
+    $runBilling($transportFifo);
+    $assert(count($transportFifo->calls) === 1 && count($transportFifo->calls[0]['order_ids']) === 1, 'BILLING_GLOBAL_FIFO_INTERLEAVE');
+
+    $resetBilling();
+    $seedFinancial(101, 2, 'A2');
+    $seedFinancial(102, 2, 'B2');
+    $transportAccounts = new BulkBillingFakeTransport();
+    $runBilling($transportAccounts);
+    $resetRhythm();
+    $runBilling($transportAccounts);
+    $assert(count($transportAccounts->calls) === 2, 'BILLING_TWO_ACCOUNTS_CALL_COUNT');
+    $assert(count(array_unique(array_map(static fn(array $call): string => substr((string) $call['order_ids'][0], 0, 3), $transportAccounts->calls))) === 2, 'BILLING_TWO_ACCOUNTS_NO_MIX');
+
+    $resetBilling();
+    $seedFinancial(101, 60, 'A429');
+    $transport429 = new BulkBillingFakeTransport();
+    $transport429->mode = '429';
+    $summary429 = $runBilling($transport429);
+    $assert(count($transport429->calls) === 1, 'BILLING_ONE_429_FOR_BATCH');
+    $assert((int) $summary429['deferred'] === 1, 'BILLING_429_CURRENT_POINTER_DEFERRED');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state="waiting"')->fetchColumn() === 60, 'BILLING_429_GLOBAL_PARKING_SAME_CYCLE');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM api_remote_permits WHERE http_status=429')->fetchColumn() === 1, 'BILLING_429_REMOTE_PERMIT_RECORDED');
+    $assert((int) $pdo->query("SELECT COUNT(*) FROM api_rhythm_penalties WHERE reason='http_429' AND blocked_until>=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 11 HOUR)")->fetchColumn() >= 1, 'BILLING_429_DURABLE_PENALTY');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state="waiting" AND available_at>=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 11 HOUR)')->fetchColumn() === 60, 'BILLING_429_POINTERS_GE_12H');
+
+    $resetBilling();
+    $seedFinancial(101, 2, 'AMB');
+    $transportAmbiguous = new BulkBillingFakeTransport();
+    $transportAmbiguous->mode = 'ambiguous';
+    $runBilling($transportAmbiguous);
+    $assert((int) $pdo->query("SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE safe_message LIKE 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED%'")->fetchColumn() === 2, 'BILLING_AMBIGUOUS_FALLBACK');
+
+    $resetBilling();
+    $seedFinancial(101, 2, 'PROC');
+    $transportProcessing = new BulkBillingFakeTransport();
+    $transportProcessing->mode = 'processing';
+    $runBilling($transportProcessing);
+    $processingStates = $pdo->query('SELECT status,safe_message,COUNT(*) jobs FROM sale_financial_reconciliation_jobs GROUP BY status,safe_message ORDER BY jobs DESC')->fetchAll(PDO::FETCH_ASSOC);
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE status="complete"')->fetchColumn() === 1, 'BILLING_PER_ORDER_STATE states=' . json_encode($processingStates));
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE status="awaiting_remote"')->fetchColumn() === 1, 'BILLING_PER_ORDER_PROCESSING_STATE');
+
     $worker = $read('app/QueueV4Clean/QueueV4CleanWorker.php');
     $producer = $read('app/QueueV4Clean/QueueV4CleanProducer.php');
+    $repository = $read('app/QueueV4Clean/QueueV4CleanRepository.php');
+    $client = $read('app/Services/MeliApiClient.php');
+    $policy = $read('app/Services/MeliTransportSourcePolicy.php');
     $orderSync = $read('app/Services/OrderSyncService.php');
     $finance = $read('app/Services/SaleFinancialService.php');
     $scheduler = $read('app/QueueV4Clean/QueueV4CleanScheduler.php');
@@ -245,17 +588,22 @@ try {
     $assert(str_contains($orderSync, 'OrderInventoryService') && str_contains($orderSync, 'project($companyId'), 'snapshot_inventory_projection_missing');
 
     $assert(str_contains($finance, 'BILLING_MAX_ORDER_IDS = 60'), 'billing_batch_limit_missing');
-    $assert(str_contains($finance, 'function claimAdditionalQueueOwnedBillingJobs'), 'billing_queue_owned_candidate_claim_missing');
-    $assert(str_contains($finance, 'FROM queue_v4_clean_jobs q'), 'billing_candidates_not_queue_v4_owned');
-    $assert(str_contains($finance, 'ORDER BY q.available_at ASC,q.id ASC'), 'billing_fifo_order_missing');
+    $assert(str_contains($repository, 'function contiguousFinancialReconciliationSourceIds'), 'billing_queue_owned_candidate_claim_missing');
+    $assert(str_contains($repository, 'FROM queue_v4_clean_jobs q'), 'billing_candidates_not_queue_v4_owned');
+    $assert(str_contains($repository, 'ORDER BY q.available_at ASC,q.id ASC'), 'billing_fifo_order_missing');
     $assert(str_contains($finance, 'function isSimpleCrossSaleCandidate'), 'billing_simple_cross_sale_guard_missing');
     $assert(str_contains($finance, "str_starts_with((string) (\$job['sale_key'] ?? ''), 'O:')"), 'billing_batch_allows_non_order_sales');
     $assert(str_contains($finance, 'function hasUnattributedBillingLines'), 'billing_unattributed_demux_guard_missing');
     $assert(!str_contains($finance, 'ORDER BY j.priority_tier,j.next_run_at,j.id'), 'billing_candidate_priority_order_leaks_into_batch');
     $assert(!str_contains($finance, 'batch_capacity_deferred'), 'billing_batch_capacity_retry_leak');
-    $assert(str_contains($finance, 'deferAdditionalQueuePointers'), 'billing_batch_429_pointer_parking_missing');
+    $assert(str_contains($worker, 'parkFinancialReconciliationUntil'), 'billing_batch_429_pointer_parking_missing');
     $assert(str_contains($finance, "'bulk' => true"), 'billing_transport_metadata_not_bulk');
     $assert(str_contains($finance, 'expected_resource_ids'), 'billing_expected_resources_missing');
+    $assert(!str_contains($finance, 'queue_v4_clean_jobs'), 'SALE_FINANCIAL_KNOWS_QUEUE_V4');
+    $assert(str_contains($repository, 'alignReadyFinancialReconciliationPointers'), 'QUEUE_POINTER_STATE_OWNER');
+    $assert(str_contains($policy, 'usesPrimaryRhythmAuthority'), 'RHYTHM_PRIMARY_AUTHORITY_policy');
+    $assert(str_contains($client, 'usesPrimaryRhythmAuthority($source)'), 'RHYTHM_PRIMARY_AUTHORITY_client');
+    $assert(str_contains($client, "? [\n                        'allowed' => true"), 'API_BUDGET_SECOND_NORMAL_THROTTLE');
 
     $assert(str_contains($scheduler, 'QueueV4CleanCycleBudget::CYCLE_HTTP_SAFETY_FUSE'), 'MAX_JOBS_CONTROLS_HTTP_YES_scheduler');
     $assert(str_contains($cycleBudget, 'CYCLE_HTTP_SAFETY_FUSE = 1000'), 'cycle_budget_safety_fuse_missing');

@@ -491,7 +491,7 @@ try {
     $assert(!str_contains($schedulerSource, 'domain_exact'), 'domain_stage_added_to_scheduler');
     $assert(str_contains($workerSource, "if (\$type === 'domain_exact')"), 'worker_domain_handler_missing');
     $assert(str_contains($workerSource, 'processExact($sourceId, $accountId, 1)'), 'financial_recalc_not_exact_one');
-    $assert(str_contains($workerSource, 'processExact($sourceId)'), 'financial_reconciliation_not_exact_one');
+    $assert(str_contains($workerSource, 'processDomainExactBatch('), 'financial_reconciliation_not_queue_owned_batch');
 
     fwrite(STDOUT, 'DOMAIN_EXACT_FINANCE_ADMISSION_2393=PASS checks=' . $checks
         . ' schema=299 fake_http=1 real_http=0 max_jobs=3 historical=0 tenant_null=0' . PHP_EOL);

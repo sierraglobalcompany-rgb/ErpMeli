@@ -38,12 +38,15 @@ final class QueueV4CleanWorker
     private ?\Closure $jobHandler;
     /** @var null|\Closure(string,int,int):void */
     private ?\Closure $domainHandler;
+    /** @var \Closure():SaleFinancialService */
+    private \Closure $financialFactory;
 
     /**
      * @param null|callable(int):MeliReadClientInterface $clientFactory
      * @param null|callable(int):OrderSyncService $syncFactory
      * @param null|callable(array<string,mixed>):void $jobHandler Test-only/local fixture seam.
      * @param null|callable(string,int,int):void $domainHandler Test-only domain source seam.
+     * @param null|callable():SaleFinancialService $financialFactory Test-only billing transport seam.
      */
     public function __construct(
         private readonly PDO $pdo,
@@ -52,6 +55,7 @@ final class QueueV4CleanWorker
         ?callable $syncFactory = null,
         ?callable $jobHandler = null,
         ?callable $domainHandler = null,
+        ?callable $financialFactory = null,
     ) {
         $this->clientFactory = $clientFactory !== null
             ? \Closure::fromCallable($clientFactory)
@@ -61,6 +65,9 @@ final class QueueV4CleanWorker
             : static fn (int $accountId): OrderSyncService => new OrderSyncService($accountId);
         $this->jobHandler = $jobHandler !== null ? \Closure::fromCallable($jobHandler) : null;
         $this->domainHandler = $domainHandler !== null ? \Closure::fromCallable($domainHandler) : null;
+        $this->financialFactory = $financialFactory !== null
+            ? \Closure::fromCallable($financialFactory)
+            : static fn (): SaleFinancialService => new SaleFinancialService();
     }
 
     /** @return array{claimed:int,completed:int,deferred:int} */
@@ -354,28 +361,57 @@ final class QueueV4CleanWorker
             return $before;
         }
 
-        ApiExecutionMetadataContext::run(
-            [
-                'source' => MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT,
-                'job_type' => 'domain_exact',
-                'company_id' => $companyId,
-                'account_id' => $accountId,
-                'source_queue_key' => $capability,
-                'source_work_id' => (string) $sourceId,
-                'bulk' => false,
-            ] + $this->transportMeta($job),
-            function () use ($capability, $sourceId, $accountId): void {
-                if ($this->domainHandler !== null) {
-                    ($this->domainHandler)($capability, $sourceId, $accountId);
-                    return;
+        $batchSourceIds = $capability === 'financial_reconciliation'
+            ? $this->repository->contiguousFinancialReconciliationSourceIds($job, 60)
+            : [$sourceId];
+        $batchOutcomes = [];
+
+        try {
+            ApiExecutionMetadataContext::run(
+                [
+                    'source' => MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT,
+                    'job_type' => 'domain_exact',
+                    'company_id' => $companyId,
+                    'account_id' => $accountId,
+                    'source_queue_key' => $capability,
+                    'source_work_id' => (string) $sourceId,
+                    'bulk' => count($batchSourceIds) > 1,
+                ] + $this->transportMeta($job),
+                function () use ($capability, $sourceId, $accountId, $companyId, $batchSourceIds, &$batchOutcomes): void {
+                    if ($this->domainHandler !== null) {
+                        ($this->domainHandler)($capability, $sourceId, $accountId);
+                        return;
+                    }
+                    if ($capability === 'financial_recalc') {
+                        (new OrderFinancialRecalcJobService())->processExact($sourceId, $accountId, 1);
+                        return;
+                    }
+                    $batchOutcomes = ($this->financialFactory)()->processDomainExactBatch(
+                        $batchSourceIds,
+                        $companyId,
+                        $accountId,
+                    )['outcomes'];
                 }
-                if ($capability === 'financial_recalc') {
-                    (new OrderFinancialRecalcJobService())->processExact($sourceId, $accountId, 1);
-                    return;
-                }
-                (new SaleFinancialService())->processExact($sourceId);
+            );
+        } catch (Throwable $error) {
+            if ($capability === 'financial_reconciliation' && count($batchSourceIds) > 1) {
+                $this->repository->alignReadyFinancialReconciliationPointersFromSources(
+                    $companyId,
+                    $accountId,
+                    $batchSourceIds,
+                    $sourceId,
+                );
             }
-        );
+            throw $error;
+        }
+        if ($capability === 'financial_reconciliation' && $batchOutcomes !== []) {
+            $this->repository->alignReadyFinancialReconciliationPointers(
+                $companyId,
+                $accountId,
+                $batchOutcomes,
+                $sourceId,
+            );
+        }
 
         $source = $this->domainSource($capability, $sourceId, $companyId, $accountId);
         if ($source === null) {

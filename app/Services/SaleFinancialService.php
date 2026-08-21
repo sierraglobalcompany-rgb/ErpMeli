@@ -136,6 +136,188 @@ final class SaleFinancialService
         return $this->processSelected(1,$jobId,true);
     }
 
+    /**
+     * The caller determines FIFO-contiguous admission and passes only source
+     * IDs. This service claims and processes financial sources, without
+     * reading or mutating scheduler state.
+     *
+     * @param list<int> $sourceIds
+     * @return array{summary:array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string},outcomes:array<int,array{state:string,classification?:string,next_safe_at?:?string}>}
+     */
+    public function processDomainExactBatch(array $sourceIds, int $companyId, int $accountId): array
+    {
+        $summary = ['processed' => 0, 'completed' => 0, 'errors' => 0, 'deferred' => 0, 'stop_reason' => 'empty'];
+        $outcomes = [];
+        $sourceIds = array_values(array_unique(array_filter(array_map('intval', $sourceIds), static fn (int $id): bool => $id > 0)));
+        if ($sourceIds === []) {
+            return ['summary' => $summary, 'outcomes' => $outcomes];
+        }
+
+        $jobs = [];
+        foreach (array_slice($sourceIds, 0, self::BILLING_MAX_ORDER_IDS) as $sourceId) {
+            $job = $this->claimSpecificBillingJob($sourceId, $companyId, $accountId);
+            if ($job === null) {
+                $outcomes[$sourceId] = $this->sourceOutcome($sourceId, $companyId, $accountId);
+                continue;
+            }
+            $jobs[] = $job;
+        }
+        if ($jobs === []) {
+            return ['summary' => $summary, 'outcomes' => $outcomes];
+        }
+
+        if (count($jobs) === 1 && str_starts_with((string) ($jobs[0]['safe_message'] ?? ''), 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED')) {
+            $result = $this->captureAndReconcile($jobs[0], true, true);
+            $outcomes[(int) $jobs[0]['id']] = $this->sourceOutcome(
+                (int) $jobs[0]['id'],
+                (int) $jobs[0]['company_id'],
+                (int) $jobs[0]['meli_account_id'],
+            );
+            $this->summarizeTerminal($summary, $result['status'] === 'reconciled' ? 'complete' : $result['status']);
+            return ['summary' => $summary, 'outcomes' => $outcomes];
+        }
+
+        $remote = [];
+        $remaining = self::BILLING_MAX_ORDER_IDS;
+        foreach ($jobs as $job) {
+            $prepared = $this->prepareBillingCandidate($job, true, true);
+            $candidateOrderCount = count($prepared['external_order_ids'] ?? []);
+            if (($prepared['ready'] ?? false) === true
+                && $this->isSimpleCrossSaleCandidate($prepared)
+                && $candidateOrderCount > 0
+                && $candidateOrderCount <= $remaining) {
+                $remote[] = $prepared;
+                $remaining -= $candidateOrderCount;
+                continue;
+            }
+            $this->applyPreparedLocalOutcome($job, $prepared, $summary);
+            $outcomes[(int) $job['id']] = $this->sourceOutcome(
+                (int) $job['id'],
+                (int) $job['company_id'],
+                (int) $job['meli_account_id'],
+            );
+        }
+
+        if ($remote === []) {
+            return ['summary' => $summary, 'outcomes' => $outcomes];
+        }
+
+        $allExternalOrderIds = [];
+        foreach ($remote as $candidate) {
+            foreach ($candidate['external_order_ids'] as $externalOrderId) {
+                $allExternalOrderIds[(string) $externalOrderId] = true;
+            }
+        }
+        $allExternalOrderIds = array_keys($allExternalOrderIds);
+        if (count($allExternalOrderIds) > self::BILLING_MAX_ORDER_IDS) {
+            foreach ($remote as $candidate) {
+                $this->finish(
+                    $candidate['job'],
+                    'review',
+                    'El lote Billing excedió 60 órdenes y fue detenido sin consultar Mercado Libre.'
+                );
+                $outcomes[(int) $candidate['job']['id']] = [
+                    'state' => 'review',
+                    'classification' => 'billing_batch_too_large',
+                ];
+                $summary['processed']++;
+                $summary['errors']++;
+            }
+            $summary['stop_reason'] = 'batch_too_large';
+            return ['summary' => $summary, 'outcomes' => $outcomes];
+        }
+
+        $api = ($this->clientFactory)((int) $accountId);
+        try {
+            $response = $api->get(self::ENDPOINT, ['order_ids' => implode(',', $allExternalOrderIds)], [
+                'job_type' => 'billing',
+                'source' => MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT,
+                'bulk' => true,
+                'estimated_total' => count($allExternalOrderIds),
+                'response_count_strategy' => 'billing_orders',
+                'expected_resource_ids' => implode(',', $allExternalOrderIds),
+            ]);
+        } catch (ApiRhythmDeferredException $error) {
+            foreach ($remote as $candidate) {
+                $this->deferWithoutAttemptPenalty(
+                    $candidate['job'],
+                    SafeErrorPresenter::message($error, 'Billing continuará en su próxima oportunidad segura.'),
+                    $error->nextSafeAt
+                );
+            }
+            throw $error;
+        } catch (ApiBudgetExhaustedException $error) {
+            foreach ($remote as $candidate) {
+                $this->deferWithoutAttemptPenalty(
+                    $candidate['job'],
+                    SafeErrorPresenter::message($error, 'Billing continuará cuando exista presupuesto API.'),
+                    $error->nextSafeAt
+                );
+            }
+            throw $error;
+        } catch (Throwable $error) {
+            foreach ($remote as $candidate) {
+                $job = $candidate['job'];
+                $retry = !$this->retryDeadlineExceeded($job);
+                $this->finish(
+                    $job,
+                    $retry ? 'retry' : 'error',
+                    SafeErrorPresenter::message($error, 'No fue posible completar la conciliación oficial.')
+                );
+            }
+            throw $error;
+        }
+
+        $metadata = $api->lastResponseMetadata() ?? ['status' => 200, 'headers' => [], 'request_id' => ''];
+        $httpStatus = (int) $metadata['status'];
+        $allLines = (new SaleBillingParser())->parse($response, $allExternalOrderIds);
+        if (count($remote) > 1 && $this->hasUnattributedBillingLines($allLines)) {
+            foreach ($remote as $candidate) {
+                $next = gmdate('Y-m-d H:i:s', time() + 60);
+                $this->finish(
+                    $candidate['job'],
+                    'retry',
+                    'BILLING_BATCH_EXACT_FALLBACK_REQUIRED: Billing devolvió conceptos compartidos no atribuibles; el siguiente intento será exacto.',
+                    $next
+                );
+                $outcomes[(int) $candidate['job']['id']] = [
+                    'state' => 'waiting',
+                    'classification' => 'billing_batch_exact_fallback_required',
+                    'next_safe_at' => $next,
+                ];
+                $summary['processed']++;
+                $summary['deferred']++;
+            }
+            $summary['stop_reason'] = 'billing_batch_ambiguous';
+            return ['summary' => $summary, 'outcomes' => $outcomes];
+        }
+
+        foreach ($remote as $candidate) {
+            $candidateExternalIds = array_fill_keys(
+                array_map('strval', $candidate['external_order_ids']),
+                true
+            );
+            $candidateLines = array_values(array_filter(
+                $allLines,
+                static fn (array $line): bool => isset($candidateExternalIds[(string) ($line['external_order_id'] ?? '')])
+            ));
+            $result = $this->persistPreparedBillingResult(
+                $candidate,
+                $httpStatus,
+                $response,
+                $metadata,
+                $candidateLines
+            );
+            $outcomes[(int) $candidate['job']['id']] = $this->sourceOutcome(
+                (int) $candidate['job']['id'],
+                (int) $candidate['job']['company_id'],
+                (int) $candidate['job']['meli_account_id'],
+            );
+            $this->summarizeTerminal($summary, $result['status'] === 'reconciled' ? 'complete' : $result['status']);
+        }
+        return ['summary' => $summary, 'outcomes' => $outcomes];
+    }
+
     /** @return array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} */
     private function processSelected(
         int $limit,
@@ -159,19 +341,6 @@ final class SaleFinancialService
             }
             $previousAccountId = (int) $job['meli_account_id'];
             try {
-                if (!$manualExact && ($domainExact || $jobId === null)) {
-                    $batch = $this->captureAndReconcileBatch(
-                        $job,
-                        $jobId === null || $domainExact,
-                        $domainExact,
-                    );
-                    $summary['processed'] += $batch['processed'];
-                    $summary['completed'] += $batch['completed'];
-                    $summary['deferred'] += $batch['deferred'];
-                    $summary['errors'] += $batch['errors'];
-                    $summary['stop_reason'] = $batch['stop_reason'];
-                    break;
-                }
                 $summary['processed']++;
                 $result = $this->captureAndReconcile($job, $jobId === null || $domainExact, $domainExact);
                 $terminal = $result['status'] === 'reconciled' ? 'complete' : $result['status'];
@@ -317,188 +486,6 @@ final class SaleFinancialService
     }
 
     /**
-     * @param array<string,mixed> $firstJob
-     * @return array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string}
-     */
-    private function captureAndReconcileBatch(array $firstJob, bool $allowSuccessor, bool $domainSuccessor): array
-    {
-        $summary = ['processed' => 0, 'completed' => 0, 'errors' => 0, 'deferred' => 0, 'stop_reason' => 'empty'];
-        $firstPointer = $this->queuePointerForSource($firstJob, ['running']);
-        $prepared = $this->prepareBillingCandidate($firstJob, $allowSuccessor, $domainSuccessor);
-        if (($prepared['ready'] ?? false) !== true) {
-            $this->applyPreparedLocalOutcome($firstJob, $prepared, $summary);
-            return $summary;
-        }
-        if ($firstPointer === null || !$this->isSimpleCrossSaleCandidate($prepared)) {
-            return $this->processPreparedExact($firstJob, $prepared, $summary);
-        }
-        $remote = [$prepared + ['queue_job_id' => (int) $firstPointer['id']]];
-
-        $remaining = self::BILLING_MAX_ORDER_IDS - count($prepared['external_order_ids']);
-        if ($remaining > 0) {
-            foreach ($this->claimAdditionalQueueOwnedBillingJobs($firstJob, $firstPointer, $remaining) as $candidate) {
-                $preparedCandidate = $this->prepareBillingCandidate($candidate, $allowSuccessor, $domainSuccessor);
-                $candidateOrderCount = count($preparedCandidate['external_order_ids'] ?? []);
-                if (($preparedCandidate['ready'] ?? false) === true
-                    && $this->isSimpleCrossSaleCandidate($preparedCandidate)
-                    && $candidateOrderCount > 0
-                    && $candidateOrderCount <= $remaining) {
-                    $remote[] = $preparedCandidate + ['queue_job_id' => (int) ($candidate['queue_job_id'] ?? 0)];
-                    $remaining -= $candidateOrderCount;
-                    continue;
-                }
-                $this->applyPreparedLocalOutcome($candidate, $preparedCandidate, $summary);
-            }
-        }
-
-        if ($remote === []) {
-            return $summary;
-        }
-
-        $allExternalOrderIds = [];
-        foreach ($remote as $candidate) {
-            foreach ($candidate['external_order_ids'] as $externalOrderId) {
-                $allExternalOrderIds[(string) $externalOrderId] = true;
-            }
-        }
-        $allExternalOrderIds = array_keys($allExternalOrderIds);
-        if (count($allExternalOrderIds) > self::BILLING_MAX_ORDER_IDS) {
-            foreach ($remote as $candidate) {
-                $this->finish(
-                    $candidate['job'],
-                    'review',
-                    'El lote Billing excedió 60 órdenes y fue detenido sin consultar Mercado Libre.'
-                );
-                $summary['processed']++;
-                $summary['errors']++;
-            }
-            $summary['stop_reason'] = 'batch_too_large';
-            return $summary;
-        }
-
-        $api = ($this->clientFactory)((int) $firstJob['meli_account_id']);
-        try {
-            $response = $api->get(self::ENDPOINT, ['order_ids' => implode(',', $allExternalOrderIds)], [
-                'job_type' => 'billing',
-                'source' => 'cron',
-                'bulk' => true,
-                'estimated_total' => count($allExternalOrderIds),
-                'response_count_strategy' => 'billing_orders',
-                'expected_resource_ids' => implode(',', $allExternalOrderIds),
-            ]);
-        } catch (ApiRhythmDeferredException $error) {
-            foreach ($remote as $candidate) {
-                if ((int) $candidate['job']['id'] === (int) $firstJob['id']) {
-                    continue;
-                }
-                $this->deferWithoutAttemptPenalty(
-                    $candidate['job'],
-                    SafeErrorPresenter::message($error, 'Billing continuará en su próxima oportunidad segura.'),
-                    $error->nextSafeAt
-                );
-            }
-            $this->deferAdditionalQueuePointers($remote, (int) $firstJob['id'], $error->nextSafeAt, 'billing_429_backoff');
-            throw $error;
-        } catch (ApiBudgetExhaustedException $error) {
-            foreach ($remote as $candidate) {
-                if ((int) $candidate['job']['id'] === (int) $firstJob['id']) {
-                    continue;
-                }
-                $this->deferWithoutAttemptPenalty(
-                    $candidate['job'],
-                    SafeErrorPresenter::message($error, 'Billing continuará cuando exista presupuesto API.'),
-                    $error->nextSafeAt
-                );
-            }
-            $this->deferAdditionalQueuePointers($remote, (int) $firstJob['id'], $error->nextSafeAt, 'api_budget_exhausted');
-            throw $error;
-        } catch (Throwable $error) {
-            foreach ($remote as $candidate) {
-                if ((int) $candidate['job']['id'] === (int) $firstJob['id']) {
-                    continue;
-                }
-                $job = $candidate['job'];
-                $retry = !$this->retryDeadlineExceeded($job);
-                $this->finish(
-                    $job,
-                    $retry ? 'retry' : 'error',
-                    SafeErrorPresenter::message($error, 'No fue posible completar la conciliación oficial.')
-                );
-            }
-            throw $error;
-        }
-        $metadata = $api->lastResponseMetadata() ?? ['status' => 200, 'headers' => [], 'request_id' => ''];
-        $httpStatus = (int) $metadata['status'];
-        $allLines = (new SaleBillingParser())->parse($response, $allExternalOrderIds);
-        if ($this->hasUnattributedBillingLines($allLines)) {
-            foreach ($remote as $candidate) {
-                $this->finish(
-                    $candidate['job'],
-                    'awaiting_remote',
-                    'Billing devolvió conceptos compartidos no atribuibles a una orden simple; se conserva para un paso exacto.',
-                    gmdate('Y-m-d H:i:s', time() + 60)
-                );
-                $summary['processed']++;
-                $summary['deferred']++;
-            }
-            $summary['stop_reason'] = 'billing_batch_ambiguous';
-            return $summary;
-        }
-        foreach ($remote as $candidate) {
-            $result = $this->persistPreparedBillingResult(
-                $candidate,
-                $httpStatus,
-                $response,
-                $metadata,
-                $allLines
-            );
-            if ((int) $candidate['job']['id'] !== (int) $firstJob['id']) {
-                $this->alignAdditionalQueuePointer($candidate);
-            }
-            $summary['processed']++;
-            $terminal = $result['status'] === 'reconciled' ? 'complete' : $result['status'];
-            if ($terminal === 'complete') {
-                $summary['completed']++;
-                $summary['stop_reason'] = 'work_completed';
-            } elseif (in_array($terminal, ['partial', 'retry', 'awaiting_remote'], true)) {
-                $summary['deferred']++;
-                $summary['stop_reason'] = 'partial_response';
-            } else {
-                $summary['errors']++;
-                $summary['stop_reason'] = 'manual_review';
-            }
-        }
-        return $summary;
-    }
-
-    /**
-     * @param array<string,mixed> $job
-     * @param array<string,mixed> $prepared
-     * @param array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} $summary
-     * @return array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string}
-     */
-    private function processPreparedExact(array $job, array $prepared, array $summary): array
-    {
-        $summary['processed']++;
-        $result = $this->captureAndReconcile($job, true, true);
-        $terminal = $result['status'] === 'reconciled' ? 'complete' : $result['status'];
-        if (!($result['finalized'] ?? false)) {
-            $this->finish($job, $terminal, (string) $result['message']);
-        }
-        if ($terminal === 'complete') {
-            $summary['completed']++;
-            $summary['stop_reason'] = 'work_completed';
-        } elseif (in_array($terminal, ['partial', 'retry', 'awaiting_remote'], true)) {
-            $summary['deferred']++;
-            $summary['stop_reason'] = 'partial_response';
-        } else {
-            $summary['errors']++;
-            $summary['stop_reason'] = 'manual_review';
-        }
-        return $summary;
-    }
-
-    /**
      * @param array<string,mixed> $job
      * @return array<string,mixed>
      */
@@ -627,6 +614,56 @@ final class SaleFinancialService
         }
     }
 
+    /**
+     * @return array{state:string,classification?:string,next_safe_at?:?string}
+     */
+    private function sourceOutcome(int $sourceId, int $companyId, int $accountId): array
+    {
+        $stmt = Database::connectionFresh()->prepare(
+            'SELECT status,next_run_at FROM sale_financial_reconciliation_jobs
+             WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1'
+        );
+        $stmt->execute([$sourceId, $companyId, $accountId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return ['state' => 'review', 'classification' => 'domain_source_missing'];
+        }
+        $status = strtolower((string) ($row['status'] ?? ''));
+        if ($status === 'complete') {
+            return ['state' => 'completed'];
+        }
+        if (in_array($status, ['pending', 'running', 'retry', 'awaiting_remote'], true)) {
+            $next = trim((string) ($row['next_run_at'] ?? ''));
+            return [
+                'state' => 'waiting',
+                'classification' => 'domain_source_waiting:financial_reconciliation',
+                'next_safe_at' => $next !== '' ? $next : gmdate('Y-m-d H:i:s', time() + 60),
+            ];
+        }
+        return [
+            'state' => 'review',
+            'classification' => 'domain_source_' . substr($status !== '' ? $status : 'unknown', 0, 70),
+        ];
+    }
+
+    /** @param array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} $summary */
+    private function summarizeTerminal(array &$summary, string $terminal): void
+    {
+        $summary['processed']++;
+        if ($terminal === 'complete') {
+            $summary['completed']++;
+            $summary['stop_reason'] = 'work_completed';
+            return;
+        }
+        if (in_array($terminal, ['partial', 'retry', 'awaiting_remote'], true)) {
+            $summary['deferred']++;
+            $summary['stop_reason'] = 'partial_response';
+            return;
+        }
+        $summary['errors']++;
+        $summary['stop_reason'] = 'manual_review';
+    }
+
     /** @param array<string,mixed> $prepared */
     private function isSimpleCrossSaleCandidate(array $prepared): bool
     {
@@ -646,203 +683,6 @@ final class SaleFinancialService
             }
         }
         return false;
-    }
-
-    /** @param array<string,mixed> $job @param list<string> $states @return array<string,mixed>|null */
-    private function queuePointerForSource(array $job, array $states): ?array
-    {
-        if (!(new SchemaInspectorService())->hasTable('queue_v4_clean_jobs')) {
-            return null;
-        }
-        $states = array_values(array_intersect($states, ['ready', 'running', 'waiting']));
-        if ($states === []) {
-            return null;
-        }
-        $pdo = Database::connectionFresh();
-        $in = implode(',', array_fill(0, count($states), '?'));
-        $stmt = $pdo->prepare(
-            'SELECT id,available_at,state
-             FROM queue_v4_clean_jobs
-             WHERE company_id=? AND meli_account_id=?
-               AND job_type="domain_exact"
-               AND resource_id=?
-               AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="financial_reconciliation"
-               AND state IN (' . $in . ')
-             ORDER BY FIELD(state,"running","ready","waiting"),id LIMIT 1'
-        );
-        $stmt->execute(array_merge([
-            (int) $job['company_id'],
-            (int) $job['meli_account_id'],
-            (string) $job['id'],
-        ], $states));
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        return is_array($row) ? $row : null;
-    }
-
-    /**
-     * @param array<string,mixed> $firstJob
-     * @param array<string,mixed> $firstPointer
-     * @return list<array<string,mixed>>
-     */
-    private function claimAdditionalQueueOwnedBillingJobs(array $firstJob, array $firstPointer, int $remainingOrderIds): array
-    {
-        if ($remainingOrderIds < 1) {
-            return [];
-        }
-        $pdo = Database::connectionFresh();
-        $reservationGuard = ManualCampaignReservationGuard::sql(
-            'sale_financial_reconciliation',
-            's.id'
-        );
-        $stmt = $pdo->prepare(
-            'SELECT q.id queue_job_id,q.available_at queue_available_at,q.state queue_state,
-                    q.job_type queue_job_type,
-                    JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability")) queue_capability,
-                    s.*,
-                    COALESCE(st.official_status,"missing") official_status,
-                    (SELECT COUNT(*)
-                       FROM meli_orders o
-                      WHERE o.meli_account_id=s.meli_account_id
-                        AND CONCAT(IF(o.external_pack_id IS NULL,"O:","P:"),COALESCE(o.external_pack_id,o.external_order_id))=s.sale_key) order_count
-             FROM queue_v4_clean_jobs q
-             LEFT JOIN sale_financial_reconciliation_jobs s
-               ON s.id=CAST(q.resource_id AS UNSIGNED)
-              AND s.company_id=q.company_id
-              AND s.meli_account_id=q.meli_account_id
-             LEFT JOIN sale_financial_state st
-               ON st.company_id=s.company_id
-              AND st.meli_account_id=s.meli_account_id
-              AND st.sale_key=s.sale_key
-              AND st.input_version=s.input_version
-             WHERE q.company_id=? AND q.meli_account_id=?
-               AND q.state="ready"
-               AND q.available_at<=UTC_TIMESTAMP(3)
-               AND (q.available_at>? OR (q.available_at=? AND q.id>?))
-             ORDER BY q.available_at ASC,q.id ASC
-             LIMIT 120'
-        );
-        $availableAt = (string) $firstPointer['available_at'];
-        $stmt->execute([
-            (int) $firstJob['company_id'],
-            (int) $firstJob['meli_account_id'],
-            $availableAt,
-            $availableAt,
-            (int) $firstPointer['id'],
-        ]);
-        $claimed = [];
-        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            if (!$this->isQueueOwnedSimpleBatchRow($row, $remainingOrderIds, $reservationGuard)) {
-                break;
-            }
-            $job = $this->claimSpecificBillingJob(
-                (int) $row['id'],
-                (int) $firstJob['company_id'],
-                (int) $firstJob['meli_account_id']
-            );
-            if ($job === null) {
-                break;
-            }
-            $job['queue_job_id'] = (int) $row['queue_job_id'];
-            $claimed[] = $job;
-            $remainingOrderIds--;
-            if ($remainingOrderIds < 1) {
-                break;
-            }
-        }
-        return $claimed;
-    }
-
-    /** @param array<string,mixed> $row */
-    private function isQueueOwnedSimpleBatchRow(array $row, int $remainingOrderIds, string $reservationGuard): bool
-    {
-        unset($reservationGuard); // The SQL guard is applied again during the CAS claim.
-        return (string) ($row['queue_job_type'] ?? '') === 'domain_exact'
-            && (string) ($row['queue_capability'] ?? '') === 'financial_reconciliation'
-            && (int) ($row['id'] ?? 0) > 0
-            && (string) ($row['status'] ?? '') !== ''
-            && in_array((string) $row['status'], ['pending', 'retry', 'awaiting_remote'], true)
-            && str_starts_with((string) ($row['sale_key'] ?? ''), 'O:')
-            && (int) ($row['order_count'] ?? 0) === 1
-            && $remainingOrderIds >= 1
-            && (string) ($row['official_status'] ?? 'missing') !== 'complete'
-            && (string) ($row['input_version'] ?? '') !== ''
-            && preg_match('/^[a-f0-9]{64}$/', (string) ($row['input_version'] ?? '')) === 1;
-    }
-
-    /**
-     * @param list<array<string,mixed>> $remote
-     */
-    private function deferAdditionalQueuePointers(array $remote, int $firstSourceId, string $nextSafeAt, string $classification): void
-    {
-        $timestamp = strtotime(trim($nextSafeAt) . ' UTC');
-        $availableAt = gmdate('Y-m-d H:i:s', $timestamp === false ? time() + 60 : max(time() + 1, $timestamp));
-        $pdo = Database::connectionFresh();
-        $stmt = $pdo->prepare(
-            'UPDATE queue_v4_clean_jobs
-             SET state="waiting",available_at=?,last_error_class=?,completed_at=NULL
-             WHERE id=? AND state="ready"
-               AND job_type="domain_exact"
-               AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="financial_reconciliation"'
-        );
-        foreach ($remote as $candidate) {
-            $job = $candidate['job'] ?? [];
-            $queueJobId = (int) ($candidate['queue_job_id'] ?? 0);
-            if (!is_array($job) || (int) ($job['id'] ?? 0) === $firstSourceId || $queueJobId < 1) {
-                continue;
-            }
-            $stmt->execute([$availableAt, $classification, $queueJobId]);
-        }
-    }
-
-    /** @param array<string,mixed> $candidate */
-    private function alignAdditionalQueuePointer(array $candidate): void
-    {
-        $queueJobId = (int) ($candidate['queue_job_id'] ?? 0);
-        $source = $candidate['job'] ?? [];
-        if ($queueJobId < 1 || !is_array($source)) {
-            return;
-        }
-        $pdo = Database::connectionFresh();
-        $stmt = $pdo->prepare(
-            'SELECT status,next_run_at FROM sale_financial_reconciliation_jobs
-             WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1'
-        );
-        $stmt->execute([
-            (int) $source['id'],
-            (int) $source['company_id'],
-            (int) $source['meli_account_id'],
-        ]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!is_array($row)) {
-            return;
-        }
-        $status = strtolower((string) ($row['status'] ?? ''));
-        if ($status === 'complete') {
-            $update = $pdo->prepare(
-                'UPDATE queue_v4_clean_jobs
-                 SET state="completed",completed_at=UTC_TIMESTAMP(3),last_error_class=NULL
-                 WHERE id=? AND state="ready"'
-            );
-            $update->execute([$queueJobId]);
-            return;
-        }
-        if (in_array($status, ['pending', 'running', 'retry', 'awaiting_remote'], true)) {
-            $next = trim((string) ($row['next_run_at'] ?? ''));
-            $availableAt = $next !== '' ? $next : gmdate('Y-m-d H:i:s', time() + 60);
-            $update = $pdo->prepare(
-                'UPDATE queue_v4_clean_jobs
-                 SET state="waiting",available_at=?,last_error_class="domain_source_waiting:financial_reconciliation",completed_at=NULL
-                 WHERE id=? AND state="ready"'
-            );
-            $update->execute([$availableAt, $queueJobId]);
-            return;
-        }
-        $update = $pdo->prepare(
-            'UPDATE queue_v4_clean_jobs
-             SET state="review",last_error_class=?,completed_at=NULL
-             WHERE id=? AND state="ready"'
-        );
-        $update->execute(['domain_source_' . substr($status !== '' ? $status : 'unknown', 0, 70), $queueJobId]);
     }
 
     /** @return array<string,mixed>|null */
@@ -934,7 +774,7 @@ final class SaleFinancialService
         $totals = $this->calculate($calculationItems, $lines);
         $legacyEstimate = $this->legacyEstimate((int) $job['meli_account_id'], $candidate['order_ids']);
         $partial = $httpStatus === 206;
-        $processing = $this->containsProcessingStatus($response);
+        $processing = $this->containsProcessingStatus($response, $externalOrderIds);
         $missingFields = $this->missingFields($metadata);
         $missingContent = $missingFields !== [];
         $hasOfficialLines = $lines !== [];
@@ -1088,7 +928,7 @@ final class SaleFinancialService
         $totals = $this->calculate($calculationItems, $lines);
         $legacyEstimate = $this->legacyEstimate((int) $job['meli_account_id'], $orderIds);
         $partial = $httpStatus === 206;
-        $processing = $this->containsProcessingStatus($response);
+        $processing = $this->containsProcessingStatus($response, $externalOrderIds);
         $missingFields = $this->missingFields($metadata);
         $missingContent = $missingFields !== [];
         $hasOfficialLines = $lines !== [];
@@ -1446,16 +1286,30 @@ final class SaleFinancialService
         return (int) ($row[0] ?? 0) > 0 ? round((float) $row[1], 2) : null;
     }
 
-    /** @param array<string,mixed> $node */
-    private function containsProcessingStatus(array $node): bool
+    /** @param array<string,mixed> $node @param list<string> $externalOrderIds */
+    private function containsProcessingStatus(array $node, array $externalOrderIds): bool
     {
+        $known = array_fill_keys(array_map('strval', $externalOrderIds), true);
+        return $this->containsProcessingStatusForKnownOrders($node, $known);
+    }
+
+    /** @param array<string,mixed> $node @param array<string,bool> $known */
+    private function containsProcessingStatusForKnownOrders(array $node, array $known, ?string $currentOrder = null): bool
+    {
+        foreach (['order_id', 'orderId', 'external_order_id'] as $orderKey) {
+            $value = isset($node[$orderKey]) ? (string) $node[$orderKey] : '';
+            if ($value !== '' && isset($known[$value])) {
+                $currentOrder = $value;
+                break;
+            }
+        }
         foreach ($node as $key => $value) {
             if (is_string($value)
                 && in_array(strtolower(trim($value)), ['processing', 'in_process', 'pending'], true)
                 && in_array(strtolower((string) $key), ['status', 'document_status', 'process_status'], true)) {
-                return true;
+                return $currentOrder !== null && isset($known[$currentOrder]);
             }
-            if (is_array($value) && $this->containsProcessingStatus($value)) {
+            if (is_array($value) && $this->containsProcessingStatusForKnownOrders($value, $known, $currentOrder)) {
                 return true;
             }
         }

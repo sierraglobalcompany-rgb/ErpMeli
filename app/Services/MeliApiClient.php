@@ -221,7 +221,18 @@ final class MeliApiClient implements MeliReadClientInterface
                 \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
                     \App\QueueV4Clean\QueueV4CleanOAuthStageContext::BUDGET_RESERVATION
                 );
-                $budgetReservation = $budget->reserve($this->accountId, $method, $path, $meta);
+                $budgetReservation = MeliTransportSourcePolicy::usesPrimaryRhythmAuthority($source)
+                    ? [
+                        'allowed' => true,
+                        'job_type' => (string) ($meta['job_type'] ?? ''),
+                        'source' => $source,
+                        'next_safe_at' => null,
+                        'window_started_at' => null,
+                        'window_seconds' => 0,
+                        'web_counter_reserved' => false,
+                        'scopes' => [],
+                    ]
+                    : $budget->reserve($this->accountId, $method, $path, $meta);
                 $executionAttemptId = max(0, (int) ($meta['execution_attempt_id'] ?? 0));
                 if ($executionAttemptId > 0) {
                     (new ExecutionJournalService())->budgetReserved($executionAttemptId);
@@ -428,7 +439,9 @@ final class MeliApiClient implements MeliReadClientInterface
                         'is_app_blocked_signal' => false,
                         'recommendation' => 'Queue V4 repetirá este GET idempotente en otra ventana segura.',
                     ];
-                    $budget->recordResult($this->accountId, $method, $path, null, null, $meta, $classification);
+                    if (!MeliTransportSourcePolicy::usesPrimaryRhythmAuthority($source)) {
+                        $budget->recordResult($this->accountId, $method, $path, null, null, $meta, $classification);
+                    }
                     $guard->recordRequest(
                         $this->accountId,
                         $requestId,
@@ -490,7 +503,9 @@ final class MeliApiClient implements MeliReadClientInterface
                     'is_app_blocked_signal' => false,
                     'recommendation' => 'Revise el trabajo exacto antes de autorizar otro intento.',
                 ];
-                $budget->recordResult($this->accountId, $method, $path, null, null, $meta, $classification);
+                if (!MeliTransportSourcePolicy::usesPrimaryRhythmAuthority($source)) {
+                    $budget->recordResult($this->accountId, $method, $path, null, null, $meta, $classification);
+                }
                 $guard->recordRequest(
                     $this->accountId,
                     $requestId,
@@ -532,7 +547,9 @@ final class MeliApiClient implements MeliReadClientInterface
                     'is_app_blocked_signal' => false,
                     'recommendation' => 'Queue V4 repetirá este GET idempotente en otra ventana segura.',
                 ];
-                $budget->recordResult($this->accountId, $method, $path, null, null, $meta, $classification);
+                if (!MeliTransportSourcePolicy::usesPrimaryRhythmAuthority($source)) {
+                    $budget->recordResult($this->accountId, $method, $path, null, null, $meta, $classification);
+                }
                 $guard->recordRequest(
                     $this->accountId, $requestId, $method, $path, null, $durationMs, null,
                     $attempt, false,
@@ -566,7 +583,9 @@ final class MeliApiClient implements MeliReadClientInterface
                 ];
                 $guard->recordRequest($this->accountId, $requestId, $method, $path, $status, $durationMs, $retryAfter, $attempt, false, null, null, null, $meta);
                 (new MeliOperationTelemetryService())->record($this->accountId, $requestId, $profile, $durationMs, $wireBytes, $decodedBytes, $status, true, $telemetryMeta);
-                $budget->recordResult($this->accountId, $method, $path, $status, $retryAfter, $meta);
+                if (!MeliTransportSourcePolicy::usesPrimaryRhythmAuthority($source)) {
+                    $budget->recordResult($this->accountId, $method, $path, $status, $retryAfter, $meta);
+                }
                 $rhythm->finalizeKnownResult($rhythmPermit, $status, $retryAfter);
                 return $decoded;
             }
@@ -623,7 +642,9 @@ final class MeliApiClient implements MeliReadClientInterface
             $errorTelemetryMeta = $meta;
             $errorTelemetryMeta['response_item_count'] = 0;
             (new MeliOperationTelemetryService())->record($this->accountId, $requestId, $profile, $durationMs, $wireBytes, $decodedBytes, $status ?: null, true, $errorTelemetryMeta);
-            $budget->recordResult($this->accountId, $method, $path, $status ?: null, $retryAfter, $meta, $classification);
+            if (!MeliTransportSourcePolicy::usesPrimaryRhythmAuthority($source)) {
+                $budget->recordResult($this->accountId, $method, $path, $status ?: null, $retryAfter, $meta, $classification);
+            }
             $rhythm->finalizeKnownResult($rhythmPermit, $status ?: null, $retryAfter);
             if (MeliTransportSourcePolicy::usesQueueRateLimitDeferral($source) && $status === 429) {
                 throw new ApiRhythmDeferredException(

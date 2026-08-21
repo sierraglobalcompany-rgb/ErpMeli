@@ -197,6 +197,220 @@ final class QueueV4CleanRepository
         }
     }
 
+    /**
+     * Queue V4 owns batching boundaries.  Starting from the already-claimed
+     * financial pointer, walk the global ready FIFO and include only contiguous
+     * simple one-order financial sources from the same tenant.  The first
+     * incompatible global job stops the batch, even if a later financial row
+     * would otherwise match.
+     *
+     * @param array<string,mixed> $runningJob
+     * @return list<int>
+     */
+    public function contiguousFinancialReconciliationSourceIds(array $runningJob, int $maxOrderIds): array
+    {
+        $companyId = (int) ($runningJob['company_id'] ?? 0);
+        $accountId = (int) ($runningJob['meli_account_id'] ?? 0);
+        $sourceId = (int) ($runningJob['resource_id'] ?? 0);
+        $this->assertTenant($companyId, $accountId);
+        if ($sourceId < 1 || $maxOrderIds < 1 || (string) ($runningJob['job_type'] ?? '') !== 'domain_exact') {
+            return [];
+        }
+        $payload = is_array($runningJob['payload'] ?? null) ? $runningJob['payload'] : [];
+        if ((string) ($payload['capability'] ?? '') !== 'financial_reconciliation') {
+            return [];
+        }
+
+        $sourceIds = [$sourceId];
+        $remaining = max(0, min(60, $maxOrderIds) - 1);
+        if ($remaining < 1) {
+            return $sourceIds;
+        }
+
+        $availableAt = (string) ($runningJob['available_at'] ?? '');
+        $jobId = (int) ($runningJob['id'] ?? 0);
+        if ($availableAt === '' || $jobId < 1) {
+            return $sourceIds;
+        }
+
+        try {
+            $statement = $this->pdo->prepare(
+                'SELECT q.id queue_job_id,q.company_id queue_company_id,q.meli_account_id queue_account_id,
+                        q.job_type queue_job_type,q.resource_id queue_resource_id,
+                        JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability")) queue_capability,
+                        s.id source_id,s.status source_status,s.sale_key,s.input_version,s.safe_message,
+                        COALESCE(st.official_status,"missing") official_status,
+                        (SELECT COUNT(*)
+                           FROM meli_orders o
+                          WHERE o.meli_account_id=s.meli_account_id
+                            AND CONCAT(IF(o.external_pack_id IS NULL,"O:","P:"),COALESCE(o.external_pack_id,o.external_order_id))=s.sale_key) order_count
+                 FROM queue_v4_clean_jobs q
+                 LEFT JOIN sale_financial_reconciliation_jobs s
+                   ON s.id=CAST(q.resource_id AS UNSIGNED)
+                  AND s.company_id=q.company_id
+                  AND s.meli_account_id=q.meli_account_id
+                 LEFT JOIN sale_financial_state st
+                   ON st.company_id=s.company_id
+                  AND st.meli_account_id=s.meli_account_id
+                  AND st.sale_key=s.sale_key
+                  AND st.input_version=s.input_version
+                 WHERE q.state="ready"
+                   AND q.available_at<=UTC_TIMESTAMP(3)
+                   AND (q.available_at>? OR (q.available_at=? AND q.id>?))
+                 ORDER BY q.available_at ASC,q.id ASC
+                 LIMIT 240'
+            );
+            $statement->execute([$availableAt, $availableAt, $jobId]);
+            $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Throwable) {
+            return $sourceIds;
+        }
+
+        foreach ($rows as $row) {
+            if (!$this->isContiguousFinancialBatchRow($row, $companyId, $accountId)) {
+                break;
+            }
+            $rowSourceId = (int) ($row['source_id'] ?? 0);
+            if ($rowSourceId < 1) {
+                break;
+            }
+            $sourceIds[] = $rowSourceId;
+            $remaining--;
+            if ($remaining < 1) {
+                break;
+            }
+        }
+
+        return $sourceIds;
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     */
+    private function isContiguousFinancialBatchRow(array $row, int $companyId, int $accountId): bool
+    {
+        return (int) ($row['queue_company_id'] ?? 0) === $companyId
+            && (int) ($row['queue_account_id'] ?? 0) === $accountId
+            && (string) ($row['queue_job_type'] ?? '') === 'domain_exact'
+            && (string) ($row['queue_capability'] ?? '') === 'financial_reconciliation'
+            && (int) ($row['source_id'] ?? 0) > 0
+            && in_array((string) ($row['source_status'] ?? ''), ['pending', 'retry', 'awaiting_remote'], true)
+            && str_starts_with((string) ($row['sale_key'] ?? ''), 'O:')
+            && (int) ($row['order_count'] ?? 0) === 1
+            && (string) ($row['official_status'] ?? 'missing') !== 'complete'
+            && preg_match('/^[a-f0-9]{64}$/', (string) ($row['input_version'] ?? '')) === 1
+            && !str_starts_with((string) ($row['safe_message'] ?? ''), 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED');
+    }
+
+    /**
+     * Queue V4, not the financial domain service, owns pointer state.  This
+     * aligns unclaimed contiguous pointers after a coalesced domain call.  The
+     * already-running pointer is intentionally ignored here and closed through
+     * the normal worker CAS path.
+     *
+     * @param array<int,array{state:string,classification?:string,next_safe_at?:?string}> $outcomesBySourceId
+     */
+    public function alignReadyFinancialReconciliationPointers(
+        int $companyId,
+        int $accountId,
+        array $outcomesBySourceId,
+        int $exceptSourceId,
+    ): void {
+        $this->assertTenant($companyId, $accountId);
+        $complete = $this->pdo->prepare(
+            'UPDATE queue_v4_clean_jobs
+             SET state="completed",completed_at=UTC_TIMESTAMP(3),last_error_class=NULL
+             WHERE company_id=? AND meli_account_id=? AND resource_id=? AND state="ready"
+               AND job_type="domain_exact"
+               AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="financial_reconciliation"'
+        );
+        $waiting = $this->pdo->prepare(
+            'UPDATE queue_v4_clean_jobs
+             SET state="waiting",available_at=?,completed_at=NULL,last_error_class=?
+             WHERE company_id=? AND meli_account_id=? AND resource_id=? AND state="ready"
+               AND job_type="domain_exact"
+               AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="financial_reconciliation"'
+        );
+        $review = $this->pdo->prepare(
+            'UPDATE queue_v4_clean_jobs
+             SET state="review",completed_at=NULL,last_error_class=?
+             WHERE company_id=? AND meli_account_id=? AND resource_id=? AND state="ready"
+               AND job_type="domain_exact"
+               AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="financial_reconciliation"'
+        );
+        foreach ($outcomesBySourceId as $sourceId => $outcome) {
+            $sourceId = (int) $sourceId;
+            if ($sourceId < 1 || $sourceId === $exceptSourceId) {
+                continue;
+            }
+            $state = (string) ($outcome['state'] ?? '');
+            if ($state === 'completed') {
+                $complete->execute([$companyId, $accountId, (string) $sourceId]);
+                continue;
+            }
+            $classification = substr((string) ($outcome['classification'] ?? 'domain_source_waiting:financial_reconciliation'), 0, 100);
+            if ($state === 'waiting') {
+                $nextSafeAt = $this->safeUtcDateTime((string) ($outcome['next_safe_at'] ?? ''));
+                $waiting->execute([$nextSafeAt, $classification, $companyId, $accountId, (string) $sourceId]);
+                continue;
+            }
+            $review->execute([
+                substr($classification !== '' ? $classification : 'domain_source_review', 0, 100),
+                $companyId,
+                $accountId,
+                (string) $sourceId,
+            ]);
+        }
+    }
+
+    /**
+     * @param list<int> $sourceIds
+     */
+    public function alignReadyFinancialReconciliationPointersFromSources(
+        int $companyId,
+        int $accountId,
+        array $sourceIds,
+        int $exceptSourceId,
+    ): void {
+        $this->assertTenant($companyId, $accountId);
+        $sourceIds = array_values(array_unique(array_filter(array_map('intval', $sourceIds), static fn (int $id): bool => $id > 0)));
+        if ($sourceIds === []) {
+            return;
+        }
+        $in = implode(',', array_fill(0, count($sourceIds), '?'));
+        $statement = $this->pdo->prepare(
+            'SELECT id,status,next_run_at FROM sale_financial_reconciliation_jobs
+             WHERE company_id=? AND meli_account_id=? AND id IN (' . $in . ')'
+        );
+        $statement->execute(array_merge([$companyId, $accountId], $sourceIds));
+        $outcomes = [];
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $status = strtolower((string) ($row['status'] ?? ''));
+            $sourceId = (int) ($row['id'] ?? 0);
+            if ($sourceId < 1) {
+                continue;
+            }
+            if ($status === 'complete') {
+                $outcomes[$sourceId] = ['state' => 'completed'];
+                continue;
+            }
+            if (in_array($status, ['pending', 'running', 'retry', 'awaiting_remote'], true)) {
+                $next = trim((string) ($row['next_run_at'] ?? ''));
+                $outcomes[$sourceId] = [
+                    'state' => 'waiting',
+                    'classification' => 'domain_source_waiting:financial_reconciliation',
+                    'next_safe_at' => $next !== '' ? $next : gmdate('Y-m-d H:i:s', time() + 60),
+                ];
+                continue;
+            }
+            $outcomes[$sourceId] = [
+                'state' => 'review',
+                'classification' => 'domain_source_' . substr($status !== '' ? $status : 'unknown', 0, 70),
+            ];
+        }
+        $this->alignReadyFinancialReconciliationPointers($companyId, $accountId, $outcomes, $exceptSourceId);
+    }
+
     public function complete(array $job, int $runId): void
     {
         $this->finish($job, $runId, 'completed', 'completed', null, null);
@@ -288,15 +502,22 @@ final class QueueV4CleanRepository
     public function parkFinancialReconciliationUntil(string $nextSafeAt, ?int $exceptJobId = null): int
     {
         $availableAt = $this->safeUtcDateTime($nextSafeAt);
-        $whereExcept = $exceptJobId !== null && $exceptJobId > 0 ? ' AND id<>?' : '';
+        $whereExcept = $exceptJobId !== null && $exceptJobId > 0 ? ' AND q.id<>?' : '';
         $statement = $this->pdo->prepare(
-            "UPDATE queue_v4_clean_jobs
+            "UPDATE queue_v4_clean_jobs q
              SET state='waiting',
-                 available_at=GREATEST(available_at, ?)
-             WHERE job_type='domain_exact'
-               AND state IN ('ready','waiting')
-               AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.capability'))='financial_reconciliation'
-               AND available_at < ?"
+                  available_at=IF(available_at IS NULL OR available_at < ?, ?, available_at)
+              WHERE q.job_type='domain_exact'
+                AND q.state IN ('ready','waiting')
+                AND q.resource_id REGEXP '^[0-9]+$'
+                AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.capability'))='financial_reconciliation'
+                AND EXISTS (
+                    SELECT 1
+                      FROM sale_financial_reconciliation_jobs s
+                     WHERE s.id=CAST(q.resource_id AS UNSIGNED)
+                       AND s.company_id=q.company_id
+                       AND s.meli_account_id=q.meli_account_id
+                )"
             . $whereExcept
         );
         $parameters = [$availableAt, $availableAt];

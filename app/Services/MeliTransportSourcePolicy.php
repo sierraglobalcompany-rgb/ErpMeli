@@ -103,6 +103,17 @@ final class MeliTransportSourcePolicy
         return self::capabilities($source)['queue_rate_limit_deferral'];
     }
 
+    public static function usesPrimaryRhythmAuthority(string $source): bool
+    {
+        return in_array($source, [
+            'queue_v4_clean',
+            self::QUEUE_V4_SALES_AUDIT,
+            self::QUEUE_V4_SALES_REPAIR,
+            self::QUEUE_V4_DOMAIN_EXACT,
+            'manual_campaign',
+        ], true);
+    }
+
     public static function requiresCurrentOAuthFence(string $source): bool
     {
         return self::capabilities($source)['current_oauth_fence'];

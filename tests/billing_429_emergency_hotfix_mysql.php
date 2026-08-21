@@ -382,7 +382,8 @@ try {
         $domainHandler,
     );
     $result = $worker->run('test', 3, 20);
-    $assert((int) $result['claimed'] === 2, 'ORDER_EXACT_CAN_PROGRESS_DURING_BILLING_BLOCK_claims');
+    $claimDebug = $pdo->query('SELECT job_type,state,last_error_class,COUNT(*) jobs FROM queue_v4_clean_jobs GROUP BY job_type,state,last_error_class ORDER BY job_type,state,last_error_class')->fetchAll(PDO::FETCH_ASSOC);
+    $assert((int) $result['claimed'] === 2, 'ORDER_EXACT_CAN_PROGRESS_DURING_BILLING_BLOCK_claims:' . json_encode($result) . ':states=' . json_encode($claimDebug));
     $assert((int) $result['completed'] === 1 && (int) $result['deferred'] === 1, 'ORDER_EXACT_CAN_PROGRESS_DURING_BILLING_BLOCK_outcome');
     $assert($orderCalls === 1, 'ORDER_EXACT_CAN_PROGRESS_DURING_BILLING_BLOCK');
     $financeStates = $pdo->query(

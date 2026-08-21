@@ -555,6 +555,39 @@ try {
     $assert((int) $pdo->query("SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE safe_message LIKE 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED%'")->fetchColumn() === 2, 'BILLING_AMBIGUOUS_FALLBACK');
 
     $resetBilling();
+    $fallbackIds = $seedFinancial(101, 3, 'AMBX');
+    $pdo->prepare('UPDATE queue_v4_clean_jobs SET available_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 30 MINUTE) WHERE resource_id=?')
+        ->execute([(string) $fallbackIds[2]]);
+    $transportExactFallback = new BulkBillingFakeTransport();
+    $transportExactFallback->mode = 'ambiguous';
+    $runBilling($transportExactFallback);
+    $assert(array_map('count', array_column($transportExactFallback->calls, 'order_ids')) === [2], 'AMBIGUOUS_FIRST_ATTEMPT_BATCHED_Q1_Q2');
+    $assert((int) $pdo->query("SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE safe_message LIKE 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED%'")->fetchColumn() === 2, 'AMBIGUOUS_FIRST_ATTEMPT_MARKED_Q1_Q2');
+    $fallbackPlaceholders = implode(',', array_fill(0, count($fallbackIds), '?'));
+    $pdo->prepare(
+        'UPDATE sale_financial_reconciliation_jobs
+            SET next_run_at=UTC_TIMESTAMP()
+          WHERE id IN (' . $fallbackPlaceholders . ')'
+    )->execute($fallbackIds);
+    $pdo->prepare(
+        'UPDATE queue_v4_clean_jobs
+            SET state="ready",available_at=UTC_TIMESTAMP(3),lease_owner=NULL,lease_expires_at=NULL,lease_generation=lease_generation+1
+          WHERE resource_id IN (' . $fallbackPlaceholders . ')'
+    )->execute(array_map('strval', $fallbackIds));
+    $resetRhythm();
+    $transportExactFallback->mode = 'success';
+    $runBilling($transportExactFallback);
+    $secondAttemptCounts = array_map('count', array_column($transportExactFallback->calls, 'order_ids'));
+    $assert($secondAttemptCounts === [2, 1], 'AMBIGUOUS_SECOND_ATTEMPT_EXACT calls=' . json_encode($transportExactFallback->calls));
+    $assert($transportExactFallback->calls[1]['order_ids'] === [$pdo->query('SELECT external_sale_id FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $fallbackIds[0])->fetchColumn()], 'SECOND_ATTEMPT_ORDER_IDS=1');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id=' . (int) $fallbackIds[1] . ' AND state="ready"')->fetchColumn() === 1, 'Q2_NOT_BATCHED_WITH_Q1');
+    $resetRhythm();
+    $runBilling($transportExactFallback);
+    $fallbackAttemptCounts = array_map('count', array_column($transportExactFallback->calls, 'order_ids'));
+    $assert($fallbackAttemptCounts === [2, 1, 1], 'LAST_FALLBACK_SOURCE_NOT_REBATCHED calls=' . json_encode($transportExactFallback->calls));
+    $assert(!in_array(2, array_slice($fallbackAttemptCounts, 1), true), 'AMBIGUOUS_BATCH_REPEATED=NO');
+
+    $resetBilling();
     $seedFinancial(101, 2, 'PROC');
     $transportProcessing = new BulkBillingFakeTransport();
     $transportProcessing->mode = 'processing';

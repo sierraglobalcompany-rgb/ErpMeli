@@ -222,6 +222,10 @@ final class QueueV4CleanRepository
         }
 
         $sourceIds = [$sourceId];
+        if ($this->financialSourceRequiresExactFallback($companyId, $accountId, $sourceId)) {
+            return $sourceIds;
+        }
+
         $remaining = max(0, min(60, $maxOrderIds) - 1);
         if ($remaining < 1) {
             return $sourceIds;
@@ -282,6 +286,26 @@ final class QueueV4CleanRepository
         }
 
         return $sourceIds;
+    }
+
+    private function financialSourceRequiresExactFallback(int $companyId, int $accountId, int $sourceId): bool
+    {
+        try {
+            $statement = $this->pdo->prepare(
+                'SELECT safe_message
+                   FROM sale_financial_reconciliation_jobs
+                  WHERE id=?
+                    AND company_id=?
+                    AND meli_account_id=?
+                  LIMIT 1'
+            );
+            $statement->execute([$sourceId, $companyId, $accountId]);
+            $safeMessage = $statement->fetchColumn();
+        } catch (Throwable) {
+            return true;
+        }
+
+        return str_starts_with((string) $safeMessage, 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED');
     }
 
     /**

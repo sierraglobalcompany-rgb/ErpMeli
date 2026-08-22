@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
     "authority_id": "operations-visibility-kiss-release-2.39.17-runtime-dependencies",
-    "runtime_manifest_paths_sha256": "4bfe3f8073ddeb84671d13bc0ff3915d0abba9e1b8feeb576a8e7ec7139115b0",
+    "runtime_manifest_paths_sha256": "e1426e3b1017066bef024b07c03f57b64449353efc903019065892bb8a408492",
     "coverage_base_commit": "ac6cfadf008ed79e994d98ce6db942eecde2d7f2",
     "classifications": {
         "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

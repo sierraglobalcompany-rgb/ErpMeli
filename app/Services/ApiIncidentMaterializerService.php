@@ -76,19 +76,19 @@ final class ApiIncidentMaterializerService
                 $scopeKey = $scopeKind === 'account' ? 'account:' . (int) $row['meli_account_id']
                     : ($scopeKind === 'company' ? 'company:' . (int) $row['company_id'] : 'application');
                 $upsert->execute([
-                    'incident_key' => $incidentKey,
+                    'incident_key' => self::clip($incidentKey, 64) ?? '',
                     'scope_key' => $scopeKey,
                     'scope_kind' => $scopeKind,
                     'company_id' => $row['company_id'],
                     'account_id' => $row['meli_account_id'],
-                    'outcome' => $outcome,
-                    'method' => (string) ($row['method'] ?? ''),
-                    'endpoint' => mb_substr((string) ($row['endpoint_path'] ?? ''), 0, 255),
+                    'outcome' => self::clip($outcome, 40) ?? 'local_failure',
+                    'method' => self::clip((string) ($row['method'] ?? ''), 10) ?? '',
+                    'endpoint' => self::clip((string) ($row['endpoint_path'] ?? ''), 255) ?? '',
                     'http_status' => $row['http_status'],
-                    'error_type' => $row['error_type'],
-                    'error_code' => $row['error_code'],
-                    'safe_message' => $row['safe_message'],
-                    'diagnostic_id' => $row['diagnostic_id'],
+                    'error_type' => self::clip($row['error_type'] ?? null, 80),
+                    'error_code' => self::clip($row['error_code'] ?? null, 120),
+                    'safe_message' => self::clip($row['safe_message'] ?? null, 500),
+                    'diagnostic_id' => self::clip($row['diagnostic_id'] ?? null, 80),
                     'reached_remote' => (int) ($row['reached_remote'] ?? 0),
                     'actionable' => (int) ($row['actionable'] ?? 0),
                     'risk_signal' => (int) ($row['risk_signal'] ?? 0),
@@ -126,5 +126,19 @@ final class ApiIncidentMaterializerService
         );
         $statement->execute();
         return $statement->rowCount();
+    }
+
+    /**
+     * The read model can be rebuilt from historical telemetry written by
+     * earlier releases.  It must never stop permanently because a legacy
+     * diagnostic was wider than the browser-facing column.
+     */
+    private static function clip(mixed $value, int $maximum): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        $text = trim((string) $value);
+        return $text === '' ? null : mb_substr($text, 0, $maximum);
     }
 }

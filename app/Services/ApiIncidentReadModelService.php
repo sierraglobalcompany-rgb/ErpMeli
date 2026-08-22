@@ -34,6 +34,9 @@ final class ApiIncidentReadModelService
         }
         try {
             $pdo = Database::connectionFresh();
+            if (!self::isCurrent($pdo)) {
+                return null;
+            }
             $accountId = max(0, (int) ($filters['account_id'] ?? 0));
             $scope = (new ApiHealthAccessScope())->predicate('g', 'incident_group', $accountId ?: null);
             $where = [
@@ -125,8 +128,12 @@ final class ApiIncidentReadModelService
     public function byKey(string $key): ?array
     {
         try {
+            $pdo = Database::connectionFresh();
+            if (!self::isCurrent($pdo)) {
+                return null;
+            }
             $scope = (new ApiHealthAccessScope())->predicate('g', 'incident_key_group');
-            $statement = Database::connectionFresh()->prepare(
+            $statement = $pdo->prepare(
                 'SELECT g.*,ack.acknowledged_at,
                         IF(ack.acknowledged_through_at IS NOT NULL AND ack.acknowledged_through_at>=g.last_seen_at,1,0) acknowledged_all,
                         1 account_count,
@@ -153,10 +160,14 @@ final class ApiIncidentReadModelService
     public function stateCounts(int $hours, ?int $accountId): ?array
     {
         try {
+            $pdo = Database::connectionFresh();
+            if (!self::isCurrent($pdo)) {
+                return null;
+            }
             $scope = (new ApiHealthAccessScope())->predicate('g', 'incident_count_group', $accountId);
             $activeMinutes = max(5, min(1440, (new AppSettingsService())->int('api_health.active_window_minutes', 120)));
             $ack = '(ack.acknowledged_through_at IS NOT NULL AND ack.acknowledged_through_at>=g.last_seen_at)';
-            $statement = Database::connectionFresh()->prepare(
+            $statement = $pdo->prepare(
                 'SELECT
                    COALESCE(SUM(NOT ' . $ack . ' AND g.outcome_class<>"policy_delay"
                      AND g.last_seen_at>=DATE_SUB(UTC_TIMESTAMP(),INTERVAL ' . $activeMinutes . ' MINUTE)),0) active,
@@ -189,9 +200,13 @@ final class ApiIncidentReadModelService
     public function signalCounts(?int $accountId): ?array
     {
         try {
+            $pdo = Database::connectionFresh();
+            if (!self::isCurrent($pdo)) {
+                return null;
+            }
             $scope = (new ApiHealthAccessScope())->predicate('g', 'incident_signal_group', $accountId);
             $minutes = max(5, min(120, (new AppSettingsService())->int('api.health.active_window_minutes', 15)));
-            $statement = Database::connectionFresh()->prepare(
+            $statement = $pdo->prepare(
                 'SELECT
                    COALESCE(SUM(g.outcome_class="blocked_signal"),0) blocked_signals,
                    COALESCE(SUM(g.reached_remote=1 AND g.http_status=400),0) bad_requests,
@@ -208,5 +223,14 @@ final class ApiIncidentReadModelService
         } catch (Throwable) {
             return null;
         }
+    }
+
+    private static function isCurrent(PDO $pdo): bool
+    {
+        $state = (int) $pdo->query(
+            'SELECT last_log_id FROM api_incident_materializer_state WHERE singleton_id=1'
+        )->fetchColumn();
+        $latest = (int) $pdo->query('SELECT COALESCE(MAX(id),0) FROM api_request_logs')->fetchColumn();
+        return $state >= $latest;
     }
 }

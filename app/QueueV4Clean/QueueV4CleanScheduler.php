@@ -77,6 +77,12 @@ final class QueueV4CleanScheduler
             $oauthClaimed = (int) ($oauth['claimed'] ?? 0);
             $salesClaimed = (int) ($salesAudit['claimed'] ?? 0);
             $producer = (new QueueV4CleanProducer($this->pdo, $repository))->produce();
+            // This bounded local-only step must run before the worker can use
+            // the remaining wall clock. Otherwise a busy remote queue can
+            // leave the browser incident catalogue permanently stale.
+            $maintenance = microtime(true) < $deadline - 1.0
+                ? (new QueueV4CleanMaintenanceService())->run(200)
+                : ['materialized' => 0, 'retained' => 0, 'warnings' => 0, 'deferred' => true];
             $capacity = self::functionalCapacity($maxJobs, $oauthClaimed, $salesClaimed, 0);
             $availableWorkerSlots = $capacity['worker_slots'];
             $remaining = min(45, (int) floor($deadline - microtime(true)));
@@ -96,9 +102,6 @@ final class QueueV4CleanScheduler
             if ($repairClaimed > 1 || $claimedTotal > $capacity['limit']) {
                 throw new \RuntimeException('queue_v4_clean_functional_capacity_exceeded');
             }
-            $maintenance = microtime(true) < $deadline - 1.0
-                ? (new QueueV4CleanMaintenanceService())->run(100)
-                : ['materialized' => 0, 'retained' => 0, 'warnings' => 0, 'deferred' => true];
             $this->pdo->exec(
                 "UPDATE queue_v4_clean_control SET last_scheduler_at=UTC_TIMESTAMP(3) WHERE control_key='primary'"
             );

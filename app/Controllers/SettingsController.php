@@ -2138,9 +2138,13 @@ final class SettingsController
         $service = new ApiHealthService();
         $incidentPage = $service->incidentPage($filters, $perPage, ($page - 1) * $perPage);
         if (!$service->dataAvailable()) {
+            $freshness = $service->incidentReadModelFreshness();
+            $message = !$freshness['current']
+                ? 'El catálogo de incidentes se está actualizando y no está al día. No se mostrará como vacío hasta completar la sincronización local.'
+                : 'No se pudo comprobar el catálogo de incidentes. Recargue la página para intentarlo nuevamente.';
             http_response_code(503);
             View::render('errors/500', [
-                'errorMessage' => 'No se pudo comprobar el catálogo de incidentes. Recargue la página para intentarlo nuevamente.',
+                'errorMessage' => $message,
                 'errorReference' => '',
             ]);
             return;

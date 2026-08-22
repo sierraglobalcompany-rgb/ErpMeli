@@ -25,13 +25,12 @@ $run = static function (array $command) use ($root): array {
 };
 
 $legacy = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
-$entryAt = strpos($legacy, "require __DIR__ . '/_cron_entry_state.php'");
 $retiredAt = strpos($legacy, 'reason=LEGACY_AUTOMATION_RETIRED');
-$flagGateAt = strpos($legacy, '$legacyFlags');
-$doctorBootstrapAt = strpos($legacy, "require __DIR__ . DIRECTORY_SEPARATOR . '_bootstrap' . '.php'");
-$assert($entryAt !== false && $retiredAt !== false && $retiredAt < $entryAt,
-    'legacy_retirement_must_precede_entry_state');
-$assert(strpos($legacy, '$legacyFlags') !== false && strpos($legacy, 'LEGACY_AUTOMATION_BLOCKED') !== false,
+$flagGateAt = strpos($legacy, '$blockedFlags');
+$doctorBootstrapAt = strpos($legacy, "require __DIR__ . '/_bootstrap.php'");
+$assert($retiredAt !== false && !str_contains($legacy, '_cron_entry_state.php'),
+    'legacy_normal_path_must_not_load_entry_state');
+$assert(strpos($legacy, '$blockedFlags') !== false && strpos($legacy, 'LEGACY_AUTOMATION_BLOCKED') !== false,
     'legacy_mutation_flags_not_blocked');
 $assert($flagGateAt !== false && $doctorBootstrapAt !== false && $flagGateAt < $doctorBootstrapAt,
     'legacy_mutation_gate_must_precede_doctor_bootstrap');
@@ -43,6 +42,14 @@ foreach (['--retention-step', '--record', '--persist', '--execute', '--set=disab
     $blocked = $run([PHP_BINARY, $root . '/jobs/process_sync_queue.php', $flag]);
     $assert($blocked['exit'] === 2 && str_contains($blocked['stderr'], 'LEGACY_AUTOMATION_BLOCKED'),
         'legacy_flag_not_blocked:' . $flag);
+}
+foreach (['--unknown=1', '--cycles=invalid', '--doctor', '--cycles=10'] as $flag) {
+    $arguments = $flag === '--doctor'
+        ? [PHP_BINARY, $root . '/jobs/process_sync_queue.php', '--doctor', '--qa-replay']
+        : [PHP_BINARY, $root . '/jobs/process_sync_queue.php', $flag];
+    $blocked = $run($arguments);
+    $assert($blocked['exit'] === 2 && str_contains($blocked['stderr'], 'LEGACY_AUTOMATION_BLOCKED'),
+        'legacy_argument_not_fail_closed:' . $flag);
 }
 
 $adversarial = [
@@ -75,6 +82,21 @@ $testSection = $testAt === false ? '' : substr($controller, $testAt, 5600);
 $assert(str_contains($testSection, "'/jobs/queue_v4_clean.php'")
     && str_contains($testSection, 'queue_v4_read_only'), 'web_preflight_not_v4_read_only');
 $assert(!str_contains($testSection, "begin('process_sync_queue'"), 'web_preflight_creates_legacy_health');
+
+$routes = (string) file_get_contents($root . '/public/index.php');
+foreach ([
+    '/settings/cron/v3-runtime-status.json',
+    '/settings/cron/v3-setup.json',
+    '/settings/cron/v3-canary.json',
+    '/settings/cron/parked',
+] as $route) {
+    $routeAt = strpos($routes, "'" . $route . "'");
+    $routeEnd = $routeAt === false ? false : strpos($routes, "\n", $routeAt);
+    $routeSource = $routeAt === false ? '' : substr($routes, $routeAt, $routeEnd === false ? null : $routeEnd - $routeAt);
+    $assert(str_contains($routeSource, 'legacyCronRetired'), 'legacy_web_route_not_410:' . $route);
+}
+$resetView = (string) file_get_contents($root . '/app/Views/settings/imported_data_reset.php');
+$assert(!str_contains($resetView, 'process_sync_queue.php'), 'reset_view_names_legacy_launcher');
 
 foreach ([
     'jobs/queue_core_convergence.php' => 'LEGACY_TOOL_BLOCKED',

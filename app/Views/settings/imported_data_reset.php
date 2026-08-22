@@ -42,6 +42,7 @@ if ($status === 'completed') {
   <div>
     <span class="eyebrow">Configuración · operación destructiva local</span>
     <h1>Restablecer datos importados de Mercado Libre</h1>
+    <p><span class="badge neutral">LOCAL_ONLY</span> Requiere decisión y confirmación explícitas; nunca se programa en Cron.</p>
     <p>Retira copias locales que pueden volver a descargarse. No modifica nada en Mercado Libre.</p>
   </div>
   <div class="page-actions">
@@ -257,7 +258,7 @@ if ($status === 'completed') {
         <p>Soporte ejecuta una tarea puntual en el servidor: procesa un lote, guarda su avance y termina. No depende de tareas automáticas adicionales.</p>
         <details>
           <summary>Comando puntual para soporte</summary>
-          <code>Herramienta offline autorizada por soporte; no usar Cron ni process_sync_queue.php.</code>
+          <code>Herramienta offline autorizada por soporte; no usar el Cron automático ni lanzadores heredados.</code>
         </details>
       </div>
       <?php if (in_array($status, ['authorized','running','pausing'], true)): ?>

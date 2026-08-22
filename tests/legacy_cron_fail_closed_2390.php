@@ -153,7 +153,6 @@ PHP,
 
     $launcherSource = (string) file_get_contents($root . '/launcher/cron.php');
     $legacySource = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
-    $retentionSource = (string) file_get_contents($root . '/app/Services/TechnicalRetentionCliService.php');
     $assert(!str_contains($launcherSource, "?? 'process_sync_queue.php'")
         && str_contains($launcherSource, "hash_equals('queue_v4_clean.php', \$requestedJob)"), 'launcher_allowlist_not_exact');
     $assert(!str_contains($launcherSource, 'queue_engine_control')
@@ -163,19 +162,14 @@ PHP,
     $assert(!str_contains($legacySource, 'CRON_V3_ENABLED')
         && !str_contains($legacySource, 'CRON_V3_SHADOW_ENABLED'), 'legacy_config_fallback_present');
     $retiredAt = strpos($legacySource, 'reason=LEGACY_AUTOMATION_RETIRED');
-    $queuesAt = strpos($legacySource, "stage(\$bootstrapId, 'preparing_queues')");
-    $capacityAt = strpos($legacySource, 'CronCapacityPlan::build');
-    $assert($retiredAt !== false && $queuesAt !== false && $retiredAt < $queuesAt, 'legacy_retirement_after_queue_prepare');
-    $assert($capacityAt !== false && $retiredAt < $capacityAt, 'legacy_retirement_after_capacity_plan');
+    $assert($retiredAt !== false, 'legacy_retirement_missing');
     $assert(strpos($legacySource, 'if ($doctorMode)') < $retiredAt, 'doctor_not_preserved');
     $assert(strpos($legacySource, 'if ($qaReplayMode)') < $retiredAt
         && str_contains($legacySource, 'ERP_FAKE_MELI_TRANSPORT'), 'qa_replay_not_preserved');
-    $assert(strpos($legacySource, 'if ($retentionStepMode)') > $retiredAt
-        && str_contains($legacySource, '!$retentionStepMode'), 'retention_step_not_exempt');
-    $assert(str_contains($retentionSource, 'Nunca consulta Mercado Libre')
-        && !str_contains($retentionSource, 'MeliApiClient'), 'retention_step_not_local_only');
-    $assert(str_contains($legacySource, "if (defined('ERP_LOCAL_MAINTENANCE_ONLY'))")
-        && str_contains($legacySource, "!defined('ERP_LOCAL_MAINTENANCE_ONLY')"), 'local_maintenance_not_preserved');
+    $assert(str_contains($legacySource, "'--retention-step'")
+        && !str_contains($legacySource, 'TechnicalRetentionCliService'), 'retention_step_not_rejected_before_bootstrap');
+    $assert(!str_contains($legacySource, '_cron_entry_state.php')
+        && !str_contains($legacySource, 'CronCapacityPlan::build'), 'legacy_normal_path_loads_runtime');
     $assert(!str_contains($legacySource, 'AutomationGateway')
         && !str_contains($legacySource, 'AutomationCapabilityRegistry'), 'automation_boundary_added_early');
 

@@ -25,8 +25,9 @@ $check(
 );
 $check(
     !str_contains($appJs, 'Promise.all([fetchOverview(), fetchTasks()])')
-        && str_contains($appJs, "await fetchOverview();\n    await fetchTasks();"),
-    'El polling no debe disparar dos agregaciones de Cron simultáneas.'
+        && str_contains($appJs, "document.querySelector('[data-queue-v4-clean]')")
+        && !str_contains($appJs, 'data-cron-v3'),
+    'La página Cron debe leer sólo Queue V4 y no reactivar agregaciones V3 simultáneas.'
 );
 $check(
     !str_contains($pause, '$this->expireFinished();'),

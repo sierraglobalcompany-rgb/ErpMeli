@@ -34,6 +34,7 @@ $tests = [
     'h4_pack_integrity_backfill_mysql.php',
     'api_health_transport_truth_23913.php',
     'api_log_transport_truth_23914.php',
+    'alert_429_transport_truth_23917.php',
     'api_incident_materializer_visibility_23915.php',
     'queue_v4_bulk_parity_convergence_2399.php',
     'domain_exact_finance_admission_2393_mysql.php',

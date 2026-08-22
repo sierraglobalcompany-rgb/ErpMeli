@@ -36,6 +36,41 @@ $csrfToken = Csrf::token();
     <article><span>Heartbeat del Cron</span><strong data-qv4-heartbeat>Sin evidencia</strong><p data-qv4-physical>Observación física: UNKNOWN</p></article>
   </section>
 
+  <section class="cron-task-section cron-api-risks" data-cron-api-risks
+           data-risks-url="<?= View::e($base) ?>/settings/cron/api-risks.json"
+           aria-labelledby="cron-api-risks-title" aria-busy="true">
+    <div class="section-heading">
+      <div>
+        <h2 id="cron-api-risks-title">Riesgos API · últimos 30 días</h2>
+        <p data-cron-api-risks-source>Cargando telemetría directa sin modificar Cron ni Mercado Libre…</p>
+      </div>
+      <a class="btn" data-cron-api-risks-detail href="<?= View::e($base) ?>/settings/api-health/incidents">Abrir diagnóstico</a>
+    </div>
+    <section class="cron-truth-grid" aria-label="Señales API de riesgo">
+      <article><span>429 remoto</span><strong data-cron-api-risk="remote_http_429">—</strong><p>Mercado Libre respondió HTTP 429.</p></article>
+      <article><span>Pausa preventiva local</span><strong data-cron-api-risk="local_rate_limited_pretransport">—</strong><p>Sin HTTP remoto; no cuenta como 429.</p></article>
+      <article><span>OAuth crítico</span><strong data-cron-api-risk="oauth_critical">—</strong><p>HTTP 401/403 remoto.</p></article>
+      <article><span>Fallo remoto</span><strong data-cron-api-risk="http_5xx">—</strong><p>HTTP 5xx de Mercado Libre.</p></article>
+      <article><span>Resultado incierto</span><strong data-cron-api-risk="remote_uncertain">—</strong><p>Requiere comprobación, no reintento ciego.</p></article>
+    </section>
+    <div class="cron-api-risks-meta" data-cron-api-risks-meta aria-live="polite"></div>
+    <p class="cron-api-risks-links">
+      <a data-cron-api-risks-remote href="<?= View::e($base) ?>/settings/api-health/incidents?hours=720&amp;http_status=429&amp;origin=remote">Ver 429 remotos</a>
+      <a data-cron-api-risks-local href="<?= View::e($base) ?>/settings/api-health/incidents?hours=720&amp;origin=protection">Ver pausas preventivas</a>
+      <a data-cron-api-risks-technical href="<?= View::e($base) ?>/settings/api-health/technical">Ver diagnóstico técnico</a>
+    </p>
+    <div class="cron-api-risks-lists">
+      <article>
+        <h3>10 focos principales</h3>
+        <ol data-cron-api-risks-top><li>Cargando evidencia…</li></ol>
+      </article>
+      <article>
+        <h3>10 eventos recientes</h3>
+        <ol data-cron-api-risks-recent><li>Cargando evidencia…</li></ol>
+      </article>
+    </div>
+  </section>
+
   <section class="cron-task-section" aria-labelledby="queue-v4-review-title">
     <div class="section-heading"><div>
       <h2 id="queue-v4-review-title">Review por causa operativa</h2>

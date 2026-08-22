@@ -14,19 +14,20 @@ $assert = static function (bool $condition, string $message): void {
     }
 };
 
-$assert(str_contains($appJs, 'const isRuntimeOperational ='), 'Cron JS must centralize operational V3 detection.');
-$assert(str_contains($appJs, 'hideLegacyV3PanelsWhenOperational()'), 'Cron JS must hide Shadow/Canary when V3 is operational.');
-$assert(str_contains($appJs, 'if (!operationalMode)'), 'Cron polling must not fetch setup/canary in operational mode.');
-$assert(str_contains($cronShell, 'data-cron-launcher-detail'), 'Cron launcher subtitle must be live-updated from V3 signals.');
-$assert(str_contains($apiShell, 'data-operational-url='), 'API Health shell must expose V3 operational snapshot URL.');
+$assert(!str_contains($appJs, 'data-cron-v3') && !str_contains($appJs, 'data-cron-control'), 'Cron JS must not retain V3 controls.');
+$assert(!str_contains($appJs, 'v3-runtime') && !str_contains($appJs, 'cron/parked'), 'Cron JS must not poll V3 routes.');
+$assert(str_contains($cronShell, 'data-queue-v4-clean'), 'Cron shell must expose Queue V4 as the only launcher surface.');
+$assert(str_contains($cronShell, 'Riesgos API · últimos 30 días'), 'Cron shell must expose the direct-telemetry risk card.');
+$assert(str_contains($apiShell, 'AssetVersionService::fingerprint'), 'API Health shell must fingerprint its managed asset.');
 $assert(!str_contains($apiShell, 'api-health.js?v=2.28.37'), 'API Health shell must not ship stale 2.28.37 cache key.');
 $assert(
     str_contains($apiShell, 'api-health.js?v=2.32.0')
         || str_contains($apiShell, 'api-health.js?v=2.33.0')
-        || str_contains($apiShell, 'api-health.js?v=2.34.1'),
+        || str_contains($apiShell, 'api-health.js?v=2.34.1')
+        || str_contains($apiShell, 'AssetVersionService::fingerprint'),
     'API Health shell must ship the current build cache key.'
 );
-$assert(str_contains($apiJs, 'loadOperational()'), 'API Health JS must load operational snapshot before heavy HTML.');
+$assert(str_contains($apiJs, 'loadOperational()'), 'API Health JS must load its bounded operational snapshot before heavy HTML.');
 $assert(str_contains($apiJs, 'No se pudo comprobar esta sección'), 'API Health JS must render a human fallback when a section fails.');
 
 echo "cron_v3_visual_truth_api_health_2314: OK\n";

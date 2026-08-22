@@ -12,6 +12,7 @@ $phpProblem = ($phpRuntime['status'] ?? 'ok') !== 'ok' || !empty($phpRuntime['mi
 $problemCount = count($moduleProblems) + ($pendingMigrations > 0 ? 1 : 0) + ($phpProblem ? 1 : 0);
 $warningCount = count($diagnostic['recent_errors'] ?? []);
 $scopeAudit = $diagnostic['business_scope'] ?? ['status' => 'failed', 'label' => 'No se pudo comprobar'];
+$incidentMaterializer = $diagnostic['incident_materializer'] ?? ['available' => false, 'current' => false, 'lag' => 0];
 $statusClass = $problemCount > 0 ? 'is-danger' : ($warningCount > 0 ? 'is-warning' : 'is-success');
 $statusTitle = $problemCount > 0 ? 'Hay problemas que requieren acción' : ($warningCount > 0 ? 'Sistema operativo con advertencias' : 'Todo funciona correctamente');
 $statusMessage = $problemCount > 0 ? "Se detectaron {$problemCount} áreas que debe revisar." : ($warningCount > 0 ? 'El sistema funciona, pero conserva eventos recientes para revisión.' : 'No se detectaron problemas en instalación, módulos o PHP.');
@@ -27,6 +28,7 @@ $statusMessage = $problemCount > 0 ? "Se detectaron {$problemCount} áreas que d
   <article class="status-card <?= $phpProblem ? 'is-warning' : 'is-success' ?>"><span class="status-card-label">PHP</span><strong><?= View::e((string) ($phpRuntime['version'] ?? PHP_VERSION)) ?></strong><p><?= View::e((string) ($phpRuntime['message'] ?? 'Versión compatible con el ERP.')) ?></p></article>
   <article class="status-card <?= $moduleProblems !== [] ? 'is-warning' : 'is-success' ?>"><span class="status-card-label">Módulos</span><strong><?= $moduleProblems === [] ? 'Todos disponibles' : count($moduleProblems) . ' con problema' ?></strong><p>Se verificaron <?= count($diagnostic['modules'] ?? []) ?> módulos principales.</p></article>
   <article class="status-card <?= ($scopeAudit['status'] ?? '') === 'ok' ? 'is-success' : 'is-warning' ?>"><span class="status-card-label">Empresa y cuenta</span><strong><?= View::e((string) ($scopeAudit['label'] ?? 'No se pudo comprobar')) ?></strong><p><?= View::e((string) ($scopeAudit['message'] ?? 'Abra el diagnóstico para revisar el alcance.')) ?></p></article>
+  <article class="status-card <?= !empty($incidentMaterializer['current']) ? 'is-success' : 'is-warning' ?>"><span class="status-card-label">Catálogo de incidentes</span><strong><?= !empty($incidentMaterializer['current']) ? 'Al día' : (!empty($incidentMaterializer['available']) ? number_format((int) ($incidentMaterializer['lag'] ?? 0), 0, ',', '.') . ' eventos pendientes' : 'NO CERTIFICADO') ?></strong><p><?= !empty($incidentMaterializer['current']) ? 'La vista agrupada coincide con la telemetría.' : 'La telemetría directa permanece disponible; revise Salud API antes de confiar en grupos históricos.' ?></p></article>
 </section>
 
 <?php if ($problemCount > 0): ?>

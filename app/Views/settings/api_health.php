@@ -4,8 +4,10 @@ use App\Core\Csrf;
 use App\Core\Env;
 use App\Core\View;
 use App\Services\DateTimePresenter;
+use App\Services\AssetVersionService;
 
 $base = rtrim(Env::get('APP_URL', ''), '/');
+$apiHealthAsset = View::asset($base, 'api-health.js') . '&v=' . rawurlencode(AssetVersionService::fingerprint('assets/api-health.js'));
 $status = is_array($overview['status'] ?? null) ? $overview['status'] : [];
 $queries = is_array($overview['queries'] ?? null) ? $overview['queries'] : [];
 $accountSummary = is_array($overview['accounts'] ?? null) ? $overview['accounts'] : ['rows' => []];
@@ -271,4 +273,4 @@ if (empty($apiHealthPartial)) {
 <?php endif; ?>
 
 <?php if (!$apiStopped): $pauseAccounts = $rows; require __DIR__ . '/_api_health_pause_dialog.php'; endif; ?>
-<?php if (empty($apiHealthPartial)): ?><script src="<?= View::e($base) ?>/assets/api-health.js?v=2.34.1" defer></script><?php endif; ?>
+<?php if (empty($apiHealthPartial)): ?><script src="<?= View::e($apiHealthAsset) ?>" defer></script><?php endif; ?>

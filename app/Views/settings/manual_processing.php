@@ -33,7 +33,8 @@ if (is_array($preview ?? null)) {
 ?>
 <div class="page-head manual-page-head">
   <div><p class="eyebrow">ADMINISTRACIÓN</p><h1>Procesar ahora</h1>
-    <p>Elija trabajos concretos para adelantarlos. Las ventas nuevas conservan prioridad y cada resultado queda guardado.</p></div>
+    <p>Elija trabajos concretos para adelantarlos. Las ventas nuevas conservan prioridad y cada resultado queda guardado.</p>
+    <p><span class="badge neutral">MANUAL_EXACT</span> Un paso idempotente por confirmación; no inicia ni continúa Cron en segundo plano.</p></div>
   <div class="page-actions"><a class="btn" href="<?= View::e($base . '/settings/cron') ?>">Ver automatización</a></div>
 </div>
 

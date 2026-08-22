@@ -73,7 +73,7 @@ $cronHealthy = (string) ($cron['state'] ?? '') === 'ok';
     <div><h2>Herramientas del sistema</h2><p>Use estas opciones para supervisión, soporte y mantenimiento.</p></div>
   </header>
   <div class="settings-tool-grid">
-    <a href="<?= View::e($base) ?>/settings/manual-processing"><strong>Procesar ahora</strong><span><?php
+    <a href="<?= View::e($base) ?>/settings/manual-processing"><strong>Procesar ahora · MANUAL_EXACT</strong><span><?php
       echo View::e(!empty($manualEngine['ready'])
         ? 'Prepare una campaña dirigida y supervise su avance.'
         : (($manualEngine['state'] ?? '') === 'maintenance'
@@ -84,9 +84,9 @@ $cronHealthy = (string) ($cron['state'] ?? '') === 'ok';
     <a href="<?= View::e($base) ?>/settings/cron"><strong>Automatización y cron</strong><span>Última ejecución, próxima tarea y recuperación.</span></a>
     <a href="<?= View::e($base) ?>/settings/diagnostics"><strong>Diagnóstico</strong><span>Problemas detectados y acciones recomendadas.</span></a>
     <a href="<?= View::e($base) ?>/settings/update"><strong>Actualizaciones</strong><span>Versión, migraciones y recuperación segura.</span></a>
-    <a href="<?= View::e($base) ?>/settings/backups"><strong>Copias y recuperación</strong><span>Copias completas cifradas, verificación y restauración segura.</span></a>
-    <a href="<?= View::e($base) ?>/settings/database-maintenance"><strong>Saneamiento de base de datos</strong><span>Analice, archive y retire ruido técnico con copia verificada.</span></a>
-    <a href="<?= View::e($base) ?>/settings/imported-data-reset"><strong>Restablecer datos importados</strong><span>Retire copias de Mercado Libre sin borrar cuentas, tokens, configuración ni evidencia.</span></a>
+    <a href="<?= View::e($base) ?>/settings/backups"><strong>Copias y recuperación · LOCAL_ONLY</strong><span>Copias completas cifradas, verificación y restauración segura.</span></a>
+    <a href="<?= View::e($base) ?>/settings/database-maintenance"><strong>Saneamiento de base de datos · LOCAL_ONLY</strong><span>Analice, archive y retire ruido técnico con copia verificada.</span></a>
+    <a href="<?= View::e($base) ?>/settings/imported-data-reset"><strong>Restablecer datos importados · LOCAL_ONLY</strong><span>Retire copias de Mercado Libre sin borrar cuentas, tokens, configuración ni evidencia.</span></a>
     <a href="<?= View::e($base) ?>/settings/emergency-control"><strong>Freno de mano</strong><span>Prepare o rote el acceso independiente de emergencia.</span></a>
     <a href="<?= View::e($base) ?>/settings/api-docs"><strong>Documentación API</strong><span>Contratos y cobertura técnica.</span></a>
     <a href="<?= View::e($base) ?>/settings/api-logs"><strong>Historial API</strong><span>Errores agrupados y evidencia sanitizada.</span></a>

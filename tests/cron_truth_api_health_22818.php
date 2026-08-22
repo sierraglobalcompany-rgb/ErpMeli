@@ -41,13 +41,15 @@ $check(str_contains($guard, 'public function readAvailable()'), 'Circuitos debe 
 $check(str_contains($apiHealth, 'LEFT JOIN api_incident_acknowledgements'), 'Los reconocimientos deben agregarse sin N+1.');
 $incidentsSection = explode('public function dataAvailable()', explode('public function incidents(', $apiHealth, 2)[1] ?? '', 2)[0] ?? '';
 $check(!str_contains($incidentsSection, '$this->incidentAcknowledgement('), 'El listado de incidentes no debe consultar un reconocimiento por fila.');
-$check(str_contains($health, "'scope' => 'global'"), 'La evidencia Cron debe declarar su alcance global.');
+$check(str_contains($health, '\'scope\' => $accountId !== null ? \'account\' : \'authorized_businesses\''),
+    'La evidencia Cron debe declarar alcance de cuentas autorizadas.');
 $check(str_contains($health, "'snapshot_state' => \$snapshotState") && str_contains($health, "'authoritative' => in_array"), 'Salud API debe publicar disponibilidad tipada.');
 $check(str_contains($controller, "'authoritative' => in_array(\$snapshotState"), 'Los JSON de Cron deben declarar snapshots autoritativos solo cuando corresponda.');
 $check(str_contains($controller, 'NotificationWorkItemService())->summary($accountIds)'), 'El resumen de notificaciones debe limitarse a cuentas autorizadas.');
 $check(str_contains($sectionController, 'ApiManualPauseService())->summary($accountIds)'), 'Las pausas manuales visibles deben limitarse a cuentas autorizadas.');
 $check(str_contains($javascript, 'new AbortController()') && str_contains($javascript, '8000'), 'El polling Cron debe cortar lecturas colgadas.');
-$check(str_contains($javascript, "snapshotState === 'authoritative_empty'"), 'Un vacío autoritativo debe limpiar filas antiguas.');
+$check(str_contains($javascript, 'data-qv4-count') && str_contains($javascript, 'data.legacy_state_consulted'),
+    'La superficie V4 debe actualizar únicamente sus contadores y declarar legado no consultado.');
 $check(str_contains($javascript, 'campaignSelectedRecently') && str_contains($javascript, 'itemLeaseLive'), 'La campaña debe presentar por separado selección y lease activo.');
 
 if ($failures !== []) {

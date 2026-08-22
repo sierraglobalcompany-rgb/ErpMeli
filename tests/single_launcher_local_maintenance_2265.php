@@ -26,21 +26,21 @@ try {
         || erp_prebootstrap_runtime_mode($state) !== 'local_maintenance') {
         throw new RuntimeException('El lanzador único no reconoció el saneamiento local.');
     }
-    $cron = (string) file_get_contents(dirname(__DIR__) . '/jobs/process_sync_queue.php');
+    $legacy = (string) file_get_contents(dirname(__DIR__) . '/jobs/process_sync_queue.php');
     foreach ([
         'DatabaseMaintenanceService',
         'ImportedMeliDataResetService',
         'BackupCenterService',
         'RestoreService',
     ] as $service) {
-        if (!str_contains($cron, $service)) {
-            throw new RuntimeException('El lanzador único no integra ' . $service . '.');
+        if (str_contains($legacy, $service)) {
+            throw new RuntimeException('El launcher retirado todavía integra ' . $service . '.');
         }
     }
-    if (!str_contains($cron, '$localMaintenanceRequestCount > 1')
-        || !str_contains($cron, 'local_maintenance_conflict')) {
+    if (!str_contains($legacy, 'LEGACY_AUTOMATION_RETIRED')
+        || !str_contains($legacy, 'LEGACY_AUTOMATION_BLOCKED')) {
         throw new RuntimeException(
-            'El lanzador debe bloquear solicitudes locales incompatibles en lugar de escoger una.'
+            'El launcher retirado debe bloquear la invocación normal y sus flags mutantes.'
         );
     }
     foreach (['process_database_maintenance.php', 'reset_imported_meli_data.php'] as $retiredJob) {

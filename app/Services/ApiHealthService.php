@@ -14,6 +14,7 @@ final class ApiHealthService
 {
     private bool $dataAvailable = true;
     private int $lastIncidentTotal = 0;
+    private string $incidentProtocol = 'complete';
 
     /** @return array{current:bool,last_log_id:int,latest_log_id:int} */
     public function incidentReadModelFreshness(): array
@@ -214,12 +215,30 @@ final class ApiHealthService
             return array_map(fn(array $row): array => $this->presentIncident($row), $materialized['rows']);
         }
 
-        // Web/API Health is materialized-only. Raw GROUP_CONCAT over the request
-        // log is a CLI rebuild concern and must never hold an administrative GET.
-        if (PHP_SAPI !== 'cli') {
+        // A stale catalogue must not look empty. The browser may use a bounded
+        // direct projection only when EXPLAIN certifies an indexed access path.
+        // It is explicitly degraded and never authorizes acknowledgement work.
+        $directDegraded = PHP_SAPI !== 'cli'
+            && $statusFilter === ''
+            && $this->directIncidentFallbackSafe($where, $params, $hours);
+        if (PHP_SAPI !== 'cli' && !$directDegraded) {
             $this->dataAvailable = false;
             $this->lastIncidentTotal = 0;
             return [];
+        }
+        if ($directDegraded) {
+            $this->incidentProtocol = 'degraded_direct';
+            $limit = min(50, max(1, $limit));
+            $offset = 0;
+            try {
+                $rows = $this->directIncidentRows($where, $params, $hours, $limit);
+                $this->lastIncidentTotal = count($rows);
+                return array_map(fn(array $row): array => $this->presentIncident($row), $rows);
+            } catch (Throwable) {
+                $this->dataAvailable = false;
+                $this->lastIncidentTotal = 0;
+                return [];
+            }
         }
 
         // The bounded CLI path remains available to rebuild/verify the read
@@ -332,7 +351,7 @@ final class ApiHealthService
         $rows = $this->incidents($filters, $limit, $offset);
         $total = $this->lastIncidentTotal();
         $available = $this->dataAvailable();
-        $truncated = $available && $offset + count($rows) < $total;
+        $truncated = $available && $this->incidentProtocol !== 'degraded_direct' && $offset + count($rows) < $total;
         return [
             'rows' => $rows,
             'total' => $total,
@@ -341,7 +360,9 @@ final class ApiHealthService
             'truncated' => $truncated,
             'protocol' => !$available
                 ? 'unavailable'
-                : ($total === 0 ? 'authoritative_empty' : ($truncated || $offset > 0 ? 'partial' : 'complete')),
+                : ($this->incidentProtocol === 'degraded_direct'
+                    ? 'degraded_direct'
+                    : ($total === 0 ? 'authoritative_empty' : ($truncated || $offset > 0 ? 'partial' : 'complete'))),
         ];
     }
 
@@ -829,6 +850,83 @@ final class ApiHealthService
     private function activeWindowMinutes(): int
     {
         return max(5, min(120, (new AppSettingsService())->int('api.health.active_window_minutes', 15)));
+    }
+
+    /**
+     * The degraded browser path is deliberately narrower than CLI rebuilds.
+     * EXPLAIN is part of the gate: no indexed plan, no raw-log page.
+     *
+     * @param list<string> $where
+     * @param array<string,mixed> $params
+     */
+    private function directIncidentFallbackSafe(array $where, array $params, int $hours): bool
+    {
+        try {
+            $statement = Database::connectionFresh()->prepare(
+                'EXPLAIN SELECT l.id
+                 FROM api_request_logs l
+                 WHERE ' . implode(' AND ', $where) . '
+                 ORDER BY l.created_at DESC,l.id DESC
+                 LIMIT 500'
+            );
+            $statement->bindValue(':hours', max(1, min(720, $hours)), PDO::PARAM_INT);
+            foreach ($params as $key => $value) {
+                $statement->bindValue(':' . $key, $value, is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR);
+            }
+            $statement->execute();
+            $plan = $statement->fetchAll(PDO::FETCH_ASSOC);
+            if ($plan === []) {
+                return false;
+            }
+            foreach ($plan as $row) {
+                $type = strtolower((string) ($row['type'] ?? ''));
+                $key = trim((string) ($row['key'] ?? ''));
+                if ($key === '' || !in_array($type, ['const', 'eq_ref', 'ref', 'range'], true)) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * @param list<string> $where
+     * @param array<string,mixed> $params
+     * @return list<array<string,mixed>>
+     */
+    private function directIncidentRows(array $where, array $params, int $hours, int $limit): array
+    {
+        $statement = Database::connectionFresh()->prepare(
+            'SELECT l.incident_key,l.outcome_class,l.method,l.endpoint_path,l.http_status,l.error_type,l.error_code,
+                    l.safe_message,l.diagnostic_id,l.created_at first_seen_at,l.created_at last_seen_at,
+                    1 repetitions,l.reached_remote,l.actionable,l.risk_signal,
+                    NULL acknowledged_at,0 acknowledged_all,1 account_count,
+                    CASE WHEN l.meli_account_id IS NOT NULL THEN COALESCE(a.account_name,"Cuenta")
+                         WHEN l.scope_kind="company" THEN CONCAT("Empresa: ",COALESCE(c.name,"sin nombre"))
+                         ELSE "Aplicación" END account_names
+             FROM (
+                SELECT l.id,l.incident_key,l.outcome_class,l.method,l.endpoint_path,l.http_status,l.error_type,
+                       l.error_code,l.safe_message,l.diagnostic_id,l.created_at,l.reached_remote,l.actionable,
+                       l.risk_signal,l.scope_kind,l.company_id,l.meli_account_id
+                FROM api_request_logs l
+                WHERE ' . implode(' AND ', $where) . '
+                ORDER BY l.created_at DESC,l.id DESC
+                LIMIT 500
+             ) l
+             LEFT JOIN meli_accounts a ON a.company_id=l.company_id AND a.id=l.meli_account_id
+             LEFT JOIN companies c ON c.id=l.company_id
+             ORDER BY l.created_at DESC,l.id DESC
+             LIMIT :limit'
+        );
+        $statement->bindValue(':hours', max(1, min(720, $hours)), PDO::PARAM_INT);
+        foreach ($params as $key => $value) {
+            $statement->bindValue(':' . $key, $value, is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR);
+        }
+        $statement->bindValue(':limit', max(1, min(50, $limit)), PDO::PARAM_INT);
+        $statement->execute();
+        return $statement->fetchAll(PDO::FETCH_ASSOC);
     }
 
     /** @return list<array<string,mixed>> */

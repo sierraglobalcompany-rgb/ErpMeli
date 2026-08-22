@@ -31,6 +31,13 @@ require __DIR__ . '/_api_health_nav.php';
 ?>
 <div class="api-subpage-intro"><div><span class="eyebrow">Incidentes</span><h2>Incidentes de integración</h2><p>Causas agrupadas, cuentas afectadas y recomendaciones sin repetir miles de registros iguales.</p></div></div>
 
+<?php if (($incidentReadMode ?? '') === 'degraded_direct'): ?>
+  <section class="alert warning" aria-live="polite">
+    <strong>Telemetría directa no agrupada.</strong>
+    El catálogo local de incidentes está atrasado. Esta vista muestra como máximo 50 resultados de los últimos 30 días con una ruta indexada certificada; no permite reconocer ni modificar incidentes.
+  </section>
+<?php endif; ?>
+
 <section class="api-essential-metrics" aria-label="Resumen de gravedad de incidentes">
   <a href="<?= View::e($base) ?>/settings/api-health/incidents?severity=critical"><span>Críticos</span><strong><?= (int) $severitySummary['critical'] ?></strong><p>Bloqueo, OAuth o autorización</p></a>
   <a href="<?= View::e($base) ?>/settings/api-health/incidents?http_status=429&amp;origin=remote"><span>Rate limit 429</span><strong><?= (int) $severitySummary['rate_limit'] ?></strong><p>Reducir ritmo y respetar espera</p></a>
@@ -60,8 +67,8 @@ require __DIR__ . '/_api_health_nav.php';
 </section>
 
 <section class="api-command-section">
-  <?php $firstShown = $total > 0 ? (($page - 1) * $perPage) + 1 : 0; $lastShown = min($total, $page * $perPage); ?>
-  <header class="panel-head"><div><h2><?= number_format($total, 0, ',', '.') ?> <?= $total === 1 ? 'incidente agrupado' : 'incidentes agrupados' ?></h2><p>Mostrando <?= number_format($firstShown, 0, ',', '.') ?>–<?= number_format($lastShown, 0, ',', '.') ?>. Cada tarjeta puede representar varias repeticiones de la misma causa.</p></div></header>
+  <?php $firstShown = $total > 0 ? (($page - 1) * $perPage) + 1 : 0; $lastShown = min($total, $page * $perPage); $directDegraded = ($incidentReadMode ?? '') === 'degraded_direct'; ?>
+  <header class="panel-head"><div><h2><?= $directDegraded ? number_format($total, 0, ',', '.') . ' eventos directos recientes' : number_format($total, 0, ',', '.') . ' ' . ($total === 1 ? 'incidente agrupado' : 'incidentes agrupados') ?></h2><p><?= $directDegraded ? 'Lectura directa limitada a esta página. El total agrupado se certificará cuando el catálogo local se ponga al día.' : 'Mostrando ' . number_format($firstShown, 0, ',', '.') . '–' . number_format($lastShown, 0, ',', '.') . '. Cada tarjeta puede representar varias repeticiones de la misma causa.' ?></p></div></header>
   <div class="incident-list">
     <?php if ($incidents === []): ?><div class="empty-state"><strong>No hay incidentes para estos filtros</strong><span>Pruebe otro periodo o elimine alguno de los filtros.</span></div><?php endif; ?>
     <?php foreach ($incidents as $incident): ?>
@@ -79,7 +86,11 @@ require __DIR__ . '/_api_health_nav.php';
             <span>Señal: <strong><?= View::e((string) ($incident['signal_label'] ?? 'Sin clasificar')) ?></strong></span>
           </div>
         </div>
-        <a class="btn" href="<?= View::e($base) ?>/settings/api-health/incidents/show?key=<?= View::e((string) $incident['incident_key']) ?>">Ver qué ocurrió</a>
+        <?php if ($directDegraded): ?>
+          <span class="btn disabled" aria-disabled="true">Detalle al recuperar catálogo</span>
+        <?php else: ?>
+          <a class="btn" href="<?= View::e($base) ?>/settings/api-health/incidents/show?key=<?= View::e((string) $incident['incident_key']) ?>">Ver qué ocurrió</a>
+        <?php endif; ?>
       </article>
     <?php endforeach; ?>
   </div>

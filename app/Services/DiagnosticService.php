@@ -29,6 +29,7 @@ final class DiagnosticService
             'migration_diagnostic' => $this->migrationDiagnostic(),
             'business_scope' => (new BusinessScopeAuditService())->inspect(),
             'modules' => (new ModuleHealthService())->expectedModules(),
+            'incident_materializer' => $this->incidentMaterializer(),
             'recent_errors' => $this->recentErrors(),
         ];
     }
@@ -75,6 +76,25 @@ final class DiagnosticService
             $status[$dir] = is_dir($full) && is_writable($full) ? 'escribible' : (is_dir($full) ? 'sin permisos' : 'faltante');
         }
         return $status;
+    }
+
+    /** @return array{available:bool,current:bool,last_log_id:int,latest_log_id:int,lag:int} */
+    private function incidentMaterializer(): array
+    {
+        try {
+            $freshness = (new ApiIncidentReadModelService())->freshness();
+            $last = (int) ($freshness['last_log_id'] ?? 0);
+            $latest = (int) ($freshness['latest_log_id'] ?? 0);
+            return [
+                'available' => $last > 0 || $latest > 0,
+                'current' => (bool) ($freshness['current'] ?? false),
+                'last_log_id' => $last,
+                'latest_log_id' => $latest,
+                'lag' => max(0, $latest - $last),
+            ];
+        } catch (Throwable) {
+            return ['available' => false, 'current' => false, 'last_log_id' => 0, 'latest_log_id' => 0, 'lag' => 0];
+        }
     }
 
     private function recentErrors(): array

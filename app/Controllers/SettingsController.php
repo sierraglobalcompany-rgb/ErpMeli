@@ -514,6 +514,18 @@ final class SettingsController
         }
     }
 
+    /** Read-only direct transport evidence for the Cron risk card. */
+    public function cronApiRisks(): void
+    {
+        $this->requireAdminPermanent();
+        $this->releaseReadOnlySession();
+        $summary = (new \App\Services\CronApiRiskSummaryService())->snapshot();
+        if (($summary['ok'] ?? false) !== true) {
+            http_response_code(503);
+        }
+        $this->json($summary);
+    }
+
     public function queueV4CleanReadiness(): void
     {
         $this->queueV4CleanMutation('readiness');
@@ -875,6 +887,15 @@ final class SettingsController
                 'message' => 'No se pudo construir el diagnóstico de Cron. No se modificó ninguna cola.',
             ]);
         }
+    }
+
+    /**
+     * V3/Queue Core routes remain explicit 410 receipts for old bookmarks and
+     * scripts. They must never bootstrap an engine or disclose a stale state.
+     */
+    public function legacyCronRetired(): void
+    {
+        $this->assertLegacyCronMutationDisabled();
     }
 
     private function cronV3SetupMutation(string $action): void
@@ -2153,7 +2174,8 @@ final class SettingsController
         $total = $incidentPage['total'];
         $pages = max(1, (int) ceil($total / $perPage));
         $accounts = $service->accounts();
-        View::render('settings/api_health_incidents', compact('incidents', 'accounts', 'filters', 'page', 'pages', 'perPage', 'total'));
+        $incidentReadMode = (string) ($incidentPage['protocol'] ?? 'complete');
+        View::render('settings/api_health_incidents', compact('incidents', 'accounts', 'filters', 'page', 'pages', 'perPage', 'total', 'incidentReadMode'));
     }
 
     public function apiHealthIncidentShow(): void

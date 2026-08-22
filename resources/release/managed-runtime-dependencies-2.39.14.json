@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
-    "authority_id": "billing-429-endpoint-isolation-release-2.39.14-runtime-dependencies",
-    "runtime_manifest_paths_sha256": "e74656273de1b5a380d720b86189dea5b7ab386e1d9c273d342327342bacf8c1",
+    "authority_id": "queue-v4-authority-legacy-truth-release-2.39.14-runtime-dependencies",
+    "runtime_manifest_paths_sha256": "afaf92f5693ab1f77f5c0f52e681bc04ed98e08ae4d5bcf9365b45239ddef51f",
     "coverage_base_commit": "99218574782e642e8ae3f9b5b95c8af531dcf56d",
     "classifications": {
         "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

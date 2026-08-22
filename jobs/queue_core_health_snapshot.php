@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-use App\Core\Database;
-use App\QueueCore\QueueCoreHealthService;
-
-require dirname(__DIR__) . '/bootstrap.php';
-
 if (in_array('--persist', $_SERVER['argv'] ?? [], true)) {
     fwrite(STDERR, "LEGACY_TOOL_BLOCKED component=queue_core_health_snapshot remote=false http=0\n");
     exit(2);
 }
+
+use App\Core\Database;
+use App\QueueCore\QueueCoreHealthService;
+
+require dirname(__DIR__) . '/bootstrap.php';
 
 try {
     Database::useProfile('cli');

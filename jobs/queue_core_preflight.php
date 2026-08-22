@@ -7,13 +7,14 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
-require dirname(__DIR__) . '/bootstrap.php';
 $arguments=is_array($_SERVER['argv']??null)?array_map('strval',$_SERVER['argv']):[];
 
 if (in_array('--record', $arguments, true)) {
     fwrite(STDERR, "LEGACY_TOOL_BLOCKED component=queue_core_preflight remote=false http=0\n");
     exit(2);
 }
+
+require dirname(__DIR__) . '/bootstrap.php';
 
 try {
     \App\Core\Database::useProfile('cli');

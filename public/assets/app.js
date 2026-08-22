@@ -654,6 +654,17 @@
   const remoteLink = root.querySelector('[data-cron-api-risks-remote]');
   const localLink = root.querySelector('[data-cron-api-risks-local]');
   const technicalLink = root.querySelector('[data-cron-api-risks-technical]');
+  const appBase = (root.dataset.appBase || '').replace(/\/$/, '');
+  // The API returns app-relative routes. Preserve the configured deployment
+  // prefix (for example /erp-meli) instead of resolving them at host root.
+  const appHref = (path) => {
+    if (typeof path !== 'string' || !path.startsWith('/settings/')) return null;
+    return `${appBase}${path}`;
+  };
+  const setAppHref = (element, path) => {
+    const href = appHref(path);
+    if (element && href) element.href = href;
+  };
   const names = {
     REMOTE_HTTP_429: 'Mercado Libre respondió HTTP 429',
     LOCAL_RATE_LIMITED_PRETRANSPORT: 'Pausa preventiva local · sin HTTP remoto',
@@ -691,10 +702,10 @@
       return;
     }
     source.textContent = `${payload.source_label || 'Telemetría directa'} · consultada ${payload.measured_at || 'ahora'}.`;
-    if (detail && payload.links?.remote_429) detail.href = payload.links.remote_429;
-    if (remoteLink && payload.links?.remote_429) remoteLink.href = payload.links.remote_429;
-    if (localLink && payload.links?.local_pretransport) localLink.href = payload.links.local_pretransport;
-    if (technicalLink && payload.links?.technical) technicalLink.href = payload.links.technical;
+    setAppHref(detail, payload.links?.remote_429);
+    setAppHref(remoteLink, payload.links?.remote_429);
+    setAppHref(localLink, payload.links?.local_pretransport);
+    setAppHref(technicalLink, payload.links?.technical);
     clear(meta);
     const materializer = payload.materializer || {};
     metaItem('Incidentes', materializer.current ? 'catálogo al día' : `catálogo atrasado (${Number(materializer.lag || 0)} eventos)`);

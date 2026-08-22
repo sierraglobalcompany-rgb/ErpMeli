@@ -38,6 +38,7 @@ $csrfToken = Csrf::token();
 
   <section class="cron-task-section cron-api-risks" data-cron-api-risks
            data-risks-url="<?= View::e($base) ?>/settings/cron/api-risks.json"
+           data-app-base="<?= View::e($base) ?>"
            aria-labelledby="cron-api-risks-title" aria-busy="true">
     <div class="section-heading">
       <div>

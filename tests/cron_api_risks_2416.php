@@ -29,8 +29,11 @@ $check(!str_contains($service, 'UPDATE ') && !str_contains($service, 'INSERT ') 
 $check(str_contains($controller, 'public function cronApiRisks(): void') && str_contains($controller, 'releaseReadOnlySession()'), 'El endpoint debe liberar sesión y ser de lectura.');
 $check(str_contains($routes, "/settings/cron/api-risks.json"), 'Falta la ruta JSON de Riesgos API.');
 $check(str_contains($view, 'Riesgos API · últimos 30 días') && str_contains($view, 'data-cron-api-risks'), 'Cron debe contener la tarjeta de riesgos progresiva.');
+$check(str_contains($view, 'data-app-base="<?= View::e($base) ?>"'), 'La tarjeta debe exponer el prefijo de instalación para enlaces dinámicos.');
 $check(str_contains($javascript, 'cache: \'no-store\'') && str_contains($javascript, 'timeoutMs = 8000'), 'La tarjeta debe evitar datos obsoletos y cortar una lectura lenta.');
 $check(str_contains($javascript, 'Pausa preventiva local · sin HTTP remoto'), 'La interfaz no debe etiquetar una pausa local como HTTP 429.');
+$check(str_contains($javascript, "const appBase = (root.dataset.appBase || '').replace(/\\/$/, '');"), 'Los enlaces de Riesgos API deben conservar el prefijo de despliegue.');
+$check(str_contains($javascript, 'return `${appBase}${path}`;') && str_contains($javascript, "path.startsWith('/settings/')"), 'Las rutas JSON deben reconstruirse dentro de la aplicación, no en la raíz del dominio.');
 
 if ($failures !== []) {
     fwrite(STDERR, implode(PHP_EOL, $failures) . PHP_EOL);

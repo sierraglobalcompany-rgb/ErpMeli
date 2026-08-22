@@ -196,7 +196,7 @@
         },
         {
             "path": "app/Services/ApiHealthService.php",
-            "sha256": "58cb2e121fcda83954365cc4a158955fa6b0e869f1e2be60b92f0882fb8a5c6f"
+            "sha256": "9d86bb36db6a20f14af8549546adb1bd67a2cf31b77cffe73e68ca0c70186a4f"
         },
         {
             "path": "app/Services/ApiIncidentMaterializerService.php",
@@ -208,7 +208,11 @@
         },
         {
             "path": "app/Services/ApiLogRiskPresenter.php",
-            "sha256": "03dbb9a18b60cfd93cfafcffbe924e9430e253d91c29334aae06b536ed09df57"
+            "sha256": "3ee1bb6b0556a194d72e8ceca3adcf6930b5c33d0425cbd836c0dae7d6284c3d"
+        },
+        {
+            "path": "app/Services/ApiRequestOutcomeClassifier.php",
+            "sha256": "466f66d360c19162cf21622640c78a3e3c0195552d87791c965c466648efebde"
         },
         {
             "path": "app/Services/ApiRhythmPolicyService.php",
@@ -452,7 +456,7 @@
         },
         {
             "path": "jobs/process_sync_queue.php",
-            "sha256": "2dd047223849be7eac4a77ac34a8d81081676c2ae9d1cb2eefa40037a9088b3a"
+            "sha256": "26470385a3d6e12e0b11b4e5084ea55946fc568a4e70ea451931d4ca37bceae2"
         },
         {
             "path": "jobs/queue_core_canary.php",
@@ -464,7 +468,7 @@
         },
         {
             "path": "jobs/queue_core_health_snapshot.php",
-            "sha256": "e566d2d07beeea20e0900bfda7cab1200a845591ca048345bc822f315af75191"
+            "sha256": "07a89c73a4b2663019909aeaf8c26b3cee26cd4b8b51360d19bd3ec08b3b32ac"
         },
         {
             "path": "jobs/queue_core_historical.php",
@@ -472,7 +476,7 @@
         },
         {
             "path": "jobs/queue_core_preflight.php",
-            "sha256": "5d194095c801f34b115036383a6784f5defcac7a3c7325c8ea3af24ffbb6d690"
+            "sha256": "46e4a7108534b56bce04821ed8ed29af82c9ae1409c9bbfa94f97b453405b3bf"
         },
         {
             "path": "jobs/queue_core_release_certify.php",
@@ -480,7 +484,7 @@
         },
         {
             "path": "jobs/queue_core_rollback.php",
-            "sha256": "f63d23b658d3dd253ebf12141e5254eaf2587e86c1d2f8393b40cedf8e9cc974"
+            "sha256": "13d06b975aa7431b297991a8b918184634e132fbc524c65a11a68eb52264648d"
         },
         {
             "path": "jobs/queue_engine_control.php",
@@ -564,7 +568,7 @@
         },
         {
             "path": "resources/release/managed-runtime-dependencies-2.39.14.json",
-            "sha256": "e6aebe80968b6780f6b41eb30ab6cf022a2f88b45903a56f7757c44c1f787cda"
+            "sha256": "f829875e8b256af70c28c836f8dcc732569fde7b3d7c7a16856a03b10254db36"
         },
         {
             "path": "resources/release/managed-runtime-dependencies-2.39.2.json",

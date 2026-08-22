@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.39.16.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.39.17.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -41,9 +41,9 @@ final class ManagedRuntimePublicationPolicy
     ];
     public const BASE_COMMIT = 'ac6cfadf008ed79e994d98ce6db942eecde2d7f2';
     public const INSTALLED_BASE_COMMIT = 'ac6cfadf008ed79e994d98ce6db942eecde2d7f2';
-    public const VERSION = '2.39.16';
-    public const BUILD_ID = 'erp-meli-2.39.16-api-incident-visibility-rc1-20260822';
-    public const BUILT_AT = '2026-08-22T08:12:12Z';
+    public const VERSION = '2.39.17';
+    public const BUILD_ID = 'erp-meli-2.39.17-operations-visibility-kiss-rc1-20260822';
+    public const BUILT_AT = '2026-08-22T12:00:00Z';
     public const MINIMUM_MIGRATION = '299_queue_v4_domain_exact_admission_2_39_3.sql';
     private const INVENTORY_MINIMUM_MIGRATION = '295_inventory_warehouse_v1_2_38_0.sql';
     private const QUEUE_V4_MINIMUM_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';

@@ -439,6 +439,21 @@ try {
             'resources/release/updater-authority-2.39.14.json',
             'resources/runtime-manifest.json',
         ];
+    } elseif ($targetVersion === '2.39.15') {
+        $requiredOverlayPaths = [
+            'VERSION',
+            'app/Services/ApiHealthService.php',
+            'app/Services/ApiLogRiskPresenter.php',
+            'app/Services/ApiRequestOutcomeClassifier.php',
+            'app/Services/ManagedRuntimePublicationPolicy.php',
+            'jobs/process_sync_queue.php',
+            'jobs/queue_core_health_snapshot.php',
+            'jobs/queue_core_preflight.php',
+            'jobs/queue_core_rollback.php',
+            'resources/release/managed-runtime-dependencies-2.39.15.json',
+            'resources/release/updater-authority-2.39.15.json',
+            'resources/runtime-manifest.json',
+        ];
     }
     foreach (array_values(array_unique($requiredOverlayPaths)) as $requiredOverlay) {
         $assert(isset($overlay[$requiredOverlay]), 'required_overlay_path_missing:' . $requiredOverlay);

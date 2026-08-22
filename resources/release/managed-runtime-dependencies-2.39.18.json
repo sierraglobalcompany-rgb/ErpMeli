@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
     "authority_id": "versioned-23917-hotfix-release-2.39.18-runtime-dependencies",
-    "runtime_manifest_paths_sha256": "PENDING_GENERATED_RUNTIME_MANIFEST",
+    "runtime_manifest_paths_sha256": "70130cc599d40201fc0d67c97af0aed28b28690a77501cf6ce9f17027d970e53",
     "coverage_base_commit": "28bd74ecd0b528aaad2ffa3af11114dfbff5737c",
     "classifications": {
         "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

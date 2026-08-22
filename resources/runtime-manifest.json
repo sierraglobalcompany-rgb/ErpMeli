@@ -1,16 +1,16 @@
 {
     "product": "erp-meli",
-    "version": "2.39.17",
-    "build_id": "erp-meli-2.39.17-operations-visibility-kiss-rc1-20260822",
+    "version": "2.39.18",
+    "build_id": "erp-meli-2.39.18-versioned-23917-hotfix-rc1-20260822",
     "built_at": "2026-08-22T12:00:00Z",
     "minimum_migration": "299_queue_v4_domain_exact_admission_2_39_3.sql",
     "publication_policy": {
-        "base_commit": "ac6cfadf008ed79e994d98ce6db942eecde2d7f2",
+        "base_commit": "28bd74ecd0b528aaad2ffa3af11114dfbff5737c",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 963,
-        "component_count": 962,
-        "paths_sha256": "e1426e3b1017066bef024b07c03f57b64449353efc903019065892bb8a408492",
-        "dependency_registry_sha256": "2c33be173eb035b7e1010b9ebfcb627bb9d57f99cfaf54480d8856ded37cb943",
+        "package_file_count": 964,
+        "component_count": 963,
+        "paths_sha256": "1d75d751601f059a1e338fbae52714bc0a0dad47e8d90c46bef3c3f30119dd76",
+        "dependency_registry_sha256": "92fe7393d44dc2c7b39015d8dfaec71ad4663c49b58a56e54e68eadbdcb1a175",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -24,8 +24,8 @@
         },
         "runtime_version": {
             "path": "VERSION",
-            "sha256": "a8e88d62224f6450c4e6c5dbfdd74a0fed23eebe5f95170af6e6335365938c8a",
-            "sha256_lf": "a8e88d62224f6450c4e6c5dbfdd74a0fed23eebe5f95170af6e6335365938c8a",
+            "sha256": "5ab627b68d21887164313e6002c1b6d8903030d193c73270c03c5d688d893b08",
+            "sha256_lf": "5ab627b68d21887164313e6002c1b6d8903030d193c73270c03c5d688d893b08",
             "text": true
         },
         "runtime_actualizar_php": {
@@ -2454,8 +2454,8 @@
         },
         "runtime_app_services_managedruntimepublicationpolicy_php": {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "4e9dfa7bc6b923b7922964dd258eb640da515f2015fd63ba3802e3e88e0211f0",
-            "sha256_lf": "4e9dfa7bc6b923b7922964dd258eb640da515f2015fd63ba3802e3e88e0211f0",
+            "sha256": "396d5dccf89aaef302d48812753c7973f61629fee57408fe3f5bae82efa498da",
+            "sha256_lf": "396d5dccf89aaef302d48812753c7973f61629fee57408fe3f5bae82efa498da",
             "text": true
         },
         "runtime_app_services_manualcampaignadapter_php": {
@@ -4452,8 +4452,8 @@
         },
         "runtime_composer_json": {
             "path": "composer.json",
-            "sha256": "e97b97390a861f3cf9dc9d8942e87a36dcad453b773f14cf17d0a028733d584d",
-            "sha256_lf": "e97b97390a861f3cf9dc9d8942e87a36dcad453b773f14cf17d0a028733d584d",
+            "sha256": "8c7f4bd214b37e177090a724be43d5d361d3a779f428edc3c64ddd34f77df3bf",
+            "sha256_lf": "8c7f4bd214b37e177090a724be43d5d361d3a779f428edc3c64ddd34f77df3bf",
             "text": true
         },
         "runtime_composer_lock": {
@@ -5374,6 +5374,12 @@
             "sha256_lf": "2c33be173eb035b7e1010b9ebfcb627bb9d57f99cfaf54480d8856ded37cb943",
             "text": true
         },
+        "runtime_resources_release_managed_runtime_dependencies_2_39_18_json": {
+            "path": "resources/release/managed-runtime-dependencies-2.39.18.json",
+            "sha256": "92fe7393d44dc2c7b39015d8dfaec71ad4663c49b58a56e54e68eadbdcb1a175",
+            "sha256_lf": "92fe7393d44dc2c7b39015d8dfaec71ad4663c49b58a56e54e68eadbdcb1a175",
+            "text": true
+        },
         "runtime_resources_release_managed_runtime_dependencies_2_39_2_json": {
             "path": "resources/release/managed-runtime-dependencies-2.39.2.json",
             "sha256": "817cf44477a527a383c5ce18d6a7e8d61d914e4ede0ebf219e06073e54a66be0",
@@ -5718,8 +5724,8 @@
         },
         "runtime_resources_release_updater_authority_2_39_17_json": {
             "path": "resources/release/updater-authority-2.39.17.json",
-            "sha256": "67b634fa677992d32e9a9e2fe3889acfc1e4c24c50fdfe076577b02d5e41967d",
-            "sha256_lf": "67b634fa677992d32e9a9e2fe3889acfc1e4c24c50fdfe076577b02d5e41967d",
+            "sha256": "998636cadfc1932946d9ced0f3791aaa3a6ba16b9f3b19b94fc1ac4f40008ffc",
+            "sha256_lf": "998636cadfc1932946d9ced0f3791aaa3a6ba16b9f3b19b94fc1ac4f40008ffc",
             "text": true
         },
         "runtime_resources_release_updater_authority_2_39_2_json": {

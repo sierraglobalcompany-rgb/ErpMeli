@@ -10,12 +10,17 @@ if (PHP_SAPI !== 'cli') {
 require dirname(__DIR__) . '/bootstrap.php';
 $arguments=is_array($_SERVER['argv']??null)?array_map('strval',$_SERVER['argv']):[];
 
+if (in_array('--record', $arguments, true)) {
+    fwrite(STDERR, "LEGACY_TOOL_BLOCKED component=queue_core_preflight remote=false http=0\n");
+    exit(2);
+}
+
 try {
     \App\Core\Database::useProfile('cli');
     $pdo = \App\Core\Database::connectionFresh();
     $result = \App\QueueCore\QueueCoreReadinessOperationLock::with($pdo, static function () use ($pdo, $arguments): array {
         $result = (new \App\QueueCore\QueueCorePreflightService($pdo))->check(true);
-        $record = in_array('--record', $arguments, true);
+        $record = false;
         if ($record) {
             $engine = (new \App\QueueCore\QueueEngineControlService($pdo))->snapshot();
             (new \App\QueueCore\QueueCoreReadinessReceiptService($pdo))->record(

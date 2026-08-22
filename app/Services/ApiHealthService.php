@@ -188,6 +188,9 @@ final class ApiHealthService
         if ($httpStatusFilter > 0) {
             $where[] = 'l.http_status=:http_status_filter';
             $params['http_status_filter'] = $httpStatusFilter;
+            if ($httpStatusFilter === 429) {
+                $where[] = 'l.reached_remote=1';
+            }
         }
         $statusFilter = in_array((string) ($filters['status'] ?? ''), ['active', 'recovered', 'reviewed', 'historical'], true)
             ? (string) $filters['status']
@@ -198,7 +201,7 @@ final class ApiHealthService
         if ($severityFilter === 'critical') {
             $where[] = '(l.outcome_class="blocked_signal" OR l.http_status=401)';
         } elseif ($severityFilter === 'high') {
-            $where[] = 'l.http_status IN (403,429)';
+            $where[] = '((l.http_status=403 AND l.reached_remote=1) OR (l.http_status=429 AND l.reached_remote=1))';
         } elseif ($severityFilter === 'medium') {
             $where[] = 'l.outcome_class="local_failure"';
         } elseif ($severityFilter === 'low') {

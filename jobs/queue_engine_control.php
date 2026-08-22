@@ -19,7 +19,7 @@ $option = static function (string $name) use ($arguments): ?string {
 };
 $desired = $option('set');
 $readiness = $option('readiness');
-if ($readiness !== null || ($desired !== null && $desired !== 'disabled')) {
+if ($readiness !== null || $desired !== null) {
     echo json_encode([
         'ok' => false,
         'status' => 'legacy_engine_activation_retired',
@@ -27,6 +27,9 @@ if ($readiness !== null || ($desired !== null && $desired !== 'disabled')) {
         'remote' => false,
         'http' => 0,
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+    // A retired activation is an acknowledged no-op, not a failed runtime
+    // command. Keeping exit 0 preserves fail-closed callers without giving
+    // automation an error path it could retry.
     exit(0);
 }
 

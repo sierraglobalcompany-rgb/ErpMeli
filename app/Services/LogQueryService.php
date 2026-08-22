@@ -217,6 +217,11 @@ final class LogQueryService
         if (($filters['http_status'] ?? '') !== '' && ctype_digit((string) $filters['http_status'])) {
             $where[] = 'l.http_status=?';
             $params[] = (int) $filters['http_status'];
+            if ((int) $filters['http_status'] === 429) {
+                // The 429 filter is an external-response filter. Local pacing
+                // remains available through outcome=policy_delay/origin=local.
+                $where[] = 'l.reached_remote=1';
+            }
         }
         if (($filters['endpoint'] ?? '') !== '') {
             $where[] = 'l.endpoint_path LIKE ?';

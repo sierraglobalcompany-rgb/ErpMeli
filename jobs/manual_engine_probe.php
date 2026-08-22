@@ -24,5 +24,4 @@ $build = is_array($manifest) ? (string) ($manifest['build_id'] ?? 'unknown') : '
 echo 'ERP_CRON_SKIP component=manual_engine_probe'
     . ' version=' . preg_replace('/[^A-Za-z0-9_.-]/', '_', $version)
     . ' build=' . preg_replace('/[^A-Za-z0-9_.-]/', '_', $build)
-    . ' reason=retired_single_launcher'
-    . ' use=process_sync_queue' . PHP_EOL;
+    . ' reason=retired_queue_v4_only' . PHP_EOL;

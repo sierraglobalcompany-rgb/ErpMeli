@@ -21,5 +21,5 @@ echo 'ERP_MANUAL_BOOT component=process_manual_queue version='
     . ' build=' . preg_replace('/[^A-Za-z0-9_.-]/', '_', $build) . PHP_EOL;
 echo 'ERP_MANUAL_SKIP reason=retired_interactive_web version='
     . preg_replace('/[^A-Za-z0-9_.-]/', '_', $version)
-    . ' use=process_sync_queue' . PHP_EOL;
+    . ' use=queue_v4_clean' . PHP_EOL;
 exit(0);

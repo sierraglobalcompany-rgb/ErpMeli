@@ -51,6 +51,21 @@ if ($qaReplayMode) {
     exit($fakeTransport ? 0 : 2);
 }
 
+// Queue V4 es la única automatización de producción. Este archivo sólo
+// conserva doctor y QA con transporte falso; nada más abre locks ni PDO.
+$legacyFlags = ['--retention-step', '--record', '--persist', '--execute', '--set', '--rollback', '--prepare'];
+foreach ($args as $argument) {
+    foreach ($legacyFlags as $flag) {
+        if ($argument === $flag || str_starts_with((string) $argument, $flag . '=')) {
+            fwrite(STDERR, 'LEGACY_AUTOMATION_BLOCKED component=process_sync_queue flag='
+                . preg_replace('/[^A-Za-z0-9_.-]/', '_', $flag) . " remote=false http=0\n");
+            exit(2);
+        }
+    }
+}
+echo 'ERP_CRON_SKIP component=process_sync_queue reason=LEGACY_AUTOMATION_RETIRED remote=false http=0' . PHP_EOL;
+exit(0);
+
 $runtimeManifest = json_decode(
     (string) @file_get_contents(dirname(__DIR__) . '/resources/runtime-manifest.json'),
     true

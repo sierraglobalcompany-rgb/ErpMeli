@@ -14,7 +14,10 @@ final class ApiLogRiskPresenter
         $path = strtolower((string) ($row['endpoint_path'] ?? ''));
         $message = strtolower((string) ($row['message'] ?? ''));
         $errorType = strtolower((string) ($row['error_type'] ?? ''));
-        $reached = (int) ($row['reached_remote'] ?? ($status > 0 ? 1 : 0)) === 1;
+        // Transport truth is explicit. Historic local policy events may retain a
+        // synthetic 429 status for compatibility, but absence of a transport
+        // marker must never be displayed as a Mercado Libre response.
+        $reached = (int) ($row['reached_remote'] ?? 0) === 1;
         $historicalPayment = str_contains($path, '/payments/');
         $descriptionMissing = $status === 404 && str_contains($path, '/description');
         $unauthorizedScopes = str_contains($message, 'unauthorized_scopes');

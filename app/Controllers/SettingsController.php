@@ -596,13 +596,29 @@ final class SettingsController
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
         try {
-            $snapshot = (new \App\Services\CronV3OperationalSnapshotService())->snapshot();
-            $overview = is_array($snapshot['legacy_overview'] ?? null)
-                ? $snapshot['legacy_overview']
-                : (new \App\Services\CronOperationalReadService())->overview();
-            $overview['cron_v3'] = $snapshot['v3'] ?? [];
-            $overview['cron_v3_operational'] = $snapshot;
-            $this->json($overview);
+            $snapshot = $this->queueV4OperationalSnapshot();
+            $runtime = (array) ($snapshot['runtime'] ?? []);
+            $totals = (array) ($snapshot['totals'] ?? []);
+            $this->json([
+                'ok' => true,
+                'snapshot_state' => 'complete',
+                'authoritative' => true,
+                'state' => (string) ($snapshot['state'] ?? 'attention'),
+                'state_label' => (string) ($snapshot['state_label'] ?? 'Queue V4 requiere revisión'),
+                'last_signal_label' => (string) ($runtime['last_scheduler_at'] ?? 'sin señal'),
+                'workload' => [
+                    'pending' => (int) ($totals['ready'] ?? 0) + (int) ($totals['running'] ?? 0) + (int) ($totals['waiting'] ?? 0),
+                    'remote_calls_last_hour' => (int) ($totals['http_last_hour'] ?? 0),
+                    'finalized_last_hour' => (int) ($totals['completed_last_hour'] ?? 0),
+                    'trend_label' => 'Backlog operativo Queue V4; Review se informa por separado.',
+                ],
+                'last_run' => null,
+                'now' => null,
+                'next' => [],
+                'history' => [],
+                'runtime' => $runtime,
+                'legacy_state_consulted' => false,
+            ]);
         } catch (\App\Core\HttpException $e) {
             throw $e;
         } catch (\Throwable) {
@@ -621,11 +637,14 @@ final class SettingsController
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
         try {
-            $snapshot = (new \App\Services\CronV3OperationalSnapshotService())->snapshot();
-            if (($snapshot['snapshot_state'] ?? '') === 'unavailable') {
-                http_response_code(503);
-            }
-            $this->json($snapshot);
+            $snapshot = $this->queueV4OperationalSnapshot();
+            $this->json($snapshot + [
+                'ok' => true,
+                'snapshot_state' => 'complete',
+                'authoritative' => true,
+                'queues' => [],
+                'legacy_state_consulted' => false,
+            ]);
         } catch (\App\Core\HttpException $e) {
             throw $e;
         } catch (\Throwable) {
@@ -644,24 +663,40 @@ final class SettingsController
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
         try {
-            $snapshot = (new \App\Services\CronV3OperationalSnapshotService())->snapshot();
-            $rows = is_array($snapshot['queues'] ?? null) ? $snapshot['queues'] : [];
             $page = max(1, (int) ($_GET['page'] ?? 1));
             $perPage = max(10, min(50, (int) ($_GET['per_page'] ?? 50)));
-            $total = count($rows);
-            $snapshotState = (string) ($snapshot['snapshot_state'] ?? 'unavailable');
-            if ($snapshotState === 'complete' && $total === 0) {
-                $snapshotState = 'authoritative_empty';
+            $scope = (new \App\Services\ApiHealthAccessScope())->snapshot();
+            $companyIds = array_values(array_filter(array_map('intval', (array) ($scope['company_ids'] ?? []))));
+            $accountIds = array_values(array_filter(array_map('intval', (array) ($scope['account_ids'] ?? []))));
+            if ($companyIds === [] || $accountIds === []) {
+                throw new \RuntimeException('queue_v4_scope_unavailable');
             }
+            $companyTokens = implode(',', array_fill(0, count($companyIds), '?'));
+            $accountTokens = implode(',', array_fill(0, count($accountIds), '?'));
+            $params = array_merge($companyIds, $accountIds);
+            $pdo = Database::connectionFresh();
+            $predicate = 'company_id IN (' . $companyTokens . ') AND meli_account_id IN (' . $accountTokens . ')';
+            $count = $pdo->prepare('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE ' . $predicate);
+            $count->execute($params);
+            $total = (int) $count->fetchColumn();
+            $rows = $pdo->prepare(
+                'SELECT job_type,state,available_at,completed_at,attempts,company_id,meli_account_id,
+                        CASE WHEN job_type="domain_exact" THEN JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability")) ELSE NULL END capability
+                 FROM queue_v4_clean_jobs
+                 WHERE ' . $predicate . '
+                 ORDER BY available_at ASC,id ASC LIMIT ' . $perPage . ' OFFSET ' . (($page - 1) * $perPage)
+            );
+            $rows->execute($params);
             $this->json([
                 'ok' => true,
-                'snapshot_state' => $snapshotState,
-                'authoritative' => in_array($snapshotState, ['complete', 'authoritative_empty'], true),
+                'snapshot_state' => $total === 0 ? 'authoritative_empty' : 'complete',
+                'authoritative' => true,
                 'version' => trim((string) @file_get_contents(dirname(__DIR__, 2) . '/VERSION')),
                 'page' => $page,
                 'per_page' => $perPage,
                 'total' => $total,
-                'rows' => array_slice($rows, ($page - 1) * $perPage, $perPage),
+                'rows' => $rows->fetchAll(\PDO::FETCH_ASSOC),
+                'legacy_state_consulted' => false,
             ]);
         } catch (\App\Core\HttpException $e) {
             throw $e;
@@ -679,6 +714,15 @@ final class SettingsController
     public function cronQueues(): void
     {
         $this->cronTasks();
+    }
+
+    /** @return array<string,mixed> */
+    private function queueV4OperationalSnapshot(): array
+    {
+        $access = (new \App\Services\ApiHealthAccessScope())->snapshot();
+        return (new \App\QueueV4Clean\QueueV4CleanHealthSnapshotService(
+            Database::connectionFresh()
+        ))->snapshot(null, (array) $access['company_ids'], (array) $access['account_ids']);
     }
 
     public function cronV3Setup(): void
@@ -1785,41 +1829,47 @@ final class SettingsController
         $this->assertSameOrigin();
         $wantsJson = str_contains((string) ($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json')
             || (($_POST['_json'] ?? '') === '1');
-        $health = new CronHealthService();
-        $run = $health->begin('process_sync_queue', 'manual_web', 5);
-        $id = $run['id'];
         $started = microtime(true);
         try {
             $databaseOk = (int) Database::connectionFresh()->query('SELECT 1')->fetchColumn() === 1;
             $storagePath = AppPaths::storage();
             $storageOk = is_dir($storagePath) && is_writable($storagePath);
-            $jobPath = dirname(__DIR__, 2) . '/jobs/process_sync_queue.php';
+            $jobPath = dirname(__DIR__, 2) . '/jobs/queue_v4_clean.php';
             $jobOk = is_file($jobPath) && is_readable($jobPath);
             $releaseIntegrity = (new ReleaseIntegrityService())->inspect(true);
-            if (!$databaseOk || !$storageOk || !$jobOk || !$releaseIntegrity['ok']) {
+            $queue = (new \App\QueueV4Clean\QueueV4CleanReadinessService(
+                Database::connectionFresh()
+            ))->snapshot();
+            $queueOk = (string) ($queue['engine'] ?? '') === 'ACTIVE'
+                && (string) ($queue['state'] ?? '') === 'CERTIFIED'
+                && (string) ($queue['physical_cron_observed'] ?? '') === 'RECENT'
+                && (int) ($queue['accounts_oauth'] ?? 0) === 3;
+            if (!$databaseOk || !$storageOk || !$jobOk || !$releaseIntegrity['ok'] || !$queueOk) {
                 throw new \RuntimeException('La prueba rápida detectó un requisito no disponible.');
             }
             $summary = [
-                'probe' => true,
+                'probe' => 'queue_v4_read_only',
                 'database' => $databaseOk,
                 'storage' => $storageOk,
-                'job_file' => $jobOk,
+                'queue_v4_file' => $jobOk,
+                'queue_v4_engine' => (string) $queue['engine'],
+                'queue_v4_readiness' => (string) $queue['state'],
+                'queue_v4_heartbeat' => (string) $queue['physical_cron_observed'],
+                'oauth_accounts' => (int) $queue['accounts_oauth'],
                 'release_integrity' => 'ok',
                 'release_version' => (string) $releaseIntegrity['version'],
                 'release_build_id' => (string) $releaseIntegrity['build_id'],
                 'processed' => 0,
                 'duration_ms' => (int) round((microtime(true) - $started) * 1000),
             ];
-            $message = 'Prueba rápida correcta: PHP, base de datos, storage y job están disponibles. '
-                . 'Esta prueba no confirma la programación automática; espere dos señales CLI.';
-            $health->finish($id, 'success', $summary, 'Prueba rápida manual desde Configuración.', 0);
+            $message = 'Preflight read-only correcto: instalación, Queue V4, heartbeat y OAuth están disponibles. '
+                . 'No se creó trabajo ni se ejecutó Cron.';
             if ($wantsJson) {
                 $this->json([
                     'ok' => true,
                     'message' => $message,
                     'summary' => $summary,
-                    'run_token' => $run['run_token'],
-                    'cron' => $health->status(),
+                    'cron' => (new \App\Services\AutomationRuntimeStatusService())->status(),
                 ]);
                 return;
             }
@@ -1828,9 +1878,8 @@ final class SettingsController
             $diagnostic = \App\Services\SafeErrorPresenter::report(
                 $e,
                 'La prueba local de Cron no pudo completarse.',
-                ['cron_health_id' => $id]
+                ['component' => 'queue_v4_clean', 'operation' => 'read_only_preflight']
             );
-            $health->finish($id, 'error', [], $diagnostic['message'], 1);
             $safeMessage = \App\Services\SafeErrorPresenter::message(
                 $e,
                 'La prueba del cron no pudo completarse.'
@@ -1849,21 +1898,20 @@ final class SettingsController
     {
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
-        $health = new CronHealthService();
         $runtime = (new \App\Services\AutomationRuntimeStatusService())->status();
         // Incluso el diagnóstico administrativo debe usar un alcance explícito.
         // `null` significaría "sin filtro" para servicios heredados.
         $accountIds = (new BusinessScopeContext())->accountIds((int) Auth::id());
         $payload = [
             'ok' => true,
-            'cron' => $health->status(),
+            'cron' => $runtime,
             'runtime' => $runtime,
             'notifications' => [
                 'state' => $runtime['state'],
                 'label' => 'Dentro del lanzador único',
                 'message' => 'Ventas y notificaciones utilizan el mismo lanzador general.',
             ],
-            'probe' => $health->status('cron_probe'),
+            'probe' => ['state' => 'read_only', 'message' => 'La comprobación web usa el preflight de Queue V4.'],
             'processing' => (new \App\Services\NotificationWorkItemService())->summary($accountIds),
             'generated_at' => gmdate('Y-m-d\TH:i:s\Z'),
             'details_included' => false,
@@ -1893,42 +1941,7 @@ final class SettingsController
     /** @return array<string,mixed> */
     private function cronReleaseIntegritySummary(bool $checkDatabase): array
     {
-        $integrity = (new ReleaseIntegrityService())->inspect($checkDatabase);
-        $componentStatus = (new \App\Services\ComponentSchemaContractService())->status('process_sync_queue');
-        if ((string) $componentStatus['state'] !== 'migration_required') {
-            return $integrity;
-        }
-
-        $missing = array_values(array_filter(
-            $componentStatus['missing'],
-            static fn (mixed $value): bool => trim((string) $value) !== ''
-        ));
-        $required = (string) ($missing[0] ?? ($integrity['minimum_migration'] ?? ''));
-        $errors = (array) ($integrity['errors'] ?? []);
-        $alreadyListed = false;
-        foreach ($errors as $error) {
-            if (is_array($error)
-                && (string) ($error['code'] ?? '') === 'migration_pending'
-                && (string) ($error['component'] ?? '') === $required) {
-                $alreadyListed = true;
-                break;
-            }
-        }
-        if (!$alreadyListed) {
-            $errors[] = [
-                'code' => 'migration_pending',
-                'component' => $required !== '' ? $required : 'process_sync_queue',
-            ];
-        }
-
-        $integrity['ok'] = false;
-        $integrity['state'] = 'schema_pending';
-        $integrity['errors'] = $errors;
-        if ($required !== '') {
-            $integrity['minimum_migration'] = $required;
-        }
-
-        return $integrity;
+        return (new ReleaseIntegrityService())->inspect($checkDatabase);
     }
 
     public function logs(): void

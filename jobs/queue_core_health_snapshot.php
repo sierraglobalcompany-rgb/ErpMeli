@@ -7,11 +7,16 @@ use App\QueueCore\QueueCoreHealthService;
 
 require dirname(__DIR__) . '/bootstrap.php';
 
+if (in_array('--persist', $_SERVER['argv'] ?? [], true)) {
+    fwrite(STDERR, "LEGACY_TOOL_BLOCKED component=queue_core_health_snapshot remote=false http=0\n");
+    exit(2);
+}
+
 try {
     Database::useProfile('cli');
     $service = new QueueCoreHealthService(Database::connectionFresh());
-    $persist = in_array('--persist', $_SERVER['argv'] ?? [], true);
-    $result = $persist ? $service->persistSnapshot() : $service->latestPersisted();
+    $persist = false;
+    $result = $service->latestPersisted();
     fwrite(STDOUT, json_encode([
         'ok' => $result !== null,
         'mode' => $persist ? 'technical_snapshot_write' : 'read_only',

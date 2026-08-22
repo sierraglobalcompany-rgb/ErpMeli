@@ -14,6 +14,7 @@ use Throwable;
 final class CronHealthService
 {
     private const AUTOMATIC_SOURCES = ['scheduled_cli', 'notification_cli'];
+    private const QUEUE_V4_JOB = 'queue_v4_clean';
     // Los contadores completos viven en columnas y el detalle por tarea en
     // system_cron_run_steps. Este JSON solo conserva un resumen operativo;
     // limitarlo a 2 KiB evita que un ciclo por minuto vuelva a convertir la
@@ -157,8 +158,8 @@ final class CronHealthService
         }
 
         $row = $this->findById($id) ?? [
-            'expected_interval_minutes' => $this->expectedInterval('process_sync_queue'),
-            'job_name' => 'process_sync_queue',
+            'expected_interval_minutes' => $this->expectedInterval(self::QUEUE_V4_JOB),
+            'job_name' => self::QUEUE_V4_JOB,
             'execution_source' => 'legacy',
             'automatic_streak' => 0,
             'started_at' => gmdate('Y-m-d H:i:s'),
@@ -248,12 +249,12 @@ final class CronHealthService
         }
     }
 
-    public function latest(string $jobName = 'process_sync_queue'): ?array
+    public function latest(string $jobName = self::QUEUE_V4_JOB): ?array
     {
         return $this->latestWhere($jobName, '');
     }
 
-    public function latestAutomatic(string $jobName = 'process_sync_queue'): ?array
+    public function latestAutomatic(string $jobName = self::QUEUE_V4_JOB): ?array
     {
         if (!$this->supportsVerificationSchema()) {
             return null;
@@ -277,7 +278,7 @@ final class CronHealthService
     }
 
     /** @return array<string,mixed>|null */
-    public function latestAutomaticAnyBuild(string $jobName = 'process_sync_queue'): ?array
+    public function latestAutomaticAnyBuild(string $jobName = self::QUEUE_V4_JOB): ?array
     {
         if (!$this->supportsVerificationSchema()) {
             return null;
@@ -288,7 +289,7 @@ final class CronHealthService
         );
     }
 
-    public function latestManual(string $jobName = 'process_sync_queue'): ?array
+    public function latestManual(string $jobName = self::QUEUE_V4_JOB): ?array
     {
         if (!$this->supportsVerificationSchema()) {
             return null;
@@ -300,8 +301,26 @@ final class CronHealthService
     }
 
     /** @return array<string,mixed> */
-    public function status(string $jobName = 'process_sync_queue'): array
+    public function status(string $jobName = self::QUEUE_V4_JOB): array
     {
+        if ($jobName === self::QUEUE_V4_JOB) {
+            $runtime = (new AutomationRuntimeStatusService())->status();
+            return [
+                'state' => (string) ($runtime['state'] ?? 'unknown'),
+                'label' => (string) ($runtime['label'] ?? 'Queue V4 no se pudo comprobar'),
+                'message' => (string) ($runtime['message'] ?? ''),
+                'latest' => null,
+                'latest_automatic' => null,
+                'latest_manual' => null,
+                'runtime' => $runtime['runtime'] ?? null,
+                'runtime_matches_web' => null,
+                'automatic_streak' => 0,
+                'required_streak' => 0,
+                'next_expected_at' => null,
+                'observed_interval_seconds' => null,
+                'is_empty' => false,
+            ];
+        }
         if (!$this->supportsVerificationSchema()) {
             return $this->legacyStatus($jobName);
         }
@@ -406,9 +425,9 @@ final class CronHealthService
     {
         $root = AppPaths::installationRoot();
         if (AppPaths::managed() && is_file($root . '/launcher/cron.php')) {
-            return 'php ' . $root . '/launcher/cron.php process_sync_queue.php';
+            return 'php ' . $root . '/launcher/cron.php queue_v4_clean.php --runtime=45 --max-jobs=3';
         }
-        return 'php ' . $root . '/jobs/process_sync_queue.php';
+        return 'php ' . $root . '/jobs/queue_v4_clean.php --runtime=45 --max-jobs=3';
     }
 
     public function recommendedNotificationCommand(): string
@@ -418,11 +437,7 @@ final class CronHealthService
 
     public function recommendedProbeCommand(): string
     {
-        $root = AppPaths::installationRoot();
-        if (AppPaths::managed() && is_file($root . '/launcher/cron.php')) {
-            return 'php ' . $root . '/launcher/cron.php cron_probe.php';
-        }
-        return 'php ' . $root . '/jobs/cron_probe.php';
+        return $this->recommendedCommand();
     }
 
     public function recommendedManualCommand(): string

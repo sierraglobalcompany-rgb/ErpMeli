@@ -4,9 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Core\AppPaths;
 use App\Core\Database;
-use PDO;
+use App\QueueV4Clean\QueueV4CleanReadinessService;
 use Throwable;
 
 /**
@@ -17,108 +16,57 @@ final class AutomationRuntimeStatusService
     /** @return array<string,mixed> */
     public function status(): array
     {
-        $health = new CronHealthService();
-        $current = $health->status();
-        $anyBuild = $health->latestAutomaticAnyBuild();
-        $bootstrap = (new CronBootstrapJournalService())->latest();
-        $entry = $this->entryState();
-        $identity = (new ReleaseIntegrityService())->identity('process_sync_queue');
-        $currentBuild = (string) $identity['build_id'];
-        $entryCurrent = is_array($entry)
-            && $currentBuild !== ''
-            && hash_equals($currentBuild, (string) ($entry['build'] ?? ''));
-        $entryAge = $entryCurrent ? $this->age((string) ($entry['observed_at'] ?? '')) : null;
-        $hasCurrentAutomatic = is_array($current['latest_automatic'] ?? null);
-
-        if (!$entryCurrent && !$hasCurrentAutomatic) {
-            $state = 'not_invoked';
-            $label = 'Automatización detenida';
-            $message = $anyBuild
-                ? 'Hay ejecuciones de una versión anterior, pero el ERP no recibió una invocación del build actual.'
-                : 'Hostinger no ha iniciado todavía el lanzador del ERP.';
-        } elseif ($entryCurrent && (string) ($entry['stage'] ?? '') === 'failed_before_bootstrap') {
-            $state = 'php_before_bootstrap_failed';
-            $label = 'PHP inició, pero no cargó el ERP';
-            $message = 'Hostinger abrió PHP, pero el arranque se detuvo antes de cargar la aplicación. No se consultó Mercado Libre.';
-        } elseif (($entryAge ?? PHP_INT_MAX) > 120) {
-            $state = 'stopped_during_check';
-            $label = 'Detenido durante la comprobación';
-            $message = 'El lanzador entró al ERP, pero no alcanzó a preparar las colas.';
-        } elseif ($hasCurrentAutomatic) {
-            $state = (string) ($current['state'] ?? 'unknown');
-            $label = (string) ($current['label'] ?? 'Por comprobar');
-            $message = (string) ($current['message'] ?? '');
-        } elseif (in_array((string) ($entry['stage'] ?? ''), [
-            'queues_prepared', 'work_selected', 'finished',
-        ], true)) {
-            $state = (string) ($entry['stage'] ?? '') === 'finished' ? 'operational' : 'processing';
-            $label = $state === 'processing' ? 'Procesando colas' : 'Esperando el siguiente ciclo';
-            $message = 'El build actual alcanzó las colas. La señal completa aparecerá al cerrar el ciclo.';
-        } else {
-            $state = 'unknown';
-            $label = 'No se pudo comprobar';
-            $message = 'No hay evidencia suficiente para confirmar el estado del lanzador.';
-        }
-
-        return [
-            'state' => $state,
-            'label' => $label,
-            'message' => $message,
-            'entry' => $entry,
-            'entry_is_current_build' => $entryCurrent,
-            'entry_age_seconds' => $entryAge,
-            'current_build' => $currentBuild,
-            'latest_current_build' => $current['latest_automatic'] ?? null,
-            'latest_any_build' => $anyBuild,
-            'health' => $current,
-            'has_recent_signal' => $hasCurrentAutomatic
-                && !in_array((string) ($current['state'] ?? ''), ['missing', 'stale', 'error', 'interrupted'], true),
-            'observed_interval_seconds' => (int) ($current['observed_interval_seconds'] ?? 0),
-            'next_expected_at' => $current['next_expected_at'] ?? null,
-        ];
-    }
-
-    /** @return array<string,mixed>|null */
-    private function entryState(): ?array
-    {
-        $path = AppPaths::storage('cache/cron-entry-state.json');
-        if (!is_file($path)) {
-            return $this->databaseEntryState();
-        }
-        $decoded = json_decode((string) @file_get_contents($path), true);
-        return is_array($decoded) ? $decoded : $this->databaseEntryState();
-    }
-
-    /** @return array<string,mixed>|null */
-    private function databaseEntryState(): ?array
-    {
         try {
-            if (!(new SchemaInspectorService())->hasTable('system_cron_entry_states')) {
-                return null;
-            }
-            $row = Database::connectionFresh()->query(
-                'SELECT release_version version,release_build_id build,stage,result_state result,
-                        processed_count processed,reached_remote remote,diagnostic_id diagnostic,
-                        observed_at
-                 FROM system_cron_entry_states
-                 WHERE component_key="process_sync_queue" LIMIT 1'
-            )->fetch(PDO::FETCH_ASSOC);
-            return is_array($row) ? $row : null;
+            $snapshot = (new QueueV4CleanReadinessService(Database::connectionFresh()))->snapshot();
+            $engine = (string) ($snapshot['engine'] ?? 'UNKNOWN');
+            $readiness = (string) ($snapshot['state'] ?? 'UNKNOWN');
+            $physical = (string) ($snapshot['physical_cron_observed'] ?? 'UNKNOWN');
+            $oauth = max(0, (int) ($snapshot['accounts_oauth'] ?? 0));
+            $recent = $engine === 'ACTIVE'
+                && $readiness === 'CERTIFIED'
+                && $physical === 'RECENT'
+                && $oauth === 3;
+            $state = $recent ? 'operational' : ($physical === 'STALE' ? 'stale' : 'attention');
+            return [
+                'state' => $state,
+                'label' => $recent ? 'Queue V4 operativa' : 'Queue V4 requiere revisión',
+                'message' => $recent
+                    ? 'El único lanzador Queue V4 registró heartbeat reciente.'
+                    : 'Revise el estado V4, OAuth y el Cron físico antes de iniciar trabajo manual.',
+                'entry' => null,
+                'entry_is_current_build' => null,
+                'entry_age_seconds' => null,
+                'current_build' => (string) ((new ReleaseIntegrityService())->identity('queue_v4_clean')['build_id'] ?? ''),
+                'latest_current_build' => null,
+                'latest_any_build' => null,
+                'health' => $snapshot,
+                'has_recent_signal' => $recent,
+                'observed_interval_seconds' => null,
+                'next_expected_at' => null,
+                'runtime' => [
+                    'engine' => $engine,
+                    'readiness' => $readiness,
+                    'scheduler' => (string) ($snapshot['scheduler'] ?? 'inactive'),
+                    'heartbeat_at' => $snapshot['last_scheduler_heartbeat'] ?? null,
+                    'physical_cron_observed' => $physical,
+                ],
+            ];
         } catch (Throwable) {
-            return null;
+            return [
+                'state' => 'unknown',
+                'label' => 'Queue V4 no se pudo comprobar',
+                'message' => 'La comprobación read-only de Queue V4 no devolvió evidencia suficiente.',
+                'entry' => null,
+                'entry_is_current_build' => null,
+                'entry_age_seconds' => null,
+                'current_build' => '',
+                'latest_current_build' => null,
+                'latest_any_build' => null,
+                'health' => null,
+                'has_recent_signal' => false,
+                'observed_interval_seconds' => null,
+                'next_expected_at' => null,
+            ];
         }
-    }
-
-    private function age(string $value): ?int
-    {
-        $normalized = trim($value);
-        if (
-            $normalized !== ''
-            && preg_match('/(?:Z|[+-]\d{2}:?\d{2})$/', $normalized) !== 1
-        ) {
-            $normalized .= ' UTC';
-        }
-        $timestamp = strtotime($normalized);
-        return $timestamp === false ? null : max(0, time() - $timestamp);
     }
 }

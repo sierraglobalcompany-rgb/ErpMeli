@@ -7,8 +7,16 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
+$rawArguments = $_SERVER['argv'] ?? [];
+$arguments = is_array($rawArguments) ? array_map('strval', $rawArguments) : [];
+foreach ($arguments as $argument) {
+    if ($argument === '--record' || str_starts_with($argument, '--record=')) {
+        fwrite(STDERR, "LEGACY_TOOL_BLOCKED component=queue_core_convergence remote=false http=0\n");
+        exit(2);
+    }
+}
+
 require dirname(__DIR__) . '/bootstrap.php';
-$arguments=is_array($_SERVER['argv']??null)?array_map('strval',$_SERVER['argv']):[];
 
 $option = static function (array $arguments, string $name): ?string {
     $prefix = '--' . $name . '=';
@@ -20,7 +28,7 @@ $option = static function (array $arguments, string $name): ?string {
     return null;
 };
 
-$recordRequested = ($option($arguments, 'record') ?? '0') === '1';
+$recordRequested = false;
 $companyId = (int) ($option($arguments, 'company') ?? 0);
 $accountId = (int) ($option($arguments, 'account') ?? 0);
 $pdo = null;

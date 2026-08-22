@@ -61,12 +61,15 @@ final class ApiIncidentReadModelService
             if ($httpStatus > 0) {
                 $where[] = 'g.http_status=:http_status_filter';
                 $params['http_status_filter'] = $httpStatus;
+                if ($httpStatus === 429) {
+                    $where[] = 'g.reached_remote=1';
+                }
             }
             $severity = (string) ($filters['severity'] ?? '');
             if ($severity === 'critical') {
                 $where[] = '(g.outcome_class="blocked_signal" OR g.http_status=401)';
             } elseif ($severity === 'high') {
-                $where[] = 'g.http_status IN (403,429)';
+                $where[] = '((g.http_status=403 AND g.reached_remote=1) OR (g.http_status=429 AND g.reached_remote=1))';
             } elseif ($severity === 'medium') {
                 $where[] = 'g.outcome_class="local_failure"';
             } elseif ($severity === 'low') {

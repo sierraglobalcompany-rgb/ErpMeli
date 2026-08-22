@@ -1,16 +1,16 @@
 {
     "product": "erp-meli",
-    "version": "2.39.14",
-    "build_id": "erp-meli-2.39.14-v4-authority-legacy-truth-rc1-20260822",
-    "built_at": "2026-08-22T03:24:43Z",
+    "version": "2.39.15",
+    "build_id": "erp-meli-2.39.15-versioned-23914-amendment-rc1-20260822",
+    "built_at": "2026-08-22T06:00:00Z",
     "minimum_migration": "299_queue_v4_domain_exact_admission_2_39_3.sql",
     "publication_policy": {
-        "base_commit": "99218574782e642e8ae3f9b5b95c8af531dcf56d",
+        "base_commit": "404d279a12b7541f765f7a79fce172bde9cb90f4",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 955,
-        "component_count": 954,
-        "paths_sha256": "afaf92f5693ab1f77f5c0f52e681bc04ed98e08ae4d5bcf9365b45239ddef51f",
-        "dependency_registry_sha256": "f829875e8b256af70c28c836f8dcc732569fde7b3d7c7a16856a03b10254db36",
+        "package_file_count": 957,
+        "component_count": 956,
+        "paths_sha256": "308c9be435c09d7c4e70ef5ac7baeca5e28bbb24b9724811ca57f7574f4a65e7",
+        "dependency_registry_sha256": "64762c91f076142ce0bfc4a6aec11dbecd6929931f2f2050f287ff5775fab557",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -24,8 +24,8 @@
         },
         "runtime_version": {
             "path": "VERSION",
-            "sha256": "815e19a9efb1f041fa73102fa309edcf80edbe834879167e717db1c9d6b3e6ac",
-            "sha256_lf": "815e19a9efb1f041fa73102fa309edcf80edbe834879167e717db1c9d6b3e6ac",
+            "sha256": "f52fdf1491558b6ed3a88ce37b0737a2c13a99e17ccdaa968c0da14c1f1f8bc7",
+            "sha256_lf": "f52fdf1491558b6ed3a88ce37b0737a2c13a99e17ccdaa968c0da14c1f1f8bc7",
             "text": true
         },
         "runtime_actualizar_php": {
@@ -2448,8 +2448,8 @@
         },
         "runtime_app_services_managedruntimepublicationpolicy_php": {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "c1a7870441d997b6ddc1078fb3b4f7ddc0a10f4332355c2b1bd5228a35628d5b",
-            "sha256_lf": "c1a7870441d997b6ddc1078fb3b4f7ddc0a10f4332355c2b1bd5228a35628d5b",
+            "sha256": "636d8034d8ed9519064846bd2465dfdb4a58bf1b2dd769f69f4e3b94aad1bd1b",
+            "sha256_lf": "636d8034d8ed9519064846bd2465dfdb4a58bf1b2dd769f69f4e3b94aad1bd1b",
             "text": true
         },
         "runtime_app_services_manualcampaignadapter_php": {
@@ -4446,8 +4446,8 @@
         },
         "runtime_composer_json": {
             "path": "composer.json",
-            "sha256": "006566a7fc875ae167d79dc0d0de27b032585a5389e33f2f4c33f64b195c4992",
-            "sha256_lf": "006566a7fc875ae167d79dc0d0de27b032585a5389e33f2f4c33f64b195c4992",
+            "sha256": "f0540efc96997982bae43407f1b92ba6d6229262a5ac82044b8f16661d75f2a8",
+            "sha256_lf": "f0540efc96997982bae43407f1b92ba6d6229262a5ac82044b8f16661d75f2a8",
             "text": true
         },
         "runtime_composer_lock": {
@@ -5344,6 +5344,12 @@
             "sha256_lf": "f829875e8b256af70c28c836f8dcc732569fde7b3d7c7a16856a03b10254db36",
             "text": true
         },
+        "runtime_resources_release_managed_runtime_dependencies_2_39_15_json": {
+            "path": "resources/release/managed-runtime-dependencies-2.39.15.json",
+            "sha256": "64762c91f076142ce0bfc4a6aec11dbecd6929931f2f2050f287ff5775fab557",
+            "sha256_lf": "64762c91f076142ce0bfc4a6aec11dbecd6929931f2f2050f287ff5775fab557",
+            "text": true
+        },
         "runtime_resources_release_managed_runtime_dependencies_2_39_2_json": {
             "path": "resources/release/managed-runtime-dependencies-2.39.2.json",
             "sha256": "817cf44477a527a383c5ce18d6a7e8d61d914e4ede0ebf219e06073e54a66be0",
@@ -5670,8 +5676,14 @@
         },
         "runtime_resources_release_updater_authority_2_39_14_json": {
             "path": "resources/release/updater-authority-2.39.14.json",
-            "sha256": "0e1d93442255f6b41b3a8ed5c40d5cd7ed0826845b230ff944f4a5c7bfced79d",
-            "sha256_lf": "0e1d93442255f6b41b3a8ed5c40d5cd7ed0826845b230ff944f4a5c7bfced79d",
+            "sha256": "cb6b7221c8f4eee4d2b02c03bd2ab8ffcb54c1e5e5ef3d4fee632bf8b953c15d",
+            "sha256_lf": "cb6b7221c8f4eee4d2b02c03bd2ab8ffcb54c1e5e5ef3d4fee632bf8b953c15d",
+            "text": true
+        },
+        "runtime_resources_release_updater_authority_2_39_15_json": {
+            "path": "resources/release/updater-authority-2.39.15.json",
+            "sha256": "0243b5bfb474382dc23108749f6d7a4784b28aa627dda4f8de9e9152c9de037f",
+            "sha256_lf": "0243b5bfb474382dc23108749f6d7a4784b28aa627dda4f8de9e9152c9de037f",
             "text": true
         },
         "runtime_resources_release_updater_authority_2_39_2_json": {

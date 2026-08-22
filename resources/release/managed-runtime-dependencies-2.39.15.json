@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
     "authority_id": "versioned-23914-amendment-release-2.39.15-runtime-dependencies",
-    "runtime_manifest_paths_sha256": "e55648564ceddbe1aaa74d826b81048905fe2814e821fa2a72bdcb954ec7b3ff",
+    "runtime_manifest_paths_sha256": "308c9be435c09d7c4e70ef5ac7baeca5e28bbb24b9724811ca57f7574f4a65e7",
     "coverage_base_commit": "404d279a12b7541f765f7a79fce172bde9cb90f4",
     "classifications": {
         "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

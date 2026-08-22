@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.39.17.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.39.18.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -39,10 +39,10 @@ final class ManagedRuntimePublicationPolicy
         'bin/queue_core_dependency_check.php',
         'bin/runtime_process_audit.php',
     ];
-    public const BASE_COMMIT = 'ac6cfadf008ed79e994d98ce6db942eecde2d7f2';
-    public const INSTALLED_BASE_COMMIT = 'ac6cfadf008ed79e994d98ce6db942eecde2d7f2';
-    public const VERSION = '2.39.17';
-    public const BUILD_ID = 'erp-meli-2.39.17-operations-visibility-kiss-rc1-20260822';
+    public const BASE_COMMIT = '28bd74ecd0b528aaad2ffa3af11114dfbff5737c';
+    public const INSTALLED_BASE_COMMIT = '28bd74ecd0b528aaad2ffa3af11114dfbff5737c';
+    public const VERSION = '2.39.18';
+    public const BUILD_ID = 'erp-meli-2.39.18-versioned-23917-hotfix-rc1-20260822';
     public const BUILT_AT = '2026-08-22T12:00:00Z';
     public const MINIMUM_MIGRATION = '299_queue_v4_domain_exact_admission_2_39_3.sql';
     private const INVENTORY_MINIMUM_MIGRATION = '295_inventory_warehouse_v1_2_38_0.sql';
@@ -249,6 +249,11 @@ final class ManagedRuntimePublicationPolicy
             'build_id' => 'erp-meli-2.39.15-versioned-23914-amendment-rc1-20260822',
             'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.15.json',
+        ],
+        '2.39.17' => [
+            'build_id' => 'erp-meli-2.39.17-operations-visibility-kiss-rc1-20260822',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.17.json',
         ],
         self::VERSION => [
             'build_id' => self::BUILD_ID,

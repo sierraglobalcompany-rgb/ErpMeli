@@ -2,9 +2,12 @@
 
 declare(strict_types=1);
 
-if (in_array('--persist', $_SERVER['argv'] ?? [], true)) {
-    fwrite(STDERR, "LEGACY_TOOL_BLOCKED component=queue_core_health_snapshot remote=false http=0\n");
-    exit(2);
+$arguments = is_array($_SERVER['argv'] ?? null) ? array_map('strval', $_SERVER['argv']) : [];
+foreach ($arguments as $argument) {
+    if ($argument === '--persist' || str_starts_with($argument, '--persist=')) {
+        fwrite(STDERR, "LEGACY_TOOL_BLOCKED component=queue_core_health_snapshot remote=false http=0\n");
+        exit(2);
+    }
 }
 
 use App\Core\Database;

@@ -27,13 +27,17 @@ $now = gmdate('Y-m-d H:i:s');
 $local = $present->invoke($health, [
     'outcome_class' => 'policy_delay',
     'last_seen_at' => $now,
-    'http_status' => null,
+    'http_status' => 429,
     'reached_remote' => 0,
+    'risk_signal' => 1,
     'safe_message' => 'Aplazado por política local',
 ]);
 $assert(($local['transport_class'] ?? '') === 'LOCAL_RATE_LIMITED_PRETRANSPORT', 'LOCAL_CLASS_MISSING');
 $assert(($local['transport_label'] ?? '') === 'Pausa preventiva local · sin HTTP remoto', 'LOCAL_LABEL_MISSING');
 $assert(empty($local['rate_limit_signal']), 'LOCAL_DELAY_COUNTED_AS_REMOTE_429');
+$assert(($local['title'] ?? '') !== 'Rate limit de Mercado Libre', 'LOCAL_SYNTHETIC_429_REMOTE_TITLE');
+$assert(($local['severity'] ?? '') !== 'high', 'LOCAL_SYNTHETIC_429_HIGH_SEVERITY');
+$assert(empty($local['blocking_risk']), 'LOCAL_SYNTHETIC_429_REMOTE_BLOCKING');
 
 $remote = $present->invoke($health, [
     'outcome_class' => 'remote_error',

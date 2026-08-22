@@ -12,11 +12,11 @@ if (PHP_SAPI !== 'cli') {
 
 $rawArguments = $_SERVER['argv'] ?? [];
 $arguments = is_array($rawArguments) ? array_map('strval', $rawArguments) : [];
-if (!in_array('--prepare', $arguments, true)) {
-    // The remaining diagnostic is intentionally read-only.
-} else {
-    fwrite(STDERR, "LEGACY_TOOL_BLOCKED component=queue_core_rollback remote=false http=0\n");
-    exit(2);
+foreach ($arguments as $argument) {
+    if ($argument === '--prepare' || str_starts_with($argument, '--prepare=')) {
+        fwrite(STDERR, "LEGACY_TOOL_BLOCKED component=queue_core_rollback remote=false http=0\n");
+        exit(2);
+    }
 }
 
 require dirname(__DIR__) . '/bootstrap.php';

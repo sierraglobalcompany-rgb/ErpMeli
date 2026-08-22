@@ -173,7 +173,7 @@ try {
     $assert(str_contains($engineCli, "\$desired !== 'disabled'") && str_contains($engineCli, "compareAndSwap('disabled'"), 'engine_disable_only_contract_missing');
     $assert(str_contains($historical, "['status', 'sources']") && strpos($historical, 'LEGACY_MUTATION_RETIRED') < strpos($historical, "require dirname(__DIR__) . '/bootstrap.php'"), 'historical_read_only_gate_invalid');
     $assert(
-        str_contains($rollback, "if (!in_array('--prepare'")
+        str_contains($rollback, "str_starts_with(\$argument, '--prepare=')")
             && str_contains($rollback, "PHP_SAPI !== 'cli'")
             && str_contains($rollbackService, "compareAndSwap('disabled'")
             && !str_contains($rollbackService, "compareAndSwap('v3'")

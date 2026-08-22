@@ -45,7 +45,7 @@ final class ApiLogRiskPresenter
                 'El ERP aplazó la operación antes del transporte; no llegó a Mercado Libre.',
                 'Espere la próxima oportunidad segura. Este evento no es una respuesta HTTP 429 remota.', 'Pausa preventiva local');
         }
-        if ($status === 429) {
+        if ($reached && $status === 429) {
             return $this->result('Alto', 'red', 'Pausa solicitada por Mercado Libre', true, true,
                 'Mercado Libre pidió reducir temporalmente las consultas.',
                 'Respete la hora segura indicada. El ERP no debe reintentar antes.', 'Pausa preventiva');

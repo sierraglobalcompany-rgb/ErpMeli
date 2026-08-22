@@ -9,9 +9,11 @@ if (PHP_SAPI !== 'cli') {
 
 $arguments=is_array($_SERVER['argv']??null)?array_map('strval',$_SERVER['argv']):[];
 
-if (in_array('--record', $arguments, true)) {
-    fwrite(STDERR, "LEGACY_TOOL_BLOCKED component=queue_core_preflight remote=false http=0\n");
-    exit(2);
+foreach ($arguments as $argument) {
+    if ($argument === '--record' || str_starts_with($argument, '--record=')) {
+        fwrite(STDERR, "LEGACY_TOOL_BLOCKED component=queue_core_preflight remote=false http=0\n");
+        exit(2);
+    }
 }
 
 require dirname(__DIR__) . '/bootstrap.php';

@@ -27,10 +27,14 @@ $run = static function (array $command) use ($root): array {
 $legacy = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
 $entryAt = strpos($legacy, "require __DIR__ . '/_cron_entry_state.php'");
 $retiredAt = strpos($legacy, 'reason=LEGACY_AUTOMATION_RETIRED');
+$flagGateAt = strpos($legacy, '$legacyFlags');
+$doctorBootstrapAt = strpos($legacy, "require __DIR__ . DIRECTORY_SEPARATOR . '_bootstrap' . '.php'");
 $assert($entryAt !== false && $retiredAt !== false && $retiredAt < $entryAt,
     'legacy_retirement_must_precede_entry_state');
 $assert(strpos($legacy, '$legacyFlags') !== false && strpos($legacy, 'LEGACY_AUTOMATION_BLOCKED') !== false,
     'legacy_mutation_flags_not_blocked');
+$assert($flagGateAt !== false && $doctorBootstrapAt !== false && $flagGateAt < $doctorBootstrapAt,
+    'legacy_mutation_gate_must_precede_doctor_bootstrap');
 
 $normal = $run([PHP_BINARY, $root . '/jobs/process_sync_queue.php']);
 $assert($normal['exit'] === 0 && str_contains($normal['stdout'], 'reason=LEGACY_AUTOMATION_RETIRED'),
@@ -39,6 +43,20 @@ foreach (['--retention-step', '--record', '--persist', '--execute', '--set=disab
     $blocked = $run([PHP_BINARY, $root . '/jobs/process_sync_queue.php', $flag]);
     $assert($blocked['exit'] === 2 && str_contains($blocked['stderr'], 'LEGACY_AUTOMATION_BLOCKED'),
         'legacy_flag_not_blocked:' . $flag);
+}
+
+$adversarial = [
+    'PROCESS_SYNC_DOCTOR_PLUS_RECORD' => [PHP_BINARY, '-n', $root . '/jobs/process_sync_queue.php', '--doctor', '--record=1'],
+    'PROCESS_SYNC_QA_PLUS_RECORD' => [PHP_BINARY, '-n', $root . '/jobs/process_sync_queue.php', '--qa-replay', '--fake-transport', '--record=1'],
+    'QUEUE_CORE_HEALTH_PERSIST_EQUALS' => [PHP_BINARY, '-n', $root . '/jobs/queue_core_health_snapshot.php', '--persist=1'],
+    'QUEUE_CORE_PREFLIGHT_RECORD_EQUALS' => [PHP_BINARY, '-n', $root . '/jobs/queue_core_preflight.php', '--record=1'],
+    'QUEUE_CORE_ROLLBACK_PREPARE_EQUALS' => [PHP_BINARY, '-n', $root . '/jobs/queue_core_rollback.php', '--prepare=1'],
+];
+foreach ($adversarial as $name => $command) {
+    $blocked = $run($command);
+    $assert($blocked['exit'] === 2 && str_contains($blocked['stderr'], 'LEGACY_')
+        && !str_contains($blocked['stderr'], 'PDO') && !str_contains($blocked['stderr'], 'bootstrap'),
+        'legacy_adversarial_not_blocked_before_bootstrap:' . $name);
 }
 
 $health = (string) file_get_contents($root . '/app/Services/CronHealthService.php');

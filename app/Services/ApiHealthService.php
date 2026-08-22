@@ -985,13 +985,14 @@ final class ApiHealthService
         $isRateLimit = $transportClass === 'REMOTE_HTTP_429';
         $isPermissionOrAuth = $reachedRemote && in_array($httpStatus, [401, 403], true);
         $isServerError = $reachedRemote && $httpStatus >= 500;
-        $hasRiskSignal = (int) ($row['risk_signal'] ?? 0) === 1;
+        $hasRiskSignal = (int) ($row['risk_signal'] ?? 0) === 1
+            && ($reachedRemote || $outcome === 'blocked_signal');
         $signalRequiresProtection = $isRateLimit || $isPermissionOrAuth || $outcome === 'blocked_signal' || $hasRiskSignal;
         $signalLabel = match (true) {
             $isRateLimit => 'Rate limit de Mercado Libre',
             $outcome === 'blocked_signal' => 'Señal de bloqueo o autorización',
-            $httpStatus === 401 => 'OAuth/autorización inválida',
-            $httpStatus === 403 => 'Permiso o alcance no disponible',
+            $isPermissionOrAuth && $httpStatus === 401 => 'OAuth/autorización inválida',
+            $isPermissionOrAuth && $httpStatus === 403 => 'Permiso o alcance no disponible',
             $isServerError => 'Falla temporal de Mercado Libre',
             $outcome === 'policy_delay' => 'Pausa preventiva local · sin HTTP remoto',
             $outcome === 'local_failure' => 'Fallo interno del ERP',
@@ -1003,26 +1004,26 @@ final class ApiHealthService
             str_contains($lower, 'already an active transaction') => 'Conflicto interno al renovar autorización',
             $outcome === 'policy_delay' => 'Consulta aplazada por protección preventiva',
             $outcome === 'blocked_signal' => 'Señal de bloqueo o autorización',
-            $httpStatus === 429 => 'Rate limit de Mercado Libre',
-            $httpStatus === 403 => 'Permiso no disponible para esta operación',
-            $httpStatus === 401 => 'Autorización de cuenta no válida',
-            $httpStatus >= 500 => 'Falla temporal de Mercado Libre',
+            $isRateLimit => 'Rate limit de Mercado Libre',
+            $isPermissionOrAuth && $httpStatus === 403 => 'Permiso no disponible para esta operación',
+            $isPermissionOrAuth && $httpStatus === 401 => 'Autorización de cuenta no válida',
+            $isServerError => 'Falla temporal de Mercado Libre',
             $outcome === 'local_failure' => 'Problema interno antes de consultar Mercado Libre',
             default => 'Respuesta con problema de Mercado Libre',
         };
         $severity = match (true) {
-            $outcome === 'blocked_signal' || $httpStatus === 401 => 'critical',
-            $httpStatus === 429 || $httpStatus === 403 => 'high',
+            $outcome === 'blocked_signal' || ($isPermissionOrAuth && $httpStatus === 401) => 'critical',
+            $isRateLimit || ($isPermissionOrAuth && $httpStatus === 403) => 'high',
             $outcome === 'local_failure' => 'medium',
             default => 'low',
         };
         $recommendation = match (true) {
             str_contains($lower, 'already an active transaction') => 'No pause las cuentas. La solicitud no llegó a Mercado Libre; continúe observando si vuelve a aparecer.',
             $outcome === 'policy_delay' => 'Espere la hora segura indicada; el trabajo continuará mediante cron.',
-            $httpStatus === 429 => 'Respete Retry-After o la próxima hora segura. Baje o mantenga limitado el ritmo efectivo de la cuenta/endpoint y no fuerce reintentos.',
-            $httpStatus === 403 => 'Revise permisos de la cuenta y la capacidad de la operación.',
-            $httpStatus === 401 => 'Revise la conexión OAuth de la cuenta afectada.',
-            $httpStatus >= 500 => 'Permita que el cron reintente con espera progresiva.',
+            $isRateLimit => 'Respete Retry-After o la próxima hora segura. Baje o mantenga limitado el ritmo efectivo de la cuenta/endpoint y no fuerce reintentos.',
+            $isPermissionOrAuth && $httpStatus === 403 => 'Revise permisos de la cuenta y la capacidad de la operación.',
+            $isPermissionOrAuth && $httpStatus === 401 => 'Revise la conexión OAuth de la cuenta afectada.',
+            $isServerError => 'Permita que el cron reintente con espera progresiva.',
             $outcome === 'local_failure' => 'Revise el diagnóstico interno del ERP; no es necesario pausar Mercado Libre.',
             default => 'Revise la operación y el diagnóstico técnico antes de reintentar.',
         };

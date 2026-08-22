@@ -31,6 +31,26 @@ $assert($local['reached_remote'] === false, 'MISSING_TRANSPORT_MARKER_MUST_NOT_I
 $assert($local['title'] === 'Pausa preventiva local', 'LOCAL_429_COMPATIBILITY_VALUE_MISLABELLED');
 $assert($local['risk'] === 'Bajo', 'LOCAL_429_COMPATIBILITY_VALUE_HIGH_RISK');
 
+$localFailure = $presenter->present([
+    'http_status' => 429,
+    'reached_remote' => 0,
+    'outcome_class' => 'local_failure',
+]);
+$assert($localFailure['reached_remote'] === false, 'LOCAL_FAILURE_SYNTHETIC_429_MARKED_REMOTE');
+$assert($localFailure['blocking'] === false, 'LOCAL_FAILURE_SYNTHETIC_429_MARKED_BLOCKING');
+$assert($localFailure['title'] !== 'Pausa solicitada por Mercado Libre', 'LOCAL_FAILURE_SYNTHETIC_429_REMOTE_TITLE');
+
+$classifiedLocal = App\Services\ApiRequestOutcomeClassifier::classify(
+    'GET',
+    '/orders/search',
+    429,
+    false,
+    'Aplazado por política local',
+    ['reached_remote' => 0, 'outcome_class' => 'policy_delay']
+);
+$assert($classifiedLocal['outcome_class'] === 'policy_delay' && $classifiedLocal['risk_signal'] === 0,
+    'LOCAL_SYNTHETIC_429_CLASSIFIER_CREATED_REMOTE_RISK');
+
 $remote = $presenter->present([
     'http_status' => 429,
     'reached_remote' => 1,

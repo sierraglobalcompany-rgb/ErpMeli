@@ -38,7 +38,7 @@ final class ApiRequestOutcomeClassifier
             || str_contains($lowerMessage, 'unauthorized_scopes')
             || str_contains($lowerMessage, 'excessive_api_call')) {
             $outcome = 'blocked_signal';
-        } elseif ($status !== null && $status >= 400) {
+        } elseif ($reachedRemote && $status !== null && $status >= 400) {
             $outcome = 'remote_error';
         } elseif (in_array($type, ['api_budget_exhausted', 'api_circuit_open', 'api_manual_pause'], true)) {
             $outcome = 'policy_delay';
@@ -47,7 +47,7 @@ final class ApiRequestOutcomeClassifier
         }
 
         $riskSignal = $outcome === 'blocked_signal'
-            || ($outcome === 'remote_error' && in_array($status, [401, 403, 429], true));
+            || ($reachedRemote && $outcome === 'remote_error' && in_array($status, [401, 403, 429], true));
         $actionable = match ($outcome) {
             'success', 'expected_absence', 'policy_delay' => false,
             default => true,

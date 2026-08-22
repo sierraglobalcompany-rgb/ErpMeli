@@ -482,6 +482,20 @@ try {
             'resources/release/updater-authority-2.39.17.json',
             'resources/runtime-manifest.json',
         ];
+    } elseif ($targetVersion === '2.39.18') {
+        $requiredOverlayPaths = [
+            'VERSION',
+            'app/Services/ManagedRuntimePublicationPolicy.php',
+            'app/Services/SaleFinancialService.php',
+            'app/Views/settings/cron_shell.php',
+            'composer.json',
+            'public/assets/app.js',
+            'resources/release/managed-runtime-dependencies-2.39.18.json',
+            'resources/release/updater-authority-2.39.18.json',
+            'resources/runtime-manifest.json',
+        ];
+        $assert(($inventory['base_commit'] ?? null) === '28bd74ecd0b528aaad2ffa3af11114dfbff5737c', 'overlay_base_not_installed_23917');
+        $assert(count($overlayRows) === count($requiredOverlayPaths), 'overlay_redundant_or_missing_paths');
     }
     foreach (array_values(array_unique($requiredOverlayPaths)) as $requiredOverlay) {
         $assert(isset($overlay[$requiredOverlay]), 'required_overlay_path_missing:' . $requiredOverlay);

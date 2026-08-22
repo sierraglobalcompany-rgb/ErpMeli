@@ -82,7 +82,7 @@ $assert(str_contains($source, "owner_engine=\"v3\"") && str_contains($source, 'e
 $assert(str_contains($source, "hasTable('cron_v3_work')"), 'El productor debe tolerar migración V3 ausente.');
 $assert(!str_contains($source, 'MeliApiClient'), 'Un productor no puede ejecutar HTTP Mercado Libre.');
 $assert(!str_contains($source, 'manual_campaign'), 'Los productores V3 no pueden crear campañas persistentes.');
-$assert(str_contains($finance, 'saleBillingCapture(') && strpos($finance, 'saleBillingCapture(') > strpos($finance, '$pdo->commit();'), 'Billing V3 debe materializarse después del commit legacy.');
+$assert(!str_contains($finance, 'saleBillingCapture('), 'Las fuentes financieras automáticas no pueden depender del productor V3.');
 $assert(str_contains($state, 'financialLocalProjection('), 'projectOrder debe materializar la unidad local conforme ownership.');
 $assert(!str_contains($claims, 'claimsSearchPage('), '/claims/sync no debe materializar una página V3 retirada.');
 $assert(!str_contains($claims, '/settings/manual-processing'), 'Reclamos no debe simular un fallback manual inexistente.');

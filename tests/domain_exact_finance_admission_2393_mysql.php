@@ -377,6 +377,141 @@ try {
     $assert($successorId !== $reconciliationId, 'input_version_successor_not_created');
     $assert((int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id='{$successorId}' AND payload_json LIKE '%financial_reconciliation%'")->fetchColumn() === 1, 'successor_ticket_not_exactly_once');
 
+    // Every newly-created automatic financial source is admitted atomically by
+    // SaleFinancialService itself. The loop intentionally includes current
+    // callers plus conservative automatic names so a future caller cannot
+    // silently recreate the V3 post-commit admission boundary.
+    $automaticOrigins = [
+        'notification',
+        'sales_repair',
+        'input_changed',
+        'order_persisted',
+        'daily',
+        'financial_recalc_local',
+        'domain_input_changed',
+        'financial_gap_scan',
+    ];
+    foreach ($automaticOrigins as $index => $origin) {
+        $saleNumber = 20000 + $index;
+        $inputVersion = hash('sha256', 'automatic-origin:' . $origin);
+        $sourceId = (int) $enqueueSale->invoke(
+            $financial,
+            10,
+            $accountId,
+            'O:' . $saleNumber,
+            (string) $saleNumber,
+            'order',
+            'COP',
+            $origin,
+            900 + $index,
+            30,
+            null,
+            $inputVersion
+        );
+        $pointerCount = (int) $pdo->query(
+            "SELECT COUNT(*) FROM queue_v4_clean_jobs
+             WHERE company_id=10 AND meli_account_id={$accountId}
+               AND job_type='domain_exact' AND resource_id='{$sourceId}'
+               AND payload_json LIKE '%financial_reconciliation%'"
+        )->fetchColumn();
+        $assert($sourceId > 0 && $pointerCount === 1, 'automatic_origin_missing_atomic_v4_pointer:' . $origin);
+        $againId = (int) $enqueueSale->invoke(
+            $financial,
+            10,
+            $accountId,
+            'O:' . $saleNumber,
+            (string) $saleNumber,
+            'order',
+            'COP',
+            $origin,
+            900 + $index,
+            30,
+            null,
+            $inputVersion
+        );
+        $assert($againId === $sourceId, 'automatic_origin_source_duplicate:' . $origin);
+        $assert((int) $pdo->query(
+            "SELECT COUNT(*) FROM queue_v4_clean_jobs
+             WHERE company_id=10 AND meli_account_id={$accountId}
+               AND job_type='domain_exact' AND resource_id='{$sourceId}'
+               AND payload_json LIKE '%financial_reconciliation%'"
+        )->fetchColumn() === 1, 'automatic_origin_pointer_duplicate:' . $origin);
+    }
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM cron_v3_work')->fetchColumn() === 0, 'automatic_finance_reached_v3');
+
+    // A pre-existing orphan is not silently readmitted by the new contract.
+    $historicalInput = hash('sha256', 'historical-orphan');
+    $pdo->prepare(
+        'INSERT INTO sale_financial_reconciliation_jobs
+         (company_id,meli_account_id,sale_key,external_sale_id,input_version,status,priority_tier,origin_type)
+         VALUES (?,?,?, ?,? ,"retry",30,"notification")'
+    )->execute([10, $accountId, 'O:29999', '29999', $historicalInput]);
+    $historicalSourceId = (int) $pdo->lastInsertId();
+    $historicalAgainId = (int) $enqueueSale->invoke(
+        $financial,
+        10,
+        $accountId,
+        'O:29999',
+        '29999',
+        'order',
+        'COP',
+        'notification',
+        999,
+        30,
+        null,
+        $historicalInput
+    );
+    $assert($historicalAgainId === $historicalSourceId, 'historical_source_was_duplicated');
+    $assert((int) $pdo->query(
+        "SELECT COUNT(*) FROM queue_v4_clean_jobs
+         WHERE job_type='domain_exact' AND resource_id='{$historicalSourceId}'
+           AND payload_json LIKE '%financial_reconciliation%'"
+    )->fetchColumn() === 0, 'historical_orphan_was_auto_readmitted');
+
+    // Manual stays outside automatic Queue V4 admission.
+    $manualId = (int) $enqueueSale->invoke(
+        $financial,
+        10,
+        $accountId,
+        'O:29998',
+        '29998',
+        'order',
+        'COP',
+        'manual',
+        1,
+        20,
+        1,
+        hash('sha256', 'manual-exact')
+    );
+    $assert((int) $pdo->query(
+        "SELECT COUNT(*) FROM queue_v4_clean_jobs
+         WHERE job_type='domain_exact' AND resource_id='{$manualId}'
+           AND payload_json LIKE '%financial_reconciliation%'"
+    )->fetchColumn() === 0, 'manual_source_was_auto_admitted');
+
+    // Admission failure must roll back the new source and all related state.
+    try {
+        $enqueueSale->invoke(
+            $financial,
+            10,
+            $otherAccountId,
+            'O:29997',
+            '29997',
+            'order',
+            'COP',
+            'notification',
+            1,
+            30,
+            null,
+            hash('sha256', 'tenant-mismatch-admission')
+        );
+        throw new RuntimeException('tenant_mismatch_admission_was_allowed');
+    } catch (RuntimeException $error) {
+        $assert(str_starts_with($error->getMessage(), 'financial_reconciliation_cron_admission_failed:'), 'admission_failure_not_fail_closed');
+    }
+    $assert((int) $pdo->query("SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE sale_key='O:29997'")->fetchColumn() === 0, 'admission_failure_committed_source');
+    $assert((int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id='29997'")->fetchColumn() === 0, 'admission_failure_committed_pointer');
+
     // Historical and tenant-null rows remain outside K1.
     $pdo->exec("INSERT INTO order_financial_recalc_jobs(company_id,meli_account_id,mode,source_type,status) VALUES (NULL,NULL,'repaired','legacy','pending')");
     $tenantNullId = (int) $pdo->lastInsertId();
@@ -487,6 +622,8 @@ try {
     $assert(!str_contains($repairSource, 'queueFromOrderIds('), 'sales_repair_parallel_reconciliation_still_present');
     $assert(str_contains($saleSource, 'processSelected(1, $jobId, false, true)'), 'domain_exact_successor_not_enabled');
     $assert(str_contains($saleSource, 'processSelected(1,$jobId,true)'), 'manual_exact_semantics_changed');
+    $assert(str_contains($saleSource, 'return $originType !== \'manual\';'), 'automatic_finance_origin_gate_not_centralized');
+    $assert(!str_contains($saleSource, 'saleBillingCapture('), 'automatic_finance_v3_dependency_still_present');
     $assert(str_contains($repositorySource, 'ORDER BY available_at ASC,id ASC'), 'fifo_sql_changed');
     $assert(!str_contains($schedulerSource, 'domain_exact'), 'domain_stage_added_to_scheduler');
     $assert(str_contains($workerSource, "if (\$type === 'domain_exact')"), 'worker_domain_handler_missing');

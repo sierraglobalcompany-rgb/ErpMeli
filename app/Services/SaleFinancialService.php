@@ -1549,8 +1549,7 @@ final class SaleFinancialService
                  SET official_status=IF(official_status="complete","complete","queued")
                  WHERE company_id=? AND meli_account_id=? AND sale_key=? AND input_version=?'
             )->execute([$companyId, $accountId, $saleKey, $inputVersion]);
-            $domainOrigin = in_array($originType, ['financial_recalc_local', 'domain_input_changed'], true);
-            if ($domainOrigin && $created) {
+            if ($created && $this->requiresAutomaticDomainAdmission($originType)) {
                 $receipt = (new CronAdmissionService($pdo))->submit(
                     'financial_reconciliation',
                     $companyId,
@@ -1566,16 +1565,6 @@ final class SaleFinancialService
                 }
             }
             $pdo->commit();
-            if (!$domainOrigin) {
-                (new CronV3ProducerService())->saleBillingCapture(
-                    $companyId,
-                    $accountId,
-                    $jobId,
-                    $saleKey,
-                    $inputVersion,
-                    $priorityTier
-                );
-            }
             return $jobId;
         } catch (Throwable $error) {
             if ($pdo->inTransaction()) {
@@ -1583,6 +1572,16 @@ final class SaleFinancialService
             }
             throw $error;
         }
+    }
+
+    /**
+     * A new automatic source is not durable work until its Queue V4 pointer is
+     * stored in the same transaction. Manual exact requests retain their own
+     * explicitly initiated flow and are never admitted as background work here.
+     */
+    private function requiresAutomaticDomainAdmission(string $originType): bool
+    {
+        return $originType !== 'manual';
     }
 
     private function retryDelayMinutes(int $attempts): int

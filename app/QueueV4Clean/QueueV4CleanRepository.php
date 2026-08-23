@@ -198,11 +198,13 @@ final class QueueV4CleanRepository
     }
 
     /**
-     * Queue V4 owns batching boundaries.  Starting from the already-claimed
-     * financial pointer, walk the global ready FIFO and include only contiguous
-     * simple one-order financial sources from the same tenant.  The first
-     * incompatible global job stops the batch, even if a later financial row
-     * would otherwise match.
+     * Queue V4 owns batching boundaries. The primary pointer has already won
+     * the global FIFO claim. Its optional extras are later, due, ready,
+     * one-order finance pointers from that same tenant only. A different
+     * tenant or a non-finance pointer is a global FIFO boundary and stops the
+     * scan. Ineligible finance pointers from the same tenant are skipped but
+     * remain untouched: they cannot change the primary turn, nor be claimed,
+     * moved, or aligned as part of this Billing request.
      *
      * @param array<string,mixed> $runningJob
      * @return list<int>
@@ -222,7 +224,11 @@ final class QueueV4CleanRepository
         }
 
         $sourceIds = [$sourceId];
-        if ($this->financialSourceRequiresExactFallback($companyId, $accountId, $sourceId)) {
+        // The global FIFO winner remains eligible to run normally even when it
+        // cannot join a bulk request. In that case it must be the only source:
+        // never claim later sources before the primary's real order cardinality
+        // and current input are known.
+        if (!$this->financialSourceIsCurrentSimpleBatchCandidate($companyId, $accountId, $sourceId)) {
             return $sourceIds;
         }
 
@@ -238,97 +244,114 @@ final class QueueV4CleanRepository
         }
 
         try {
+            $cursorAvailableAt = $availableAt;
+            $cursorJobId = $jobId;
+            while ($remaining > 0) {
             $statement = $this->pdo->prepare(
-                'SELECT q.id queue_job_id,q.company_id queue_company_id,q.meli_account_id queue_account_id,
-                        q.job_type queue_job_type,q.resource_id queue_resource_id,
+                'SELECT q.id queue_job_id,q.available_at queue_available_at,
+                        q.company_id queue_company_id,q.meli_account_id queue_account_id,
+                        q.job_type queue_job_type,
                         JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability")) queue_capability,
                         s.id source_id,s.status source_status,s.sale_key,s.input_version,s.safe_message,
-                        COALESCE(st.official_status,"missing") official_status,
+                        st.input_version state_input_version,COALESCE(st.official_status,"missing") official_status,
                         (SELECT COUNT(*)
                            FROM meli_orders o
                           WHERE o.meli_account_id=s.meli_account_id
                             AND CONCAT(IF(o.external_pack_id IS NULL,"O:","P:"),COALESCE(o.external_pack_id,o.external_order_id))=s.sale_key) order_count
-                 FROM queue_v4_clean_jobs q
-                 LEFT JOIN sale_financial_reconciliation_jobs s
-                   ON s.id=CAST(q.resource_id AS UNSIGNED)
-                  AND s.company_id=q.company_id
-                  AND s.meli_account_id=q.meli_account_id
-                 LEFT JOIN sale_financial_state st
-                   ON st.company_id=s.company_id
-                  AND st.meli_account_id=s.meli_account_id
-                  AND st.sale_key=s.sale_key
-                  AND st.input_version=s.input_version
-                 WHERE q.state="ready"
-                   AND q.available_at<=UTC_TIMESTAMP(3)
-                   AND (q.available_at>? OR (q.available_at=? AND q.id>?))
-                 ORDER BY q.available_at ASC,q.id ASC
-                 LIMIT 240'
+                   FROM queue_v4_clean_jobs q
+                   LEFT JOIN sale_financial_reconciliation_jobs s
+                     ON s.id=CAST(q.resource_id AS UNSIGNED)
+                    AND s.company_id=q.company_id
+                    AND s.meli_account_id=q.meli_account_id
+                   LEFT JOIN sale_financial_state st
+                     ON st.company_id=s.company_id
+                    AND st.meli_account_id=s.meli_account_id
+                    AND st.sale_key=s.sale_key
+                  WHERE q.state="ready"
+                    AND q.available_at<=UTC_TIMESTAMP(3)
+                    AND (q.available_at>? OR (q.available_at=? AND q.id>?))
+                  ORDER BY q.available_at ASC,q.id ASC
+                  LIMIT 240'
             );
-            $statement->execute([$availableAt, $availableAt, $jobId]);
+            $statement->execute([$cursorAvailableAt, $cursorAvailableAt, $cursorJobId]);
             $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($rows as $row) {
+                $cursorAvailableAt = (string) ($row['queue_available_at'] ?? $cursorAvailableAt);
+                $cursorJobId = (int) ($row['queue_job_id'] ?? $cursorJobId);
+                if ((int) ($row['queue_company_id'] ?? 0) !== $companyId
+                    || (int) ($row['queue_account_id'] ?? 0) !== $accountId
+                    || (string) ($row['queue_job_type'] ?? '') !== 'domain_exact'
+                    || (string) ($row['queue_capability'] ?? '') !== 'financial_reconciliation') {
+                    break;
+                }
+                if (!in_array((string) ($row['source_status'] ?? ''), ['pending', 'retry', 'awaiting_remote'], true)
+                    || !str_starts_with((string) ($row['sale_key'] ?? ''), 'O:')
+                    || (int) ($row['order_count'] ?? 0) !== 1
+                    || (string) ($row['official_status'] ?? 'missing') === 'complete'
+                    || preg_match('/^[a-f0-9]{64}$/', (string) ($row['input_version'] ?? '')) !== 1
+                    || !hash_equals((string) ($row['input_version'] ?? ''), (string) ($row['state_input_version'] ?? ''))
+                    || str_starts_with((string) ($row['safe_message'] ?? ''), 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED')) {
+                    continue;
+                }
+                $rowSourceId = (int) ($row['source_id'] ?? 0);
+                if ($rowSourceId > 0) {
+                    $sourceIds[] = $rowSourceId;
+                    $remaining--;
+                    if ($remaining < 1) {
+                        break;
+                    }
+                }
+            }
+            if (count($rows) < 240) {
+                break;
+            }
+            }
         } catch (Throwable) {
             return $sourceIds;
-        }
-
-        foreach ($rows as $row) {
-            if (!$this->isContiguousFinancialBatchRow($row, $companyId, $accountId)) {
-                break;
-            }
-            $rowSourceId = (int) ($row['source_id'] ?? 0);
-            if ($rowSourceId < 1) {
-                break;
-            }
-            $sourceIds[] = $rowSourceId;
-            $remaining--;
-            if ($remaining < 1) {
-                break;
-            }
         }
 
         return $sourceIds;
     }
 
-    private function financialSourceRequiresExactFallback(int $companyId, int $accountId, int $sourceId): bool
+    private function financialSourceIsCurrentSimpleBatchCandidate(int $companyId, int $accountId, int $sourceId): bool
     {
         try {
             $statement = $this->pdo->prepare(
-                'SELECT safe_message
-                   FROM sale_financial_reconciliation_jobs
-                  WHERE id=?
-                    AND company_id=?
-                    AND meli_account_id=?
+                'SELECT s.status,s.sale_key,s.input_version,s.safe_message,
+                        st.input_version state_input_version,COALESCE(st.official_status,"missing") official_status,
+                        (SELECT COUNT(*)
+                           FROM meli_orders o
+                          WHERE o.meli_account_id=s.meli_account_id
+                            AND CONCAT(IF(o.external_pack_id IS NULL,"O:","P:"),COALESCE(o.external_pack_id,o.external_order_id))=s.sale_key) order_count
+                   FROM sale_financial_reconciliation_jobs s
+                   LEFT JOIN sale_financial_state st
+                     ON st.company_id=s.company_id
+                    AND st.meli_account_id=s.meli_account_id
+                    AND st.sale_key=s.sale_key
+                  WHERE s.id=?
+                    AND s.company_id=?
+                    AND s.meli_account_id=?
                   LIMIT 1'
             );
             $statement->execute([$sourceId, $companyId, $accountId]);
-            $safeMessage = $statement->fetchColumn();
+            $row = $statement->fetch(PDO::FETCH_ASSOC);
         } catch (Throwable) {
-            return true;
+            return false;
         }
 
-        return str_starts_with((string) $safeMessage, 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED');
-    }
-
-    /**
-     * @param array<string,mixed> $row
-     */
-    private function isContiguousFinancialBatchRow(array $row, int $companyId, int $accountId): bool
-    {
-        return (int) ($row['queue_company_id'] ?? 0) === $companyId
-            && (int) ($row['queue_account_id'] ?? 0) === $accountId
-            && (string) ($row['queue_job_type'] ?? '') === 'domain_exact'
-            && (string) ($row['queue_capability'] ?? '') === 'financial_reconciliation'
-            && (int) ($row['source_id'] ?? 0) > 0
-            && in_array((string) ($row['source_status'] ?? ''), ['pending', 'retry', 'awaiting_remote'], true)
+        return is_array($row)
+            && in_array((string) ($row['status'] ?? ''), ['pending', 'retry', 'awaiting_remote'], true)
             && str_starts_with((string) ($row['sale_key'] ?? ''), 'O:')
             && (int) ($row['order_count'] ?? 0) === 1
             && (string) ($row['official_status'] ?? 'missing') !== 'complete'
             && preg_match('/^[a-f0-9]{64}$/', (string) ($row['input_version'] ?? '')) === 1
+            && hash_equals((string) ($row['input_version'] ?? ''), (string) ($row['state_input_version'] ?? ''))
             && !str_starts_with((string) ($row['safe_message'] ?? ''), 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED');
     }
 
     /**
      * Queue V4, not the financial domain service, owns pointer state.  This
-     * aligns unclaimed contiguous pointers after a coalesced domain call.  The
+     * aligns selected, unclaimed pointers after a coalesced domain call. The
      * already-running pointer is intentionally ignored here and closed through
      * the normal worker CAS path.
      *

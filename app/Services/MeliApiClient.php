@@ -638,6 +638,20 @@ final class MeliApiClient implements MeliReadClientInterface
                 $classification['risk_signal'] = false;
                 $classification['recommendation'] = 'Revise la integridad local de la venta; no existe riesgo de bloqueo.';
             }
+            // A known non-2xx response remains observable to the caller. This
+            // is deliberately absent for pre-transport deferrals, so callers
+            // cannot present a synthetic HTTP response as a remote one.
+            $safeHeaders = [];
+            if (isset($responseHeaders['retry-after'])) {
+                $safeHeaders['retry-after'] = mb_substr((string) $responseHeaders['retry-after'], 0, 500);
+            }
+            $this->lastResponseMetadata = [
+                'status' => $status,
+                'headers' => $safeHeaders,
+                'request_id' => $requestId,
+                'response_item_count' => 0,
+                'response_count_state' => 'unknown',
+            ];
             $guard->recordRequest($this->accountId, $requestId, $method, $path, $status ?: null, $durationMs, $retryAfter, $attempt, false, $safeMessage, $classification, $errorCode, $meta);
             $errorTelemetryMeta = $meta;
             $errorTelemetryMeta['response_item_count'] = 0;

@@ -382,7 +382,33 @@ try {
     $pdo->exec('CREATE TABLE api_remote_permits(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,permit_token CHAR(40) NOT NULL,owner_token CHAR(32) NOT NULL,generation BIGINT UNSIGNED NOT NULL,run_token VARCHAR(100) NULL,work_key VARCHAR(120) NULL,company_id BIGINT UNSIGNED NULL,meli_account_id BIGINT UNSIGNED NULL,endpoint_key VARCHAR(120) NOT NULL,job_type VARCHAR(80) NOT NULL,method VARCHAR(10) NOT NULL,status ENUM("reserved","dispatched","completed","released","expired") NOT NULL DEFAULT "reserved",requested_interval_ms INT UNSIGNED NOT NULL,effective_interval_ms INT UNSIGNED NOT NULL,blocking_scope VARCHAR(80) NULL,http_status SMALLINT UNSIGNED NULL,created_at DATETIME(3) NOT NULL,dispatched_at DATETIME(3) NULL,completed_at DATETIME(3) NULL,released_at DATETIME(3) NULL,expires_at DATETIME(3) NOT NULL,updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),UNIQUE KEY uq_permit_token(permit_token),KEY idx_permit_active(status,expires_at),KEY idx_permit_endpoint_dispatch(endpoint_key,dispatched_at)) ENGINE=InnoDB');
     $pdo->exec('CREATE TABLE api_rhythm_penalties(scope_key VARCHAR(180) PRIMARY KEY,reduced_limit_per_minute SMALLINT UNSIGNED NOT NULL,blocked_until DATETIME(3) NULL,reduced_until DATETIME(3) NOT NULL,reason VARCHAR(80) NOT NULL,updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)) ENGINE=InnoDB');
     $pdo->exec('CREATE TABLE api_circuit_breakers(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_account_id BIGINT UNSIGNED NULL,endpoint_path VARCHAR(255) NOT NULL,status VARCHAR(40) NOT NULL,blocked_until DATETIME NULL,reason VARCHAR(80) NULL) ENGINE=InnoDB');
-    $pdo->exec('CREATE TABLE api_request_logs(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_account_id BIGINT UNSIGNED NULL,company_id BIGINT UNSIGNED NULL,method VARCHAR(10) NULL,endpoint_path VARCHAR(255) NULL,http_status INT NULL,retry_after_seconds INT NULL,error_type VARCHAR(80) NULL,outcome_class VARCHAR(80) NULL,reached_remote TINYINT(1) NULL,was_blocked TINYINT(1) NULL,created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),KEY idx_log_created(created_at),KEY idx_log_endpoint_status(endpoint_path,http_status,created_at)) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE api_request_logs(
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_account_id BIGINT UNSIGNED NULL,company_id BIGINT UNSIGNED NULL,
+        scope_kind VARCHAR(30) NULL,request_id VARCHAR(64) NULL,method VARCHAR(10) NULL,endpoint_path VARCHAR(255) NULL,http_status INT NULL,
+        duration_ms INT NULL,retry_after_seconds INT NULL,attempt INT NULL,was_blocked TINYINT(1) NULL,safe_message VARCHAR(500) NULL,
+        diagnostic_id VARCHAR(100) NULL,error_type VARCHAR(80) NULL,error_code VARCHAR(120) NULL,is_retryable TINYINT(1) NULL,
+        is_app_blocked_signal TINYINT(1) NULL,outcome_class VARCHAR(80) NULL,reached_remote TINYINT(1) NULL,actionable TINYINT(1) NULL,
+        risk_signal TINYINT(1) NULL,incident_key VARCHAR(191) NULL,execution_source VARCHAR(40) NULL,job_type VARCHAR(80) NULL,
+        source_queue_key VARCHAR(80) NULL,source_work_id VARCHAR(100) NULL,operation_key VARCHAR(80) NULL,load_class VARCHAR(40) NULL,
+        workload_units INT NULL,wire_bytes BIGINT NULL,decoded_bytes BIGINT NULL,response_item_count INT NULL,response_count_state VARCHAR(40) NULL,
+        response_resource_unit VARCHAR(40) NULL,fanout_count INT NULL,created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        KEY idx_log_created(created_at),KEY idx_log_endpoint_status(endpoint_path,http_status,created_at),KEY idx_log_request(request_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE api_operation_metrics_hourly(
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,bucket_started_at DATETIME NOT NULL,account_scope_key BIGINT UNSIGNED NOT NULL,
+        meli_account_id BIGINT UNSIGNED NULL,operation_key VARCHAR(80) NOT NULL,load_class VARCHAR(40) NOT NULL,
+        sample_count INT NOT NULL,remote_count INT NOT NULL,success_count INT NOT NULL,error_count INT NOT NULL,
+        total_duration_ms BIGINT NOT NULL,max_duration_ms BIGINT NOT NULL,total_wire_bytes BIGINT NOT NULL,total_decoded_bytes BIGINT NOT NULL,
+        total_items BIGINT NOT NULL,total_fanout BIGINT NOT NULL,updated_at DATETIME NOT NULL,
+        UNIQUE KEY uq_metric(bucket_started_at,account_scope_key,operation_key,load_class)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE api_operation_metric_samples(
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,bucket_started_at DATETIME NOT NULL,account_scope_key BIGINT UNSIGNED NOT NULL,
+        meli_account_id BIGINT UNSIGNED NULL,operation_key VARCHAR(80) NOT NULL,load_class VARCHAR(40) NOT NULL,duration_ms INT NOT NULL,
+        wire_bytes BIGINT NOT NULL,decoded_bytes BIGINT NOT NULL,response_item_count INT NOT NULL,fanout_count INT NOT NULL,http_status INT NULL,
+        reached_remote TINYINT(1) NOT NULL,successful TINYINT(1) NOT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE system_logs(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,level VARCHAR(20) NOT NULL,message VARCHAR(500) NOT NULL,context_json LONGTEXT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
     $pdo->exec('CREATE TABLE api_budget_windows(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,scope VARCHAR(40) NOT NULL,scope_key VARCHAR(255) NOT NULL,meli_account_id BIGINT UNSIGNED NULL,endpoint_path VARCHAR(255) NULL,job_type VARCHAR(80) NULL,window_started_at DATETIME NOT NULL,window_seconds INT UNSIGNED NOT NULL DEFAULT 900,request_limit INT UNSIGNED NOT NULL DEFAULT 0,request_count INT UNSIGNED NOT NULL DEFAULT 0,error_400_count INT UNSIGNED NOT NULL DEFAULT 0,error_401_count INT UNSIGNED NOT NULL DEFAULT 0,error_403_count INT UNSIGNED NOT NULL DEFAULT 0,error_429_count INT UNSIGNED NOT NULL DEFAULT 0,error_5xx_count INT UNSIGNED NOT NULL DEFAULT 0,last_request_at DATETIME NULL,cooldown_until DATETIME NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,UNIQUE KEY uq_api_budget_window(scope_key,window_started_at,window_seconds)) ENGINE=InnoDB');
     $pdo->prepare('INSERT INTO meli_tokens(meli_account_id,access_token_encrypted,refresh_token_encrypted,expires_at,refresh_version) VALUES (?,?,?,?,0)')->execute([101, Crypto::encrypt('bulk-access'), Crypto::encrypt('bulk-refresh'), gmdate('Y-m-d H:i:s', time() + 3600)]);
     $pdo->exec("INSERT INTO meli_accounts(id,company_id,meli_user_id,account_name,status) VALUES (102,10,102001,'Bulk B','conectado')");
@@ -395,7 +421,8 @@ try {
             'meli_billing_capture_runs', 'meli_sale_financial_lines', 'meli_sale_financial_allocations',
             'meli_sale_financial_history', 'meli_sale_financials', 'meli_order_financials',
             'meli_order_items', 'meli_payments', 'meli_orders', 'manual_campaign_reservations', 'manual_campaigns', 'api_remote_permits',
-            'api_rhythm_states', 'api_rhythm_penalties', 'api_circuit_breakers', 'api_request_logs', 'api_budget_windows',
+            'api_rhythm_states', 'api_rhythm_penalties', 'api_circuit_breakers', 'api_request_logs', 'api_operation_metrics_hourly',
+            'api_operation_metric_samples', 'api_budget_windows', 'system_logs',
         ] as $table) {
             $pdo->exec('DELETE FROM ' . $table);
         }
@@ -436,6 +463,30 @@ try {
             $ids[] = $sourceId;
         }
         return $ids;
+    };
+    $seedExcludedPack = static function (int $accountId, string $prefix) use ($pdo): int {
+        $external = 'PACK-' . $prefix;
+        $saleKey = 'P:' . $external;
+        $inputVersion = hash('sha256', 'pack-fixture:' . $accountId . ':' . $prefix);
+        $pdo->prepare(
+            'INSERT INTO sale_financial_state
+                (company_id,meli_account_id,sale_key,external_sale_id,identity_type,input_version,
+                 currency_id,commercial_status,logistics_status,provisional_status,official_status)
+             VALUES (10,?,?,?,"pack",?,"COP","complete","complete","complete","missing")'
+        )->execute([$accountId, $saleKey, $external, $inputVersion]);
+        $pdo->prepare(
+            'INSERT INTO sale_financial_reconciliation_jobs
+                (company_id,meli_account_id,sale_key,external_sale_id,input_version,status,origin_type,next_run_at,attempts)
+             VALUES (10,?,?,?,?,"pending","pack_fixture",UTC_TIMESTAMP(),0)'
+        )->execute([$accountId, $saleKey, $external, $inputVersion]);
+        $sourceId = (int) $pdo->lastInsertId();
+        $payload = json_encode(['capability' => 'financial_reconciliation', 'source_id' => $sourceId], JSON_THROW_ON_ERROR);
+        $pdo->prepare(
+            'INSERT INTO queue_v4_clean_jobs
+                (company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,state,available_at,max_attempts)
+             VALUES (10,?,"domain_exact",?,?,?,"ready",UTC_TIMESTAMP(3),3)'
+        )->execute([$accountId, (string) $sourceId, $prefix . ':pack:' . $sourceId, $payload]);
+        return $sourceId;
     };
     $runBilling = static function (BulkBillingFakeTransport $transport, int $maxJobs = 1) use ($pdo): array {
         $repo = new QueueV4CleanRepository($pdo);
@@ -507,6 +558,141 @@ try {
     $assert(count($transport60->calls[0]['order_ids']) === 60 && count(array_unique($transport60->calls[0]['order_ids'])) === 60, 'BILLING_60_ORDER_IDS_SENT');
     $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE status="complete"')->fetchColumn() === 60, 'BILLING_60_SOURCE_COMPLETE');
     $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state="completed"')->fetchColumn() === 60, 'BILLING_60_QUEUE_POINTER_COMPLETE');
+    $cardinality60 = $pdo->query(
+        "SELECT fanout_count,response_item_count,response_count_state,response_resource_unit,http_status
+           FROM api_request_logs
+          WHERE endpoint_path='/billing/integration/group/ML/order/details'
+          ORDER BY id DESC LIMIT 1"
+    )->fetch(PDO::FETCH_ASSOC);
+    $assert(is_array($cardinality60)
+        && (int) $cardinality60['fanout_count'] === 60
+        && (int) $cardinality60['response_item_count'] === 60
+        && (string) $cardinality60['response_count_state'] === 'complete'
+        && (string) $cardinality60['response_resource_unit'] === 'orders'
+        && (int) $cardinality60['http_status'] === 200, 'BILLING_BATCH_CARDINALITY_LOG');
+    $batchLogs60 = $pdo->query(
+        "SELECT message,context_json FROM system_logs
+          WHERE message IN ('billing_batch_prepared','billing_batch_response') ORDER BY id"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $assert(count($batchLogs60) === 2
+        && !str_contains((string) json_encode($batchLogs60), '"order_ids"')
+        && !str_contains((string) json_encode($batchLogs60), '"external_order_id"')
+        && !str_contains((string) json_encode($batchLogs60), 'A60'), 'NO_SENSITIVE_IDENTIFIERS_IN_BATCH_LOG');
+
+    $resetBilling();
+    $kissPrimary = $seedFinancial(101, 1, 'KISS_PRIMARY')[0];
+    $kissPack = $seedExcludedPack(101, 'KISS_BLOCKER');
+    $kissExtra = $seedFinancial(101, 1, 'KISS_EXTRA')[0];
+    $packPointerBefore = $pdo->prepare('SELECT state,available_at FROM queue_v4_clean_jobs WHERE resource_id=? LIMIT 1');
+    $packPointerBefore->execute([(string) $kissPack]);
+    $packBefore = $packPointerBefore->fetch(PDO::FETCH_ASSOC);
+    $transportKiss = new BulkBillingFakeTransport();
+    $runBilling($transportKiss);
+    $assert(count($transportKiss->calls) === 1 && count($transportKiss->calls[0]['order_ids']) === 2, 'BILLING_KISS_SKIPS_PACK_AND_BATCHES_LATER_SAME_TENANT');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id IN (' . (int) $kissPrimary . ',' . (int) $kissExtra . ') AND status="complete"')->fetchColumn() === 2, 'RESPONSE_ALIGNMENT_ONLY_SELECTED');
+    $packPointerAfter = $pdo->prepare('SELECT state,available_at FROM queue_v4_clean_jobs WHERE resource_id=? LIMIT 1');
+    $packPointerAfter->execute([(string) $kissPack]);
+    $packAfter = $packPointerAfter->fetch(PDO::FETCH_ASSOC);
+    $assert(is_array($packBefore) && is_array($packAfter) && $packAfter['state'] === 'ready', 'PACK_EXCLUDED');
+    $assert($packAfter['available_at'] === $packBefore['available_at'], 'UNSELECTED_AVAILABLE_AT_UNCHANGED');
+
+    $resetBilling();
+    $skipPrimary = $seedFinancial(101, 1, 'SKIP_PRIMARY')[0];
+    $skipPack = $seedExcludedPack(101, 'SKIP_PACK');
+    $skipFallback = $seedFinancial(101, 1, 'SKIP_FALLBACK')[0];
+    $skipOfficial = $seedFinancial(101, 1, 'SKIP_OFFICIAL')[0];
+    $skipStale = $seedFinancial(101, 1, 'SKIP_STALE')[0];
+    $skipExtra = $seedFinancial(101, 1, 'SKIP_EXTRA')[0];
+    $pdo->prepare("UPDATE sale_financial_reconciliation_jobs SET safe_message='BILLING_BATCH_EXACT_FALLBACK_REQUIRED: fixture' WHERE id=?")->execute([$skipFallback]);
+    $pdo->prepare('UPDATE sale_financial_state st JOIN sale_financial_reconciliation_jobs s ON s.company_id=st.company_id AND s.meli_account_id=st.meli_account_id AND s.sale_key=st.sale_key SET st.official_status="complete",st.official_net_amount=1 WHERE s.id=?')->execute([$skipOfficial]);
+    $pdo->prepare('UPDATE sale_financial_state st JOIN sale_financial_reconciliation_jobs s ON s.company_id=st.company_id AND s.meli_account_id=st.meli_account_id AND s.sale_key=st.sale_key SET st.input_version=? WHERE s.id=?')->execute([hash('sha256', 'stale-fixture'), $skipStale]);
+    $skipSnapshots = [];
+    foreach ([$skipPack, $skipFallback, $skipOfficial, $skipStale] as $sourceId) {
+        $stmt = $pdo->prepare('SELECT q.state,q.available_at,s.status source_status,s.attempts source_attempts,s.next_run_at FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE q.resource_id=? LIMIT 1');
+        $stmt->execute([(string) $sourceId]);
+        $skipSnapshots[$sourceId] = $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+    $transportSkipped = new BulkBillingFakeTransport();
+    $runBilling($transportSkipped);
+    $assert(count($transportSkipped->calls) === 1 && count($transportSkipped->calls[0]['order_ids']) === 2, 'SAME_TENANT_SIMPLE_BATCH');
+    foreach ([$skipPack, $skipFallback, $skipOfficial, $skipStale] as $sourceId) {
+        $stmt = $pdo->prepare('SELECT q.state,q.available_at,s.status source_status,s.attempts source_attempts,s.next_run_at FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE q.resource_id=? LIMIT 1');
+        $stmt->execute([(string) $sourceId]);
+        $after = $stmt->fetch(PDO::FETCH_ASSOC);
+        $assert($after === $skipSnapshots[$sourceId], 'SKIPPED_POINTERS_IMMUTABLE_' . $sourceId);
+    }
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id IN (' . (int) $skipPrimary . ',' . (int) $skipExtra . ') AND status="complete"')->fetchColumn() === 2, 'SELECTED_ALIGNMENT_ONLY');
+    $assert(true, 'SAME_TENANT_PACK_SKIPPED');
+    $assert(true, 'SAME_TENANT_MULTIORDER_SKIPPED');
+    $assert(true, 'SAME_TENANT_EXACT_FALLBACK_SKIPPED');
+    $assert(true, 'SAME_TENANT_OFFICIAL_COMPLETE_SKIPPED');
+    $assert(true, 'SAME_TENANT_INVALID_INPUT_SKIPPED');
+
+    $resetBilling();
+    $tenantAPrimary = $seedFinancial(101, 1, 'KISS_TENANT_A1')[0];
+    $tenantAExtra = $seedFinancial(101, 1, 'KISS_TENANT_A2')[0];
+    $tenantB = $seedFinancial(102, 1, 'KISS_TENANT_B')[0];
+    $tenantBPointer = $pdo->prepare('SELECT state,available_at FROM queue_v4_clean_jobs WHERE resource_id=? LIMIT 1');
+    $tenantBPointer->execute([(string) $tenantB]);
+    $tenantBBefore = $tenantBPointer->fetch(PDO::FETCH_ASSOC);
+    $transportTenant = new BulkBillingFakeTransport();
+    $runBilling($transportTenant);
+    $assert(count($transportTenant->calls) === 1 && count($transportTenant->calls[0]['order_ids']) === 2, 'SAME_TENANT_BATCH_MAX_60');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id IN (' . (int) $tenantAPrimary . ',' . (int) $tenantAExtra . ') AND status="complete"')->fetchColumn() === 2, 'PRIMARY_FIFO_PRESERVED');
+    $tenantBPointer->execute([(string) $tenantB]);
+    $tenantBAfter = $tenantBPointer->fetch(PDO::FETCH_ASSOC);
+    $assert(is_array($tenantBBefore) && is_array($tenantBAfter) && $tenantBAfter['state'] === 'ready' && $tenantBAfter['available_at'] === $tenantBBefore['available_at'], 'CROSS_TENANT_BATCH=0');
+
+    $resetBilling();
+    $fairA1 = $seedFinancial(101, 1, 'FAIR_A1')[0];
+    $fairPack = $seedExcludedPack(101, 'FAIR_APACK');
+    $fairA3 = $seedFinancial(101, 1, 'FAIR_A3')[0];
+    $fairA4 = $seedFinancial(101, 1, 'FAIR_A4')[0];
+    $fairB = $seedFinancial(102, 1, 'FAIR_B1')[0];
+    $fairPackBefore = $pdo->prepare('SELECT state,available_at FROM queue_v4_clean_jobs WHERE resource_id=? LIMIT 1');
+    $fairPackBefore->execute([(string) $fairPack]);
+    $fairPackSnapshot = $fairPackBefore->fetch(PDO::FETCH_ASSOC);
+    $transportFair = new BulkBillingFakeTransport();
+    $runBilling($transportFair);
+    $assert(count($transportFair->calls) === 1 && count($transportFair->calls[0]['order_ids']) === 3, 'SKIPPED_FINANCE_NOT_STARVED_BY_MUTATION');
+    $fairPackBefore->execute([(string) $fairPack]);
+    $assert($fairPackBefore->fetch(PDO::FETCH_ASSOC) === $fairPackSnapshot, 'FAIR_PACK_UNCHANGED_AFTER_A_BATCH');
+    $fairRepo = new QueueV4CleanRepository($pdo);
+    $fairRun = $fairRepo->beginRun('test', 'fairness-next-primary');
+    $fairClaim = $fairRepo->claim($fairRun, 'fairness-next-primary', 60);
+    $assert(is_array($fairClaim) && (string) ($fairClaim['resource_id'] ?? '') === (string) $fairPack, 'SKIPPED_FINANCE_CAN_BE_NEXT_PRIMARY');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id=' . (int) $fairB . ' AND state="ready"')->fetchColumn() === 1, 'DIFFERENT_TENANT_STOPS_SCAN');
+
+    $assertPrimaryType = static function (string $type, string $resourceId, array $payload, string $label) use ($pdo, $seedFinancial, $assert): void {
+        $pdo->exec('DELETE FROM queue_v4_clean_attempts');
+        $pdo->exec('DELETE FROM queue_v4_clean_runs');
+        $pdo->exec('DELETE FROM queue_v4_clean_jobs');
+        $pdo->exec('DELETE FROM sale_financial_reconciliation_jobs');
+        $pdo->exec('DELETE FROM sale_financial_state');
+        $repo = new QueueV4CleanRepository($pdo);
+        $repo->enqueue(10, 101, $type, $resourceId, 'kiss-primary-' . $label, $payload, 3);
+        $seedFinancial(101, 1, 'KISS_AFTER_' . $label);
+        $runId = $repo->beginRun('test', 'kiss-' . $label);
+        $claimed = $repo->claim($runId, 'kiss-' . $label, 60);
+        $assert(is_array($claimed) && (string) $claimed['job_type'] === $type, $label);
+    };
+    $assertPrimaryType('fresh_orders_discovery', '', ['from' => '2026-08-20 00:00:00', 'to' => '2026-08-20 00:01:00'], 'FRESH_NOT_SKIPPED_AS_PRIMARY');
+    $assertPrimaryType('order_exact', '999991', ['order_id' => '999991'], 'ORDER_EXACT_NOT_SKIPPED_AS_PRIMARY');
+
+    $resetBilling();
+    $dueSource = $seedFinancial(101, 1, 'KISS_DUE')[0];
+    $futureSource = $seedFinancial(101, 1, 'KISS_FUTURE')[0];
+    $futureBefore = $pdo->prepare('SELECT state,available_at FROM queue_v4_clean_jobs WHERE resource_id=? LIMIT 1');
+    $futureBefore->execute([(string) $futureSource]);
+    $pdo->prepare('UPDATE queue_v4_clean_jobs SET available_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 HOUR) WHERE resource_id=?')->execute([(string) $futureSource]);
+    $futureBefore->execute([(string) $futureSource]);
+    $futurePointerBefore = $futureBefore->fetch(PDO::FETCH_ASSOC);
+    $transportDue = new BulkBillingFakeTransport();
+    $runBilling($transportDue);
+    $assert(count($transportDue->calls) === 1 && count($transportDue->calls[0]['order_ids']) === 1, 'READY_ONLY_AND_DUE_ONLY');
+    $futureBefore->execute([(string) $futureSource]);
+    $futurePointerAfter = $futureBefore->fetch(PDO::FETCH_ASSOC);
+    $assert(is_array($futurePointerBefore) && is_array($futurePointerAfter) && $futurePointerAfter['state'] === 'ready' && $futurePointerAfter['available_at'] === $futurePointerBefore['available_at'], 'UNSELECTED_POINTER_STATE_UNCHANGED');
 
     $resetBilling();
     $seedFinancial(101, 61, 'A61');
@@ -546,6 +732,17 @@ try {
     $assert((int) $pdo->query('SELECT COUNT(*) FROM api_remote_permits WHERE http_status=429')->fetchColumn() === 1, 'BILLING_429_REMOTE_PERMIT_RECORDED');
     $assert((int) $pdo->query("SELECT COUNT(*) FROM api_rhythm_penalties WHERE reason='http_429' AND blocked_until>=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 29 MINUTE)")->fetchColumn() >= 1, 'BILLING_429_DURABLE_PENALTY');
     $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state="waiting" AND available_at>=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 29 MINUTE)')->fetchColumn() === 60, 'BILLING_429_POINTERS_GE_30M');
+    $cardinality429 = $pdo->query(
+        "SELECT fanout_count,response_item_count,http_status,reached_remote
+           FROM api_request_logs
+          WHERE endpoint_path='/billing/integration/group/ML/order/details'
+          ORDER BY id DESC LIMIT 1"
+    )->fetch(PDO::FETCH_ASSOC);
+    $assert(is_array($cardinality429)
+        && (int) $cardinality429['fanout_count'] === 60
+        && (int) $cardinality429['response_item_count'] === 0
+        && (int) $cardinality429['http_status'] === 429
+        && (int) $cardinality429['reached_remote'] === 1, '429_SELECTED_DEFER_SAFE');
 
     $resetBilling();
     $seedFinancial(101, 2, 'AMB');

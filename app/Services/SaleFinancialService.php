@@ -227,6 +227,21 @@ final class SaleFinancialService
             return ['summary' => $summary, 'outcomes' => $outcomes];
         }
 
+        // system_logs provides the durable, low-cardinality pre-transport
+        // receipt. It deliberately contains neither source/order identifiers
+        // nor payloads; api_request_logs remains the physical HTTP authority.
+        $batchTrace = bin2hex(random_bytes(12));
+        $selectedSourcesCount = count($remote);
+        $externalOrderIdsCount = count($allExternalOrderIds);
+        Logger::write('info', 'billing_batch_prepared', [
+            'batch_trace' => $batchTrace,
+            'company_id' => $companyId,
+            'meli_account_id' => $accountId,
+            'selected_sources_count' => $selectedSourcesCount,
+            'external_order_ids_count' => $externalOrderIdsCount,
+            'bulk' => $selectedSourcesCount > 1,
+        ]);
+
         $api = ($this->clientFactory)((int) $accountId);
         try {
             $response = $api->get(self::ENDPOINT, ['order_ids' => implode(',', $allExternalOrderIds)], [
@@ -236,6 +251,9 @@ final class SaleFinancialService
                 'estimated_total' => count($allExternalOrderIds),
                 'response_count_strategy' => 'billing_orders',
                 'expected_resource_ids' => implode(',', $allExternalOrderIds),
+                // Persisted by the existing API telemetry authority after a
+                // known remote response; it is only a cardinality, never IDs.
+                'fanout_count' => $selectedSourcesCount,
             ]);
         } catch (ApiRhythmDeferredException $error) {
             foreach ($remote as $candidate) {
@@ -244,6 +262,20 @@ final class SaleFinancialService
                     SafeErrorPresenter::message($error, 'Billing continuará en su próxima oportunidad segura.'),
                     $error->nextSafeAt
                 );
+            }
+            $known = $api->lastResponseMetadata();
+            if (is_array($known) && (int) ($known['status'] ?? 0) > 0) {
+                Logger::write('info', 'billing_batch_response', [
+                    'batch_trace' => $batchTrace,
+                    'http_status' => (int) $known['status'],
+                    'request_id' => (string) ($known['request_id'] ?? ''),
+                    'selected_sources_count' => $selectedSourcesCount,
+                    'external_order_ids_count' => $externalOrderIdsCount,
+                    'response_item_count' => (int) ($known['response_item_count'] ?? 0),
+                    'completed_count' => 0,
+                    'waiting_count' => count($remote),
+                    'review_count' => 0,
+                ]);
             }
             throw $error;
         } catch (ApiBudgetExhaustedException $error) {
@@ -289,9 +321,23 @@ final class SaleFinancialService
                 $summary['deferred']++;
             }
             $summary['stop_reason'] = 'billing_batch_ambiguous';
+            Logger::write('info', 'billing_batch_response', [
+                'batch_trace' => $batchTrace,
+                'http_status' => $httpStatus,
+                'request_id' => (string) ($metadata['request_id'] ?? ''),
+                'selected_sources_count' => $selectedSourcesCount,
+                'external_order_ids_count' => $externalOrderIdsCount,
+                'response_item_count' => (int) ($metadata['response_item_count'] ?? 0),
+                'completed_count' => 0,
+                'waiting_count' => count($remote),
+                'review_count' => 0,
+            ]);
             return ['summary' => $summary, 'outcomes' => $outcomes];
         }
 
+        $completedCount = 0;
+        $waitingCount = 0;
+        $reviewCount = 0;
         foreach ($remote as $candidate) {
             $candidateExternalIds = array_fill_keys(
                 array_map('strval', $candidate['external_order_ids']),
@@ -314,7 +360,24 @@ final class SaleFinancialService
                 (int) $candidate['job']['meli_account_id'],
             );
             $this->summarizeTerminal($summary, $result['status'] === 'reconciled' ? 'complete' : $result['status']);
+            match ((string) ($outcomes[(int) $candidate['job']['id']]['state'] ?? '')) {
+                'completed' => $completedCount++,
+                'waiting' => $waitingCount++,
+                'review' => $reviewCount++,
+                default => null,
+            };
         }
+        Logger::write('info', 'billing_batch_response', [
+            'batch_trace' => $batchTrace,
+            'http_status' => $httpStatus,
+            'request_id' => (string) ($metadata['request_id'] ?? ''),
+            'selected_sources_count' => $selectedSourcesCount,
+            'external_order_ids_count' => $externalOrderIdsCount,
+            'response_item_count' => (int) ($metadata['response_item_count'] ?? 0),
+            'completed_count' => $completedCount,
+            'waiting_count' => $waitingCount,
+            'review_count' => $reviewCount,
+        ]);
         return ['summary' => $summary, 'outcomes' => $outcomes];
     }
 

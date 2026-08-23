@@ -1,16 +1,16 @@
 {
     "product": "erp-meli",
-    "version": "2.39.18",
-    "build_id": "erp-meli-2.39.18-versioned-23917-hotfix-rc1-20260822",
+    "version": "2.39.19",
+    "build_id": "erp-meli-2.39.19-billing-throughput-kiss-rc1-20260822",
     "built_at": "2026-08-22T12:00:00Z",
     "minimum_migration": "299_queue_v4_domain_exact_admission_2_39_3.sql",
     "publication_policy": {
         "base_commit": "28bd74ecd0b528aaad2ffa3af11114dfbff5737c",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 965,
-        "component_count": 964,
-        "paths_sha256": "d7162a3e3a77d26ce1dd0a9ce214fa171623e6fa0d79dc16f17129e781c4788f",
-        "dependency_registry_sha256": "a639299299d55e68e9cc2f02cb39f5aeb487709fad329a10c69b98d17f308fb4",
+        "package_file_count": 966,
+        "component_count": 965,
+        "paths_sha256": "727ad6dd81c91c789b2a7dffe3c1eae5d737a860024ecb8c7c556f62abfff675",
+        "dependency_registry_sha256": "a2eb7292f761ac80cbdd4fc0f44f4a5e36fdd3d3a32b61d8c2819f2bb2c7f82e",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -24,8 +24,8 @@
         },
         "runtime_version": {
             "path": "VERSION",
-            "sha256": "5ab627b68d21887164313e6002c1b6d8903030d193c73270c03c5d688d893b08",
-            "sha256_lf": "5ab627b68d21887164313e6002c1b6d8903030d193c73270c03c5d688d893b08",
+            "sha256": "33a3d5efb26f1454626beb71c1c692e69df530aa9c2a5e67fb9e19c936a46d45",
+            "sha256_lf": "33a3d5efb26f1454626beb71c1c692e69df530aa9c2a5e67fb9e19c936a46d45",
             "text": true
         },
         "runtime_actualizar_php": {
@@ -1188,8 +1188,8 @@
         },
         "runtime_app_queuev4clean_queuev4cleanrepository_php": {
             "path": "app/QueueV4Clean/QueueV4CleanRepository.php",
-            "sha256": "8d8fa0f1fbdb2dcb1cf076a618e7dc9b4e8fdaf5b6e842f09b70508771ba1d08",
-            "sha256_lf": "8d8fa0f1fbdb2dcb1cf076a618e7dc9b4e8fdaf5b6e842f09b70508771ba1d08",
+            "sha256": "6024658f78636dac191156ada9f2eda7ae3855bee9ed25d356a30766f700f833",
+            "sha256_lf": "6024658f78636dac191156ada9f2eda7ae3855bee9ed25d356a30766f700f833",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleanreviewservice_php": {
@@ -2454,8 +2454,8 @@
         },
         "runtime_app_services_managedruntimepublicationpolicy_php": {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "396d5dccf89aaef302d48812753c7973f61629fee57408fe3f5bae82efa498da",
-            "sha256_lf": "396d5dccf89aaef302d48812753c7973f61629fee57408fe3f5bae82efa498da",
+            "sha256": "939fde9489a4d94309ee80311f5b3f980f87052c9253098d99b497c7d779b459",
+            "sha256_lf": "939fde9489a4d94309ee80311f5b3f980f87052c9253098d99b497c7d779b459",
             "text": true
         },
         "runtime_app_services_manualcampaignadapter_php": {
@@ -2568,8 +2568,8 @@
         },
         "runtime_app_services_meliapiclient_php": {
             "path": "app/Services/MeliApiClient.php",
-            "sha256": "5c628c465b779ef238f875bae27b775a79344329a9f66b075b61b2b58ba47a9b",
-            "sha256_lf": "5c628c465b779ef238f875bae27b775a79344329a9f66b075b61b2b58ba47a9b",
+            "sha256": "d1d99237bfda73915d1441e4ac66912651b7b6bc6daaeaa27503e961f5600a89",
+            "sha256_lf": "d1d99237bfda73915d1441e4ac66912651b7b6bc6daaeaa27503e961f5600a89",
             "text": true
         },
         "runtime_app_services_meliapiexception_php": {
@@ -3120,8 +3120,8 @@
         },
         "runtime_app_services_salefinancialservice_php": {
             "path": "app/Services/SaleFinancialService.php",
-            "sha256": "f161e73d1c7752035b9b768d943907b2494266e00572d389c17d2a48e01cbebc",
-            "sha256_lf": "f161e73d1c7752035b9b768d943907b2494266e00572d389c17d2a48e01cbebc",
+            "sha256": "69cad34595d56359c3484e80691eec9d691c012f3a8808ab6bfd5fa865daa972",
+            "sha256_lf": "69cad34595d56359c3484e80691eec9d691c012f3a8808ab6bfd5fa865daa972",
             "text": true
         },
         "runtime_app_services_salefinancialstateservice_php": {
@@ -5378,6 +5378,12 @@
             "path": "resources/release/managed-runtime-dependencies-2.39.18.json",
             "sha256": "a639299299d55e68e9cc2f02cb39f5aeb487709fad329a10c69b98d17f308fb4",
             "sha256_lf": "a639299299d55e68e9cc2f02cb39f5aeb487709fad329a10c69b98d17f308fb4",
+            "text": true
+        },
+        "runtime_resources_release_managed_runtime_dependencies_2_39_19_json": {
+            "path": "resources/release/managed-runtime-dependencies-2.39.19.json",
+            "sha256": "a2eb7292f761ac80cbdd4fc0f44f4a5e36fdd3d3a32b61d8c2819f2bb2c7f82e",
+            "sha256_lf": "a2eb7292f761ac80cbdd4fc0f44f4a5e36fdd3d3a32b61d8c2819f2bb2c7f82e",
             "text": true
         },
         "runtime_resources_release_managed_runtime_dependencies_2_39_2_json": {

@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
     "authority_id": "billing-throughput-kiss-release-2.39.19-runtime-dependencies",
-    "runtime_manifest_paths_sha256": "d7162a3e3a77d26ce1dd0a9ce214fa171623e6fa0d79dc16f17129e781c4788f",
+    "runtime_manifest_paths_sha256": "ebdc7bedf55c251a40dc1fe2538131f0e6f0f659dcce61392a34902026d0eae1",
     "coverage_base_commit": "28bd74ecd0b528aaad2ffa3af11114dfbff5737c",
     "classifications": {
         "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

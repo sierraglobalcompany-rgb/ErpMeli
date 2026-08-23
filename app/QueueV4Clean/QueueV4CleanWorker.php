@@ -29,6 +29,14 @@ final class QueueV4CleanWorker
 {
     public const DEFAULT_MAX_JOBS = 15;
     public const HARD_MAX_JOBS = 15;
+    /**
+     * A runnable scan is deliberately capped at the same cardinality as one
+     * Billing request.  It lets a short prefix of local-only finance rows get
+     * their normal safe deferral without turning a worker turn into a table
+     * scan.
+     */
+    public const MAX_SCAN_ROWS = 60;
+    public const MAX_SCAN_TIME_MS = 1000;
 
     /** @var \Closure(int):MeliReadClientInterface */
     private \Closure $clientFactory;
@@ -40,6 +48,17 @@ final class QueueV4CleanWorker
     private ?\Closure $domainHandler;
     /** @var \Closure():SaleFinancialService */
     private \Closure $financialFactory;
+
+    /** @var array{scanned:int,claimed:int,effective:int,completed:int,deferred:int,local_deferred:int,remote_deferred:int} */
+    private array $lastMetrics = [
+        'scanned' => 0,
+        'claimed' => 0,
+        'effective' => 0,
+        'completed' => 0,
+        'deferred' => 0,
+        'local_deferred' => 0,
+        'remote_deferred' => 0,
+    ];
 
     /**
      * @param null|callable(int):MeliReadClientInterface $clientFactory
@@ -70,31 +89,43 @@ final class QueueV4CleanWorker
             : static fn (): SaleFinancialService => new SaleFinancialService();
     }
 
-    /** @return array{claimed:int,completed:int,deferred:int} */
+    /** @return array{claimed:int,completed:int,deferred:int} Legacy result contract; see lastMetrics(). */
     public function run(string $launcher, int $maxJobs = self::DEFAULT_MAX_JOBS, int $runtimeSeconds = 45): array
     {
+        $ownsDeadline = !CronDeadlineContext::active();
+        if ($ownsDeadline) {
+            CronDeadlineContext::start($runtimeSeconds, max(1, $runtimeSeconds - 5), 8, 3);
+        }
         if ($maxJobs < 1 || $runtimeSeconds < 5) {
-            return ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
+            if ($ownsDeadline) {
+                CronDeadlineContext::clear();
+            }
+            return $this->emptySummary();
         }
         $control = $this->repository->control();
         if ((string) $control['engine_state'] !== 'ACTIVE') {
-            return ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
+            if ($ownsDeadline) {
+                CronDeadlineContext::clear();
+            }
+            return $this->emptySummary();
         }
         $maxJobs = min(self::HARD_MAX_JOBS, $maxJobs);
-        $deadline = microtime(true) + max(5, min(45, $runtimeSeconds));
         $owner = bin2hex(random_bytes(16));
         $runId = $this->repository->beginRun($launcher, $owner);
-        $claimed = $completed = $deferred = 0;
+        $scanned = $claimed = $effective = $completed = $deferred = $localDeferred = $remoteDeferred = 0;
+        $scanStartedAt = hrtime(true);
         try {
             $this->repository->expireLeases();
             $this->repository->releaseDueWaiting();
-            while ($claimed < $maxJobs
-                && microtime(true) < $deadline - 2.0
+            while ($effective < $maxJobs
+                && $scanned < self::MAX_SCAN_ROWS
+                && $this->scanTimeRemaining($scanStartedAt)
                 && CronDeadlineContext::canAcceptWork(2)) {
                 $job = $this->repository->claim($runId, $owner, 60);
                 if ($job === null) {
                     break;
                 }
+                $scanned++;
                 $claimed++;
                 try {
                     $outcome = $this->handle($job);
@@ -109,6 +140,8 @@ final class QueueV4CleanWorker
                         ),
                     );
                     $deferred++;
+                    $remoteDeferred++;
+                    $effective++;
                     continue;
                 } catch (ApiRhythmDeferredException $error) {
                     $this->repository->deferWithoutAttemptPenalty(
@@ -124,6 +157,8 @@ final class QueueV4CleanWorker
                         );
                     }
                     $deferred++;
+                    $remoteDeferred++;
+                    $effective++;
                     continue;
                 } catch (ApiBudgetExhaustedException $error) {
                     $this->repository->deferWithoutAttemptPenalty(
@@ -133,6 +168,8 @@ final class QueueV4CleanWorker
                         $error->nextSafeAt,
                     );
                     $deferred++;
+                    $remoteDeferred++;
+                    $effective++;
                     continue;
                 } catch (CronDeadlineDeferredException $error) {
                     $this->repository->deferWithoutAttemptPenalty(
@@ -142,6 +179,7 @@ final class QueueV4CleanWorker
                         $error->nextSafeAt,
                     );
                     $deferred++;
+                    $localDeferred++;
                     break;
                 } catch (QueueV4PreTransportDeferredException $error) {
                     $this->repository->deferWithoutAttemptPenalty(
@@ -151,6 +189,8 @@ final class QueueV4CleanWorker
                         $error->nextSafeAt,
                     );
                     $deferred++;
+                    $remoteDeferred++;
+                    $effective++;
                     continue;
                 } catch (RemoteResultUncertainException) {
                     $this->repository->deferWithoutAttemptPenalty(
@@ -160,6 +200,8 @@ final class QueueV4CleanWorker
                         gmdate('Y-m-d H:i:s', time() + 60),
                     );
                     $deferred++;
+                    $remoteDeferred++;
+                    $effective++;
                     continue;
                 } catch (MeliApiException $error) {
                     if ($error->httpStatus === 429) {
@@ -170,14 +212,18 @@ final class QueueV4CleanWorker
                             (new ApiRhythmPolicyService())->conservativeRateLimitNextSafeAt(),
                         );
                         $deferred++;
+                        $remoteDeferred++;
+                        $effective++;
                         continue;
                     }
                     $this->functionalFailure($job, $runId, $error);
                     $deferred++;
+                    $effective++;
                     continue;
                 } catch (RuntimeException $error) {
                     $this->functionalFailure($job, $runId, $error);
                     $deferred++;
+                    $effective++;
                     continue;
                 }
                 if (($outcome['state'] ?? '') === 'waiting') {
@@ -188,6 +234,7 @@ final class QueueV4CleanWorker
                         isset($outcome['next_safe_at']) ? (string) $outcome['next_safe_at'] : null,
                     );
                     $deferred++;
+                    $localDeferred++;
                     continue;
                 }
                 if (($outcome['state'] ?? '') === 'review') {
@@ -197,6 +244,7 @@ final class QueueV4CleanWorker
                         (string) ($outcome['classification'] ?? 'domain_source_review'),
                     );
                     $deferred++;
+                    $effective++;
                     continue;
                 }
                 if (($outcome['state'] ?? '') !== 'completed') {
@@ -204,18 +252,64 @@ final class QueueV4CleanWorker
                 }
                 $this->repository->complete($job, $runId);
                 $completed++;
+                if (($outcome['effective'] ?? true) === true) {
+                    $effective++;
+                }
             }
             $this->repository->finishRun($runId, 'completed');
-            return compact('claimed', 'completed', 'deferred');
+            $this->lastMetrics = [
+                'scanned' => $scanned,
+                'claimed' => $claimed,
+                'effective' => $effective,
+                'completed' => $completed,
+                'deferred' => $deferred,
+                'local_deferred' => $localDeferred,
+                'remote_deferred' => $remoteDeferred,
+            ];
+            return [
+                'claimed' => $claimed,
+                'completed' => $completed,
+                'deferred' => $deferred,
+            ];
         } catch (Throwable $error) {
             $this->repository->finishRun($runId, 'failed');
             throw $error;
+        } finally {
+            if ($ownsDeadline) {
+                CronDeadlineContext::clear();
+            }
         }
+    }
+
+    /** @return array{scanned:int,claimed:int,effective:int,completed:int,deferred:int,local_deferred:int,remote_deferred:int} */
+    private function emptySummary(): array
+    {
+        $this->lastMetrics = [
+            'scanned' => 0,
+            'claimed' => 0,
+            'effective' => 0,
+            'completed' => 0,
+            'deferred' => 0,
+            'local_deferred' => 0,
+            'remote_deferred' => 0,
+        ];
+        return ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
+    }
+
+    /** @return array{scanned:int,claimed:int,effective:int,completed:int,deferred:int,local_deferred:int,remote_deferred:int} */
+    public function lastMetrics(): array
+    {
+        return $this->lastMetrics;
+    }
+
+    private function scanTimeRemaining(int $startedAtNanoseconds): bool
+    {
+        return (hrtime(true) - $startedAtNanoseconds) < self::MAX_SCAN_TIME_MS * 1_000_000;
     }
 
     /**
      * @param array<string,mixed> $job
-     * @return array{state:string,classification?:string,next_safe_at?:?string}
+     * @return array{state:string,classification?:string,next_safe_at?:?string,effective?:bool}
      */
     private function handle(array $job): array
     {
@@ -335,7 +429,7 @@ final class QueueV4CleanWorker
     /**
      * @param array<string,mixed> $job
      * @param array<string,mixed> $payload
-     * @return array{state:string,classification?:string,next_safe_at?:?string}
+     * @return array{state:string,classification?:string,next_safe_at?:?string,effective?:bool}
      */
     private function handleDomainExact(array $job, int $companyId, int $accountId, array $payload): array
     {
@@ -358,7 +452,7 @@ final class QueueV4CleanWorker
         }
         $before = $this->domainOutcome($capability, $source);
         if ($before['state'] !== 'waiting') {
-            return $before;
+            return $before + ['effective' => false];
         }
 
         $batchSourceIds = $capability === 'financial_reconciliation'

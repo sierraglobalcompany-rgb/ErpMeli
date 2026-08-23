@@ -27,7 +27,7 @@ $assert(str_contains($health, 'directIncidentFallbackSafe') && str_contains($hea
 $assert(str_contains($health, "'degraded_direct'") && str_contains($health, 'min(50') && str_contains($health, 'LIMIT 500'), 'direct_fallback_not_explicitly_bounded');
 $assert(str_contains($health, 'SQL_CALC_FOUND_ROWS ') && str_contains($health, 'count($rows)'), 'direct_fallback_must_not_count_unbounded_groups');
 $assert(str_contains($controller, 'no está al día') && str_contains($controller, 'No se mostrará como vacío'), 'stale_incident_catalogue_message_missing');
-$assert(strpos($scheduler, 'QueueV4CleanMaintenanceService())->run(200)') < strpos($scheduler, 'QueueV4CleanWorker($this->pdo, $repository))->run'), 'incident_materializer_can_be_starved_by_worker');
+$assert(strpos($scheduler, 'QueueV4CleanMaintenanceService())->run(200)') < strpos($scheduler, '$workerService->run'), 'incident_materializer_can_be_starved_by_worker');
 $assert(str_contains($diagnostic, 'SET SESSION TRANSACTION READ ONLY') && str_contains($diagnostic, 'production_mutations'), 'read_only_materializer_diagnostic_missing');
 $assert(str_contains($diagnostic, 'diagnose($pdo)'), 'diagnostic_must_use_the_read_only_connection');
 $assert(str_contains((string) file_get_contents($root . '/app/Services/ApiIncidentMaterializerService.php'), 'SAVEPOINT api_incident_row'), 'materializer_row_isolation_missing');

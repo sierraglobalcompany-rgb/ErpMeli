@@ -523,7 +523,9 @@ try {
     $pdo->exec("INSERT INTO order_financial_recalc_jobs(company_id,meli_account_id,mode,source_type,status) VALUES (10,{$accountId},'repaired','historical','pending')");
     $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs')->fetchColumn() === $historicalBefore, 'historical_backlog_auto_admitted');
 
-    // Isolated worker mapping: complete/waiting/review and FIFO, bounded to three claims.
+    // Isolated worker mapping: complete/waiting/review and FIFO. K1 bounds
+    // effective work, so a local waiting result may be scanned without
+    // consuming the three effective-work slots.
     $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
     $pdo->exec('TRUNCATE TABLE queue_v4_clean_attempts');
     $pdo->exec('TRUNCATE TABLE queue_v4_clean_runs');
@@ -573,14 +575,15 @@ try {
     };
     QueueV4CleanCycleBudget::start(3);
     try {
-        $workerResult = (new QueueV4CleanWorker($pdo, new QueueV4CleanRepository($pdo), null, null, null, $domainHandler))
-            ->run('test', 3, 10);
+        $workerForEffectiveBudget = new QueueV4CleanWorker($pdo, new QueueV4CleanRepository($pdo), null, null, null, $domainHandler);
+        $workerResult = $workerForEffectiveBudget->run('test', 3, 10);
+        $workerMetrics = $workerForEffectiveBudget->lastMetrics();
         $budget = QueueV4CleanCycleBudget::snapshot();
     } finally {
         QueueV4CleanCycleBudget::clear();
     }
-    $assert($workerResult['claimed'] === 3, 'max_jobs_three_not_preserved');
-    $assert($seen === array_slice($sourceIds, 0, 3), 'domain_fifo_changed');
+    $assert($workerResult['claimed'] === 4 && $workerMetrics['effective'] === 2, 'max_jobs_three_effective_budget_preserved');
+    $assert($seen === $sourceIds, 'domain_fifo_changed');
     $assert($physicalBoundaries === 1 && (int) ($budget['used'] ?? -1) === 1, 'domain_exact_physical_http_not_bounded_to_one');
     $assert((int) $pdo->query(
         "SELECT COUNT(*) FROM queue_v4_clean_transport_events
@@ -591,7 +594,7 @@ try {
     $assert((string) $states[0]['state'] === 'completed', 'source_complete_pointer_not_completed');
     $assert((string) $states[1]['state'] === 'waiting' && (int) $states[1]['attempt_count'] === 0, 'source_pending_pointer_not_nonfailure_waiting');
     $assert((string) $states[2]['state'] === 'review', 'source_error_pointer_not_review');
-    $assert((string) $states[3]['state'] === 'ready', 'worker_exceeded_max_jobs_three');
+    $assert((string) $states[3]['state'] === 'waiting' && (int) $states[3]['attempt_count'] === 0, 'local_waiting_must_not_consume_effective_slot');
 
     // Corrupt/missing pointer mapping is inspected directly because Repository::claim already
     // rejects a mismatched company/account pair before the Worker can receive it.

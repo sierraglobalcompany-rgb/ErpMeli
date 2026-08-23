@@ -469,6 +469,13 @@ try {
         $saleKey = 'P:' . $external;
         $inputVersion = hash('sha256', 'pack-fixture:' . $accountId . ':' . $prefix);
         $pdo->prepare(
+            'INSERT INTO meli_orders(meli_account_id,external_order_id,external_pack_id,date_created,date_created_local,status,total_amount,paid_amount,currency_id)
+             VALUES (?,?,?,UTC_TIMESTAMP(),UTC_TIMESTAMP(),"paid",100,100,"COP")'
+        )->execute([$accountId, 'PACK-ORDER-' . $prefix, $external]);
+        $pdo->prepare(
+            'INSERT INTO meli_packs(meli_account_id,external_pack_id,integrity_status) VALUES (?,?,"incomplete")'
+        )->execute([$accountId, $external]);
+        $pdo->prepare(
             'INSERT INTO sale_financial_state
                 (company_id,meli_account_id,sale_key,external_sale_id,identity_type,input_version,
                  currency_id,commercial_status,logistics_status,provisional_status,official_status)
@@ -596,6 +603,29 @@ try {
     $assert(is_array($packBefore) && is_array($packAfter) && $packAfter['state'] === 'ready', 'PACK_EXCLUDED');
     $assert($packAfter['available_at'] === $packBefore['available_at'], 'UNSELECTED_AVAILABLE_AT_UNCHANGED');
 
+    // K1: max-jobs is an effective-work budget. Three locally deferred packs
+    // must not consume the three useful slots that follow their FIFO prefix.
+    $resetBilling();
+    $k1PackOne = $seedExcludedPack(101, 'K1_PACK_1');
+    $k1PackTwo = $seedExcludedPack(101, 'K1_PACK_2');
+    $k1PackThree = $seedExcludedPack(101, 'K1_PACK_3');
+    $k1Simple = $seedFinancial(101, 1, 'K1_SIMPLE')[0];
+    $transportK1 = new BulkBillingFakeTransport();
+    $repoK1 = new QueueV4CleanRepository($pdo);
+    $serviceK1 = new SaleFinancialService(
+        static fn (int $accountId): MeliApiClient => new MeliApiClient($accountId, $transportK1)
+    );
+    $workerK1 = new QueueV4CleanWorker($pdo, $repoK1, null, null, null, null, static fn (): SaleFinancialService => $serviceK1);
+    $summaryK1 = $workerK1->run('test', 3, 45);
+    $metricsK1 = $workerK1->lastMetrics();
+    $assert(count($transportK1->calls) === 1 && count($transportK1->calls[0]['order_ids']) === 1, 'K1_PACK_PREFIX_REACHES_SIMPLE');
+    $assert((int) ($summaryK1['claimed'] ?? 0) === 4 && (int) ($metricsK1['scanned'] ?? 0) === 4, 'K1_SCANNED_LOCAL_PACK_PREFIX');
+    $assert((int) ($metricsK1['effective'] ?? 0) === 1, 'K1_EFFECTIVE_WORK_COUNTS_ONLY_REMOTE_CANDIDATE');
+    $assert((int) ($metricsK1['local_deferred'] ?? 0) === 3, 'K1_LOCAL_DEFERRED_METRIC');
+    $assert((int) ($metricsK1['remote_deferred'] ?? 0) === 0, 'K1_REMOTE_DEFERRED_METRIC');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $k1Simple . ' AND status="complete"')->fetchColumn() === 1, 'K1_SIMPLE_COMPLETED');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id IN (' . (int) $k1PackOne . ',' . (int) $k1PackTwo . ',' . (int) $k1PackThree . ') AND state="waiting"')->fetchColumn() === 3, 'K1_PACKS_SAFELY_DEFERRED');
+
     $resetBilling();
     $skipPrimary = $seedFinancial(101, 1, 'SKIP_PRIMARY')[0];
     $skipPack = $seedExcludedPack(101, 'SKIP_PACK');
@@ -674,9 +704,18 @@ try {
         $repo = new QueueV4CleanRepository($pdo);
         $repo->enqueue(10, 101, $type, $resourceId, 'kiss-primary-' . $label, $payload, 3);
         $seedFinancial(101, 1, 'KISS_AFTER_' . $label);
-        $runId = $repo->beginRun('test', 'kiss-' . $label);
-        $claimed = $repo->claim($runId, 'kiss-' . $label, 60);
-        $assert(is_array($claimed) && (string) $claimed['job_type'] === $type, $label);
+        $seen = [];
+        $worker = new QueueV4CleanWorker(
+            $pdo,
+            $repo,
+            null,
+            null,
+            static function (array $job) use (&$seen): void {
+                $seen[] = (string) $job['job_type'];
+            },
+        );
+        $worker->run('test', 1, 45);
+        $assert($seen === [$type] && (int) ($worker->lastMetrics()['effective'] ?? 0) === 1, $label);
     };
     $assertPrimaryType('fresh_orders_discovery', '', ['from' => '2026-08-20 00:00:00', 'to' => '2026-08-20 00:01:00'], 'FRESH_NOT_SKIPPED_AS_PRIMARY');
     $assertPrimaryType('order_exact', '999991', ['order_id' => '999991'], 'ORDER_EXACT_NOT_SKIPPED_AS_PRIMARY');
@@ -804,6 +843,7 @@ try {
     $finance = $read('app/Services/SaleFinancialService.php');
     $scheduler = $read('app/QueueV4Clean/QueueV4CleanScheduler.php');
     $cycleBudget = $read('app/QueueV4Clean/QueueV4CleanCycleBudget.php');
+    $deadlineContext = $read('app/Services/CronDeadlineContext.php');
     $suite = $read('tests/current_release_suite_2399.php');
 
     $freshBlockStart = strpos($worker, "if (\$type === 'fresh_orders_discovery')");
@@ -820,6 +860,13 @@ try {
     $assert(str_contains($orderSync, 'OrderInventoryService') && str_contains($orderSync, 'project($companyId'), 'snapshot_inventory_projection_missing');
 
     $assert(str_contains($finance, 'BILLING_MAX_ORDER_IDS = 60'), 'billing_batch_limit_missing');
+    $assert(!str_contains($worker, '$deadline = microtime(true)'), 'K1_WORKER_MUST_NOT_CREATE_SECOND_DEADLINE');
+    $assert(str_contains($worker, 'CronDeadlineContext::start') && str_contains($worker, 'CronDeadlineContext::clear'), 'K1_WORKER_CLOCK_CONTEXT_MISSING');
+    $assert(str_contains($scheduler, 'CronDeadlineContext::deadline()') && !str_contains($scheduler, '$startedAt +'), 'K1_SCHEDULER_MUST_USE_SHARED_CLOCK');
+    $assert(str_contains($worker, 'MAX_SCAN_ROWS = 60') && str_contains($worker, 'MAX_SCAN_TIME_MS = 1000'), 'K1_BOUNDED_RUNNABLE_SCAN_MISSING');
+    $assert(str_contains($worker, "'effective' => \$effective") && str_contains($worker, "'local_deferred' => \$localDeferred"), 'K1_EFFECTIVE_WORK_METRICS_MISSING');
+    $assert(str_contains($finance, 'CronDeadlineContext::assertCanStartRemote(3.0)') && str_contains($finance, 'CronDeadlineDeferredException $error'), 'K1_BILLING_DEADLINE_FENCES_MISSING');
+    $assert(str_contains($deadlineContext, 'CronExecutionWindow') && str_contains($deadlineContext, 'assertCanStartRemote'), 'K1_SINGLE_CLOCK_AUTHORITY_MISSING');
     $assert(str_contains($repository, 'function contiguousFinancialReconciliationSourceIds'), 'billing_queue_owned_candidate_claim_missing');
     $assert(str_contains($repository, 'FROM queue_v4_clean_jobs q'), 'billing_candidates_not_queue_v4_owned');
     $assert(str_contains($repository, 'ORDER BY q.available_at ASC,q.id ASC'), 'billing_fifo_order_missing');

@@ -153,6 +153,11 @@ final class SaleFinancialService
             return ['summary' => $summary, 'outcomes' => $outcomes];
         }
 
+        // A domain batch must not claim source leases or build a 60-order
+        // request after the shared CLI window has entered its closing reserve.
+        // QueueV4CleanDispatchFence repeats this immediately before cURL.
+        CronDeadlineContext::assertCanStartRemote(3.0);
+
         $jobs = [];
         foreach (array_slice($sourceIds, 0, self::BILLING_MAX_ORDER_IDS) as $sourceId) {
             $job = $this->claimSpecificBillingJob($sourceId, $companyId, $accountId);
@@ -244,6 +249,9 @@ final class SaleFinancialService
 
         $api = ($this->clientFactory)((int) $accountId);
         try {
+            // This is the last boundary before a physical permit/transport.
+            // The dispatch fence is deliberately still the final authority.
+            CronDeadlineContext::assertCanStartRemote(2.0);
             $response = $api->get(self::ENDPOINT, ['order_ids' => implode(',', $allExternalOrderIds)], [
                 'job_type' => 'billing',
                 'source' => MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT,
@@ -283,6 +291,15 @@ final class SaleFinancialService
                 $this->deferWithoutAttemptPenalty(
                     $candidate['job'],
                     SafeErrorPresenter::message($error, 'Billing continuará cuando exista presupuesto API.'),
+                    $error->nextSafeAt
+                );
+            }
+            throw $error;
+        } catch (CronDeadlineDeferredException $error) {
+            foreach ($remote as $candidate) {
+                $this->deferWithoutAttemptPenalty(
+                    $candidate['job'],
+                    'La ventana segura del Cron terminó antes de consultar Billing; se reintentará sin penalización.',
                     $error->nextSafeAt
                 );
             }

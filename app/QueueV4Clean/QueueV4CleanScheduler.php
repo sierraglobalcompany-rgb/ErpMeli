@@ -19,9 +19,27 @@ final class QueueV4CleanScheduler
     /** @return array<string,mixed> */
     public function run(int $maxJobs = QueueV4CleanWorker::DEFAULT_MAX_JOBS, int $runtimeSeconds = 45): array
     {
+        $ownsDeadline = !CronDeadlineContext::active();
+        if ($ownsDeadline) {
+            CronDeadlineContext::start($runtimeSeconds, max(1, $runtimeSeconds - 5), 8, 3);
+        }
+        try {
+            return $this->runWithinExecutionWindow($maxJobs, $runtimeSeconds);
+        } finally {
+            if ($ownsDeadline) {
+                CronDeadlineContext::clear();
+            }
+        }
+    }
+
+    /** @return array<string,mixed> */
+    private function runWithinExecutionWindow(int $maxJobs, int $runtimeSeconds): array
+    {
         QueueV4CleanOAuthStageContext::reset();
-        $startedAt = microtime(true);
-        $deadline = $startedAt + max(5, min(45, $runtimeSeconds));
+        $deadline = CronDeadlineContext::deadline();
+        if ($deadline === null) {
+            throw new \RuntimeException('queue_v4_clean_execution_window_missing');
+        }
         $repository = new QueueV4CleanRepository($this->pdo);
         $control = $repository->control();
         if ((string) $control['engine_state'] !== 'ACTIVE'
@@ -80,26 +98,30 @@ final class QueueV4CleanScheduler
             // This bounded local-only step must run before the worker can use
             // the remaining wall clock. Otherwise a busy remote queue can
             // leave the browser incident catalogue permanently stale.
-            $maintenance = microtime(true) < $deadline - 1.0
+            $maintenance = CronDeadlineContext::canAcceptWork(1)
                 ? (new QueueV4CleanMaintenanceService())->run(200)
                 : ['materialized' => 0, 'retained' => 0, 'warnings' => 0, 'deferred' => true];
             $capacity = self::functionalCapacity($maxJobs, $oauthClaimed, $salesClaimed, 0);
             $availableWorkerSlots = $capacity['worker_slots'];
-            $remaining = min(45, (int) floor($deadline - microtime(true)));
+            $remaining = max(0, min(45, (int) floor(CronDeadlineContext::remainingSeconds())));
             // Reserve a small local-only window for the incident read model.
             // HTTP/business work remains bounded by the shared cycle budget.
             $workerRuntime = $remaining >= 8 ? $remaining - 3 : $remaining;
+            $workerService = new QueueV4CleanWorker($this->pdo, $repository);
             $worker = $remaining >= 5 && $availableWorkerSlots > 0
-                ? (new QueueV4CleanWorker($this->pdo, $repository))->run('scheduler', $availableWorkerSlots, $workerRuntime)
+                ? $workerService->run('scheduler', $availableWorkerSlots, $workerRuntime)
                 : ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
+            $workerMetrics = $workerService->lastMetrics();
             $workerClaimed = (int) ($worker['claimed'] ?? 0);
-            $capacity = self::functionalCapacity($maxJobs, $oauthClaimed, $salesClaimed, $workerClaimed);
+            $workerEffective = (int) ($workerMetrics['effective'] ?? $workerClaimed);
+            $capacity = self::functionalCapacity($maxJobs, $oauthClaimed, $salesClaimed, $workerEffective);
             $salesRepair = $capacity['remaining_slots'] > 0 && CronDeadlineContext::canAcceptWork(3)
                 ? (new SalesAuditExactRepairService())->processDue(1)
                 : ['processed' => 0, 'jobs' => 0, 'status' => 'deferred'];
             $repairClaimed = (int) ($salesRepair['jobs'] ?? 0);
             $claimedTotal = $oauthClaimed + $salesClaimed + $workerClaimed + $repairClaimed;
-            if ($repairClaimed > 1 || $claimedTotal > $capacity['limit']) {
+            $effectiveTotal = $oauthClaimed + $salesClaimed + $workerEffective + $repairClaimed;
+            if ($repairClaimed > 1 || $effectiveTotal > $capacity['limit']) {
                 throw new \RuntimeException('queue_v4_clean_functional_capacity_exceeded');
             }
             $this->pdo->exec(
@@ -115,7 +137,9 @@ final class QueueV4CleanScheduler
                 'sales_repair' => $salesRepair,
                 'producer' => $producer,
                 'worker' => $worker,
+                'worker_metrics' => $workerMetrics,
                 'claimed_total' => $claimedTotal,
+                'effective_total' => $effectiveTotal,
                 'http_budget' => QueueV4CleanCycleBudget::snapshot(),
             ];
         } finally {

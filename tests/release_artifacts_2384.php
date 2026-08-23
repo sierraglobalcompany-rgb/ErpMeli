@@ -497,6 +497,19 @@ try {
         ];
         $assert(($inventory['base_commit'] ?? null) === '28bd74ecd0b528aaad2ffa3af11114dfbff5737c', 'overlay_base_not_installed_23917');
         $assert(count($overlayRows) === count($requiredOverlayPaths), 'overlay_redundant_or_missing_paths');
+    } elseif ($targetVersion === '2.39.19') {
+        $requiredOverlayPaths = [
+            'VERSION',
+            'app/QueueV4Clean/QueueV4CleanRepository.php',
+            'app/Services/ManagedRuntimePublicationPolicy.php',
+            'app/Services/MeliApiClient.php',
+            'app/Services/SaleFinancialService.php',
+            'resources/release/managed-runtime-dependencies-2.39.19.json',
+            'resources/release/updater-authority-2.39.19.json',
+            'resources/runtime-manifest.json',
+        ];
+        $assert(($inventory['base_commit'] ?? null) === 'c4db6be5e41213a52f476dff03f099b10fae6624', 'overlay_base_not_23918_authority');
+        $assert(count($overlayRows) === count($requiredOverlayPaths), 'overlay_redundant_or_missing_paths');
     }
     foreach (array_values(array_unique($requiredOverlayPaths)) as $requiredOverlay) {
         $assert(isset($overlay[$requiredOverlay]), 'required_overlay_path_missing:' . $requiredOverlay);

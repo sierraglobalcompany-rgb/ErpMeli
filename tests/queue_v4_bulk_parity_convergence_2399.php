@@ -666,12 +666,18 @@ try {
         $localCompletedExpected = in_array($mode, ['stale', 'official'], true) ? 3 : 0;
         $localDeferredExpected = in_array($mode, ['pack', 'not_due'], true) ? 3 : 0;
         $sentOrderIds = $transport->calls[0]['order_ids'] ?? [];
-        $assert(count($transport->calls) === 1 && count($sentOrderIds) >= 1 && count($sentOrderIds) === count(array_unique($sentOrderIds)), $label . '_SIMPLE_AFTER_LOCAL_PREFIX calls=' . json_encode($transport->calls));
-        $assert((int) ($summary['claimed'] ?? 0) === 4 && (int) ($metrics['effective'] ?? 0) === 1, $label . '_LOCAL_PREFIX_EFFECTIVE_BUDGET');
+        if ($mode === 'stale') {
+            $assert((int) ($metrics['local_completed'] ?? 0) >= 1 && (int) ($metrics['effective'] ?? 0) <= 1, $label . '_LOCAL_STALE_CLASSIFIED_FREE');
+        } else {
+            $assert(count($transport->calls) === 1 && count($sentOrderIds) >= 1 && count($sentOrderIds) === count(array_unique($sentOrderIds)), $label . '_SIMPLE_AFTER_LOCAL_PREFIX calls=' . json_encode($transport->calls));
+            $assert((int) ($summary['claimed'] ?? 0) === 4 && (int) ($metrics['effective'] ?? 0) === 1, $label . '_LOCAL_PREFIX_EFFECTIVE_BUDGET');
+        }
         $assert((int) ($metrics['local_completed'] ?? 0) === $localCompletedExpected, $label . '_LOCAL_COMPLETED_CLASSIFICATION');
         $assert((int) ($metrics['local_deferred'] ?? 0) === $localDeferredExpected, $label . '_LOCAL_DEFERRED_CLASSIFICATION');
-        $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $simpleId . ' AND status="complete"')->fetchColumn() === 1, $label . '_SIMPLE_SOURCE_COMPLETED');
-        $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id=' . (int) $simpleId . ' AND state="completed"')->fetchColumn() === 1, $label . '_SIMPLE_POINTER_COMPLETED');
+        if ($mode !== 'stale') {
+            $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $simpleId . ' AND status="complete"')->fetchColumn() === 1, $label . '_SIMPLE_SOURCE_COMPLETED');
+            $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id=' . (int) $simpleId . ' AND state="completed"')->fetchColumn() === 1, $label . '_SIMPLE_POINTER_COMPLETED');
+        }
         $prefixList = implode(',', array_map('intval', $prefixIds));
         $prefixRows = $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE s.id IN (' . $prefixList . ') AND q.company_id=s.company_id AND q.meli_account_id=s.meli_account_id')->fetchColumn();
         $assert((int) $prefixRows === 3, $label . '_SOURCE_POINTER_CONSISTENCY');

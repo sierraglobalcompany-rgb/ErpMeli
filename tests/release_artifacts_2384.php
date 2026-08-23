@@ -14,6 +14,7 @@ $targetVersion = trim((string) (getenv('ERP_RELEASE_ARTIFACT_VERSION') ?: '2.38.
 $upgradeFrom = trim((string) (getenv('ERP_RELEASE_ARTIFACT_UPGRADE_FROM') ?: '2.38.3'));
 $requiredMigration = trim((string) (getenv('ERP_RELEASE_ARTIFACT_MIGRATION') ?: '296_queue_v4_clean_oauth_control_plane_2_38_3.sql'));
 $forbiddenMigrationPrefix = trim((string) (getenv('ERP_RELEASE_ARTIFACT_FORBIDDEN_MIGRATION_PREFIX') ?: '297_'));
+$overlayLabel = trim((string) (getenv('ERP_RELEASE_ARTIFACT_OVERLAY_LABEL') ?: 'FTP_REPAIR_OVERLAY'));
 $directory = $argv[1] ?? '';
 if (!is_dir($directory) || !class_exists(ZipArchive::class)) {
     fwrite(STDERR, 'Release artifacts ' . $targetVersion . ": FAIL arguments\n");
@@ -52,9 +53,9 @@ $readZip = static function (string $path): array {
 try {
     $version = ManagedRuntimePublicationPolicy::VERSION;
     $fullPath = $directory . '/ERP_MELI_' . $version . '_GIT_EXACT.zip';
-    $overlayPath = $directory . '/ERP_MELI_' . $version . '_FTP_REPAIR_OVERLAY.zip';
+    $overlayPath = $directory . '/ERP_MELI_' . $version . '_' . $overlayLabel . '.zip';
     $updatePath = $directory . '/ERP_MELI_' . $version . '_UPDATE_PACKAGE.erpupd';
-    $inventoryPath = $directory . '/ERP_MELI_' . $version . '_FTP_REPAIR_OVERLAY_INVENTORY.json';
+    $inventoryPath = $directory . '/ERP_MELI_' . $version . '_' . $overlayLabel . '_INVENTORY.json';
     $authorityPath = $directory . '/ERP_MELI_' . $version . '_ARTIFACT_MANIFEST.json';
     $sumsPath = $directory . '/ERP_MELI_' . $version . '_SHA256SUMS.txt';
     foreach ([$fullPath, $overlayPath, $updatePath, $inventoryPath, $authorityPath, $sumsPath] as $path) {

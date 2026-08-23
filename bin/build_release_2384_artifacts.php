@@ -146,6 +146,10 @@ $releaseUpgradeFrom = trim((string) (getenv('ERP_RELEASE_UPGRADE_FROM') ?: '2.38
 $releaseSchema = trim((string) (getenv('ERP_RELEASE_SCHEMA') ?: '296'));
 $releaseMigrationNote = trim((string) (getenv('ERP_RELEASE_MIGRATION_NOTE') ?: 'no se agrega ninguna migración'));
 $releaseInstruction = trim((string) (getenv('ERP_RELEASE_INSTRUCTION') ?: 'Mantenga Cron deshabilitado y ejecute por SSH únicamente jobs/queue_v4_runtime_self_check.php.'));
+$releaseOverlayLabel = trim((string) (getenv('ERP_RELEASE_OVERLAY_LABEL') ?: 'FTP_REPAIR_OVERLAY'));
+if (preg_match('/^[A-Z0-9_]+$/', $releaseOverlayLabel) !== 1) {
+    throw new RuntimeException('release_overlay_label_invalid');
+}
 
 try {
     if (!class_exists(ZipArchive::class)) {
@@ -211,7 +215,7 @@ try {
         throw new RuntimeException('release_timestamp_invalid');
     }
     $fullPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_GIT_EXACT.zip';
-    $overlayPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_FTP_REPAIR_OVERLAY.zip';
+    $overlayPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_' . $releaseOverlayLabel . '.zip';
     $updatePath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_UPDATE_PACKAGE.erpupd';
     release2380Zip($fullPath, $entries, $files, $timestamp);
     release2380Zip($overlayPath, $overlayEntries, $files, $timestamp);
@@ -264,14 +268,14 @@ try {
             'shared/current-release.json',
         ],
     ];
-    $inventoryPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_FTP_REPAIR_OVERLAY_INVENTORY.json';
+    $inventoryPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_' . $releaseOverlayLabel . '_INVENTORY.json';
     file_put_contents($inventoryPath, release2380Json($overlayInventory));
 
     $instructionPath = $output . DIRECTORY_SEPARATOR . 'ERP_MELI_' . $version . '_FTP_INSTRUCTIONS.md';
     file_put_contents($instructionPath, implode("\n", [
         '# ERP MELI ' . $version . ' — instalación manual',
         '',
-        '1. Extraiga ERP_MELI_' . $version . '_FTP_REPAIR_OVERLAY.zip localmente.',
+        '1. Extraiga ERP_MELI_' . $version . '_' . $releaseOverlayLabel . '.zip localmente.',
         '2. Suba únicamente los archivos incluidos sobre la carpeta existente erp-meli, conservando rutas.',
         '3. Nunca sobrescriba config.env, shared/config.env, storage, OAuth, pausas, logs o backups.',
         '4. Abra actualizar.php y complete ' . $releaseUpgradeFrom . ' → ' . $version . '; ' . $releaseMigrationNote . '.',

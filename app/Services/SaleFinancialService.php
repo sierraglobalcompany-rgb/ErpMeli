@@ -142,7 +142,7 @@ final class SaleFinancialService
      * reading or mutating scheduler state.
      *
      * @param list<int> $sourceIds
-     * @return array{summary:array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string},outcomes:array<int,array{state:string,classification?:string,next_safe_at?:?string}>}
+     * @return array{summary:array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string},outcomes:array<int,array{state:string,classification?:string,next_safe_at?:?string,effective?:bool,execution_class?:string}>}
      */
     public function processDomainExactBatch(array $sourceIds, int $companyId, int $accountId): array
     {
@@ -173,18 +173,18 @@ final class SaleFinancialService
 
         if (count($jobs) === 1 && str_starts_with((string) ($jobs[0]['safe_message'] ?? ''), 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED')) {
             $result = $this->captureAndReconcile($jobs[0], true, true);
-            $outcomes[(int) $jobs[0]['id']] = $this->sourceOutcome(
+            $outcomes[(int) $jobs[0]['id']] = $this->remoteCandidateOutcome($this->sourceOutcome(
                 (int) $jobs[0]['id'],
                 (int) $jobs[0]['company_id'],
                 (int) $jobs[0]['meli_account_id'],
-            );
+            ));
             $this->summarizeTerminal($summary, $result['status'] === 'reconciled' ? 'complete' : $result['status']);
             return ['summary' => $summary, 'outcomes' => $outcomes];
         }
 
         $remote = [];
         $remaining = self::BILLING_MAX_ORDER_IDS;
-        foreach ($jobs as $job) {
+        foreach ($jobs as $index => $job) {
             $prepared = $this->prepareBillingCandidate($job, true, true);
             $candidateOrderCount = count($prepared['external_order_ids'] ?? []);
             if (($prepared['ready'] ?? false) === true
@@ -195,12 +195,16 @@ final class SaleFinancialService
                 $remaining -= $candidateOrderCount;
                 continue;
             }
+            if ($index > 0) {
+                continue;
+            }
             $this->applyPreparedLocalOutcome($job, $prepared, $summary);
-            $outcomes[(int) $job['id']] = $this->sourceOutcome(
+            $outcomes[(int) $job['id']] = $this->localOnlyOutcome($this->sourceOutcome(
                 (int) $job['id'],
                 (int) $job['company_id'],
                 (int) $job['meli_account_id'],
-            );
+            ), $prepared);
+            return ['summary' => $summary, 'outcomes' => $outcomes];
         }
 
         if ($remote === []) {
@@ -333,6 +337,8 @@ final class SaleFinancialService
                     'state' => 'waiting',
                     'classification' => 'billing_batch_exact_fallback_required',
                     'next_safe_at' => $next,
+                    'effective' => true,
+                    'execution_class' => 'remote_candidate',
                 ];
                 $summary['processed']++;
                 $summary['deferred']++;
@@ -371,11 +377,11 @@ final class SaleFinancialService
                 $metadata,
                 $candidateLines
             );
-            $outcomes[(int) $candidate['job']['id']] = $this->sourceOutcome(
+            $outcomes[(int) $candidate['job']['id']] = $this->remoteCandidateOutcome($this->sourceOutcome(
                 (int) $candidate['job']['id'],
                 (int) $candidate['job']['company_id'],
                 (int) $candidate['job']['meli_account_id'],
-            );
+            ));
             $this->summarizeTerminal($summary, $result['status'] === 'reconciled' ? 'complete' : $result['status']);
             match ((string) ($outcomes[(int) $candidate['job']['id']]['state'] ?? '')) {
                 'completed' => $completedCount++,
@@ -695,7 +701,7 @@ final class SaleFinancialService
     }
 
     /**
-     * @return array{state:string,classification?:string,next_safe_at?:?string}
+     * @return array{state:string,classification?:string,next_safe_at?:?string,effective?:bool,execution_class?:string}
      */
     private function sourceOutcome(int $sourceId, int $companyId, int $accountId): array
     {
@@ -714,16 +720,50 @@ final class SaleFinancialService
         }
         if (in_array($status, ['pending', 'running', 'retry', 'awaiting_remote'], true)) {
             $next = trim((string) ($row['next_run_at'] ?? ''));
+            $isFuture = $next !== '' && strtotime($next . ' UTC') > time();
             return [
                 'state' => 'waiting',
-                'classification' => 'domain_source_waiting:financial_reconciliation',
+                'classification' => ($isFuture ? 'domain_source_not_due:' : 'domain_source_waiting:') . 'financial_reconciliation',
                 'next_safe_at' => $next !== '' ? $next : gmdate('Y-m-d H:i:s', time() + 60),
+                'effective' => !$isFuture,
+                'execution_class' => $isFuture ? 'local_only' : 'remote_candidate',
             ];
         }
         return [
             'state' => 'review',
             'classification' => 'domain_source_' . substr($status !== '' ? $status : 'unknown', 0, 70),
         ];
+    }
+
+    /**
+     * @param array{state:string,classification?:string,next_safe_at?:?string,effective?:bool,execution_class?:string} $outcome
+     * @param array<string,mixed> $prepared
+     * @return array{state:string,classification?:string,next_safe_at?:?string,effective?:bool,execution_class?:string}
+     */
+    private function localOnlyOutcome(array $outcome, array $prepared): array
+    {
+        $status = (string) ($prepared['status'] ?? '');
+        if (($prepared['non_failure'] ?? false) === true) {
+            $outcome['classification'] = 'financial_local_pack_incomplete';
+        } elseif ($status === 'reconciled') {
+            $outcome['classification'] = ($prepared['finalized'] ?? false) === false
+                ? 'financial_local_stale_or_official_complete'
+                : 'financial_local_completed';
+        }
+        $outcome['effective'] = false;
+        $outcome['execution_class'] = 'local_only';
+        return $outcome;
+    }
+
+    /**
+     * @param array{state:string,classification?:string,next_safe_at?:?string,effective?:bool,execution_class?:string} $outcome
+     * @return array{state:string,classification?:string,next_safe_at?:?string,effective?:bool,execution_class?:string}
+     */
+    private function remoteCandidateOutcome(array $outcome): array
+    {
+        $outcome['effective'] = true;
+        $outcome['execution_class'] = 'remote_candidate';
+        return $outcome;
     }
 
     /** @param array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} $summary */

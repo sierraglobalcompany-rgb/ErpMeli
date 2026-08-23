@@ -29,6 +29,8 @@ final class QueueV4CleanWorker
 {
     public const DEFAULT_MAX_JOBS = 15;
     public const HARD_MAX_JOBS = 15;
+    public const MIN_RUNTIME_SECONDS = 5;
+    public const MAX_RUNTIME_SECONDS = 45;
     /**
      * A runnable scan is deliberately capped at the same cardinality as one
      * Billing request.  It lets a short prefix of local-only finance rows get
@@ -49,13 +51,14 @@ final class QueueV4CleanWorker
     /** @var \Closure():SaleFinancialService */
     private \Closure $financialFactory;
 
-    /** @var array{scanned:int,claimed:int,effective:int,completed:int,deferred:int,local_deferred:int,remote_deferred:int} */
+    /** @var array{scanned:int,claimed:int,effective:int,completed:int,deferred:int,local_completed:int,local_deferred:int,remote_deferred:int} */
     private array $lastMetrics = [
         'scanned' => 0,
         'claimed' => 0,
         'effective' => 0,
         'completed' => 0,
         'deferred' => 0,
+        'local_completed' => 0,
         'local_deferred' => 0,
         'remote_deferred' => 0,
     ];
@@ -92,11 +95,12 @@ final class QueueV4CleanWorker
     /** @return array{claimed:int,completed:int,deferred:int} Legacy result contract; see lastMetrics(). */
     public function run(string $launcher, int $maxJobs = self::DEFAULT_MAX_JOBS, int $runtimeSeconds = 45): array
     {
+        $runtimeSeconds = self::normalizeRuntimeSeconds($runtimeSeconds);
         $ownsDeadline = !CronDeadlineContext::active();
         if ($ownsDeadline) {
             CronDeadlineContext::start($runtimeSeconds, max(1, $runtimeSeconds - 5), 8, 3);
         }
-        if ($maxJobs < 1 || $runtimeSeconds < 5) {
+        if ($maxJobs < 1) {
             if ($ownsDeadline) {
                 CronDeadlineContext::clear();
             }
@@ -112,7 +116,7 @@ final class QueueV4CleanWorker
         $maxJobs = min(self::HARD_MAX_JOBS, $maxJobs);
         $owner = bin2hex(random_bytes(16));
         $runId = $this->repository->beginRun($launcher, $owner);
-        $scanned = $claimed = $effective = $completed = $deferred = $localDeferred = $remoteDeferred = 0;
+        $scanned = $claimed = $effective = $completed = $deferred = $localCompleted = $localDeferred = $remoteDeferred = 0;
         $scanStartedAt = hrtime(true);
         try {
             $this->repository->expireLeases();
@@ -227,6 +231,7 @@ final class QueueV4CleanWorker
                     continue;
                 }
                 if (($outcome['state'] ?? '') === 'waiting') {
+                    $isEffective = ($outcome['effective'] ?? true) === true;
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
                         $runId,
@@ -234,7 +239,12 @@ final class QueueV4CleanWorker
                         isset($outcome['next_safe_at']) ? (string) $outcome['next_safe_at'] : null,
                     );
                     $deferred++;
-                    $localDeferred++;
+                    if ($isEffective) {
+                        $remoteDeferred++;
+                        $effective++;
+                    } else {
+                        $localDeferred++;
+                    }
                     continue;
                 }
                 if (($outcome['state'] ?? '') === 'review') {
@@ -254,6 +264,8 @@ final class QueueV4CleanWorker
                 $completed++;
                 if (($outcome['effective'] ?? true) === true) {
                     $effective++;
+                } else {
+                    $localCompleted++;
                 }
             }
             $this->repository->finishRun($runId, 'completed');
@@ -263,6 +275,7 @@ final class QueueV4CleanWorker
                 'effective' => $effective,
                 'completed' => $completed,
                 'deferred' => $deferred,
+                'local_completed' => $localCompleted,
                 'local_deferred' => $localDeferred,
                 'remote_deferred' => $remoteDeferred,
             ];
@@ -281,7 +294,7 @@ final class QueueV4CleanWorker
         }
     }
 
-    /** @return array{scanned:int,claimed:int,effective:int,completed:int,deferred:int,local_deferred:int,remote_deferred:int} */
+    /** @return array{scanned:int,claimed:int,effective:int,completed:int,deferred:int,local_completed:int,local_deferred:int,remote_deferred:int} */
     private function emptySummary(): array
     {
         $this->lastMetrics = [
@@ -290,16 +303,22 @@ final class QueueV4CleanWorker
             'effective' => 0,
             'completed' => 0,
             'deferred' => 0,
+            'local_completed' => 0,
             'local_deferred' => 0,
             'remote_deferred' => 0,
         ];
         return ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
     }
 
-    /** @return array{scanned:int,claimed:int,effective:int,completed:int,deferred:int,local_deferred:int,remote_deferred:int} */
+    /** @return array{scanned:int,claimed:int,effective:int,completed:int,deferred:int,local_completed:int,local_deferred:int,remote_deferred:int} */
     public function lastMetrics(): array
     {
         return $this->lastMetrics;
+    }
+
+    public static function normalizeRuntimeSeconds(int $runtimeSeconds): int
+    {
+        return max(self::MIN_RUNTIME_SECONDS, min(self::MAX_RUNTIME_SECONDS, $runtimeSeconds));
     }
 
     private function scanTimeRemaining(int $startedAtNanoseconds): bool
@@ -309,7 +328,7 @@ final class QueueV4CleanWorker
 
     /**
      * @param array<string,mixed> $job
-     * @return array{state:string,classification?:string,next_safe_at?:?string,effective?:bool}
+     * @return array{state:string,classification?:string,next_safe_at?:?string,effective?:bool,execution_class?:string}
      */
     private function handle(array $job): array
     {
@@ -429,7 +448,7 @@ final class QueueV4CleanWorker
     /**
      * @param array<string,mixed> $job
      * @param array<string,mixed> $payload
-     * @return array{state:string,classification?:string,next_safe_at?:?string,effective?:bool}
+     * @return array{state:string,classification?:string,next_safe_at?:?string,effective?:bool,execution_class?:string}
      */
     private function handleDomainExact(array $job, int $companyId, int $accountId, array $payload): array
     {
@@ -453,6 +472,9 @@ final class QueueV4CleanWorker
         $before = $this->domainOutcome($capability, $source);
         if ($before['state'] !== 'waiting') {
             return $before + ['effective' => false];
+        }
+        if (($before['effective'] ?? true) === false) {
+            return $before;
         }
 
         $batchSourceIds = $capability === 'financial_reconciliation'
@@ -505,13 +527,16 @@ final class QueueV4CleanWorker
                 $batchOutcomes,
                 $sourceId,
             );
+            if (isset($batchOutcomes[$sourceId]) && is_array($batchOutcomes[$sourceId])) {
+                return $batchOutcomes[$sourceId];
+            }
         }
 
         $source = $this->domainSource($capability, $sourceId, $companyId, $accountId);
         if ($source === null) {
             return ['state' => 'review', 'classification' => 'domain_source_missing_after_process'];
         }
-        return $this->domainOutcome($capability, $source);
+        return $this->domainOutcome($capability, $source, true);
     }
 
     /** @return array<string,mixed>|null */
@@ -541,20 +566,27 @@ final class QueueV4CleanWorker
 
     /**
      * @param array<string,mixed> $source
-     * @return array{state:string,classification?:string,next_safe_at?:?string}
+     * @return array{state:string,classification?:string,next_safe_at?:?string,effective?:bool,execution_class?:string}
      */
-    private function domainOutcome(string $capability, array $source): array
+    private function domainOutcome(string $capability, array $source, bool $afterProcessing = false): array
     {
         $status = strtolower(trim((string) ($source['status'] ?? '')));
         if ($status === 'complete') {
-            return ['state' => 'completed'];
+            return [
+                'state' => 'completed',
+                'effective' => $afterProcessing,
+                'execution_class' => $afterProcessing ? 'remote_candidate' : 'local_only',
+            ];
         }
         if (in_array($status, ['pending', 'running', 'retry', 'awaiting_remote'], true)) {
             $next = trim((string) ($source['next_run_at'] ?? ''));
+            $isFuture = $next !== '' && strtotime($next . ' UTC') > time();
             return [
                 'state' => 'waiting',
-                'classification' => 'domain_source_waiting:' . $capability,
+                'classification' => ($isFuture ? 'domain_source_not_due:' : 'domain_source_waiting:') . $capability,
                 'next_safe_at' => $next !== '' ? $next : gmdate('Y-m-d H:i:s', time() + 5),
+                'effective' => !$isFuture && !$afterProcessing,
+                'execution_class' => $isFuture || $afterProcessing ? 'local_only' : 'remote_candidate',
             ];
         }
         return [

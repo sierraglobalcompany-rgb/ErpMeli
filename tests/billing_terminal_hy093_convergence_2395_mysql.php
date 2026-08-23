@@ -336,7 +336,7 @@ try {
     }
 
     $assert(!in_array('HY093', $matrix, true), 'post_fix_hy093_present');
-    $assert($domainHandlerCalls === 2, 'deferred_domain_handler_count_invalid');
+    $assert($domainHandlerCalls === 0, 'deferred_domain_handler_should_not_run_for_source_not_due:' . $domainHandlerCalls);
     $terminalList = implode(',', array_map('intval', $terminalPointerIds));
     $executableTerminalPointers = (int) $pdo->query(
         "SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE id IN ({$terminalList}) AND state IN ('ready','running','waiting')"

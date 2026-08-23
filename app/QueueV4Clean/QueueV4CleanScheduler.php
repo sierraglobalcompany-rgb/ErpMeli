@@ -19,6 +19,7 @@ final class QueueV4CleanScheduler
     /** @return array<string,mixed> */
     public function run(int $maxJobs = QueueV4CleanWorker::DEFAULT_MAX_JOBS, int $runtimeSeconds = 45): array
     {
+        $runtimeSeconds = QueueV4CleanWorker::normalizeRuntimeSeconds($runtimeSeconds);
         $ownsDeadline = !CronDeadlineContext::active();
         if ($ownsDeadline) {
             CronDeadlineContext::start($runtimeSeconds, max(1, $runtimeSeconds - 5), 8, 3);

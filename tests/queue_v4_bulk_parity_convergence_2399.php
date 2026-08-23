@@ -626,6 +626,61 @@ try {
     $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $k1Simple . ' AND status="complete"')->fetchColumn() === 1, 'K1_SIMPLE_COMPLETED');
     $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id IN (' . (int) $k1PackOne . ',' . (int) $k1PackTwo . ',' . (int) $k1PackThree . ') AND state="waiting"')->fetchColumn() === 3, 'K1_PACKS_SAFELY_DEFERRED');
 
+    $assertLocalPrefixReachesSimple = static function (string $mode, string $label) use ($pdo, $resetBilling, $seedFinancial, $seedExcludedPack, $assert): void {
+        $resetBilling();
+        $prefixIds = [];
+        for ($i = 1; $i <= 3; $i++) {
+            if ($mode === 'pack') {
+                $prefixIds[] = $seedExcludedPack(101, $label . '_PACK_' . $i);
+                continue;
+            }
+            $sourceId = $seedFinancial(101, 1, $label . '_LOCAL_' . $i)[0];
+            if ($mode === 'stale') {
+                $pdo->prepare('UPDATE sale_financial_reconciliation_jobs SET input_version=? WHERE id=?')
+                    ->execute([str_repeat('0', 64), $sourceId]);
+            } elseif ($mode === 'official') {
+                $pdo->prepare(
+                    'UPDATE sale_financial_state st
+                        JOIN sale_financial_reconciliation_jobs s
+                          ON s.company_id=st.company_id
+                         AND s.meli_account_id=st.meli_account_id
+                         AND s.sale_key=st.sale_key
+                       SET st.official_status="complete",st.official_net_amount=90
+                     WHERE s.id=?'
+                )->execute([$sourceId]);
+            } elseif ($mode === 'not_due') {
+                $pdo->prepare('UPDATE sale_financial_reconciliation_jobs SET next_run_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR) WHERE id=?')
+                    ->execute([$sourceId]);
+            }
+            $prefixIds[] = $sourceId;
+        }
+        $simpleId = $seedFinancial(101, 1, $label . '_SIMPLE')[0];
+        $transport = new BulkBillingFakeTransport();
+        $repo = new QueueV4CleanRepository($pdo);
+        $service = new SaleFinancialService(
+            static fn (int $accountId): MeliApiClient => new MeliApiClient($accountId, $transport)
+        );
+        $worker = new QueueV4CleanWorker($pdo, $repo, null, null, null, null, static fn (): SaleFinancialService => $service);
+        $summary = $worker->run('test', 3, 45);
+        $metrics = $worker->lastMetrics();
+        $localCompletedExpected = in_array($mode, ['stale', 'official'], true) ? 3 : 0;
+        $localDeferredExpected = in_array($mode, ['pack', 'not_due'], true) ? 3 : 0;
+        $sentOrderIds = $transport->calls[0]['order_ids'] ?? [];
+        $assert(count($transport->calls) === 1 && count($sentOrderIds) >= 1 && count($sentOrderIds) === count(array_unique($sentOrderIds)), $label . '_SIMPLE_AFTER_LOCAL_PREFIX calls=' . json_encode($transport->calls));
+        $assert((int) ($summary['claimed'] ?? 0) === 4 && (int) ($metrics['effective'] ?? 0) === 1, $label . '_LOCAL_PREFIX_EFFECTIVE_BUDGET');
+        $assert((int) ($metrics['local_completed'] ?? 0) === $localCompletedExpected, $label . '_LOCAL_COMPLETED_CLASSIFICATION');
+        $assert((int) ($metrics['local_deferred'] ?? 0) === $localDeferredExpected, $label . '_LOCAL_DEFERRED_CLASSIFICATION');
+        $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $simpleId . ' AND status="complete"')->fetchColumn() === 1, $label . '_SIMPLE_SOURCE_COMPLETED');
+        $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id=' . (int) $simpleId . ' AND state="completed"')->fetchColumn() === 1, $label . '_SIMPLE_POINTER_COMPLETED');
+        $prefixList = implode(',', array_map('intval', $prefixIds));
+        $prefixRows = $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE s.id IN (' . $prefixList . ') AND q.company_id=s.company_id AND q.meli_account_id=s.meli_account_id')->fetchColumn();
+        $assert((int) $prefixRows === 3, $label . '_SOURCE_POINTER_CONSISTENCY');
+    };
+    $assertLocalPrefixReachesSimple('pack', 'K1_R1_PACK');
+    $assertLocalPrefixReachesSimple('stale', 'K1_R1_STALE');
+    $assertLocalPrefixReachesSimple('official', 'K1_R1_OFFICIAL');
+    $assertLocalPrefixReachesSimple('not_due', 'K1_R1_SOURCE_NOT_DUE');
+
     $resetBilling();
     $skipPrimary = $seedFinancial(101, 1, 'SKIP_PRIMARY')[0];
     $skipPack = $seedExcludedPack(101, 'SKIP_PACK');
@@ -863,8 +918,24 @@ try {
     $assert(!str_contains($worker, '$deadline = microtime(true)'), 'K1_WORKER_MUST_NOT_CREATE_SECOND_DEADLINE');
     $assert(str_contains($worker, 'CronDeadlineContext::start') && str_contains($worker, 'CronDeadlineContext::clear'), 'K1_WORKER_CLOCK_CONTEXT_MISSING');
     $assert(str_contains($scheduler, 'CronDeadlineContext::deadline()') && !str_contains($scheduler, '$startedAt +'), 'K1_SCHEDULER_MUST_USE_SHARED_CLOCK');
+    $assert(QueueV4CleanWorker::normalizeRuntimeSeconds(4) === 5, 'K1_RUNTIME_4_CLAMPS_TO_5');
+    $assert(QueueV4CleanWorker::normalizeRuntimeSeconds(5) === 5, 'K1_RUNTIME_5_STAYS_5');
+    $assert(QueueV4CleanWorker::normalizeRuntimeSeconds(45) === 45, 'K1_RUNTIME_45_STAYS_45');
+    $assert(QueueV4CleanWorker::normalizeRuntimeSeconds(46) === 45, 'K1_RUNTIME_46_CLAMPS_TO_45');
+    $assert(QueueV4CleanWorker::normalizeRuntimeSeconds(120) === 45, 'K1_RUNTIME_120_CLAMPS_TO_45');
+    \App\Services\CronDeadlineContext::start(5, 4, 8, 3);
+    $outerBefore = \App\Services\CronDeadlineContext::snapshot();
+    try {
+        $workerOuterClock = new QueueV4CleanWorker($pdo, new QueueV4CleanRepository($pdo));
+        $workerOuterClock->run('test', 1, 120);
+        $outerAfter = \App\Services\CronDeadlineContext::snapshot();
+    } finally {
+        \App\Services\CronDeadlineContext::clear();
+    }
+    $assert($outerBefore['deadline_unix'] === $outerAfter['deadline_unix'], 'K1_OUTER_CLOCK_NOT_EXTENDED_BY_WORKER');
+    $assert($outerBefore['accept_until_unix'] === $outerAfter['accept_until_unix'], 'K1_OUTER_ACCEPT_WINDOW_NOT_RESTARTED');
     $assert(str_contains($worker, 'MAX_SCAN_ROWS = 60') && str_contains($worker, 'MAX_SCAN_TIME_MS = 1000'), 'K1_BOUNDED_RUNNABLE_SCAN_MISSING');
-    $assert(str_contains($worker, "'effective' => \$effective") && str_contains($worker, "'local_deferred' => \$localDeferred"), 'K1_EFFECTIVE_WORK_METRICS_MISSING');
+    $assert(str_contains($worker, "'effective' => \$effective") && str_contains($worker, "'local_completed' => \$localCompleted") && str_contains($worker, "'local_deferred' => \$localDeferred"), 'K1_EFFECTIVE_WORK_METRICS_MISSING');
     $assert(str_contains($finance, 'CronDeadlineContext::assertCanStartRemote(3.0)') && str_contains($finance, 'CronDeadlineDeferredException $error'), 'K1_BILLING_DEADLINE_FENCES_MISSING');
     $assert(str_contains($deadlineContext, 'CronExecutionWindow') && str_contains($deadlineContext, 'assertCanStartRemote'), 'K1_SINGLE_CLOCK_AUTHORITY_MISSING');
     $assert(str_contains($repository, 'function contiguousFinancialReconciliationSourceIds'), 'billing_queue_owned_candidate_claim_missing');

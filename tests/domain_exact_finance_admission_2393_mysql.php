@@ -596,6 +596,70 @@ try {
     $assert((string) $states[2]['state'] === 'review', 'source_error_pointer_not_review');
     $assert((string) $states[3]['state'] === 'waiting' && (int) $states[3]['attempt_count'] === 0, 'local_waiting_must_not_consume_effective_slot');
 
+    // R2: a financial_recalc exact step that processes one functional unit
+    // but leaves the source pending is still effective work. max-jobs=1 must
+    // stop before a second recalc source, then repeated exact turns converge.
+    $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
+    $pdo->exec('TRUNCATE TABLE queue_v4_clean_attempts');
+    $pdo->exec('TRUNCATE TABLE queue_v4_clean_runs');
+    $pdo->exec('TRUNCATE TABLE queue_v4_clean_jobs');
+    $pdo->exec('TRUNCATE TABLE order_financial_recalc_job_items');
+    $pdo->exec('TRUNCATE TABLE order_financial_recalc_jobs');
+    $pdo->exec('SET FOREIGN_KEY_CHECKS=1');
+    $pdo->exec("INSERT INTO queue_v4_clean_control(control_key,engine_state,readiness_state,scheduler_enabled) VALUES ('primary','ACTIVE','CERTIFIED',1)
+        ON DUPLICATE KEY UPDATE engine_state='ACTIVE',readiness_state='CERTIFIED',scheduler_enabled=1");
+    $pdo->prepare('INSERT INTO order_financial_recalc_jobs(company_id,meli_account_id,mode,source_type,status,total_items) VALUES (10,?,"repaired","r2","pending",4)')
+        ->execute([$accountId]);
+    $r2Source = (int) $pdo->lastInsertId();
+    $pdo->prepare('INSERT INTO order_financial_recalc_jobs(company_id,meli_account_id,mode,source_type,status,total_items) VALUES (10,?,"repaired","r2","pending",1)')
+        ->execute([$accountId]);
+    $r2SecondSource = (int) $pdo->lastInsertId();
+    for ($i = 1; $i <= 4; $i++) {
+        $pdo->prepare('INSERT INTO order_financial_recalc_job_items(order_financial_recalc_job_id,meli_order_id,external_order_id,status,phase,billing_status,financial_status) VALUES (?,?,?,?,?,?,?)')
+            ->execute([$r2Source, 9000 + $i, 'R2-' . $i, 'pending', 'local_recalc', 'pending', 'pending']);
+    }
+    $pdo->prepare('INSERT INTO order_financial_recalc_job_items(order_financial_recalc_job_id,meli_order_id,external_order_id,status,phase,billing_status,financial_status) VALUES (?,?,?,?,?,?,?)')
+        ->execute([$r2SecondSource, 9999, 'R2-SECOND', 'pending', 'local_recalc', 'pending', 'pending']);
+    foreach ([$r2Source, $r2SecondSource] as $sourceId) {
+        $pdo->beginTransaction();
+        $admission->submit('financial_recalc', 10, $accountId, $sourceId, 'r2-effective:' . $sourceId);
+        $pdo->commit();
+    }
+    $r2Seen = [];
+    $r2Handler = static function (string $capability, int $sourceId, int $claimedAccount) use ($pdo, $accountId, $r2Source, $r2SecondSource, &$r2Seen): array {
+        if ($capability !== 'financial_recalc' || $claimedAccount !== $accountId) {
+            throw new RuntimeException('r2_financial_recalc_scope_invalid');
+        }
+        $r2Seen[] = $sourceId;
+        $item = $pdo->prepare('SELECT id FROM order_financial_recalc_job_items WHERE order_financial_recalc_job_id=? AND status="pending" ORDER BY id LIMIT 1');
+        $item->execute([$sourceId]);
+        $itemId = (int) ($item->fetchColumn() ?: 0);
+        if ($itemId > 0) {
+            $pdo->prepare('UPDATE order_financial_recalc_job_items SET status="complete" WHERE id=?')->execute([$itemId]);
+        }
+        $remaining = (int) $pdo->query('SELECT COUNT(*) FROM order_financial_recalc_job_items WHERE order_financial_recalc_job_id=' . (int) $sourceId . ' AND status="pending"')->fetchColumn();
+        $pdo->prepare('UPDATE order_financial_recalc_jobs SET processed_items=processed_items+1,status=? WHERE id=? AND meli_account_id=?')
+            ->execute([$remaining === 0 ? 'complete' : 'pending', $sourceId, $claimedAccount]);
+        return ['processed' => $itemId > 0 ? 1 : 0];
+    };
+    $r2Worker = new QueueV4CleanWorker($pdo, new QueueV4CleanRepository($pdo), null, null, null, $r2Handler);
+    $r2First = $r2Worker->run('test', 1, 10);
+    $r2FirstMetrics = $r2Worker->lastMetrics();
+    $r2FirstPointer = $pdo->query('SELECT state,last_error_class,attempt_count FROM queue_v4_clean_jobs WHERE resource_id="' . (int) $r2Source . '"')->fetch(PDO::FETCH_ASSOC);
+    $assert((int) ($r2FirstMetrics['effective'] ?? 0) === 1 && (string) ($r2FirstPointer['state'] ?? '') === 'waiting', 'FINANCIAL_RECALC_PENDING_AFTER_ONE_IS_EFFECTIVE');
+    $assert((string) ($r2FirstPointer['last_error_class'] ?? '') === 'domain_source_waiting:financial_recalc', 'FINANCIAL_RECALC_PENDING_NOT_LOCAL_ONLY');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM order_financial_recalc_job_items WHERE order_financial_recalc_job_id=' . (int) $r2Source . ' AND status="complete"')->fetchColumn() === 1, 'FINANCIAL_RECALC_EXACTLY_ONE_ITEM_FIRST_TURN');
+    $assert(!in_array($r2SecondSource, $r2Seen, true), 'FINANCIAL_RECALC_MAX_JOBS_ONE_PROCESSED_SECOND_SOURCE');
+    $pdo->exec('UPDATE queue_v4_clean_jobs SET available_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 HOUR) WHERE resource_id="' . (int) $r2SecondSource . '"');
+    while ((string) $pdo->query('SELECT status FROM order_financial_recalc_jobs WHERE id=' . (int) $r2Source)->fetchColumn() !== 'complete') {
+        $pdo->exec('UPDATE queue_v4_clean_jobs SET state="ready",available_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND),lease_owner=NULL,lease_expires_at=NULL WHERE resource_id="' . (int) $r2Source . '"');
+        $r2Worker->run('test', 1, 10);
+    }
+    $r2FinalPointer = $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE resource_id="' . (int) $r2Source . '"')->fetchColumn();
+    $assert((string) $r2FinalPointer === 'completed', 'FINANCIAL_RECALC_SOURCE_POINTER_CONVERGENCE');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM order_financial_recalc_job_items WHERE order_financial_recalc_job_id=' . (int) $r2Source . ' AND status="complete"')->fetchColumn() === 4, 'FINANCIAL_RECALC_REPEAT_UNTIL_COMPLETE');
+    $assert((string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE resource_id="' . (int) $r2SecondSource . '"')->fetchColumn() === 'ready', 'FINANCIAL_RECALC_SECOND_SOURCE_REMAINS_UNCLAIMED');
+
     // Corrupt/missing pointer mapping is inspected directly because Repository::claim already
     // rejects a mismatched company/account pair before the Worker can receive it.
     $worker = new QueueV4CleanWorker($pdo, new QueueV4CleanRepository($pdo), null, null, null, $domainHandler);

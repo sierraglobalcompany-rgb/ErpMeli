@@ -629,6 +629,7 @@ try {
     $assertLocalPrefixReachesSimple = static function (string $mode, string $label) use ($pdo, $resetBilling, $seedFinancial, $seedExcludedPack, $assert): void {
         $resetBilling();
         $prefixIds = [];
+        $replacementIds = [];
         for ($i = 1; $i <= 3; $i++) {
             if ($mode === 'pack') {
                 $prefixIds[] = $seedExcludedPack(101, $label . '_PACK_' . $i);
@@ -636,8 +637,24 @@ try {
             }
             $sourceId = $seedFinancial(101, 1, $label . '_LOCAL_' . $i)[0];
             if ($mode === 'stale') {
+                $current = $pdo->prepare('SELECT sale_key,external_sale_id,input_version,priority_tier FROM sale_financial_reconciliation_jobs WHERE id=?');
+                $current->execute([$sourceId]);
+                $currentRow = $current->fetch(PDO::FETCH_ASSOC);
                 $pdo->prepare('UPDATE sale_financial_reconciliation_jobs SET input_version=? WHERE id=?')
                     ->execute([str_repeat('0', 64), $sourceId]);
+                $pdo->prepare(
+                    'INSERT INTO sale_financial_reconciliation_jobs
+                        (company_id,meli_account_id,sale_key,external_sale_id,input_version,status,priority_tier,origin_type,origin_id,next_run_at,attempts,completed_at)
+                     VALUES (10,?,?,?,?, "complete", ?, "domain_input_changed", ?, UTC_TIMESTAMP(), 0, UTC_TIMESTAMP())'
+                )->execute([
+                    101,
+                    (string) $currentRow['sale_key'],
+                    (string) $currentRow['external_sale_id'],
+                    (string) $currentRow['input_version'],
+                    (int) $currentRow['priority_tier'],
+                    $sourceId,
+                ]);
+                $replacementIds[] = (int) $pdo->lastInsertId();
             } elseif ($mode === 'official') {
                 $pdo->prepare(
                     'UPDATE sale_financial_state st
@@ -655,6 +672,7 @@ try {
             $prefixIds[] = $sourceId;
         }
         $simpleId = $seedFinancial(101, 1, $label . '_SIMPLE')[0];
+        $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id=' . (int) $simpleId . ' AND state="ready"')->fetchColumn() === 1, $label . '_SIMPLE_READY_BEFORE_LOCAL_PREFIX_RUN');
         $transport = new BulkBillingFakeTransport();
         $repo = new QueueV4CleanRepository($pdo);
         $service = new SaleFinancialService(
@@ -666,18 +684,17 @@ try {
         $localCompletedExpected = in_array($mode, ['stale', 'official'], true) ? 3 : 0;
         $localDeferredExpected = in_array($mode, ['pack', 'not_due'], true) ? 3 : 0;
         $sentOrderIds = $transport->calls[0]['order_ids'] ?? [];
+        $assert(count($transport->calls) === 1 && count($sentOrderIds) >= 1 && count($sentOrderIds) === count(array_unique($sentOrderIds)), $label . '_SIMPLE_AFTER_LOCAL_PREFIX calls=' . json_encode($transport->calls) . ' summary=' . json_encode($summary) . ' metrics=' . json_encode($metrics));
+        $assert((int) ($summary['claimed'] ?? 0) === 4 && (int) ($metrics['effective'] ?? 0) === 1, $label . '_LOCAL_PREFIX_EFFECTIVE_BUDGET');
         if ($mode === 'stale') {
-            $assert((int) ($metrics['local_completed'] ?? 0) >= 1 && (int) ($metrics['effective'] ?? 0) <= 1, $label . '_LOCAL_STALE_CLASSIFIED_FREE');
-        } else {
-            $assert(count($transport->calls) === 1 && count($sentOrderIds) >= 1 && count($sentOrderIds) === count(array_unique($sentOrderIds)), $label . '_SIMPLE_AFTER_LOCAL_PREFIX calls=' . json_encode($transport->calls));
-            $assert((int) ($summary['claimed'] ?? 0) === 4 && (int) ($metrics['effective'] ?? 0) === 1, $label . '_LOCAL_PREFIX_EFFECTIVE_BUDGET');
+            $replacementList = implode(',', array_map('intval', $replacementIds));
+            $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id IN (' . $replacementList . ') AND status="complete"')->fetchColumn() === 3, $label . '_STALE_ALREADY_REPLACED_SUCCESSORS_PRESERVED');
+            $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE origin_type="domain_input_changed" AND origin_id IN (' . implode(',', array_map('intval', $prefixIds)) . ')')->fetchColumn() === 3, $label . '_STALE_SUCCESSOR_DUPLICATE_ZERO');
         }
         $assert((int) ($metrics['local_completed'] ?? 0) === $localCompletedExpected, $label . '_LOCAL_COMPLETED_CLASSIFICATION');
         $assert((int) ($metrics['local_deferred'] ?? 0) === $localDeferredExpected, $label . '_LOCAL_DEFERRED_CLASSIFICATION');
-        if ($mode !== 'stale') {
-            $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $simpleId . ' AND status="complete"')->fetchColumn() === 1, $label . '_SIMPLE_SOURCE_COMPLETED');
-            $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id=' . (int) $simpleId . ' AND state="completed"')->fetchColumn() === 1, $label . '_SIMPLE_POINTER_COMPLETED');
-        }
+        $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $simpleId . ' AND status="complete"')->fetchColumn() === 1, $label . '_SIMPLE_SOURCE_COMPLETED');
+        $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id=' . (int) $simpleId . ' AND state="completed"')->fetchColumn() === 1, $label . '_SIMPLE_POINTER_COMPLETED');
         $prefixList = implode(',', array_map('intval', $prefixIds));
         $prefixRows = $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE s.id IN (' . $prefixList . ') AND q.company_id=s.company_id AND q.meli_account_id=s.meli_account_id')->fetchColumn();
         $assert((int) $prefixRows === 3, $label . '_SOURCE_POINTER_CONSISTENCY');
@@ -718,6 +735,40 @@ try {
     $assert($skipAfter[$skipPack] === $skipSnapshots[$skipPack], 'SAME_TENANT_PACK_SKIPPED');
     $assert($skipAfter[$skipPack] === $skipSnapshots[$skipPack], 'SAME_TENANT_MULTIORDER_SKIPPED');
     $assert($skipAfter[$skipFallback] === $skipSnapshots[$skipFallback], 'SAME_TENANT_EXACT_FALLBACK_SKIPPED');
+
+    $resetBilling();
+    $racePrimary = $seedFinancial(101, 1, 'R2_RACE_PRIMARY')[0];
+    $raceSecondary = $seedFinancial(101, 1, 'R2_RACE_SECONDARY')[0];
+    $raceThird = $seedFinancial(101, 1, 'R2_RACE_THIRD')[0];
+    $pdo->exec('DROP TRIGGER IF EXISTS trg_r2_secondary_claim_race');
+    $pdo->exec(
+        'CREATE TRIGGER trg_r2_secondary_claim_race AFTER UPDATE ON sale_financial_reconciliation_jobs
+         FOR EACH ROW
+         UPDATE sale_financial_state st
+            SET st.official_status="complete",st.official_net_amount=77
+          WHERE NEW.id=' . (int) $raceSecondary . '
+            AND NEW.status="running"
+            AND OLD.status<>"running"
+            AND st.company_id=NEW.company_id
+            AND st.meli_account_id=NEW.meli_account_id
+            AND st.sale_key=NEW.sale_key'
+    );
+    $transportRace = new BulkBillingFakeTransport();
+    $runBilling($transportRace);
+    $raceRows = $pdo->query(
+        'SELECT id,status,attempts FROM sale_financial_reconciliation_jobs
+          WHERE id IN (' . (int) $racePrimary . ',' . (int) $raceSecondary . ',' . (int) $raceThird . ')
+          ORDER BY id'
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $racePointers = $pdo->query(
+        'SELECT resource_id,state,attempt_count,last_error_class FROM queue_v4_clean_jobs
+          WHERE resource_id IN ("' . (int) $racePrimary . '","' . (int) $raceSecondary . '","' . (int) $raceThird . '")
+          ORDER BY CAST(resource_id AS UNSIGNED)'
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $assert(count($transportRace->calls) === 1 && count($transportRace->calls[0]['order_ids']) === 2, 'SECONDARY_LOCAL_RACE_REMOTE_BATCH_EXCLUDES_SECONDARY');
+    $assert((string) $raceRows[1]['status'] === 'complete' && (int) $raceRows[1]['attempts'] === 1, 'SECONDARY_LOCAL_RACE_SOURCE_FINALIZED rows=' . json_encode($raceRows) . ' pointers=' . json_encode($racePointers));
+    $assert((string) $racePointers[1]['state'] === 'completed' && (int) $racePointers[1]['attempt_count'] === 0, 'SECONDARY_LOCAL_RACE_POINTER_FINALIZED_NO_ATTEMPT_PENALTY rows=' . json_encode($raceRows) . ' pointers=' . json_encode($racePointers));
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id="' . (int) $raceSecondary . '" AND state="running"')->fetchColumn() === 0, 'SECONDARY_LOCAL_RACE_NO_RUNNING_LEAK');
     $assert($skipAfter[$skipOfficial] === $skipSnapshots[$skipOfficial], 'SAME_TENANT_OFFICIAL_COMPLETE_SKIPPED');
     $assert($skipAfter[$skipStale] === $skipSnapshots[$skipStale], 'SAME_TENANT_INVALID_INPUT_SKIPPED');
 

@@ -158,33 +158,28 @@ final class SaleFinancialService
         // QueueV4CleanDispatchFence repeats this immediately before cURL.
         CronDeadlineContext::assertCanStartRemote(3.0);
 
-        $jobs = [];
-        foreach (array_slice($sourceIds, 0, self::BILLING_MAX_ORDER_IDS) as $sourceId) {
+        $remote = [];
+        $remaining = self::BILLING_MAX_ORDER_IDS;
+        $claimedAny = false;
+        foreach (array_slice($sourceIds, 0, self::BILLING_MAX_ORDER_IDS) as $index => $sourceId) {
             $job = $this->claimSpecificBillingJob($sourceId, $companyId, $accountId);
             if ($job === null) {
                 $outcomes[$sourceId] = $this->sourceOutcome($sourceId, $companyId, $accountId);
                 continue;
             }
-            $jobs[] = $job;
-        }
-        if ($jobs === []) {
-            return ['summary' => $summary, 'outcomes' => $outcomes];
-        }
-
-        if (count($jobs) === 1 && str_starts_with((string) ($jobs[0]['safe_message'] ?? ''), 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED')) {
-            $result = $this->captureAndReconcile($jobs[0], true, true);
-            $outcomes[(int) $jobs[0]['id']] = $this->remoteCandidateOutcome($this->sourceOutcome(
-                (int) $jobs[0]['id'],
-                (int) $jobs[0]['company_id'],
-                (int) $jobs[0]['meli_account_id'],
-            ));
-            $this->summarizeTerminal($summary, $result['status'] === 'reconciled' ? 'complete' : $result['status']);
-            return ['summary' => $summary, 'outcomes' => $outcomes];
-        }
-
-        $remote = [];
-        $remaining = self::BILLING_MAX_ORDER_IDS;
-        foreach ($jobs as $index => $job) {
+            $claimedAny = true;
+            if ($index === 0
+                && count($sourceIds) === 1
+                && str_starts_with((string) ($job['safe_message'] ?? ''), 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED')) {
+                $result = $this->captureAndReconcile($job, true, true);
+                $outcomes[(int) $job['id']] = $this->remoteCandidateOutcome($this->sourceOutcome(
+                    (int) $job['id'],
+                    (int) $job['company_id'],
+                    (int) $job['meli_account_id'],
+                ));
+                $this->summarizeTerminal($summary, $result['status'] === 'reconciled' ? 'complete' : $result['status']);
+                return ['summary' => $summary, 'outcomes' => $outcomes];
+            }
             $prepared = $this->prepareBillingCandidate($job, true, true);
             $candidateOrderCount = count($prepared['external_order_ids'] ?? []);
             if (($prepared['ready'] ?? false) === true
@@ -196,6 +191,12 @@ final class SaleFinancialService
                 continue;
             }
             if ($index > 0) {
+                $this->applyPreparedLocalOutcome($job, $prepared, $summary);
+                $outcomes[(int) $job['id']] = $this->localOnlyOutcome($this->sourceOutcome(
+                    (int) $job['id'],
+                    (int) $job['company_id'],
+                    (int) $job['meli_account_id'],
+                ), $prepared);
                 continue;
             }
             $this->applyPreparedLocalOutcome($job, $prepared, $summary);
@@ -207,7 +208,7 @@ final class SaleFinancialService
             return ['summary' => $summary, 'outcomes' => $outcomes];
         }
 
-        if ($remote === []) {
+        if (!$claimedAny || $remote === []) {
             return ['summary' => $summary, 'outcomes' => $outcomes];
         }
 
@@ -609,13 +610,54 @@ final class SaleFinancialService
                 ];
             }
         }
+        $persistedState = $this->persistedFinancialState(
+            (int) $job['company_id'],
+            (int) $job['meli_account_id'],
+            (string) $job['sale_key'],
+        );
+        $persistedInputVersion = is_array($persistedState) ? (string) ($persistedState['input_version'] ?? '') : '';
+        if ($persistedInputVersion !== ''
+            && !hash_equals($persistedInputVersion, (string) $job['input_version'])
+            && $this->hasFinancialSourceForInputVersion(
+                (int) $job['company_id'],
+                (int) $job['meli_account_id'],
+                (string) $job['sale_key'],
+                $persistedInputVersion,
+                (int) $job['id'],
+            )) {
+            return [
+                'ready' => false,
+                'status' => 'reconciled',
+                'message' => 'La entrada financiera ya fue reemplazada por la versión vigente; se cerró sin consultar Billing.',
+                'finalized' => false,
+                'already_replaced' => true,
+            ];
+        }
+        if ($persistedInputVersion !== ''
+            && hash_equals($persistedInputVersion, (string) $job['input_version'])
+            && (string) ($persistedState['official_status'] ?? '') === 'complete'
+            && $persistedState['official_net_amount'] !== null) {
+            return [
+                'ready' => false,
+                'status' => 'reconciled',
+                'message' => 'La versión vigente ya tiene evidencia oficial; no se repitió Billing.',
+                'finalized' => false,
+            ];
+        }
         $state = (new SaleFinancialStateService())->projectSale(
             (int) $job['company_id'],
             (int) $job['meli_account_id'],
             (string) $job['sale_key']
         );
         if (!hash_equals((string) $state['input_version'], (string) $job['input_version'])) {
-            if ($allowSuccessor) {
+            $alreadyReplaced = $this->hasFinancialSourceForInputVersion(
+                (int) $job['company_id'],
+                (int) $job['meli_account_id'],
+                (string) $job['sale_key'],
+                (string) $state['input_version'],
+                (int) $job['id'],
+            );
+            if ($allowSuccessor && !$alreadyReplaced) {
                 $this->enqueueSale(
                     (int) $job['company_id'],
                     (int) $job['meli_account_id'],
@@ -633,10 +675,13 @@ final class SaleFinancialService
             return [
                 'ready' => false,
                 'status' => 'reconciled',
-                'message' => $allowSuccessor
+                'message' => $alreadyReplaced
+                    ? 'La entrada financiera ya fue reemplazada por la versión vigente; se cerró sin consultar Billing.'
+                    : ($allowSuccessor
                     ? 'La entrada financiera cambió antes de consultar Billing; se creó una única captura para la versión vigente.'
-                    : 'La entrada financiera cambió; el paso exacto terminó sin consultar Billing ni crear otro trabajo.',
+                    : 'La entrada financiera cambió; el paso exacto terminó sin consultar Billing ni crear otro trabajo.'),
                 'finalized' => false,
+                'already_replaced' => $alreadyReplaced,
             ];
         }
         if ((string) ($state['official_status'] ?? '') === 'complete'
@@ -700,6 +745,43 @@ final class SaleFinancialService
         }
     }
 
+    private function hasFinancialSourceForInputVersion(
+        int $companyId,
+        int $accountId,
+        string $saleKey,
+        string $inputVersion,
+        int $excludeSourceId
+    ): bool {
+        $stmt = Database::connectionFresh()->prepare(
+            'SELECT 1
+               FROM sale_financial_reconciliation_jobs
+              WHERE company_id=?
+                AND meli_account_id=?
+                AND sale_key=?
+                AND input_version=?
+                AND id<>?
+              LIMIT 1'
+        );
+        $stmt->execute([$companyId, $accountId, $saleKey, $inputVersion, $excludeSourceId]);
+        return $stmt->fetchColumn() !== false;
+    }
+
+    /** @return array{input_version:string,official_status:string,official_net_amount:mixed}|null */
+    private function persistedFinancialState(int $companyId, int $accountId, string $saleKey): ?array
+    {
+        $stmt = Database::connectionFresh()->prepare(
+            'SELECT input_version,official_status,official_net_amount
+               FROM sale_financial_state
+              WHERE company_id=?
+                AND meli_account_id=?
+                AND sale_key=?
+              LIMIT 1'
+        );
+        $stmt->execute([$companyId, $accountId, $saleKey]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return is_array($row) ? $row : null;
+    }
+
     /**
      * @return array{state:string,classification?:string,next_safe_at?:?string,effective?:bool,execution_class?:string}
      */
@@ -746,9 +828,13 @@ final class SaleFinancialService
         if (($prepared['non_failure'] ?? false) === true) {
             $outcome['classification'] = 'financial_local_pack_incomplete';
         } elseif ($status === 'reconciled') {
-            $outcome['classification'] = ($prepared['finalized'] ?? false) === false
-                ? 'financial_local_stale_or_official_complete'
-                : 'financial_local_completed';
+            if (($prepared['already_replaced'] ?? false) === true) {
+                $outcome['classification'] = 'financial_local_stale_already_replaced';
+            } else {
+                $outcome['classification'] = ($prepared['finalized'] ?? false) === false
+                    ? 'financial_local_stale_or_official_complete'
+                    : 'financial_local_completed';
+            }
         }
         $outcome['effective'] = false;
         $outcome['execution_class'] = 'local_only';

@@ -481,6 +481,7 @@ final class QueueV4CleanWorker
             ? $this->repository->contiguousFinancialReconciliationSourceIds($job, 60)
             : [$sourceId];
         $batchOutcomes = [];
+        $domainResult = null;
 
         try {
             ApiExecutionMetadataContext::run(
@@ -493,13 +494,13 @@ final class QueueV4CleanWorker
                     'source_work_id' => (string) $sourceId,
                     'bulk' => count($batchSourceIds) > 1,
                 ] + $this->transportMeta($job),
-                function () use ($capability, $sourceId, $accountId, $companyId, $batchSourceIds, &$batchOutcomes): void {
+                function () use ($capability, $sourceId, $accountId, $companyId, $batchSourceIds, &$batchOutcomes, &$domainResult): void {
                     if ($this->domainHandler !== null) {
-                        ($this->domainHandler)($capability, $sourceId, $accountId);
+                        $domainResult = ($this->domainHandler)($capability, $sourceId, $accountId);
                         return;
                     }
                     if ($capability === 'financial_recalc') {
-                        (new OrderFinancialRecalcJobService())->processExact($sourceId, $accountId, 1);
+                        $domainResult = (new OrderFinancialRecalcJobService())->processExact($sourceId, $accountId, 1);
                         return;
                     }
                     $batchOutcomes = ($this->financialFactory)()->processDomainExactBatch(
@@ -536,7 +537,7 @@ final class QueueV4CleanWorker
         if ($source === null) {
             return ['state' => 'review', 'classification' => 'domain_source_missing_after_process'];
         }
-        return $this->domainOutcome($capability, $source, true);
+        return $this->domainOutcome($capability, $source, true, $this->domainEffectiveWork($capability, $domainResult));
     }
 
     /** @return array<string,mixed>|null */
@@ -568,7 +569,7 @@ final class QueueV4CleanWorker
      * @param array<string,mixed> $source
      * @return array{state:string,classification?:string,next_safe_at?:?string,effective?:bool,execution_class?:string}
      */
-    private function domainOutcome(string $capability, array $source, bool $afterProcessing = false): array
+    private function domainOutcome(string $capability, array $source, bool $afterProcessing = false, bool $effectiveWork = false): array
     {
         $status = strtolower(trim((string) ($source['status'] ?? '')));
         if ($status === 'complete') {
@@ -585,14 +586,23 @@ final class QueueV4CleanWorker
                 'state' => 'waiting',
                 'classification' => ($isFuture ? 'domain_source_not_due:' : 'domain_source_waiting:') . $capability,
                 'next_safe_at' => $next !== '' ? $next : gmdate('Y-m-d H:i:s', time() + 5),
-                'effective' => !$isFuture && !$afterProcessing,
-                'execution_class' => $isFuture || $afterProcessing ? 'local_only' : 'remote_candidate',
+                'effective' => !$isFuture && (!$afterProcessing || $effectiveWork),
+                'execution_class' => $isFuture || ($afterProcessing && !$effectiveWork) ? 'local_only' : 'remote_candidate',
             ];
         }
         return [
             'state' => 'review',
             'classification' => 'domain_source_' . ($status !== '' ? $this->safeToken($status) : 'unknown'),
         ];
+    }
+
+    /** @param mixed $domainResult */
+    private function domainEffectiveWork(string $capability, $domainResult): bool
+    {
+        if ($capability !== 'financial_recalc' || !is_array($domainResult)) {
+            return false;
+        }
+        return (int) ($domainResult['processed'] ?? 0) > 0;
     }
 
     private function failureClass(Throwable $error): string

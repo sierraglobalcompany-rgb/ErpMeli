@@ -615,18 +615,20 @@ try {
     $transportSkipped = new BulkBillingFakeTransport();
     $runBilling($transportSkipped);
     $assert(count($transportSkipped->calls) === 1 && count($transportSkipped->calls[0]['order_ids']) === 2, 'SAME_TENANT_SIMPLE_BATCH');
+    $skipAfter = [];
     foreach ([$skipPack, $skipFallback, $skipOfficial, $skipStale] as $sourceId) {
         $stmt = $pdo->prepare('SELECT q.state,q.available_at,s.status source_status,s.attempts source_attempts,s.next_run_at FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE q.resource_id=? LIMIT 1');
         $stmt->execute([(string) $sourceId]);
         $after = $stmt->fetch(PDO::FETCH_ASSOC);
+        $skipAfter[$sourceId] = $after;
         $assert($after === $skipSnapshots[$sourceId], 'SKIPPED_POINTERS_IMMUTABLE_' . $sourceId);
     }
     $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id IN (' . (int) $skipPrimary . ',' . (int) $skipExtra . ') AND status="complete"')->fetchColumn() === 2, 'SELECTED_ALIGNMENT_ONLY');
-    $assert(true, 'SAME_TENANT_PACK_SKIPPED');
-    $assert(true, 'SAME_TENANT_MULTIORDER_SKIPPED');
-    $assert(true, 'SAME_TENANT_EXACT_FALLBACK_SKIPPED');
-    $assert(true, 'SAME_TENANT_OFFICIAL_COMPLETE_SKIPPED');
-    $assert(true, 'SAME_TENANT_INVALID_INPUT_SKIPPED');
+    $assert($skipAfter[$skipPack] === $skipSnapshots[$skipPack], 'SAME_TENANT_PACK_SKIPPED');
+    $assert($skipAfter[$skipPack] === $skipSnapshots[$skipPack], 'SAME_TENANT_MULTIORDER_SKIPPED');
+    $assert($skipAfter[$skipFallback] === $skipSnapshots[$skipFallback], 'SAME_TENANT_EXACT_FALLBACK_SKIPPED');
+    $assert($skipAfter[$skipOfficial] === $skipSnapshots[$skipOfficial], 'SAME_TENANT_OFFICIAL_COMPLETE_SKIPPED');
+    $assert($skipAfter[$skipStale] === $skipSnapshots[$skipStale], 'SAME_TENANT_INVALID_INPUT_SKIPPED');
 
     $resetBilling();
     $tenantAPrimary = $seedFinancial(101, 1, 'KISS_TENANT_A1')[0];

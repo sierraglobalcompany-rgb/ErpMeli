@@ -5742,8 +5742,8 @@
         },
         "runtime_resources_release_updater_authority_2_39_19_json": {
             "path": "resources/release/updater-authority-2.39.19.json",
-            "sha256": "19ec95fdcfeb16e1ce74f7e4af6c3ac233b09d7753fbf2a08b231a5f8a0e83ea",
-            "sha256_lf": "19ec95fdcfeb16e1ce74f7e4af6c3ac233b09d7753fbf2a08b231a5f8a0e83ea",
+            "sha256": "efaad242b6ec6f22a92e23d2540177441fc31372aa24c0f942097a01fde4d6e2",
+            "sha256_lf": "efaad242b6ec6f22a92e23d2540177441fc31372aa24c0f942097a01fde4d6e2",
             "text": true
         },
         "runtime_resources_release_updater_authority_2_39_2_json": {

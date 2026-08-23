@@ -10,7 +10,7 @@
         "package_file_count": 967,
         "component_count": 966,
         "paths_sha256": "ebdc7bedf55c251a40dc1fe2538131f0e6f0f659dcce61392a34902026d0eae1",
-        "dependency_registry_sha256": "a2eb7292f761ac80cbdd4fc0f44f4a5e36fdd3d3a32b61d8c2819f2bb2c7f82e",
+        "dependency_registry_sha256": "696fae9f0919da1e1f31a20d012abfd48d206206669c9d0122bd843a4d2c37f2",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -5382,8 +5382,8 @@
         },
         "runtime_resources_release_managed_runtime_dependencies_2_39_19_json": {
             "path": "resources/release/managed-runtime-dependencies-2.39.19.json",
-            "sha256": "a2eb7292f761ac80cbdd4fc0f44f4a5e36fdd3d3a32b61d8c2819f2bb2c7f82e",
-            "sha256_lf": "a2eb7292f761ac80cbdd4fc0f44f4a5e36fdd3d3a32b61d8c2819f2bb2c7f82e",
+            "sha256": "696fae9f0919da1e1f31a20d012abfd48d206206669c9d0122bd843a4d2c37f2",
+            "sha256_lf": "696fae9f0919da1e1f31a20d012abfd48d206206669c9d0122bd843a4d2c37f2",
             "text": true
         },
         "runtime_resources_release_managed_runtime_dependencies_2_39_2_json": {

@@ -12,7 +12,7 @@ Trace producer → source table → V4 pointer → canonical contract → draine
 
 Keep business source ownership outside Queue V4. Keep physical FIFO, leases and drain authority inside Queue V4.
 
-For notification/webhook work, `meli_notification_events` is the occurrence/generation authority and `meli_notification_work_items` is the durable resource aggregate. K2 may only mutate generations strictly after the stored event activation watermark. Historical notification events require a separate recovery prompt.
+For notification/webhook work, `meli_notification_events` is the occurrence/generation authority and `meli_notification_work_items` is the durable resource aggregate. K2 may only mutate generations strictly after the stored event activation watermark and at or before the active `processing_event_id`. Historical notification events require a separate recovery prompt.
 
 ## 4. KISS constraint
 

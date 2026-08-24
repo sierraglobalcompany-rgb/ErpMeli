@@ -16,11 +16,12 @@ Rules:
 10. One durable notification work item can map to multiple sequential canonical generations, but each generation has at most one pointer through `notification:order_exact:work:<work_id>:event:<event_id>`.
 11. Duplicate webhook deliveries coalesced into one work item and the same event generation produce one canonical admission and one effective execution.
 12. A newer event arriving while the source is `queued` or `running` preserves the active `processing_event_id` and sets `rerun_requested=1`; no inline execution occurs.
-13. Source finalization is deterministic by generation: when pointer generation `G` completes, only events `id > activation_event_watermark AND id <= G` are marked processed. If `latest_event_id > G` or `rerun_requested=1`, the source returns to `pending` for a later generation; otherwise it becomes `complete`.
-14. Unsupported topics are marked `paused` with an explicit `k2_no_canonical_contract_*` reason; they are not marked complete.
-15. If the canonical pointer is active (`ready`, `running`, or `waiting`), the source remains `queued`. If the pointer is terminal non-success (`review` or `dead`), the source is marked safe error/held with evidence.
-16. Admission is bounded by the shared `CronDeadlineContext` and a local wall-time guard. If the budget is gone or nearly gone, K2 stops without partially inventing work.
-17. Concurrent first-run activation is fail-closed. A loser rereads the committed event watermark and never loses the first post-frontier notification.
-18. If `notifications.enabled=0` or `notifications.webhook_first_enabled=0`, K2 creates no new canonical admissions; durable receipt may continue.
+13. Every K2 event mutation is bounded by the event frontier: `event.id > activation_event_watermark AND event.id <= processing_event_id`. A reused historical work item must never rewrite pre-activation event status, disposition, acknowledgement, processing timestamp or error fields.
+14. Source finalization is deterministic by generation: when pointer generation `G` completes, only events `id > activation_event_watermark AND id <= G` are marked processed. If `latest_event_id > G` or `rerun_requested=1`, the source returns to `pending` for a later generation; otherwise it becomes `complete`.
+15. Unsupported topics are marked `paused` with an explicit `k2_no_canonical_contract_*` reason only for the new forward event range. They are not marked complete and pre-activation unsupported events stay byte/state-stable.
+16. If the canonical pointer is active (`ready`, `running`, or `waiting`), the source remains `queued`. If pointer generation `G` reaches `review` or `dead` while a newer generation exists, the old pointer remains terminal as evidence and the source aggregate returns to `pending` for the new generation. If no newer generation exists, the source remains safely held/error.
+17. Admission is bounded by the shared `CronDeadlineContext` accept-work window and a local wall-time guard. If the budget is gone or nearly gone, K2 stops without partially inventing work.
+18. Concurrent first-run activation is fail-closed. A loser rereads the committed event watermark and never loses the first post-frontier notification.
+19. If `notifications.enabled=0` or `notifications.webhook_first_enabled=0`, K2 creates no new canonical admissions or reconciliations; durable receipt may continue.
 
 The K2 stage is local-only. It performs no Mercado Libre HTTP and does not consume the worker's remote call budget. The existing Queue V4 worker remains the only automatic drainer.

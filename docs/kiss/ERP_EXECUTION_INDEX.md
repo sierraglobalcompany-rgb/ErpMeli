@@ -204,7 +204,7 @@ This index is intentionally human-readable. It names the current execution surfa
 - STATE AUTHORITY: `meli_notification_events` ingress and `meli_notification_work_items` durable source; `queue_v4_clean_jobs` remains the technical pointer.
 - ADMISSION: `QueueV4CleanNotificationAdmissionStage` reads only event generations after `app_settings.notifications.k2.forward_from_event_id`.
 - CANONICAL CONTRACT: order/order notifications become Canonical Work Contract V1 `order_exact` via `CronAdmissionService::submitOrderExact`.
-- EXECUTION: `CanonicalFifoDrainer` executes the resulting V4 pointer; source-pointer reconciliation closes only the pointer generation and preserves newer notification events through rerun.
+- EXECUTION: `CanonicalFifoDrainer` executes the resulting V4 pointer; source-pointer reconciliation closes only the active pointer generation, never mutates pre-activation events, and preserves newer notification events through rerun even if the previous pointer lands in `review` or `dead`.
 - UNSUPPORTED TOPICS: shipment/payment/item/question/claim/message/unknown remain buffered then safe-paused with visible classification; no fake completion.
 - STATUS: K2_CANONICAL_FORWARD for order/order, BUFFERED_UNSUPPORTED for other topic families.
 - NOTES: historical rows before activation are not replayed or mutated.

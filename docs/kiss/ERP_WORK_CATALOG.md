@@ -153,9 +153,9 @@
 - RHYTHM_AUTHORITY: normal order endpoint rhythm, not Billing breaker
 - DEADLINE_AUTHORITY: K2 admission stage wall-time bound plus kernel deadline
 - RETRY_AUTHORITY: Queue V4 for canonical pointer; unsupported notification topics safe-paused
-- EFFECTIVE_RULE: forward-only; latest_event_id must be greater than activation event watermark for every K2 mutation
+- EFFECTIVE_RULE: forward-only; every K2 event mutation is bounded to `id > activation_event_watermark AND id <= processing_event_id`; review/dead of an older generation cannot drop a newer event
 - FINALIZATION_OWNER: source-pointer reconciliation in K2 admission stage
-- LEGACY_PATHS: notification/webhook legacy consumers remain retired/blocked, not physically deleted in K2 R1
+- LEGACY_PATHS: notification/webhook legacy consumers remain retired/blocked, not physically deleted in K2
 - STATUS: K2_CANONICAL_FORWARD for order/order; BUFFERED_UNSUPPORTED for shipment/payment/item/question/claim/message/unknown
 
 ## legacy Queue Core / V3

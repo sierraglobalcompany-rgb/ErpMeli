@@ -100,12 +100,12 @@ final class QueueV4CleanNotificationAdmissionStage
                 $summary['read']++;
                 $decision = $this->classify($row);
                 if ($decision['action'] === 'quarantine') {
-                    $this->markUnsupported((int) $row['id'], 'k2_notification_tenant_invalid');
+                    $this->markUnsupported((int) $row['id'], (int) $row['latest_event_id'], $watermark, 'k2_notification_tenant_invalid');
                     $summary['quarantined']++;
                     continue;
                 }
                 if ($decision['action'] === 'unsupported') {
-                    $this->markUnsupported((int) $row['id'], (string) $decision['reason']);
+                    $this->markUnsupported((int) $row['id'], (int) $row['latest_event_id'], $watermark, (string) $decision['reason']);
                     $summary['unsupported']++;
                     continue;
                 }
@@ -141,7 +141,7 @@ final class QueueV4CleanNotificationAdmissionStage
                     $summary['errors']++;
                     continue;
                 }
-                $this->markQueued((int) $row['id'], (int) $receipt['job_id'], (bool) $receipt['deduplicated'], $generationEventId);
+                $this->markQueued((int) $row['id'], (int) $receipt['job_id'], (bool) $receipt['deduplicated'], $generationEventId, $watermark);
                 $summary['admitted']++;
                 if ($receipt['deduplicated']) {
                     $summary['deduplicated']++;
@@ -252,8 +252,13 @@ final class QueueV4CleanNotificationAdmissionStage
                         break;
                     }
                 } elseif (in_array($state, ['review', 'dead'], true)) {
-                    $this->markAdmissionHeld((int) $row['id'], 'canonical_pointer_' . $state);
+                    $hasRerun = $this->markGenerationTerminalHold((int) $row['id'], (int) $row['processing_event_id'], $state);
                     $summary['reconciled']++;
+                    if ($hasRerun) {
+                        $summary['deferred'] = true;
+                        $summary['diagnostic'] = 'rerun_generation_pending_after_' . $state;
+                        break;
+                    }
                     $summary['errors']++;
                 }
             }
@@ -295,9 +300,9 @@ final class QueueV4CleanNotificationAdmissionStage
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    private function canContinue(float $startedAt, float $reserveSeconds = 0.2): bool
+    private function canContinue(float $startedAt, float $reserveSeconds = 0.5): bool
     {
-        if ((microtime(true) - $startedAt) >= self::WALL_TIME_SECONDS) {
+        if ((microtime(true) - $startedAt) >= (self::WALL_TIME_SECONDS - $reserveSeconds)) {
             return false;
         }
 
@@ -327,7 +332,7 @@ final class QueueV4CleanNotificationAdmissionStage
         return ['action' => 'unsupported', 'reason' => 'k2_no_canonical_contract_' . substr($type !== '' ? $type : $topic, 0, 40)];
     }
 
-    private function markQueued(int $workId, int $jobId, bool $deduplicated, int $generationEventId): void
+    private function markQueued(int $workId, int $jobId, bool $deduplicated, int $generationEventId, int $watermark): void
     {
         $this->pdo->prepare(
             'UPDATE meli_notification_work_items
@@ -344,11 +349,11 @@ final class QueueV4CleanNotificationAdmissionStage
         $this->pdo->prepare(
             'UPDATE meli_notification_events
              SET status="queued",disposition="canonical_order_exact_admitted",error_message=NULL,acknowledged_at=COALESCE(acknowledged_at,UTC_TIMESTAMP())
-             WHERE work_item_id=? AND id<=? AND status NOT IN ("duplicate","ignored","processed")'
-        )->execute([$workId, $generationEventId]);
+             WHERE work_item_id=? AND id>? AND id<=? AND status NOT IN ("duplicate","ignored","processed")'
+        )->execute([$workId, $watermark, $generationEventId]);
     }
 
-    private function markUnsupported(int $workId, string $reason): void
+    private function markUnsupported(int $workId, int $generationEventId, int $watermark, string $reason): void
     {
         $safe = substr(preg_replace('/[^a-z0-9_:-]/i', '_', $reason) ?: 'k2_no_canonical_contract', 0, 80);
         $this->pdo->prepare(
@@ -362,8 +367,8 @@ final class QueueV4CleanNotificationAdmissionStage
         $this->pdo->prepare(
             'UPDATE meli_notification_events
              SET disposition=?,error_message=NULL,acknowledged_at=COALESCE(acknowledged_at,UTC_TIMESTAMP())
-             WHERE work_item_id=? AND status NOT IN ("duplicate","ignored","processed")'
-        )->execute([$safe, $workId]);
+             WHERE work_item_id=? AND id>? AND id<=? AND status NOT IN ("duplicate","ignored","processed")'
+        )->execute([$safe, $workId, $watermark, $generationEventId]);
     }
 
     private function markAdmissionHeld(int $workId, string $reason): void
@@ -420,6 +425,43 @@ final class QueueV4CleanNotificationAdmissionStage
              WHERE id=?'
         )->execute([$workId]);
         return true;
+    }
+
+    private function markGenerationTerminalHold(int $workId, int $generationEventId, string $state): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT latest_event_id,processing_event_id,rerun_requested
+             FROM meli_notification_work_items WHERE id=? LIMIT 1 FOR UPDATE'
+        );
+        $stmt->execute([$workId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return false;
+        }
+
+        $latestEventId = (int) $row['latest_event_id'];
+        $processingEventId = $row['processing_event_id'] === null ? null : (int) $row['processing_event_id'];
+        $rerunRequested = (int) ($row['rerun_requested'] ?? 0) === 1;
+        if (($processingEventId !== null && $processingEventId !== $generationEventId) || $latestEventId > $generationEventId || $rerunRequested) {
+            $safeState = $state === 'dead' ? 'dead' : 'review';
+            $this->pdo->prepare(
+                'UPDATE meli_notification_work_items
+                 SET status="pending",next_run_at=UTC_TIMESTAMP(3),locked_by=NULL,locked_at=NULL,lock_expires_at=NULL,
+                     last_result=?,last_error_code=?,last_error_message="La generación anterior quedó retenida; existe una generación nueva pendiente.",
+                     last_error_diagnostic_id=?,last_error_stage="canonical_pointer",last_processed_at=UTC_TIMESTAMP(),
+                     completed_at=NULL,processing_event_id=NULL,rerun_requested=0,consecutive_failures=0
+                 WHERE id=?'
+            )->execute([
+                'canonical_pointer_' . $safeState . '_rerun_pending',
+                'canonical_pointer_' . $safeState,
+                'K2-' . gmdate('Ymd-His'),
+                $workId,
+            ]);
+            return true;
+        }
+
+        $this->markAdmissionHeld($workId, 'canonical_pointer_' . ($state === 'dead' ? 'dead' : 'review'));
+        return false;
     }
 
     private function notificationForwardEnabled(): bool

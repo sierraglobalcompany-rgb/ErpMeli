@@ -157,6 +157,14 @@ try {
     $stmtEvent21 = $pdo->prepare('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE idempotency_key=?');
     $stmtEvent21->execute(['notification:order_exact:work:' . (int) $work2 . ':event:21']);
     $assert((int) $stmtEvent21->fetchColumn() === 1, 'R2_RERUN_GENERATION_NOT_ADMITTED');
+    $assert((string) $pdo->query('SELECT status FROM meli_notification_events WHERE id=21')->fetchColumn() !== 'processed', 'R2_EVENT_21_FALSE_COMPLETE_BEFORE_GENERATION_21');
+    $beforeGeneration21Executions = count(array_filter($executed, static fn (string $key): bool => str_ends_with($key, ':event:21')));
+    $executeOne($pdo, $executed);
+    $stage->run(15);
+    $afterGeneration21Executions = count(array_filter($executed, static fn (string $key): bool => str_ends_with($key, ':event:21')));
+    $assert($afterGeneration21Executions - $beforeGeneration21Executions === 1, 'R2_GENERATION_21_EXECUTION_COUNT_INVALID');
+    $assert((string) $pdo->query('SELECT status FROM meli_notification_events WHERE id=21')->fetchColumn() === 'processed', 'R2_EVENT_21_NOT_PROCESSED_BY_GENERATION_21');
+    $assert((string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=' . (int) $work2)->fetchColumn() === 'complete', 'R2_SOURCE_NOT_FINAL_COMPLETE_AFTER_GENERATION_21');
 
     foreach (['', '-1', '1.5', 'garbage', '922337203685477580799'] as $bad) {
         $pdo->exec('DELETE FROM queue_v4_clean_attempts');
@@ -202,6 +210,9 @@ try {
     echo "HISTORICAL_WORK_ITEM_WITH_NEW_FORWARD_EVENT=PASS\n";
     echo "INFLIGHT_RERUN_PRESERVED=PASS\n";
     echo "RERUN_GENERATION_REQUEUED=PASS\n";
+    echo "RERUN_GENERATION_E2E=PASS\n";
+    echo "LOST_RERUN=0\n";
+    echo "FALSE_COMPLETE=0\n";
     echo "PAUSE_GATE_ADMISSIONS=0\n";
     echo "DEADLINE_EXHAUSTED_MUTATIONS=0\n";
     echo "RECONCILIATION_SKIP_LOCKED=PASS\n";

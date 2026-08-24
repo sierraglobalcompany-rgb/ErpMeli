@@ -96,11 +96,28 @@ try {
         'supported_5' => 5,
         'mixed_15' => 15,
         'mixed_dedup_reconcile_30' => 30,
+        'generation_frontier_30' => 30,
     ];
     foreach ($scenarios as $scenario => $count) {
         for ($iteration = 1; $iteration <= 20; $iteration++) {
             $reset($pdo);
             for ($i = 1; $i <= $count; $i++) {
+                if ($scenario === 'generation_frontier_30') {
+                    $oldEventId = 1000 + $i;
+                    $newEventId = 2000 + $i;
+                    $pdo->prepare('INSERT INTO meli_notification_events(id,work_item_id,status,disposition) VALUES (?,?,"queued","historical"),(?,?,"queued","forward")')
+                        ->execute([$oldEventId, $i, $newEventId, $i]);
+                    $pdo->prepare(
+                        'INSERT INTO meli_notification_work_items
+                         (id,meli_account_id,account_scope_key,meli_user_id,canonical_topic,resource_type,remote_resource_id,
+                          latest_event_id,priority,occurrence_count,status,next_run_at,correlation_id,first_received_at,last_received_at)
+                         VALUES (?,1,"account:1",1001,"order","order",?, ?,10,2,"pending",UTC_TIMESTAMP(3),?,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3))'
+                    )->execute([$i, (string) (990000 + $iteration * 100 + $i), $newEventId, 'bench-gen-' . $i]);
+                    if ($i === 1) {
+                        $pdo->exec('UPDATE app_settings SET setting_value="1500" WHERE setting_key="notifications.k2.forward_from_event_id"');
+                    }
+                    continue;
+                }
                 $topic = ($scenario === 'mixed_15' && $i % 3 === 0) ? 'shipment' : 'order';
                 $type = $topic;
                 $insertWork($pdo, $i, $topic, $type, (string) (900000 + $iteration * 100 + $i), $scenario === 'mixed_dedup_reconcile_30' && $i <= 5 ? 'queued' : 'pending');

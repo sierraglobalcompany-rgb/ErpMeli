@@ -30,19 +30,19 @@ This index is intentionally human-readable. It names the current execution surfa
 - OWNER: Queue V4 canonical drainer.
 - FILE: `app/Services/OrderFinancialRecalcJobService.php`.
 - METHOD/SYMBOL: `processDue()` and exact processing.
-- STATE AUTHORITY: financial recalc source rows and V4 pointer.
+- STATE AUTHORITY: `order_financial_recalc_jobs` source rows and V4 pointer.
 - NEXT CALL: local calculation / downstream reconciliation admission.
-- NOTES: V4 automatic.
+- NOTES: K3 normal forward path is automatic only for tenant/account-owned sources admitted through `CronAdmissionService`; historical orphan repair is a separate recovery workflow.
 
 ### financial_reconciliation
 
 - ROLE: official Billing reconciliation.
-- OWNER: Queue V4 canonical drainer plus Billing rhythm authority.
+- OWNER: `SaleFinancialService` business logic plus Queue V4 FIFO/pointer authority and Billing rhythm authority.
 - FILE: `app/Services/SaleFinancialService.php`.
 - METHOD/SYMBOL: `processDomainExactBatch()`.
 - STATE AUTHORITY: `sale_financial_reconciliation_jobs` source and `queue_v4_clean_jobs` pointer.
 - NEXT CALL: `MeliApiClient` Billing endpoint if policy permits.
-- NOTES: Billing 429 can park only this work family.
+- NOTES: K3 preserves source ownership outside Queue V4. Queue V4 owns claim, lease, contiguous batch selection and parking. Billing batches are same tenant/account, max 60 order ids, 900s/B429 rhythm unchanged. Billing 429 can park only this work family.
 
 ## B. Control plane
 

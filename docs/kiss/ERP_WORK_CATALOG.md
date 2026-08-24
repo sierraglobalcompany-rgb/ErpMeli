@@ -56,12 +56,12 @@
 
 - WORK_TYPE: financial_recalc
 - PLANE: DATA_PLANE
-- PRODUCER: order persistence/financial source
-- BUSINESS_SOURCE_OF_TRUTH: order financial state
-- ADMISSION_BOUNDARY: V4 admission
+- PRODUCER: order persistence creates/updates the financial recalc source
+- BUSINESS_SOURCE_OF_TRUTH: `order_financial_recalc_jobs`
+- ADMISSION_BOUNDARY: `CronAdmissionService::submit('financial_recalc', ...)` inside the source transaction
 - PHYSICAL_FIFO_MAPPING: `domain_exact` / `financial_recalc`
 - CANONICAL_WORK_TYPE: V1 supported
-- IDEMPOTENCY_AUTHORITY: source idempotency
+- IDEMPOTENCY_AUTHORITY: `source:<source_id>`
 - AVAILABLE/FIFO_RULE: Queue V4 FIFO
 - DRAIN_AUTHORITY: canonical FIFO drainer
 - CANONICAL_EXECUTOR: `CanonicalFifoDrainer`
@@ -71,9 +71,9 @@
 - RHYTHM_AUTHORITY: not Billing breaker
 - DEADLINE_AUTHORITY: kernel
 - RETRY_AUTHORITY: Queue V4
-- EFFECTIVE_RULE: claim then recalc
+- EFFECTIVE_RULE: a claim is effective only when the recalc source reports persisted progress
 - NON_FAILURE_RULE: local defer remains non-functional
-- FINALIZATION_OWNER: Queue V4/source service
+- FINALIZATION_OWNER: Queue V4/source service; admission failure is fail-closed and visible
 - OBSERVABILITY: V4 attempts
 - LEGACY_PATHS: old financial recalculation workers not automatic
 - STATUS: V4_AUTOMATIC
@@ -82,9 +82,9 @@
 
 - WORK_TYPE: financial_reconciliation
 - PLANE: DATA_PLANE
-- PRODUCER: financial source creation/recovery admission
+- PRODUCER: normal financial source creation; historical recovery only by separate explicit microphase
 - BUSINESS_SOURCE_OF_TRUTH: `sale_financial_reconciliation_jobs`
-- ADMISSION_BOUNDARY: `CronAdmissionService::submit`
+- ADMISSION_BOUNDARY: `CronAdmissionService::submit('financial_reconciliation', ...)` inside the source transaction
 - PHYSICAL_FIFO_MAPPING: `domain_exact` / `financial_reconciliation`
 - CANONICAL_WORK_TYPE: V1 supported
 - IDEMPOTENCY_AUTHORITY: `source:<source_id>`
@@ -97,7 +97,7 @@
 - RHYTHM_AUTHORITY: Billing 900s and B429 30/120/360/720
 - DEADLINE_AUTHORITY: kernel deadline plus capacity deferral
 - RETRY_AUTHORITY: functional retry vs non-failure defer split
-- EFFECTIVE_RULE: Billing may batch up to contract limits
+- EFFECTIVE_RULE: Queue V4 claims the primary pointer; Queue V4 selects same-tenant/account contiguous eligible sources; SaleFinancialService executes Billing without owning Queue V4 tables
 - NON_FAILURE_RULE: PACK_INCOMPLETE and rhythm defer do not penalize attempts
 - FINALIZATION_OWNER: SaleFinancialService plus Queue V4 repository
 - OBSERVABILITY: transport journal, attempts, safe_message

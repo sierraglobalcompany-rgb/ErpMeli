@@ -112,6 +112,7 @@ $prefixes = array_map('intval', $envList('K1_SCAN_PREFIXES', [0, 1, 3, 10, 30, 5
 $modes = $envList('K1_SCAN_MODES', ['PACK_INCOMPLETE', 'SOURCE_NOT_DUE', 'STALE_ALREADY_REPLACED', 'OFFICIAL_COMPLETE', 'MIXED_LOCAL_PREFIX']);
 $progress = (string) getenv('K1_SCAN_PROGRESS') === '1';
 $rawCsvPath = trim((string) getenv('K1_SCAN_RAW_CSV'));
+$packDue = (string) getenv('K1_SCAN_PACK_DUE') === '1';
 if ($rawCsvPath !== '') {
     $rawCsvDir = dirname($rawCsvPath);
     if (!is_dir($rawCsvDir)) {
@@ -278,14 +279,15 @@ try {
     /**
      * @return array{source_id:int,pointer_id:int}
      */
-    $seedPack = static function (string $prefix) use ($pdo): array {
+    $seedPack = static function (string $prefix) use ($pdo, $packDue): array {
         $external = '201' . sprintf('%010u', crc32($prefix . microtime(true))) . random_int(1000, 9999);
         $saleKey = 'P:' . $external;
         $inputVersion = hash('sha256', 'pack:' . $prefix . ':' . microtime(true));
         $pdo->prepare('INSERT INTO meli_orders(meli_account_id,external_order_id,external_pack_id,date_created,date_created_local,status,total_amount,paid_amount,currency_id) VALUES (101,?,?,UTC_TIMESTAMP(),UTC_TIMESTAMP(),"paid",100,100,"COP")')->execute(['PACK-ORDER-' . $prefix . '-' . random_int(1000, 9999), $external]);
         $pdo->prepare('INSERT INTO meli_packs(meli_account_id,external_pack_id,integrity_status) VALUES (101,?,"incomplete")')->execute([$external]);
         $pdo->prepare('INSERT INTO sale_financial_state(company_id,meli_account_id,sale_key,external_sale_id,identity_type,input_version,currency_id,commercial_status,logistics_status,provisional_status,official_status) VALUES (10,101,?,?,"pack",?,"COP","complete","complete","complete","missing")')->execute([$saleKey, $external, $inputVersion]);
-        $pdo->prepare('INSERT INTO sale_financial_reconciliation_jobs(company_id,meli_account_id,sale_key,external_sale_id,input_version,status,origin_type,next_run_at,attempts,safe_message) VALUES (10,101,?,?,?,"retry","k1_scan_pack",DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR),0,"PACK_INCOMPLETE")')->execute([$saleKey, $external, $inputVersion]);
+        $nextRunSql = $packDue ? 'UTC_TIMESTAMP()' : 'DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR)';
+        $pdo->prepare('INSERT INTO sale_financial_reconciliation_jobs(company_id,meli_account_id,sale_key,external_sale_id,input_version,status,origin_type,next_run_at,attempts,safe_message) VALUES (10,101,?,?,?,"retry","k1_scan_pack",' . $nextRunSql . ',0,"PACK_INCOMPLETE")')->execute([$saleKey, $external, $inputVersion]);
         $sourceId = (int) $pdo->lastInsertId();
         $payload = json_encode(['capability' => 'financial_reconciliation', 'source_id' => $sourceId], JSON_THROW_ON_ERROR);
         $pdo->prepare('INSERT INTO queue_v4_clean_jobs(company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,state,available_at,max_attempts) VALUES (10,101,"domain_exact",?,?,?,"ready","2026-01-01 00:00:00.000",3)')->execute([(string) $sourceId, 'k1-scan-pack:' . $prefix . ':' . $sourceId, $payload]);

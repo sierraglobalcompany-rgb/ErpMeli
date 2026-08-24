@@ -12,6 +12,8 @@ Trace producer → source table → V4 pointer → canonical contract → draine
 
 Keep business source ownership outside Queue V4. Keep physical FIFO, leases and drain authority inside Queue V4.
 
+For finance work, `order_financial_recalc_jobs` and `sale_financial_reconciliation_jobs` are the durable source authority. Queue V4 may create/claim/defer/complete physical pointers, select a bounded Billing batch and park only `financial_reconciliation`; it must not become the owner of financial business semantics. `SaleFinancialService` owns Billing business decisions but must not update `queue_v4_clean_jobs` directly.
+
 For notification/webhook work, `meli_notification_events` is the occurrence/generation authority and `meli_notification_work_items` is the durable resource aggregate. K2 may only mutate generations strictly after the stored event activation watermark and at or before the active `processing_event_id`. Historical notification events require a separate recovery prompt.
 
 ## 4. KISS constraint
@@ -29,6 +31,8 @@ Every claim/takeover/release change needs either single-transaction proof or a t
 ## 7. Performance proof
 
 Every FIFO scan or lookahead change needs an upper bound and a real benchmark against representative prefixes.
+
+For K3 finance, due `PACK_INCOMPLETE` prefixes must be measured as due work, not hidden behind future `available_at`; Billing batch scans remain capped at 60.
 
 ## 8. Publication
 

@@ -27,6 +27,8 @@ $tests = [
     'queue_v4_k2_notifications_forward_path_r1_23919.php',
     'queue_v4_k2_notifications_event_generation_r2_23919.php',
     'queue_v4_k2_notifications_event_generation_r3_23919.php',
+    'queue_v4_k3_finance_canonicalization_23919.php',
+    'benchmark_queue_v4_k3_finance.php',
     'queue_v4_update_transition_23919.php',
     'runtime_publication_policy_2380.php', 'managed_runtime_package_2361.php',
     'runtime_package_attestation_b21a.php',

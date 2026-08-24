@@ -511,6 +511,121 @@ try {
         );
         return $worker->run('test', $maxJobs, 45);
     };
+    $runConcurrentK1Workers = static function (int $maxJobs = 3) use ($dsn, $user, $pass, $database, $root, $temporary): array {
+        $childScript = $temporary . DIRECTORY_SEPARATOR . 'k1-concurrent-worker.php';
+        if (!is_file($childScript)) {
+            file_put_contents($childScript, <<<'PHP'
+<?php
+declare(strict_types=1);
+
+use App\Core\Database;
+use App\QueueV4Clean\QueueV4CleanRepository;
+use App\QueueV4Clean\QueueV4CleanWorker;
+use App\Services\MeliApiClient;
+use App\Services\MeliHttpTransportInterface;
+use App\Services\SaleFinancialService;
+
+$root = (string) getenv('K1_CONCURRENT_ROOT');
+$shared = (string) getenv('K1_CONCURRENT_SHARED_ROOT');
+defined('ERP_SHARED_ROOT') || define('ERP_SHARED_ROOT', $shared);
+putenv('APP_KEY=queue-v4-bulk-parity-local-only');
+$_ENV['APP_KEY'] = 'queue-v4-bulk-parity-local-only';
+putenv('ML_WRITE_ENABLED=false');
+$_ENV['ML_WRITE_ENABLED'] = 'false';
+spl_autoload_register(static function (string $class) use ($root): void {
+    if (!str_starts_with($class, 'App\\')) {
+        return;
+    }
+    $path = $root . '/app/' . str_replace('\\', '/', substr($class, 4)) . '.php';
+    if (is_file($path)) {
+        require $path;
+    }
+});
+
+final class K1ConcurrencyBillingTransport implements MeliHttpTransportInterface
+{
+    public function request(string $method, string $url, array $data, array $headers, bool $form, array $timeouts): array
+    {
+        $orderIds = array_values(array_filter(explode(',', (string) ($data['order_ids'] ?? ''))));
+        $results = [];
+        foreach ($orderIds as $orderId) {
+            $results[] = [
+                'order_id' => $orderId,
+                'details' => [
+                    ['detail_id' => 'fee-' . $orderId, 'detail_type' => 'SALE_FEE', 'detail_amount' => 10],
+                ],
+            ];
+        }
+        return [
+            'status' => 200,
+            'body' => ['results' => $results],
+            'headers' => [],
+            'curl_error' => '',
+            'duration_ms' => 5,
+            'wire_bytes' => 1,
+            'decoded_bytes' => 1,
+        ];
+    }
+}
+
+$pdo = new PDO((string) getenv('K1_CONCURRENT_DSN_DB'), (string) getenv('K1_CONCURRENT_USER'), (string) getenv('K1_CONCURRENT_PASS'), [
+    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    PDO::ATTR_EMULATE_PREPARES => false,
+]);
+$pdo->exec("SET SESSION time_zone='+00:00'");
+Database::setConnection($pdo);
+$transport = new K1ConcurrencyBillingTransport();
+$repo = new QueueV4CleanRepository($pdo);
+$service = new SaleFinancialService(
+    static fn (int $accountId): MeliApiClient => new MeliApiClient($accountId, $transport)
+);
+$worker = new QueueV4CleanWorker($pdo, $repo, null, null, null, null, static fn (): SaleFinancialService => $service);
+$summary = $worker->run('test', (int) getenv('K1_CONCURRENT_MAX_JOBS'), 45);
+echo json_encode(['summary' => $summary, 'metrics' => $worker->lastMetrics()], JSON_THROW_ON_ERROR), PHP_EOL;
+PHP);
+        }
+        $env = array_merge($_ENV, [
+            'K1_CONCURRENT_ROOT' => $root,
+            'K1_CONCURRENT_SHARED_ROOT' => $temporary,
+            'K1_CONCURRENT_DSN_DB' => $dsn . ';dbname=' . $database,
+            'K1_CONCURRENT_USER' => $user,
+            'K1_CONCURRENT_PASS' => $pass,
+            'K1_CONCURRENT_MAX_JOBS' => (string) $maxJobs,
+        ]);
+        $descriptors = [
+            0 => ['pipe', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+        $processes = [];
+        for ($i = 0; $i < 2; $i++) {
+            $pipes = [];
+            $process = proc_open([PHP_BINARY, $childScript], $descriptors, $pipes, $root, $env);
+            if (!is_resource($process)) {
+                throw new RuntimeException('k1_concurrency_child_start_failed');
+            }
+            fclose($pipes[0]);
+            $processes[] = ['process' => $process, 'pipes' => $pipes];
+        }
+        $results = [];
+        foreach ($processes as $slot) {
+            $stdout = stream_get_contents($slot['pipes'][1]);
+            $stderr = stream_get_contents($slot['pipes'][2]);
+            fclose($slot['pipes'][1]);
+            fclose($slot['pipes'][2]);
+            $exit = proc_close($slot['process']);
+            if ($exit !== 0) {
+                throw new RuntimeException('k1_concurrency_child_failed:' . $exit . ':' . trim((string) $stderr));
+            }
+            $decoded = json_decode(trim((string) $stdout), true);
+            if (!is_array($decoded)) {
+                throw new RuntimeException('k1_concurrency_child_json_invalid:' . trim((string) $stdout));
+            }
+            $results[] = $decoded;
+        }
+        return $results;
+    };
 
     $resetBilling();
     $singleIds = $seedFinancial(101, 1, 'DIRECT1');
@@ -609,7 +724,6 @@ try {
     $k1PackOne = $seedExcludedPack(101, 'K1_PACK_1');
     $k1PackTwo = $seedExcludedPack(101, 'K1_PACK_2');
     $k1PackThree = $seedExcludedPack(101, 'K1_PACK_3');
-    $pdo->exec('UPDATE sale_financial_reconciliation_jobs SET next_run_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR) WHERE id IN (' . (int) $k1PackOne . ',' . (int) $k1PackTwo . ',' . (int) $k1PackThree . ')');
     $k1Simple = $seedFinancial(101, 1, 'K1_SIMPLE')[0];
     $transportK1 = new BulkBillingFakeTransport();
     $repoK1 = new QueueV4CleanRepository($pdo);
@@ -619,13 +733,77 @@ try {
     $workerK1 = new QueueV4CleanWorker($pdo, $repoK1, null, null, null, null, static fn (): SaleFinancialService => $serviceK1);
     $summaryK1 = $workerK1->run('test', 3, 45);
     $metricsK1 = $workerK1->lastMetrics();
-    $assert(count($transportK1->calls) === 1 && count($transportK1->calls[0]['order_ids']) === 1, 'K1_PACK_PREFIX_REACHES_SIMPLE');
+    $sentK1 = $transportK1->calls[0]['order_ids'] ?? [];
+    $assert(count($transportK1->calls) === 1 && count($sentK1) === 1, 'K1_DUE_PACK_PREFIX_REACHES_SIMPLE');
+    $assert(count(array_filter($sentK1, static fn (string $id): bool => str_starts_with($id, 'PACK-'))) === 0, 'PACK_REMOTE_HTTP=0');
     $assert((int) ($summaryK1['claimed'] ?? 0) === 4 && (int) ($metricsK1['scanned'] ?? 0) === 4, 'K1_SCANNED_LOCAL_PACK_PREFIX');
     $assert((int) ($metricsK1['effective'] ?? 0) === 1, 'K1_EFFECTIVE_WORK_COUNTS_ONLY_REMOTE_CANDIDATE');
+    $assert((int) ($metricsK1['effective'] ?? 0) === 1, 'SIMPLE_EFFECTIVE=1');
     $assert((int) ($metricsK1['local_deferred'] ?? 0) === 3, 'K1_LOCAL_DEFERRED_METRIC');
+    $assert((int) ($metricsK1['local_deferred'] ?? 0) === 3 && (int) ($metricsK1['effective'] ?? 0) === 1, 'PACK_EFFECTIVE_CONSUMED=0');
     $assert((int) ($metricsK1['remote_deferred'] ?? 0) === 0, 'K1_REMOTE_DEFERRED_METRIC');
     $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $k1Simple . ' AND status="complete"')->fetchColumn() === 1, 'K1_SIMPLE_COMPLETED');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $k1Simple . ' AND status="complete"')->fetchColumn() === 1, 'SIMPLE_SOURCE_COMPLETED=PASS');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id="' . (int) $k1Simple . '" AND state="completed"')->fetchColumn() === 1, 'SIMPLE_POINTER_COMPLETED=PASS');
     $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id IN (' . (int) $k1PackOne . ',' . (int) $k1PackTwo . ',' . (int) $k1PackThree . ') AND state="waiting"')->fetchColumn() === 3, 'K1_PACKS_SAFELY_DEFERRED');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id IN (' . (int) $k1PackOne . ',' . (int) $k1PackTwo . ',' . (int) $k1PackThree . ') AND state="waiting"')->fetchColumn() === 3, 'PACK_POINTERS_SAFELY_DEFERRED=3');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE s.id IN (' . (int) $k1PackOne . ',' . (int) $k1PackTwo . ',' . (int) $k1PackThree . ') AND q.company_id=s.company_id AND q.meli_account_id=s.meli_account_id')->fetchColumn() === 3, 'PACK_SOURCE_POINTER_CONSISTENCY=PASS');
+    $assert((int) $pdo->query('SELECT COALESCE(SUM(attempt_count),0) FROM queue_v4_clean_jobs WHERE resource_id IN ("' . (int) $k1PackOne . '","' . (int) $k1PackTwo . '","' . (int) $k1PackThree . '")')->fetchColumn() === 0
+        && (int) $pdo->query('SELECT COALESCE(SUM(attempts),0) FROM sale_financial_reconciliation_jobs WHERE id IN (' . (int) $k1PackOne . ',' . (int) $k1PackTwo . ',' . (int) $k1PackThree . ')')->fetchColumn() === 0, 'PACK_ATTEMPT_PENALTY=0');
+
+    $resetBilling();
+    $runningSource = $seedFinancial(101, 1, 'K1_RUNNING_SOURCE')[0];
+    $pdo->prepare(
+        'UPDATE sale_financial_reconciliation_jobs
+            SET status="running",next_run_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR),
+                lock_owner="source-owner",lease_generation=7,lease_expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 5 MINUTE)
+          WHERE id=?'
+    )->execute([$runningSource]);
+    $runningBefore = $pdo->query('SELECT status,next_run_at,lock_owner,lease_generation,lease_expires_at,attempts FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $runningSource)->fetch(PDO::FETCH_ASSOC);
+    $queueBefore = $pdo->query('SELECT state,attempt_count,lease_owner,lease_generation,last_error_class FROM queue_v4_clean_jobs WHERE resource_id="' . (int) $runningSource . '"')->fetch(PDO::FETCH_ASSOC);
+    $repoRunning = new QueueV4CleanRepository($pdo);
+    $runIdRunning = $repoRunning->beginRun('test', 'k1-running-owner');
+    $compactRunning = $repoRunning->compactLocalFifoPrefix($runIdRunning, 'k1-running-owner', 60);
+    $repoRunning->finishRun($runIdRunning, 'completed');
+    $runningAfter = $pdo->query('SELECT status,next_run_at,lock_owner,lease_generation,lease_expires_at,attempts FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $runningSource)->fetch(PDO::FETCH_ASSOC);
+    $queueAfter = $pdo->query('SELECT state,attempt_count,lease_owner,lease_generation,last_error_class FROM queue_v4_clean_jobs WHERE resource_id="' . (int) $runningSource . '"')->fetch(PDO::FETCH_ASSOC);
+    $assert((int) ($compactRunning['claimed'] ?? -1) === 0 && (int) ($compactRunning['scanned'] ?? -1) === 0, 'K1_PREFIX_RUNNING_SOURCE_FAIL_CLOSED=PASS');
+    $assert((int) ($compactRunning['claimed'] ?? -1) === 0, 'FAST_COMPACT_RUNNING_SOURCE=0');
+    $assert($runningBefore === $runningAfter, 'SOURCE_MUTATION=0');
+    $assert($queueBefore === $queueAfter, 'QUEUE_FAST_MUTATION=0');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_attempts')->fetchColumn() === 0, 'RUNNING_SOURCE_FAST_ATTEMPT_INSERT=0');
+
+    $resetBilling();
+    $caseALocals = $seedFinancial(101, 30, 'K1_CONCURRENCY_A_LOCAL');
+    $pdo->exec('UPDATE sale_financial_reconciliation_jobs SET next_run_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR) WHERE id IN (' . implode(',', array_map('intval', $caseALocals)) . ')');
+    $concurrencyA = $runConcurrentK1Workers(3);
+    $duplicatesA = (int) $pdo->query('SELECT COUNT(*) FROM (SELECT job_id,COUNT(*) c FROM queue_v4_clean_attempts GROUP BY job_id HAVING c<>1) x')->fetchColumn();
+    $assert(array_sum(array_map(static fn (array $row): int => (int) ($row['summary']['claimed'] ?? 0), $concurrencyA)) === 30, 'PREFIX_COMPACTION_CONCURRENCY_CASE_A_CLAIMED=30');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state="waiting"')->fetchColumn() === 30, 'PREFIX_COMPACTION_CASE_A_WAITING=30');
+    $assert($duplicatesA === 0, 'DUPLICATE_LOCAL_SETTLEMENT=0');
+    $assert($duplicatesA === 0, 'DUPLICATE_QUEUE_ATTEMPTS=0');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state="running"')->fetchColumn() === 0, 'QUEUE_LEASE_LEAKS=0');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE lock_owner IS NOT NULL')->fetchColumn() === 0, 'SOURCE_LEASE_LEAKS=0');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM api_request_logs WHERE endpoint_path="/billing/integration/group/ML/order/details"')->fetchColumn() === 0, 'DUPLICATE_REMOTE_BILLING=0');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs q LEFT JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE q.job_type="domain_exact" AND JSON_EXTRACT(q.payload_json,"$.capability")="financial_reconciliation" AND (s.id IS NULL OR s.company_id<>q.company_id OR s.meli_account_id<>q.meli_account_id)')->fetchColumn() === 0, 'CROSS_TENANT=0');
+
+    $resetBilling();
+    $caseBLocals = $seedFinancial(101, 59, 'K1_CONCURRENCY_B_LOCAL');
+    $pdo->exec('UPDATE sale_financial_reconciliation_jobs SET next_run_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR) WHERE id IN (' . implode(',', array_map('intval', $caseBLocals)) . ')');
+    $caseBEffective = $seedFinancial(101, 1, 'K1_CONCURRENCY_B_EFFECTIVE')[0];
+    $concurrencyB = $runConcurrentK1Workers(3);
+    $duplicatesB = (int) $pdo->query('SELECT COUNT(*) FROM (SELECT job_id,COUNT(*) c FROM queue_v4_clean_attempts GROUP BY job_id HAVING c<>1) x')->fetchColumn();
+    $caseBState = $pdo->query('SELECT q.state pointer_state,q.attempt_count,q.last_error_class,s.status source_status,s.safe_message FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE q.resource_id="' . (int) $caseBEffective . '"')->fetch(PDO::FETCH_ASSOC);
+    $assert(array_sum(array_map(static fn (array $row): int => (int) ($row['summary']['claimed'] ?? 0), $concurrencyB)) === 60, 'PREFIX_COMPACTION_CONCURRENCY_CASE_B_CLAIMED=60');
+    $caseBLogs = $pdo->query('SELECT level,message,context_json FROM system_logs ORDER BY id DESC LIMIT 5')->fetchAll(PDO::FETCH_ASSOC);
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id="' . (int) $caseBEffective . '" AND state="completed"')->fetchColumn() === 1, 'PREFIX_COMPACTION_CONCURRENCY_EFFECTIVE_COMPLETED=1 state=' . json_encode($caseBState) . ' workers=' . json_encode($concurrencyB) . ' logs=' . json_encode($caseBLogs));
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $caseBEffective . ' AND status="complete"')->fetchColumn() === 1, 'DOUBLE_SOURCE_FINALIZATION=0');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state="waiting"')->fetchColumn() === 59, 'POINTER_CORRUPTION=0');
+    $assert($duplicatesB === 0, 'DUPLICATE_QUEUE_ATTEMPTS_CASE_B=0');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state="running"')->fetchColumn() === 0, 'QUEUE_LEASE_LEAKS_CASE_B=0');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE lock_owner IS NOT NULL')->fetchColumn() === 0, 'SOURCE_LEASE_LEAKS_CASE_B=0');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM api_request_logs WHERE endpoint_path="/billing/integration/group/ML/order/details" AND http_status=200')->fetchColumn() === 1, 'DUPLICATE_REMOTE_BILLING_CASE_B=0');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs q LEFT JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE q.job_type="domain_exact" AND JSON_EXTRACT(q.payload_json,"$.capability")="financial_reconciliation" AND (s.id IS NULL OR s.company_id<>q.company_id OR s.meli_account_id<>q.meli_account_id)')->fetchColumn() === 0, 'CROSS_TENANT_CASE_B=0');
 
     $assertLocalPrefixReachesSimple = static function (string $mode, string $label) use ($pdo, $resetBilling, $seedFinancial, $seedExcludedPack, $assert): void {
         $resetBilling();
@@ -633,10 +811,7 @@ try {
         $replacementIds = [];
         for ($i = 1; $i <= 3; $i++) {
             if ($mode === 'pack') {
-                $sourceId = $seedExcludedPack(101, $label . '_PACK_' . $i);
-                $pdo->prepare('UPDATE sale_financial_reconciliation_jobs SET next_run_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR) WHERE id=?')
-                    ->execute([$sourceId]);
-                $prefixIds[] = $sourceId;
+                $prefixIds[] = $seedExcludedPack(101, $label . '_PACK_' . $i);
                 continue;
             }
             $sourceId = $seedFinancial(101, 1, $label . '_LOCAL_' . $i)[0];

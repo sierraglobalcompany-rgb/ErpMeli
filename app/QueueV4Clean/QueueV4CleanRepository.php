@@ -1102,7 +1102,7 @@ final class QueueV4CleanRepository
         if ($status === 'complete') {
             return ['state' => 'completed'];
         }
-        if (!in_array($status, ['pending', 'running', 'retry', 'awaiting_remote'], true)) {
+        if (!in_array($status, ['pending', 'retry', 'awaiting_remote'], true)) {
             return null;
         }
         $next = trim((string) ($source['next_run_at'] ?? ''));

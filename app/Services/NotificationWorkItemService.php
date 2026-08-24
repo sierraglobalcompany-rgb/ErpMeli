@@ -66,14 +66,17 @@ final class NotificationWorkItemService
                 THEN VALUES(latest_event_sent_at) ELSE latest_event_sent_at END,
               priority=LEAST(priority,VALUES(priority)),
               occurrence_count=occurrence_count+1,
-              rerun_requested=IF(status="running",1,rerun_requested),
+              rerun_requested=IF(status IN ("running","queued"),1,rerun_requested),
               status=CASE
-                WHEN status="running" THEN status
+                WHEN status IN ("running","queued") THEN status
                 WHEN VALUES(status) IN ("ignored","quarantined") THEN VALUES(status)
                 ELSE "pending" END,
               next_run_at=CASE
-                WHEN status="running" THEN next_run_at
+                WHEN status IN ("running","queued") THEN next_run_at
                 ELSE DATE_ADD(UTC_TIMESTAMP(),INTERVAL ? SECOND) END,
+              completed_at=CASE
+                WHEN status IN ("running","queued") THEN completed_at
+                ELSE NULL END,
               last_received_at=UTC_TIMESTAMP(),
               consecutive_failures=CASE
                 WHEN VALUES(latest_event_sent_at) IS NULL

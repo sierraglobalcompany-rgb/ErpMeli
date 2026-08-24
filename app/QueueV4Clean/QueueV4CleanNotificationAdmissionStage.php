@@ -13,13 +13,13 @@ use Throwable;
  * Forward-only bridge from durable Mercado Libre notifications to canonical work.
  *
  * K2 intentionally does not replay historical notification rows. On first run it
- * stores the current work-item frontier and only admits later rows. Physical
+ * stores the current notification-event frontier and only admits later event generations. Physical
  * storage remains Queue V4, but notification code enters through
  * CronAdmissionService, the canonical admission boundary.
  */
 final class QueueV4CleanNotificationAdmissionStage
 {
-    private const WATERMARK_ID_KEY = 'notifications.k2.forward_from_work_item_id';
+    private const WATERMARK_ID_KEY = 'notifications.k2.forward_from_event_id';
     private const WATERMARK_AT_KEY = 'notifications.k2.forward_from_utc';
     private const MAX_LIMIT = 30;
     private const WALL_TIME_SECONDS = 2.0;
@@ -40,6 +40,8 @@ final class QueueV4CleanNotificationAdmissionStage
         $summary = [
             'available' => true,
             'activated' => false,
+            'forward_authority' => 'notification_event_id',
+            'watermark_valid' => true,
             'watermark_id' => 0,
             'read' => 0,
             'admitted' => 0,
@@ -50,6 +52,8 @@ final class QueueV4CleanNotificationAdmissionStage
             'completed' => 0,
             'errors' => 0,
             'deferred' => false,
+            'paused' => false,
+            'diagnostic' => '',
         ];
 
         if (!$this->canContinue($startedAt)) {
@@ -57,14 +61,30 @@ final class QueueV4CleanNotificationAdmissionStage
             return $summary;
         }
 
-        $watermark = $this->watermarkId();
-        if ($watermark === null) {
+        if (!$this->notificationForwardEnabled()) {
+            $summary['paused'] = true;
+            $summary['diagnostic'] = 'notifications_forward_paused';
+            return $summary;
+        }
+
+        $watermarkState = $this->watermarkState();
+        if ($watermarkState['state'] === 'corrupt') {
+            $summary['watermark_valid'] = false;
+            $summary['deferred'] = true;
+            $summary['diagnostic'] = 'invalid_event_watermark';
+            return $summary;
+        }
+        if ($watermarkState['state'] === 'missing') {
             $summary['activated'] = true;
             $summary['watermark_id'] = $this->activateForwardWatermark();
             return $summary;
         }
+        $watermark = (int) $watermarkState['value'];
         $summary['watermark_id'] = $watermark;
         $summary = $this->reconcileQueued($summary, $limit, $watermark, $startedAt);
+        if (!empty($summary['deferred'])) {
+            return $summary;
+        }
         if (!$this->canContinue($startedAt)) {
             $summary['deferred'] = true;
             return $summary;
@@ -90,30 +110,38 @@ final class QueueV4CleanNotificationAdmissionStage
                     continue;
                 }
 
+                $generationEventId = (int) $row['latest_event_id'];
                 $receipt = (new CronAdmissionService($this->pdo))->submitOrderExact(
                     (int) $row['company_id'],
                     (int) $row['meli_account_id'],
                     (string) $row['remote_resource_id'],
                     (int) $row['id'],
-                    'work:' . (int) $row['id'],
+                    'work:' . (int) $row['id'] . ':event:' . $generationEventId,
                     [
                         'canonical_topic' => (string) $row['canonical_topic'],
-                        'latest_event_id' => (int) $row['latest_event_id'],
+                        'latest_event_id' => $generationEventId,
+                        'notification_work_item_id' => (int) $row['id'],
+                        'notification_event_generation_id' => $generationEventId,
                     ],
                 );
                 if (!$receipt['accepted']) {
                     if ($receipt['reason'] === 'ALREADY_COMPLETED' && $receipt['job_id'] !== null) {
-                        $this->markComplete((int) $row['id'], (int) $row['latest_event_id']);
+                        $completed = $this->markGenerationComplete((int) $row['id'], $generationEventId, $watermark);
                         $summary['deduplicated']++;
                         $summary['reconciled']++;
-                        $summary['completed']++;
+                        if ($completed) {
+                            $summary['completed']++;
+                        } else {
+                            $summary['deferred'] = true;
+                            $summary['diagnostic'] = 'rerun_generation_pending';
+                        }
                         continue;
                     }
                     $this->markAdmissionHeld((int) $row['id'], $receipt['reason']);
                     $summary['errors']++;
                     continue;
                 }
-                $this->markQueued((int) $row['id'], (int) $receipt['job_id'], (bool) $receipt['deduplicated']);
+                $this->markQueued((int) $row['id'], (int) $receipt['job_id'], (bool) $receipt['deduplicated'], $generationEventId);
                 $summary['admitted']++;
                 if ($receipt['deduplicated']) {
                     $summary['deduplicated']++;
@@ -130,23 +158,33 @@ final class QueueV4CleanNotificationAdmissionStage
         return $summary;
     }
 
-    private function watermarkId(): ?int
+    /** @return array{state:string,value:?int} */
+    private function watermarkState(): array
     {
         $stmt = $this->pdo->prepare('SELECT setting_value FROM app_settings WHERE setting_key=? LIMIT 1');
         $stmt->execute([self::WATERMARK_ID_KEY]);
         $value = $stmt->fetchColumn();
         if ($value === false) {
-            return null;
+            return ['state' => 'missing', 'value' => null];
         }
 
-        return is_numeric($value) ? max(0, (int) $value) : 0;
+        $text = trim((string) $value);
+        if ($text === '' || !preg_match('/^(0|[1-9][0-9]{0,18})$/', $text)) {
+            return ['state' => 'corrupt', 'value' => null];
+        }
+        $asInt = (int) $text;
+        if ((string) $asInt !== $text && !($asInt === 0 && $text === '0')) {
+            return ['state' => 'corrupt', 'value' => null];
+        }
+
+        return ['state' => 'valid', 'value' => $asInt];
     }
 
     private function activateForwardWatermark(): int
     {
         $this->pdo->beginTransaction();
         try {
-            $max = (int) $this->pdo->query('SELECT COALESCE(MAX(id),0) FROM meli_notification_work_items')->fetchColumn();
+            $max = (int) $this->pdo->query('SELECT COALESCE(MAX(id),0) FROM meli_notification_events')->fetchColumn();
             $stmt = $this->pdo->prepare(
                 'INSERT INTO app_settings(setting_key,setting_value,is_encrypted,setting_group)
                  VALUES (?, ?, 0, "notifications")
@@ -154,16 +192,16 @@ final class QueueV4CleanNotificationAdmissionStage
             );
             $stmt->execute([self::WATERMARK_ID_KEY, (string) $max]);
             $stmt->execute([self::WATERMARK_AT_KEY, gmdate('Y-m-d H:i:s')]);
-            $authoritative = $this->watermarkId();
+            $authoritative = $this->watermarkState();
             $this->pdo->commit();
-            return $authoritative ?? $max;
+            return $authoritative['state'] === 'valid' ? (int) $authoritative['value'] : $max;
         } catch (Throwable $error) {
             if ($this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
             }
-            $authoritative = $this->watermarkId();
-            if ($authoritative !== null) {
-                return $authoritative;
+            $authoritative = $this->watermarkState();
+            if ($authoritative['state'] === 'valid') {
+                return (int) $authoritative['value'];
             }
             throw $error;
         }
@@ -182,17 +220,18 @@ final class QueueV4CleanNotificationAdmissionStage
         $this->pdo->beginTransaction();
         try {
             $stmt = $this->pdo->prepare(
-                'SELECT w.id,w.meli_account_id,w.latest_event_id,j.state,j.completed_at
+                'SELECT w.id,w.meli_account_id,w.latest_event_id,w.processing_event_id,w.rerun_requested,j.state,j.completed_at
                  FROM meli_notification_work_items w
                  JOIN queue_v4_clean_jobs j
-                  ON j.idempotency_key=CONCAT("notification:order_exact:work:",w.id)
+                  ON j.idempotency_key=CONCAT("notification:order_exact:work:",w.id,":event:",w.processing_event_id)
                   AND j.meli_account_id=w.meli_account_id
                   AND j.job_type="order_exact"
                  WHERE w.status="queued"
-                   AND w.id>?
-                 ORDER BY w.id ASC
+                   AND w.processing_event_id IS NOT NULL
+                   AND w.processing_event_id>?
+                 ORDER BY w.processing_event_id ASC,w.id ASC
                  LIMIT ' . max(1, min(self::MAX_LIMIT, $limit)) . '
-                 FOR UPDATE'
+                 FOR UPDATE SKIP LOCKED'
             );
             $stmt->execute([$watermark]);
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -203,9 +242,15 @@ final class QueueV4CleanNotificationAdmissionStage
                 }
                 $state = (string) $row['state'];
                 if ($state === 'completed') {
-                    $this->markComplete((int) $row['id'], (int) $row['latest_event_id']);
+                    $completed = $this->markGenerationComplete((int) $row['id'], (int) $row['processing_event_id'], $watermark);
                     $summary['reconciled']++;
-                    $summary['completed']++;
+                    if ($completed) {
+                        $summary['completed']++;
+                    } else {
+                        $summary['deferred'] = true;
+                        $summary['diagnostic'] = 'rerun_generation_pending';
+                        break;
+                    }
                 } elseif (in_array($state, ['review', 'dead'], true)) {
                     $this->markAdmissionHeld((int) $row['id'], 'canonical_pointer_' . $state);
                     $summary['reconciled']++;
@@ -237,7 +282,7 @@ final class QueueV4CleanNotificationAdmissionStage
             'SELECT w.*,a.company_id,a.status account_status
              FROM meli_notification_work_items w
              LEFT JOIN meli_accounts a ON a.id=w.meli_account_id
-             WHERE w.id>?
+             WHERE w.latest_event_id>?
                AND w.status IN ("pending","retry")
                AND w.next_run_at<=UTC_TIMESTAMP(3)
                AND (w.lock_expires_at IS NULL OR w.lock_expires_at<UTC_TIMESTAMP(3))
@@ -256,7 +301,8 @@ final class QueueV4CleanNotificationAdmissionStage
             return false;
         }
 
-        return CronDeadlineContext::remainingSeconds() > $reserveSeconds;
+        return CronDeadlineContext::remainingSeconds() > $reserveSeconds
+            && CronDeadlineContext::canAcceptWork(0);
     }
 
     /**
@@ -281,20 +327,25 @@ final class QueueV4CleanNotificationAdmissionStage
         return ['action' => 'unsupported', 'reason' => 'k2_no_canonical_contract_' . substr($type !== '' ? $type : $topic, 0, 40)];
     }
 
-    private function markQueued(int $workId, int $jobId, bool $deduplicated): void
+    private function markQueued(int $workId, int $jobId, bool $deduplicated, int $generationEventId): void
     {
         $this->pdo->prepare(
             'UPDATE meli_notification_work_items
              SET status="queued",locked_by=NULL,locked_at=NULL,lock_expires_at=NULL,
                  last_error_code=NULL,last_error_message=NULL,last_error_diagnostic_id=NULL,last_error_stage=NULL,
-                 last_result=?,last_processed_at=UTC_TIMESTAMP(),processing_event_id=latest_event_id
-             WHERE id=?'
-        )->execute([$deduplicated ? 'canonical_order_exact_already_admitted' : 'canonical_order_exact_admitted:' . $jobId, $workId]);
+                 last_result=?,last_processed_at=UTC_TIMESTAMP(),processing_event_id=?,rerun_requested=0,completed_at=NULL
+             WHERE id=? AND latest_event_id=?'
+        )->execute([
+            $deduplicated ? 'canonical_order_exact_already_admitted' : 'canonical_order_exact_admitted:' . $jobId,
+            $generationEventId,
+            $workId,
+            $generationEventId,
+        ]);
         $this->pdo->prepare(
             'UPDATE meli_notification_events
              SET status="queued",disposition="canonical_order_exact_admitted",error_message=NULL,acknowledged_at=COALESCE(acknowledged_at,UTC_TIMESTAMP())
-             WHERE work_item_id=? AND status NOT IN ("duplicate","ignored","processed")'
-        )->execute([$workId]);
+             WHERE work_item_id=? AND id<=? AND status NOT IN ("duplicate","ignored","processed")'
+        )->execute([$workId, $generationEventId]);
     }
 
     private function markUnsupported(int $workId, string $reason): void
@@ -328,13 +379,37 @@ final class QueueV4CleanNotificationAdmissionStage
         )->execute([$safe, 'K2-' . gmdate('Ymd-His'), $workId]);
     }
 
-    private function markComplete(int $workId, int $latestEventId): void
+    private function markGenerationComplete(int $workId, int $generationEventId, int $watermark): bool
     {
         $this->pdo->prepare(
             'UPDATE meli_notification_events
              SET status="processed",disposition="canonical_order_exact_completed",processed_at=COALESCE(processed_at,UTC_TIMESTAMP()),error_message=NULL
-             WHERE work_item_id=? AND status NOT IN ("duplicate","ignored") AND (?=0 OR id<=?)'
-        )->execute([$workId, $latestEventId, $latestEventId]);
+             WHERE work_item_id=? AND id>? AND id<=? AND status NOT IN ("duplicate","ignored")'
+        )->execute([$workId, $watermark, $generationEventId]);
+        $stmt = $this->pdo->prepare(
+            'SELECT latest_event_id,processing_event_id,rerun_requested
+             FROM meli_notification_work_items WHERE id=? LIMIT 1 FOR UPDATE'
+        );
+        $stmt->execute([$workId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return false;
+        }
+        $latestEventId = (int) $row['latest_event_id'];
+        $processingEventId = $row['processing_event_id'] === null ? null : (int) $row['processing_event_id'];
+        $rerunRequested = (int) ($row['rerun_requested'] ?? 0) === 1;
+        if (($processingEventId !== null && $processingEventId !== $generationEventId) || $latestEventId > $generationEventId || $rerunRequested) {
+            $this->pdo->prepare(
+                'UPDATE meli_notification_work_items
+                 SET status="pending",next_run_at=UTC_TIMESTAMP(3),locked_by=NULL,locked_at=NULL,lock_expires_at=NULL,
+                     last_result="canonical_order_exact_generation_completed_rerun_pending",
+                     last_error_code=NULL,last_error_message=NULL,last_error_diagnostic_id=NULL,last_error_stage=NULL,
+                     last_processed_at=UTC_TIMESTAMP(),completed_at=NULL,processing_event_id=NULL,rerun_requested=0,
+                     consecutive_failures=0
+                 WHERE id=?'
+            )->execute([$workId]);
+            return false;
+        }
         $this->pdo->prepare(
             'UPDATE meli_notification_work_items
              SET status="complete",locked_by=NULL,locked_at=NULL,lock_expires_at=NULL,
@@ -344,6 +419,23 @@ final class QueueV4CleanNotificationAdmissionStage
                  rerun_requested=0,consecutive_failures=0
              WHERE id=?'
         )->execute([$workId]);
+        return true;
+    }
+
+    private function notificationForwardEnabled(): bool
+    {
+        foreach (['notifications.enabled', 'notifications.webhook_first_enabled'] as $key) {
+            $stmt = $this->pdo->prepare('SELECT setting_value FROM app_settings WHERE setting_key=? LIMIT 1');
+            $stmt->execute([$key]);
+            $value = $stmt->fetchColumn();
+            if ($value === false) {
+                continue;
+            }
+            if (in_array(strtolower(trim((string) $value)), ['0', 'false', 'off', 'no', 'disabled'], true)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private function hasTable(string $table): bool

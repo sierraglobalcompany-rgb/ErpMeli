@@ -132,12 +132,12 @@ try {
     $second = $stage->run(10);
     $assert((int) $second['admitted'] === 1, 'K2_ORDER_ADMISSION_COUNT');
     $assert((int) $second['unsupported'] === 1, 'K2_UNSUPPORTED_COUNT');
-    $assert((int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE job_type='order_exact' AND idempotency_key='notification:order_exact:work:2'")->fetchColumn() === 1, 'K2_ORDER_POINTER_NOT_UNIQUE');
+    $assert((int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE job_type='order_exact' AND idempotency_key='notification:order_exact:work:2:event:2'")->fetchColumn() === 1, 'K2_ORDER_POINTER_NOT_UNIQUE');
     $assert((string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=2')->fetchColumn() === 'queued', 'K2_SOURCE_NOT_QUEUED_AFTER_ADMISSION');
     $assert((string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=3')->fetchColumn() === 'paused', 'K2_UNSUPPORTED_NOT_PAUSED');
 
     $noop = $stage->run(10);
-    $assert((int) $noop['admitted'] === 0 && (int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE idempotency_key='notification:order_exact:work:2'")->fetchColumn() === 1, 'K2_DUPLICATE_WEBHOOK_ADMISSION_NOT_IDEMPOTENT');
+    $assert((int) $noop['admitted'] === 0 && (int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE idempotency_key='notification:order_exact:work:2:event:2'")->fetchColumn() === 1, 'K2_DUPLICATE_WEBHOOK_ADMISSION_NOT_IDEMPOTENT');
 
     $executed = [];
     $repo = new QueueV4CleanRepository($pdo);
@@ -145,7 +145,7 @@ try {
         $executed[] = (string) $job['idempotency_key'];
     });
     $result = $drainer->run('test', 1, 10);
-    $assert((int) $result['completed'] === 1 && $executed === ['notification:order_exact:work:2'], 'K2_CANONICAL_DRAINER_DID_NOT_EXECUTE_ORDER');
+    $assert((int) $result['completed'] === 1 && $executed === ['notification:order_exact:work:2:event:2'], 'K2_CANONICAL_DRAINER_DID_NOT_EXECUTE_ORDER');
     $reconciled = $stage->run(10);
     $assert((int) $reconciled['completed'] === 1, 'K2_SOURCE_POINTER_CONVERGENCE_NOT_RECONCILED');
     $assert((string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=2')->fetchColumn() === 'complete', 'K2_SOURCE_NOT_COMPLETED_AFTER_POINTER_COMPLETED');
@@ -181,7 +181,7 @@ try {
         $outputs[$suffix] = ['exit' => $exit, 'stdout' => trim((string) $stdout), 'stderr' => trim((string) $stderr)];
     }
     $assert(($outputs['a']['exit'] ?? 1) === 0 && ($outputs['b']['exit'] ?? 1) === 0, 'K2_RACE_CHILD_EXIT:' . json_encode($outputs));
-    $assert((int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE idempotency_key='notification:order_exact:work:4'")->fetchColumn() === 1, 'K2_TWO_PROCESS_RACE_DUPLICATED_POINTER');
+    $assert((int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE idempotency_key='notification:order_exact:work:4:event:4'")->fetchColumn() === 1, 'K2_TWO_PROCESS_RACE_DUPLICATED_POINTER');
     $assert((string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=4')->fetchColumn() === 'queued', 'K2_TWO_PROCESS_RACE_SOURCE_NOT_QUEUED');
 
     echo "QUEUE_V4_K2_NOTIFICATIONS_FORWARD_PATH=PASS checks=$checks\n";

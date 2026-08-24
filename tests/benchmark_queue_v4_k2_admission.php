@@ -65,7 +65,7 @@ $reset = static function (PDO $pdo): void {
     $pdo->exec('DELETE FROM meli_notification_events');
     $pdo->exec('DELETE FROM meli_notification_work_items');
     $pdo->exec('DELETE FROM app_settings');
-    $pdo->exec('INSERT INTO app_settings(setting_key,setting_value,is_encrypted,setting_group) VALUES ("notifications.k2.forward_from_work_item_id","0",0,"notifications")');
+    $pdo->exec('INSERT INTO app_settings(setting_key,setting_value,is_encrypted,setting_group) VALUES ("notifications.k2.forward_from_event_id","0",0,"notifications")');
 };
 
 $percentile = static function (array $values, float $p): float {
@@ -108,7 +108,7 @@ try {
                     $pdo->prepare(
                         'INSERT INTO queue_v4_clean_jobs(company_id,meli_account_id,job_type,resource_id,idempotency_key,state,payload_json,completed_at)
                          VALUES (1,1,"order_exact",?,?, "completed", ?, UTC_TIMESTAMP(3))'
-                    )->execute([(string) (900000 + $iteration * 100 + $i), 'notification:order_exact:work:' . $i, '{"contract_version":1}']);
+                    )->execute([(string) (900000 + $iteration * 100 + $i), 'notification:order_exact:work:' . $i . ':event:' . $i, '{"contract_version":1}']);
                 }
             }
             $start = hrtime(true);

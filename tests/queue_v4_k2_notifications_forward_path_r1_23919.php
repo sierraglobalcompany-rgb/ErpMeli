@@ -119,7 +119,7 @@ $insertPointer = static function (PDO $pdo, int $workId, string $orderId, string
         $accountId,
         'order_exact',
         $orderId,
-        'notification:order_exact:work:' . $workId,
+        'notification:order_exact:work:' . $workId . ':event:' . $workId,
         $state,
         '{"contract_version":1,"order_id":"' . $orderId . '"}',
         $state,
@@ -154,7 +154,7 @@ try {
     }
     $after = $pdo->query('SELECT id,status,last_result,last_error_code,completed_at FROM meli_notification_work_items ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
     $assert($before === $after, 'R1_HISTORICAL_ROWS_MUTATED_BY_RECONCILIATION');
-    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE idempotency_key="notification:order_exact:work:1"')->fetchColumn() === 0, 'R1_HISTORICAL_PENDING_ADMITTED');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE idempotency_key="notification:order_exact:work:1:event:1"')->fetchColumn() === 0, 'R1_HISTORICAL_PENDING_ADMITTED');
 
     $pdo->exec('TRUNCATE queue_v4_clean_attempts');
     $pdo->exec('TRUNCATE queue_v4_clean_runs');
@@ -164,18 +164,18 @@ try {
     $pdo->exec('DELETE FROM app_settings');
     $empty = $stage->run(30);
     $assert(($empty['activated'] ?? false) === true, 'R1_EMPTY_TABLE_NOT_ACTIVATED');
-    $assert((string) $pdo->query('SELECT setting_value FROM app_settings WHERE setting_key="notifications.k2.forward_from_work_item_id"')->fetchColumn() === '0', 'R1_EMPTY_FRONTIER_NOT_ZERO');
+    $assert((string) $pdo->query('SELECT setting_value FROM app_settings WHERE setting_key="notifications.k2.forward_from_event_id"')->fetchColumn() === '0', 'R1_EMPTY_FRONTIER_NOT_ZERO');
     $insertWork($pdo, 1, 'order', 'order', '20001');
     $firstForward = $stage->run(30);
     $assert((int) $firstForward['admitted'] === 1, 'R1_FIRST_POST_ACTIVATION_NOT_ADMITTED');
-    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE idempotency_key="notification:order_exact:work:1"')->fetchColumn() === 1, 'R1_FIRST_POST_ACTIVATION_POINTER_MISSING');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE idempotency_key="notification:order_exact:work:1:event:1"')->fetchColumn() === 1, 'R1_FIRST_POST_ACTIVATION_POINTER_MISSING');
     $executed = [];
     $repo = new QueueV4CleanRepository($pdo);
     $drainer = new CanonicalFifoDrainer($pdo, $repo, null, null, static function (array $job) use (&$executed): void {
         $executed[] = (string) $job['idempotency_key'];
     });
     $result = $drainer->run('test', 1, 10);
-    $assert((int) $result['completed'] === 1 && $executed === ['notification:order_exact:work:1'], 'R1_FIRST_FORWARD_DRAINER_NOT_EXECUTED');
+    $assert((int) $result['completed'] === 1 && $executed === ['notification:order_exact:work:1:event:1'], 'R1_FIRST_FORWARD_DRAINER_NOT_EXECUTED');
     $completed = $stage->run(30);
     $assert((int) $completed['completed'] === 1 && (string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=1')->fetchColumn() === 'complete', 'R1_FIRST_FORWARD_NOT_COMPLETED');
 
@@ -184,13 +184,13 @@ try {
     $pdo->exec('DELETE FROM queue_v4_clean_jobs');
     $pdo->exec('DELETE FROM meli_notification_events');
     $pdo->exec('DELETE FROM meli_notification_work_items');
-    $pdo->exec('UPDATE app_settings SET setting_value="1" WHERE setting_key="notifications.k2.forward_from_work_item_id"');
+    $pdo->exec('UPDATE app_settings SET setting_value="1" WHERE setting_key="notifications.k2.forward_from_event_id"');
     $insertWork($pdo, 2, 'order', 'order', '30002');
     $insertPointer($pdo, 2, '30002', 'completed');
     $alreadyCompleted = $stage->run(30);
     $assert((int) $alreadyCompleted['completed'] === 1, 'R1_ALREADY_COMPLETED_POINTER_NOT_RECONCILED');
     $assert((string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=2')->fetchColumn() === 'complete', 'R1_ALREADY_COMPLETED_SOURCE_NOT_COMPLETE');
-    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE idempotency_key="notification:order_exact:work:2"')->fetchColumn() === 1, 'R1_ALREADY_COMPLETED_DUPLICATED_POINTER');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE idempotency_key="notification:order_exact:work:2:event:2"')->fetchColumn() === 1, 'R1_ALREADY_COMPLETED_DUPLICATED_POINTER');
 
     $pdo->exec('DELETE FROM queue_v4_clean_jobs');
     $pdo->exec('DELETE FROM meli_notification_events');
@@ -277,11 +277,11 @@ try {
             $exit = proc_close($process);
             $assert($exit === 0, 'R1_ACTIVATION_CHILD_EXIT:' . $stderr);
         }
-        $assert((int) $pdo->query('SELECT COUNT(*) FROM app_settings WHERE setting_key="notifications.k2.forward_from_work_item_id"')->fetchColumn() === 1, 'R1_ACTIVATION_FRONTIERS_PER_ROUND_NOT_ONE');
-        $assert((string) $pdo->query('SELECT setting_value FROM app_settings WHERE setting_key="notifications.k2.forward_from_work_item_id"')->fetchColumn() === '0', 'R1_ACTIVATION_EMPTY_FRONTIER_MOVED');
+        $assert((int) $pdo->query('SELECT COUNT(*) FROM app_settings WHERE setting_key="notifications.k2.forward_from_event_id"')->fetchColumn() === 1, 'R1_ACTIVATION_FRONTIERS_PER_ROUND_NOT_ONE');
+        $assert((string) $pdo->query('SELECT setting_value FROM app_settings WHERE setting_key="notifications.k2.forward_from_event_id"')->fetchColumn() === '0', 'R1_ACTIVATION_EMPTY_FRONTIER_MOVED');
         $insertWork($pdo, 1, 'order', 'order', (string) (70000 + $round));
         $stage->run(30);
-        if ((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE idempotency_key="notification:order_exact:work:1"')->fetchColumn() !== 1) {
+        if ((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE idempotency_key="notification:order_exact:work:1:event:1"')->fetchColumn() !== 1) {
             $lost++;
         }
     }

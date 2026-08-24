@@ -1,0 +1,205 @@
+# ERP execution index
+
+This index is intentionally human-readable. It names the current execution surfaces and their authority without granting new runtime authority.
+
+## A. Data plane
+
+### fresh_orders_discovery
+
+- ROLE: discover recent orders and feed exact order work.
+- OWNER: Queue V4 canonical drainer.
+- FILE: `app/QueueV4Clean/CanonicalFifoDrainer.php`.
+- METHOD/SYMBOL: `handle()` dispatches canonical work type.
+- STATE AUTHORITY: `queue_v4_clean_jobs`.
+- NEXT CALL: order discovery domain service.
+- NOTES: V4 automatic, no manual background continuation.
+
+### order_exact
+
+- ROLE: incorporate one exact order resource.
+- OWNER: Queue V4 canonical drainer.
+- FILE: `app/Services/OrderSyncService.php`.
+- METHOD/SYMBOL: `processEnrichmentResource()`.
+- STATE AUTHORITY: V4 pointer plus order persistence tables.
+- NEXT CALL: `MeliApiClient` only through dispatch fence and rhythm policy.
+- NOTES: must not inherit Billing endpoint breaker.
+
+### financial_recalc
+
+- ROLE: local/derived financial recalculation after order persistence.
+- OWNER: Queue V4 canonical drainer.
+- FILE: `app/Services/OrderFinancialRecalcJobService.php`.
+- METHOD/SYMBOL: `processDue()` and exact processing.
+- STATE AUTHORITY: financial recalc source rows and V4 pointer.
+- NEXT CALL: local calculation / downstream reconciliation admission.
+- NOTES: V4 automatic.
+
+### financial_reconciliation
+
+- ROLE: official Billing reconciliation.
+- OWNER: Queue V4 canonical drainer plus Billing rhythm authority.
+- FILE: `app/Services/SaleFinancialService.php`.
+- METHOD/SYMBOL: `processDomainExactBatch()`.
+- STATE AUTHORITY: `sale_financial_reconciliation_jobs` source and `queue_v4_clean_jobs` pointer.
+- NEXT CALL: `MeliApiClient` Billing endpoint if policy permits.
+- NOTES: Billing 429 can park only this work family.
+
+## B. Control plane
+
+### CronAdmissionService
+
+- ROLE: create physical V4 pointers from business sources.
+- OWNER: admission boundary.
+- FILE: `app/Services/CronAdmissionService.php`.
+- METHOD/SYMBOL: `submit()`.
+- STATE AUTHORITY: `queue_v4_clean_jobs`.
+- NEXT CALL: no execution; worker later claims.
+- NOTES: must preserve idempotency key and tenant/account isolation.
+
+### QueueV4CleanRepository
+
+- ROLE: durable persistence for authority, claim, lease, completion and defer.
+- OWNER: Queue V4 persistence layer.
+- FILE: `app/QueueV4Clean/QueueV4CleanRepository.php`.
+- METHOD/SYMBOL: `acquireDrainAuthority()`, `claim()`, `releaseDrainAuthority()`.
+- STATE AUTHORITY: Queue V4 tables.
+- NEXT CALL: kernel or scheduler.
+- NOTES: R3 hardened release ordering.
+
+### CanonicalWorkContract
+
+- ROLE: define explicit executable contract.
+- OWNER: K1B canonical kernel.
+- FILE: `app/QueueV4Clean/CanonicalWorkContract.php`.
+- METHOD/SYMBOL: contract constants/factory.
+- STATE AUTHORITY: immutable version/type rules.
+- NEXT CALL: `CanonicalFifoDrainer`.
+- NOTES: unsupported versions/types fail closed.
+
+### CanonicalFifoDrainer
+
+- ROLE: single shared execution kernel.
+- OWNER: Queue V4 canonical kernel.
+- FILE: `app/QueueV4Clean/CanonicalFifoDrainer.php`.
+- METHOD/SYMBOL: `run()`, `handle()`, `handleDomainExact()`.
+- STATE AUTHORITY: claim result plus contract.
+- NEXT CALL: domain handler.
+- NOTES: worker/updater/manual future must use this kernel, not duplicate execution.
+
+### QueueV4CleanWorker
+
+- ROLE: thin automatic adapter.
+- OWNER: CLI worker.
+- FILE: `app/QueueV4Clean/QueueV4CleanWorker.php`.
+- METHOD/SYMBOL: `run()`.
+- STATE AUTHORITY: canonical drainer.
+- NEXT CALL: `CanonicalFifoDrainer::run()`.
+- NOTES: no separate execution semantics.
+
+### QueueV4CleanScheduler
+
+- ROLE: scheduler wrapper and control-plane orchestration.
+- OWNER: CLI scheduler.
+- FILE: `app/QueueV4Clean/QueueV4CleanScheduler.php`.
+- METHOD/SYMBOL: `run()`, `runWithinExecutionWindow()`.
+- STATE AUTHORITY: readiness/OAuth/sales audit/worker sequence.
+- NEXT CALL: control stages and worker.
+- NOTES: FIFO claim applies to eligible V4 work after control-plane slots.
+
+## C. Remote execution
+
+### MeliApiClient
+
+- ROLE: Mercado Libre API transport client.
+- OWNER: remote gateway.
+- FILE: `app/Services/MeliApiClient.php`.
+- METHOD/SYMBOL: request execution internals.
+- STATE AUTHORITY: API response/fake transport in tests.
+- NEXT CALL: transport, rhythm and result classifiers.
+- NOTES: R3 made no transport policy change.
+
+### ApiRhythmPolicyService
+
+- ROLE: pacing, permits, 429 backoff and Retry-After authority.
+- OWNER: API rhythm layer.
+- FILE: `app/Services/ApiRhythmPolicyService.php`.
+- METHOD/SYMBOL: `rateLimitNextSafeAt()`, `dispatched()`.
+- STATE AUTHORITY: API rhythm tables.
+- NEXT CALL: MeliApiClient/Queue V4 deferral.
+- NOTES: Billing 30/120/360/720 and 900s minimum unchanged.
+
+### QueueV4CleanDispatchFence
+
+- ROLE: bind physical remote transport to current claimed work.
+- OWNER: Queue V4 transport fence.
+- FILE: `app/QueueV4Clean/QueueV4CleanDispatchFence.php`.
+- METHOD/SYMBOL: dispatch fence APIs.
+- STATE AUTHORITY: transport context.
+- NEXT CALL: journal/result path.
+- NOTES: prevents blind remote work.
+
+### OAuth
+
+- ROLE: refresh/control credentials before remote work.
+- OWNER: Queue V4 OAuth control plane.
+- FILE: `app/QueueV4Clean/QueueV4CleanOAuthSupervisor.php`.
+- METHOD/SYMBOL: `run()`.
+- STATE AUTHORITY: OAuth operation tables.
+- NEXT CALL: OAuth refresh only when policy permits.
+- NOTES: not a K1B R3 change.
+
+## D. Observability
+
+### Transport journal
+
+- ROLE: record physical/pretransport API evidence.
+- OWNER: Queue V4/API health.
+- FILE: `app/QueueV4Clean/QueueV4CleanTransportJournal.php`.
+- METHOD/SYMBOL: journal methods.
+- STATE AUTHORITY: transport events/logs.
+- NEXT CALL: health/presenter/materializer.
+- NOTES: needed for B429 truth, not changed by R3.
+
+### Sales audit and sales repair
+
+- ROLE: control/data plane support for annual sales and exact repair.
+- OWNER: Queue V4 stages/domain services.
+- FILES: `QueueV4CleanSalesAuditStage`, `SalesAuditRunService`, `SalesAuditExactRepairService`.
+- STATE AUTHORITY: sales audit tables plus V4.
+- NOTES: included in release suite; no R3 semantics change.
+
+### Maintenance/reset/backup
+
+- ROLE: local/manual maintenance surfaces.
+- OWNER: local admin services.
+- FILES: backup, maintenance, reset services.
+- STATE AUTHORITY: local request/session tables.
+- NOTES: not automatic queue drainers.
+
+## E. Legacy/retired
+
+### process_sync_queue.php
+
+- ROLE: retired legacy launcher wrapper.
+- OWNER: legacy compatibility.
+- FILE: `jobs/process_sync_queue.php`.
+- STATE AUTHORITY: none for automatic work.
+- NEXT CALL: none; normal invocation blocked/retired.
+- NOTES: delete later only after K2/deletion audit.
+
+### Queue Core / V3 remnants
+
+- ROLE: historical/diagnostic/offline remnants.
+- OWNER: legacy compatibility.
+- FILES: `jobs/cron_v4.php`, `jobs/queue_core_*.php`, CronV3 services.
+- STATE AUTHORITY: historical tables/resources.
+- NEXT CALL: none for canonical automatic processing.
+- NOTES: catalogued for deletion backlog, not removed in R3.
+
+### Notifications/webhooks
+
+- ROLE: event buffering and work-item processing.
+- OWNER: mixed legacy/manual services.
+- FILES: `WebhookSpoolService`, `NotificationWorkItemService`.
+- STATUS: DEFERRED_K2 for canonical ownership decision.
+- NOTES: not certified as part of K1B execution kernel.

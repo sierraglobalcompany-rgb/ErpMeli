@@ -115,6 +115,99 @@ final class CronAdmissionService
         };
     }
 
+    /**
+     * Forward-only notification admission for canonical order exact work.
+     *
+     * The caller owns the source transaction and must already hold the durable
+     * notification work-item lock. This method is the canonical admission
+     * boundary; notification code must not insert Queue V4 rows directly.
+     *
+     * @param array<string,mixed> $payload
+     * @return array{accepted:bool,job_id:?int,deduplicated:bool,reason:string}
+     */
+    public function submitOrderExact(
+        int $companyId,
+        int $accountId,
+        string $orderId,
+        int $sourceId,
+        string $idempotencyKey,
+        array $payload = [],
+    ): array {
+        $orderId = trim($orderId);
+        $idempotencyKey = trim($idempotencyKey);
+        if ($companyId < 1 || $accountId < 1) {
+            return $this->receipt(false, null, false, 'INVALID_TENANT');
+        }
+        if ($sourceId < 1 || $orderId === '' || !ctype_digit($orderId) || $idempotencyKey === '') {
+            return $this->receipt(false, null, false, 'INVALID_SOURCE');
+        }
+        if (!$this->pdo->inTransaction()) {
+            throw new RuntimeException('cron_admission_source_transaction_required');
+        }
+
+        $tenant = $this->pdo->prepare(
+            'SELECT 1 FROM meli_accounts WHERE id=? AND company_id=? LIMIT 1'
+        );
+        $tenant->execute([$accountId, $companyId]);
+        if ($tenant->fetchColumn() === false) {
+            return $this->receipt(false, null, false, 'INVALID_TENANT');
+        }
+
+        $storedKey = 'notification:order_exact:' . $idempotencyKey;
+        if (strlen($storedKey) > 190) {
+            throw new RuntimeException('cron_admission_idempotency_key_too_long');
+        }
+        $document = CanonicalWorkContract::payloadWithVersion([
+            'order_id' => $orderId,
+            'source' => 'notification_forward',
+            'notification_work_item_id' => $sourceId,
+        ]);
+        if ($payload !== []) {
+            $document['payload'] = $payload;
+        }
+        $json = json_encode(
+            $document,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+        );
+        if (strlen($json) > 4096) {
+            throw new RuntimeException('cron_admission_payload_too_large');
+        }
+
+        $insert = $this->pdo->prepare(
+            'INSERT INTO queue_v4_clean_jobs
+             (company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,max_attempts)
+             VALUES (?,?,?,?,?,?,3)
+             ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)'
+        );
+        $insert->execute([$companyId, $accountId, 'order_exact', $orderId, $storedKey, $json]);
+        $inserted = $insert->rowCount() === 1;
+
+        $job = $this->pdo->prepare(
+            'SELECT id,state,resource_id FROM queue_v4_clean_jobs
+             WHERE company_id=? AND meli_account_id=? AND job_type="order_exact" AND idempotency_key=?
+             LIMIT 1'
+        );
+        $job->execute([$companyId, $accountId, $storedKey]);
+        $row = $job->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            throw new RuntimeException('cron_admission_receipt_missing');
+        }
+        if (!hash_equals($orderId, (string) $row['resource_id'])) {
+            throw new RuntimeException('cron_admission_idempotency_conflict');
+        }
+        $jobId = (int) $row['id'];
+        if ($inserted) {
+            return $this->receipt(true, $jobId, false, 'ACCEPTED');
+        }
+
+        return match ((string) $row['state']) {
+            'ready', 'running', 'waiting' => $this->receipt(true, $jobId, true, 'ALREADY_QUEUED'),
+            'completed' => $this->receipt(false, $jobId, true, 'ALREADY_COMPLETED'),
+            'review' => $this->receipt(false, $jobId, true, 'REVIEW_HELD'),
+            default => $this->receipt(false, $jobId, true, 'DEAD_HELD'),
+        };
+    }
+
     /** @return array{accepted:bool,job_id:?int,deduplicated:bool,reason:string} */
     private function receipt(bool $accepted, ?int $jobId, bool $deduplicated, string $reason): array
     {

@@ -96,6 +96,9 @@ final class QueueV4CleanScheduler
             $oauthClaimed = (int) ($oauth['claimed'] ?? 0);
             $salesClaimed = (int) ($salesAudit['claimed'] ?? 0);
             $producer = (new QueueV4CleanProducer($this->pdo, $repository))->produce();
+            $notificationAdmission = CronDeadlineContext::canAcceptWork(1)
+                ? (new QueueV4CleanNotificationAdmissionStage($this->pdo))->run(15)
+                : ['available' => false, 'deferred' => true, 'admitted' => 0, 'reconciled' => 0];
             // This bounded local-only step must run before the worker can use
             // the remaining wall clock. Otherwise a busy remote queue can
             // leave the browser incident catalogue permanently stale.
@@ -137,6 +140,7 @@ final class QueueV4CleanScheduler
                 'sales_audit' => $salesAudit,
                 'sales_repair' => $salesRepair,
                 'producer' => $producer,
+                'notification_admission' => $notificationAdmission,
                 'worker' => $worker,
                 'worker_metrics' => $workerMetrics,
                 'claimed_total' => $claimedTotal,

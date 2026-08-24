@@ -115,6 +115,12 @@ final class QueueV4CleanWorker
         }
         $maxJobs = min(self::HARD_MAX_JOBS, $maxJobs);
         $owner = bin2hex(random_bytes(16));
+        if (!$this->repository->acquireDrainAuthority($owner, CanonicalWorkContract::DRAIN_LEASE_TTL_SECONDS)) {
+            if ($ownsDeadline) {
+                CronDeadlineContext::clear();
+            }
+            return $this->emptySummary();
+        }
         $runId = $this->repository->beginRun($launcher, $owner);
         $scanned = $claimed = $effective = $completed = $deferred = $localCompleted = $localDeferred = $remoteDeferred = 0;
         /** @var list<array{job:array<string,mixed>,classification:string,next_safe_at:?string}> $pendingLocalDefers */
@@ -354,6 +360,7 @@ final class QueueV4CleanWorker
             $this->repository->finishRun($runId, 'failed');
             throw $error;
         } finally {
+            $this->repository->releaseDrainAuthority($owner);
             if ($ownsDeadline) {
                 CronDeadlineContext::clear();
             }

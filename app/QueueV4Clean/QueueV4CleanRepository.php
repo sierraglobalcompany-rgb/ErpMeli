@@ -17,6 +17,80 @@ final class QueueV4CleanRepository
     {
     }
 
+    public function acquireDrainAuthority(string $owner, int $ttlSeconds = CanonicalWorkContract::DRAIN_LEASE_TTL_SECONDS): bool
+    {
+        $ttlSeconds = max(10, min(300, $ttlSeconds));
+        $this->pdo->beginTransaction();
+        try {
+            $this->pdo->prepare(
+                'INSERT IGNORE INTO queue_v4_clean_leases (lease_key) VALUES (?)'
+            )->execute([CanonicalWorkContract::DRAIN_LEASE_KEY]);
+            $statement = $this->pdo->prepare(
+                'UPDATE queue_v4_clean_leases
+                 SET owner_ref=?,acquired_at=UTC_TIMESTAMP(3),heartbeat_at=UTC_TIMESTAMP(3),
+                     expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND)
+                 WHERE lease_key=?
+                   AND (owner_ref IS NULL OR owner_ref=? OR expires_at IS NULL OR expires_at<UTC_TIMESTAMP(3))'
+            );
+            $statement->execute([$owner, $ttlSeconds, CanonicalWorkContract::DRAIN_LEASE_KEY, $owner]);
+            $won = $statement->rowCount() === 1;
+            $this->pdo->commit();
+            return $won;
+        } catch (Throwable $error) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
+    public function releaseDrainAuthority(string $owner): bool
+    {
+        $this->pdo->beginTransaction();
+        try {
+            $active = $this->pdo->prepare(
+                "SELECT COUNT(*) FROM queue_v4_clean_jobs
+                 WHERE state='running' AND lease_owner=? AND lease_expires_at>=UTC_TIMESTAMP(3)"
+            );
+            $active->execute([$owner]);
+            if ((int) $active->fetchColumn() > 0) {
+                $this->pdo->commit();
+                return false;
+            }
+            $statement = $this->pdo->prepare(
+                'UPDATE queue_v4_clean_leases
+                 SET owner_ref=NULL,acquired_at=NULL,heartbeat_at=NULL,expires_at=NULL
+                 WHERE lease_key=? AND owner_ref=?'
+            );
+            $statement->execute([CanonicalWorkContract::DRAIN_LEASE_KEY, $owner]);
+            $released = $statement->rowCount() === 1;
+            $this->pdo->commit();
+            return $released;
+        } catch (Throwable $error) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
+    private function drainAuthorityOwnedForUpdate(string $owner): bool
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT owner_ref,expires_at
+             FROM queue_v4_clean_leases
+             WHERE lease_key=?
+             LIMIT 1 FOR UPDATE'
+        );
+        $statement->execute([CanonicalWorkContract::DRAIN_LEASE_KEY]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return false;
+        }
+        return hash_equals($owner, (string) ($row['owner_ref'] ?? ''))
+            && strtotime((string) ($row['expires_at'] ?? '') . ' UTC') >= time();
+    }
+
     /** @return array<string,mixed> */
     public function control(bool $forUpdate = false): array
     {
@@ -143,6 +217,10 @@ final class QueueV4CleanRepository
     {
         $this->pdo->beginTransaction();
         try {
+            if (!$this->drainAuthorityOwnedForUpdate($owner)) {
+                $this->pdo->commit();
+                return null;
+            }
             $row = $this->pdo->query(
                 "SELECT * FROM queue_v4_clean_jobs
                  WHERE state='ready' AND available_at<=UTC_TIMESTAMP(3)
@@ -154,6 +232,11 @@ final class QueueV4CleanRepository
             }
             $companyId = (int) $row['company_id'];
             $accountId = (int) $row['meli_account_id'];
+            $canonicalType = CanonicalWorkContract::canonicalType($row);
+            if ($canonicalType === null || !in_array($canonicalType, CanonicalWorkContract::supportedTypes(), true)) {
+                $this->pdo->commit();
+                return null;
+            }
             $previousGeneration = (int) ($row['lease_generation'] ?? 0);
             $generation = $previousGeneration + 1;
             $this->assertTenant($companyId, $accountId);
@@ -475,6 +558,10 @@ final class QueueV4CleanRepository
         }
         $this->pdo->beginTransaction();
         try {
+            if (!$this->drainAuthorityOwnedForUpdate($owner)) {
+                $this->pdo->commit();
+                return ['scanned' => 0, 'claimed' => 0, 'local_completed' => 0, 'local_deferred' => 0];
+            }
             $firstId = (int) $this->pdo->query(
                 "SELECT id FROM queue_v4_clean_jobs
                  WHERE state='ready' AND available_at<=UTC_TIMESTAMP(3)

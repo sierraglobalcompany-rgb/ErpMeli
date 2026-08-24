@@ -369,6 +369,7 @@ try {
     $assert($tenantBlocked, 'tenant mismatch was accepted');
 
     $leaseId = $repository->enqueue(4, 2, 'order_exact', '9010', 'lease:9010', ['order_id' => '9010']);
+    $assert($repository->acquireDrainAuthority('lease-fixture'), 'lease fixture drain authority not acquired');
     $runId = $repository->beginRun('test', 'lease-fixture');
     $claim = $repository->claim($runId, 'lease-fixture', 10);
     $assert((int) ($claim['id'] ?? 0) === $leaseId, 'lease fixture claim mismatch');

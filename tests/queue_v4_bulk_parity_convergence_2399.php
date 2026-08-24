@@ -981,10 +981,14 @@ PHP);
     $fairPackBefore->execute([(string) $fairPack]);
     $assert($fairPackBefore->fetch(PDO::FETCH_ASSOC) === $fairPackSnapshot, 'FAIR_PACK_UNCHANGED_AFTER_A_BATCH');
     $fairRepo = new QueueV4CleanRepository($pdo);
+    $assert($fairRepo->acquireDrainAuthority('fairness-next-primary'), 'FAIRNESS_DRAIN_AUTHORITY_ACQUIRED');
     $fairRun = $fairRepo->beginRun('test', 'fairness-next-primary');
     $fairClaim = $fairRepo->claim($fairRun, 'fairness-next-primary', 60);
     $assert(is_array($fairClaim) && (string) ($fairClaim['resource_id'] ?? '') === (string) $fairPack, 'SKIPPED_FINANCE_CAN_BE_NEXT_PRIMARY');
     $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id=' . (int) $fairB . ' AND state="ready"')->fetchColumn() === 1, 'DIFFERENT_TENANT_STOPS_SCAN');
+    $fairRepo->finishRun($fairRun, 'stopped');
+    $pdo->exec('UPDATE queue_v4_clean_jobs SET state="ready",lease_owner=NULL,lease_expires_at=NULL,lease_generation=lease_generation+1,attempt_count=GREATEST(attempt_count-1,0) WHERE resource_id=' . (int) $fairPack . ' AND state="running"');
+    $fairRepo->releaseDrainAuthority('fairness-next-primary');
 
     $assertPrimaryType = static function (string $type, string $resourceId, array $payload, string $label) use ($pdo, $seedFinancial, $assert): void {
         $pdo->exec('DELETE FROM queue_v4_clean_attempts');

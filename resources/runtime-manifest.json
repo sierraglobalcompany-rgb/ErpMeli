@@ -7,10 +7,10 @@
     "publication_policy": {
         "base_commit": "28bd74ecd0b528aaad2ffa3af11114dfbff5737c",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 967,
-        "component_count": 966,
-        "paths_sha256": "ebdc7bedf55c251a40dc1fe2538131f0e6f0f659dcce61392a34902026d0eae1",
-        "dependency_registry_sha256": "696fae9f0919da1e1f31a20d012abfd48d206206669c9d0122bd843a4d2c37f2",
+        "package_file_count": 968,
+        "component_count": 967,
+        "paths_sha256": "84720278624bf49b7506c7c54be89994e0a150095889063c7cd743f6d4305938",
+        "dependency_registry_sha256": "4ff693c73ab40ca33f4f2fffb52edd20fe6742873c821d34d3a1455164dc5e55",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -1114,6 +1114,12 @@
             "sha256_lf": "ac7a4fdb1adbd9bdfcae6f7f9bd948946e11240a1316bc5df6e2df80c36545bd",
             "text": true
         },
+        "runtime_app_queuev4clean_canonicalworkcontract_php": {
+            "path": "app/QueueV4Clean/CanonicalWorkContract.php",
+            "sha256": "32819697c4dfa6a9c442842c7509903cc17ec11248c331f08ac2bdc0a167d24c",
+            "sha256_lf": "32819697c4dfa6a9c442842c7509903cc17ec11248c331f08ac2bdc0a167d24c",
+            "text": true
+        },
         "runtime_app_queuev4clean_queuev4cleancontrolservice_php": {
             "path": "app/QueueV4Clean/QueueV4CleanControlService.php",
             "sha256": "19d5083dbbb4c1a9d41d184bf378f3ef5ecd4f85e6c0d404f8bdf5b64640efee",
@@ -1188,8 +1194,8 @@
         },
         "runtime_app_queuev4clean_queuev4cleanrepository_php": {
             "path": "app/QueueV4Clean/QueueV4CleanRepository.php",
-            "sha256": "4a62632ce379db236fcefbf69ecaef6f6f35afd5020f967143a9f604ae1c4574",
-            "sha256_lf": "4a62632ce379db236fcefbf69ecaef6f6f35afd5020f967143a9f604ae1c4574",
+            "sha256": "75657a304c49ef66a7f051fca98dde532b8fcdc61e8f7317bc4ad76f889d5ad3",
+            "sha256_lf": "75657a304c49ef66a7f051fca98dde532b8fcdc61e8f7317bc4ad76f889d5ad3",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleanreviewservice_php": {
@@ -1236,8 +1242,8 @@
         },
         "runtime_app_queuev4clean_queuev4cleanworker_php": {
             "path": "app/QueueV4Clean/QueueV4CleanWorker.php",
-            "sha256": "a087135e58269b6f31ff59d980dec214296d0e0d459c868a93a862dfd99b4d53",
-            "sha256_lf": "a087135e58269b6f31ff59d980dec214296d0e0d459c868a93a862dfd99b4d53",
+            "sha256": "a1cdfdd562be0073ef609c3413d1b0f74154137f6e10ae27b816da809608ce48",
+            "sha256_lf": "a1cdfdd562be0073ef609c3413d1b0f74154137f6e10ae27b816da809608ce48",
             "text": true
         },
         "runtime_app_recovery_databasemaintenancerecoverykernel_php": {
@@ -5382,8 +5388,8 @@
         },
         "runtime_resources_release_managed_runtime_dependencies_2_39_19_json": {
             "path": "resources/release/managed-runtime-dependencies-2.39.19.json",
-            "sha256": "696fae9f0919da1e1f31a20d012abfd48d206206669c9d0122bd843a4d2c37f2",
-            "sha256_lf": "696fae9f0919da1e1f31a20d012abfd48d206206669c9d0122bd843a4d2c37f2",
+            "sha256": "4ff693c73ab40ca33f4f2fffb52edd20fe6742873c821d34d3a1455164dc5e55",
+            "sha256_lf": "4ff693c73ab40ca33f4f2fffb52edd20fe6742873c821d34d3a1455164dc5e55",
             "text": true
         },
         "runtime_resources_release_managed_runtime_dependencies_2_39_2_json": {

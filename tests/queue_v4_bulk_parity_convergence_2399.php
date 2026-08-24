@@ -609,6 +609,7 @@ try {
     $k1PackOne = $seedExcludedPack(101, 'K1_PACK_1');
     $k1PackTwo = $seedExcludedPack(101, 'K1_PACK_2');
     $k1PackThree = $seedExcludedPack(101, 'K1_PACK_3');
+    $pdo->exec('UPDATE sale_financial_reconciliation_jobs SET next_run_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR) WHERE id IN (' . (int) $k1PackOne . ',' . (int) $k1PackTwo . ',' . (int) $k1PackThree . ')');
     $k1Simple = $seedFinancial(101, 1, 'K1_SIMPLE')[0];
     $transportK1 = new BulkBillingFakeTransport();
     $repoK1 = new QueueV4CleanRepository($pdo);
@@ -632,7 +633,10 @@ try {
         $replacementIds = [];
         for ($i = 1; $i <= 3; $i++) {
             if ($mode === 'pack') {
-                $prefixIds[] = $seedExcludedPack(101, $label . '_PACK_' . $i);
+                $sourceId = $seedExcludedPack(101, $label . '_PACK_' . $i);
+                $pdo->prepare('UPDATE sale_financial_reconciliation_jobs SET next_run_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR) WHERE id=?')
+                    ->execute([$sourceId]);
+                $prefixIds[] = $sourceId;
                 continue;
             }
             $sourceId = $seedFinancial(101, 1, $label . '_LOCAL_' . $i)[0];

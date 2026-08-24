@@ -7,10 +7,10 @@
     "publication_policy": {
         "base_commit": "28bd74ecd0b528aaad2ffa3af11114dfbff5737c",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 969,
-        "component_count": 968,
-        "paths_sha256": "ec4326cebbfa60cc739a3f659566b9862d457d0befb8a1fe8f7e49ab860fc363",
-        "dependency_registry_sha256": "794f745d9005dba5d2aeb5512c66c13bdfd9f44f01a17730771df7ec2dfc4b89",
+        "package_file_count": 970,
+        "component_count": 969,
+        "paths_sha256": "596da3d07c3b65cc71bc8277f3cd1a0d035c3e953ee4d8f942b9ad10ce138863",
+        "dependency_registry_sha256": "ecf1135967b66d8cedac2565954f7805c42788f34fb0de139954062c6145bbcb",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -1162,6 +1162,12 @@
             "sha256_lf": "0cd180496a2911589e849ba424833b6c1974e8b799745f1fb33820a3ef3d49be",
             "text": true
         },
+        "runtime_app_queuev4clean_queuev4cleannotificationadmissionstage_php": {
+            "path": "app/QueueV4Clean/QueueV4CleanNotificationAdmissionStage.php",
+            "sha256": "8ac533721aa16805af884b4713e967275b464274ef5fb6d4c779ce970aa77e7f",
+            "sha256_lf": "8ac533721aa16805af884b4713e967275b464274ef5fb6d4c779ce970aa77e7f",
+            "text": true
+        },
         "runtime_app_queuev4clean_queuev4cleanoauthdispatchfence_php": {
             "path": "app/QueueV4Clean/QueueV4CleanOAuthDispatchFence.php",
             "sha256": "bca3978db811633753e4736c4879f387702849443ce56980d0f3c619f13b89e5",
@@ -1224,8 +1230,8 @@
         },
         "runtime_app_queuev4clean_queuev4cleanscheduler_php": {
             "path": "app/QueueV4Clean/QueueV4CleanScheduler.php",
-            "sha256": "ac679d559ea86f4e77a870258f0b1db5e214f41161d6e7ef42cc28d153b66af4",
-            "sha256_lf": "ac679d559ea86f4e77a870258f0b1db5e214f41161d6e7ef42cc28d153b66af4",
+            "sha256": "8d4f22e2c644f7eb972fe3f616149c41409dafafd7cfca63ff66208528c271cf",
+            "sha256_lf": "8d4f22e2c644f7eb972fe3f616149c41409dafafd7cfca63ff66208528c271cf",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleantransportcontext_php": {
@@ -1686,8 +1692,8 @@
         },
         "runtime_app_services_cronadmissionservice_php": {
             "path": "app/Services/CronAdmissionService.php",
-            "sha256": "05e6c685cb739141ee2a3211466d2a9a7cb55e3730d7f7ed11513227ac7beb97",
-            "sha256_lf": "05e6c685cb739141ee2a3211466d2a9a7cb55e3730d7f7ed11513227ac7beb97",
+            "sha256": "dc1810b5c6df68858dff090f8bc77cce1b9e2adde109813a2a697e72426272bd",
+            "sha256_lf": "dc1810b5c6df68858dff090f8bc77cce1b9e2adde109813a2a697e72426272bd",
             "text": true
         },
         "runtime_app_services_cronapirisksummaryservice_php": {
@@ -5394,8 +5400,8 @@
         },
         "runtime_resources_release_managed_runtime_dependencies_2_39_19_json": {
             "path": "resources/release/managed-runtime-dependencies-2.39.19.json",
-            "sha256": "794f745d9005dba5d2aeb5512c66c13bdfd9f44f01a17730771df7ec2dfc4b89",
-            "sha256_lf": "794f745d9005dba5d2aeb5512c66c13bdfd9f44f01a17730771df7ec2dfc4b89",
+            "sha256": "ecf1135967b66d8cedac2565954f7805c42788f34fb0de139954062c6145bbcb",
+            "sha256_lf": "ecf1135967b66d8cedac2565954f7805c42788f34fb0de139954062c6145bbcb",
             "text": true
         },
         "runtime_resources_release_managed_runtime_dependencies_2_39_2_json": {

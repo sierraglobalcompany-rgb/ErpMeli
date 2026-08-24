@@ -96,6 +96,38 @@ if (($argv[1] ?? '') === '--takeover-claim-child') {
     exit(0);
 }
 
+if (($argv[1] ?? '') === '--release-claim-child') {
+    putenv('APP_KEY=queue-v4-k1b-release-claim-local-only');
+    $_ENV['APP_KEY'] = 'queue-v4-k1b-release-claim-local-only';
+    putenv('ML_WRITE_ENABLED=false');
+    $_ENV['ML_WRITE_ENABLED'] = 'false';
+    $pdo = $connect((string) getenv('K1B_RELEASE_DSN'), (string) getenv('K1B_RELEASE_USER'), (string) getenv('K1B_RELEASE_PASS'));
+    $repo = new QueueV4CleanRepository($pdo);
+    $action = (string) getenv('K1B_RELEASE_ACTION');
+    $owner = (string) getenv('K1B_RELEASE_OWNER');
+    $runId = (int) getenv('K1B_RELEASE_RUN_ID');
+    $start = (float) getenv('K1B_RELEASE_START');
+    while (microtime(true) < $start) {
+        usleep(1000);
+    }
+    $claimed = 0;
+    $released = false;
+    if ($action === 'claim') {
+        $claimed = is_array($repo->claim($runId, $owner, 60)) ? 1 : 0;
+    } elseif ($action === 'release') {
+        $released = $repo->releaseDrainAuthority($owner);
+    } else {
+        throw new RuntimeException('K1B_R3_RELEASE_CHILD_ACTION_INVALID');
+    }
+    echo json_encode([
+        'action' => $action,
+        'owner' => $owner,
+        'claimed' => $claimed,
+        'released' => $released,
+    ], JSON_THROW_ON_ERROR) . PHP_EOL;
+    exit(0);
+}
+
 $dsn = trim((string) getenv('ERP_MIGRATOR_TEST_DSN'));
 $user = (string) getenv('ERP_MIGRATOR_TEST_USER');
 $pass = (string) getenv('ERP_MIGRATOR_TEST_PASS');
@@ -340,6 +372,93 @@ try {
     $assert($duplicateExecution === 0, 'K1B_R2_DUPLICATE_EXECUTION');
 
     $resetQueue($pdo);
+    $repo->enqueue(1, 1, 'order_exact', '2501', 'release-live:2501', ['order_id' => '2501']);
+    $assert($repo->acquireDrainAuthority('release-owner'), 'K1B_R3_RELEASE_OWNER_AUTHORITY');
+    $releaseRun = $repo->beginRun('test', 'release-owner');
+    $releaseJob = $repo->claim($releaseRun, 'release-owner', 60);
+    $assert(is_array($releaseJob), 'K1B_R3_RELEASE_OWNER_CLAIM');
+    $assert(!$repo->releaseDrainAuthority('release-owner'), 'K1B_R3_RELEASE_WITH_OWN_LIVE_JOB_DENIED');
+    $ownerAfterDenied = (string) $pdo->query("SELECT owner_ref FROM queue_v4_clean_leases WHERE lease_key='" . CanonicalWorkContract::DRAIN_LEASE_KEY . "'")->fetchColumn();
+    $assert($ownerAfterDenied === 'release-owner', 'K1B_R3_AUTHORITY_OWNER_AFTER_DENIED_RELEASE_UNCHANGED');
+    $pdo->exec("UPDATE queue_v4_clean_jobs SET lease_expires_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE id=" . (int) $releaseJob['id']);
+    $assert($repo->expireLeases() === 1, 'K1B_R3_RELEASE_FIXTURE_LEASE_EXPIRED');
+    $assert($repo->releaseDrainAuthority('release-owner'), 'K1B_R3_RELEASE_WITHOUT_OWN_LIVE_JOB_PASS');
+
+    $resetQueue($pdo);
+    $releaseClaimRounds = 20;
+    $unsafeReleaseAfterClaim = 0;
+    $claimWithoutAuthorityAfterRelease = 0;
+    $releaseDuplicateAttempts = 0;
+    $releaseOverlappingOwnership = 0;
+    for ($round = 1; $round <= $releaseClaimRounds; $round++) {
+        $resetQueue($pdo);
+        $repo->enqueue(1, 1, 'order_exact', (string) (3000 + $round), 'release-race:' . $round, ['order_id' => (string) (3000 + $round)]);
+        $assert($repo->acquireDrainAuthority('release-a'), 'K1B_R3_RELEASE_RACE_AUTHORITY_' . $round);
+        $runA = $repo->beginRun('test', 'release-a');
+        $start = microtime(true) + 0.35;
+        $children = [
+            ['action' => 'claim', 'owner' => 'release-a', 'run_id' => $runA],
+            ['action' => 'release', 'owner' => 'release-a', 'run_id' => 0],
+        ];
+        $processes = [];
+        foreach ($children as $child) {
+            $descriptor = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+            $env = array_merge(getenv() ?: [], [
+                'K1B_RELEASE_DSN' => $dsn . ';dbname=' . $database,
+                'K1B_RELEASE_USER' => $user,
+                'K1B_RELEASE_PASS' => $pass,
+                'K1B_RELEASE_ACTION' => $child['action'],
+                'K1B_RELEASE_OWNER' => $child['owner'],
+                'K1B_RELEASE_RUN_ID' => (string) $child['run_id'],
+                'K1B_RELEASE_START' => (string) $start,
+                'APP_KEY' => 'queue-v4-k1b-release-claim-local-only',
+                'ML_WRITE_ENABLED' => 'false',
+            ]);
+            $cmd = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' --release-claim-child';
+            $process = proc_open($cmd, $descriptor, $pipes, $root, $env);
+            if (!is_resource($process)) {
+                throw new RuntimeException('K1B_R3_RELEASE_CLAIM_PROC_OPEN');
+            }
+            $processes[] = [$process, $pipes, $child['action']];
+        }
+        $outputs = [];
+        foreach ($processes as [$process, $pipes, $action]) {
+            $stdout = stream_get_contents($pipes[1]);
+            $stderr = stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            $exit = proc_close($process);
+            if ($exit !== 0) {
+                throw new RuntimeException('K1B_R3_RELEASE_CLAIM_CHILD_FAILED:' . $action . ':' . $stderr);
+            }
+            $outputs[$action] = json_decode(trim((string) $stdout), true, 16, JSON_THROW_ON_ERROR);
+        }
+        $claimed = (int) ($outputs['claim']['claimed'] ?? 0);
+        $released = (bool) ($outputs['release']['released'] ?? false);
+        if ($claimed === 1 && $released) {
+            $unsafeReleaseAfterClaim++;
+        }
+        if ($released && $claimed === 1) {
+            $claimWithoutAuthorityAfterRelease++;
+        }
+        $attempts = (int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_attempts')->fetchColumn();
+        if ($attempts > 1) {
+            $releaseDuplicateAttempts++;
+        }
+        $authorityOwner = (string) $pdo->query("SELECT COALESCE(owner_ref,'') FROM queue_v4_clean_leases WHERE lease_key='" . CanonicalWorkContract::DRAIN_LEASE_KEY . "'")->fetchColumn();
+        $activeOwner = (string) $pdo->query("SELECT COALESCE(MAX(lease_owner),'') FROM queue_v4_clean_jobs WHERE state='running' AND lease_expires_at>=UTC_TIMESTAMP(3)")->fetchColumn();
+        if ($authorityOwner !== '' && $activeOwner !== '' && !hash_equals($authorityOwner, $activeOwner)) {
+            $releaseOverlappingOwnership++;
+        }
+        $assert(($claimed === 1 && !$released) || ($claimed === 0 && $released), 'K1B_R3_RELEASE_CLAIM_SAFE_ORDER_' . $round . ':' . json_encode($outputs));
+        $repo->finishRun($runA, 'stopped');
+    }
+    $assert($unsafeReleaseAfterClaim === 0, 'K1B_R3_UNSAFE_RELEASE_AFTER_CLAIM');
+    $assert($claimWithoutAuthorityAfterRelease === 0, 'K1B_R3_CLAIM_WITHOUT_AUTHORITY_AFTER_RELEASE');
+    $assert($releaseDuplicateAttempts === 0, 'K1B_R3_RELEASE_DUPLICATE_ATTEMPTS');
+    $assert($releaseOverlappingOwnership === 0, 'K1B_R3_RELEASE_OVERLAPPING_ENGINE_OWNERSHIP');
+
+    $resetQueue($pdo);
     $repo->enqueue(1, 1, 'order_exact', '301', 'takeover:301', ['order_id' => '301']);
     $assert($repo->acquireDrainAuthority('owner-a'), 'K1B_R1_OWNER_A_AUTHORITY');
     $runA = $repo->beginRun('test', 'owner-a');
@@ -400,6 +519,13 @@ try {
     echo "K1B_NEW_OWNER_DRAINS_BEHIND_FOREIGN_LIVE_JOB=0" . PHP_EOL;
     echo "K1B_DUPLICATE_ATTEMPTS=0" . PHP_EOL;
     echo "K1B_DUPLICATE_EXECUTION=0" . PHP_EOL;
+    echo "K1B_RELEASE_WITH_OWN_LIVE_JOB=DENIED" . PHP_EOL;
+    echo "K1B_RELEASE_WITHOUT_OWN_LIVE_JOB=PASS" . PHP_EOL;
+    echo "K1B_AUTHORITY_OWNER_AFTER_DENIED_RELEASE=UNCHANGED" . PHP_EOL;
+    echo "K1B_RELEASE_CLAIM_RACE=PASS" . PHP_EOL;
+    echo "K1B_RELEASE_CLAIM_RACE_ROUNDS={$releaseClaimRounds}" . PHP_EOL;
+    echo "K1B_UNSAFE_RELEASE_AFTER_CLAIM=0" . PHP_EOL;
+    echo "K1B_CLAIM_WITHOUT_AUTHORITY_AFTER_RELEASE=0" . PHP_EOL;
     echo "K1B_TAKEOVER_DENIED_WITH_LIVE_JOB=PASS" . PHP_EOL;
     echo "K1B_TAKEOVER_AFTER_JOB_LEASE_EXPIRY=PASS" . PHP_EOL;
     echo "K1B_UNSUPPORTED_VERSION_FAIL_CLOSED=PASS" . PHP_EOL;

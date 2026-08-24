@@ -97,12 +97,12 @@ final class QueueV4CleanRepository
     {
         $this->pdo->beginTransaction();
         try {
-            $active = $this->pdo->prepare(
-                "SELECT COUNT(*) FROM queue_v4_clean_jobs
-                 WHERE state='running' AND lease_owner=? AND lease_expires_at>=UTC_TIMESTAMP(3)"
-            );
-            $active->execute([$owner]);
-            if ((int) $active->fetchColumn() > 0) {
+            $authority = $this->lockDrainAuthorityRow();
+            if (!hash_equals($owner, (string) ($authority['owner_ref'] ?? ''))) {
+                $this->pdo->commit();
+                return false;
+            }
+            if ($this->hasOwnActiveRunningJob($owner, true)) {
                 $this->pdo->commit();
                 return false;
             }
@@ -121,6 +121,22 @@ final class QueueV4CleanRepository
             }
             throw $error;
         }
+    }
+
+    private function hasOwnActiveRunningJob(string $owner, bool $forUpdate = false): bool
+    {
+        $sql = "SELECT id FROM queue_v4_clean_jobs
+                WHERE state='running'
+                  AND lease_owner=?
+                  AND lease_expires_at>=UTC_TIMESTAMP(3)
+                ORDER BY id
+                LIMIT 1";
+        if ($forUpdate) {
+            $sql .= ' FOR UPDATE';
+        }
+        $statement = $this->pdo->prepare($sql);
+        $statement->execute([$owner]);
+        return $statement->fetchColumn() !== false;
     }
 
     private function drainAuthorityOwnedForUpdate(string $owner): bool

@@ -20,20 +20,20 @@ final class QueueV4CleanRepository
     public function acquireDrainAuthority(string $owner, int $ttlSeconds = CanonicalWorkContract::DRAIN_LEASE_TTL_SECONDS): bool
     {
         $ttlSeconds = max(10, min(300, $ttlSeconds));
+        $this->pdo->prepare(
+            'INSERT IGNORE INTO queue_v4_clean_leases (lease_key) VALUES (?)'
+        )->execute([CanonicalWorkContract::DRAIN_LEASE_KEY]);
         $this->pdo->beginTransaction();
         try {
-            $this->pdo->prepare(
-                'INSERT IGNORE INTO queue_v4_clean_leases (lease_key) VALUES (?)'
-            )->execute([CanonicalWorkContract::DRAIN_LEASE_KEY]);
-            $foreignRunning = $this->pdo->prepare(
-                "SELECT COUNT(*) FROM queue_v4_clean_jobs
-                 WHERE state='running'
-                   AND lease_owner IS NOT NULL
-                   AND lease_owner<>?
-                   AND lease_expires_at>=UTC_TIMESTAMP(3)"
-            );
-            $foreignRunning->execute([$owner]);
-            if ((int) $foreignRunning->fetchColumn() > 0) {
+            $authority = $this->lockDrainAuthorityRow();
+            $currentOwner = (string) ($authority['owner_ref'] ?? '');
+            $expiresAt = (string) ($authority['expires_at'] ?? '');
+            $expired = $expiresAt === '' || strtotime($expiresAt . ' UTC') < time();
+            if ($currentOwner !== '' && !hash_equals($owner, $currentOwner) && !$expired) {
+                $this->pdo->commit();
+                return false;
+            }
+            if ($this->hasForeignActiveRunningJob($owner, true)) {
                 $this->pdo->commit();
                 return false;
             }
@@ -41,10 +41,9 @@ final class QueueV4CleanRepository
                 'UPDATE queue_v4_clean_leases
                  SET owner_ref=?,acquired_at=UTC_TIMESTAMP(3),heartbeat_at=UTC_TIMESTAMP(3),
                      expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND)
-                 WHERE lease_key=?
-                   AND (owner_ref IS NULL OR owner_ref=? OR expires_at IS NULL OR expires_at<UTC_TIMESTAMP(3))'
+                 WHERE lease_key=?'
             );
-            $statement->execute([$owner, $ttlSeconds, CanonicalWorkContract::DRAIN_LEASE_KEY, $owner]);
+            $statement->execute([$owner, $ttlSeconds, CanonicalWorkContract::DRAIN_LEASE_KEY]);
             $won = $statement->rowCount() === 1;
             $this->pdo->commit();
             return $won;
@@ -58,6 +57,40 @@ final class QueueV4CleanRepository
             }
             throw $error;
         }
+    }
+
+    /** @return array<string,mixed> */
+    private function lockDrainAuthorityRow(): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT owner_ref,expires_at
+             FROM queue_v4_clean_leases
+             WHERE lease_key=?
+             LIMIT 1 FOR UPDATE'
+        );
+        $statement->execute([CanonicalWorkContract::DRAIN_LEASE_KEY]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            throw new RuntimeException('queue_v4_clean_drain_authority_missing');
+        }
+        return $row;
+    }
+
+    private function hasForeignActiveRunningJob(string $owner, bool $forUpdate = false): bool
+    {
+        $sql = "SELECT id FROM queue_v4_clean_jobs
+                WHERE state='running'
+                  AND lease_owner IS NOT NULL
+                  AND lease_owner<>?
+                  AND lease_expires_at>=UTC_TIMESTAMP(3)
+                ORDER BY id
+                LIMIT 1";
+        if ($forUpdate) {
+            $sql .= ' FOR UPDATE';
+        }
+        $statement = $this->pdo->prepare($sql);
+        $statement->execute([$owner]);
+        return $statement->fetchColumn() !== false;
     }
 
     public function releaseDrainAuthority(string $owner): bool

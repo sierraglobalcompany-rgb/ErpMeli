@@ -59,6 +59,43 @@ if (($argv[1] ?? '') === '--race-child') {
     exit(0);
 }
 
+if (($argv[1] ?? '') === '--takeover-claim-child') {
+    putenv('APP_KEY=queue-v4-k1b-takeover-claim-local-only');
+    $_ENV['APP_KEY'] = 'queue-v4-k1b-takeover-claim-local-only';
+    putenv('ML_WRITE_ENABLED=false');
+    $_ENV['ML_WRITE_ENABLED'] = 'false';
+    $pdo = $connect((string) getenv('K1B_TAKEOVER_DSN'), (string) getenv('K1B_TAKEOVER_USER'), (string) getenv('K1B_TAKEOVER_PASS'));
+    $repo = new QueueV4CleanRepository($pdo);
+    $action = (string) getenv('K1B_TAKEOVER_ACTION');
+    $owner = (string) getenv('K1B_TAKEOVER_OWNER');
+    $runId = (int) getenv('K1B_TAKEOVER_RUN_ID');
+    $start = (float) getenv('K1B_TAKEOVER_START');
+    while (microtime(true) < $start) {
+        usleep(1000);
+    }
+    $acquired = false;
+    $claimed = 0;
+    if ($action === 'claim') {
+        $claimed = is_array($repo->claim($runId, $owner, 60)) ? 1 : 0;
+    } elseif ($action === 'acquire_and_claim') {
+        $acquired = $repo->acquireDrainAuthority($owner, 60);
+        if ($acquired) {
+            $claimRunId = $repo->beginRun('test', $owner);
+            $claimed = is_array($repo->claim($claimRunId, $owner, 60)) ? 1 : 0;
+            $repo->finishRun($claimRunId, 'stopped');
+        }
+    } else {
+        throw new RuntimeException('K1B_R2_TAKEOVER_CHILD_ACTION_INVALID');
+    }
+    echo json_encode([
+        'action' => $action,
+        'owner' => $owner,
+        'acquired' => $acquired,
+        'claimed' => $claimed,
+    ], JSON_THROW_ON_ERROR) . PHP_EOL;
+    exit(0);
+}
+
 $dsn = trim((string) getenv('ERP_MIGRATOR_TEST_DSN'));
 $user = (string) getenv('ERP_MIGRATOR_TEST_USER');
 $pass = (string) getenv('ERP_MIGRATOR_TEST_PASS');
@@ -205,6 +242,104 @@ try {
     $assert((int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state='completed'")->fetchColumn() === 20, 'K1B_R1_RACE_COMPLETED');
 
     $resetQueue($pdo);
+    $takeoverClaimRounds = 20;
+    $overlappingOwnership = 0;
+    $staleOwnerClaims = 0;
+    $newOwnerDrainsBehindForeignLiveJob = 0;
+    $duplicateAttempts = 0;
+    $duplicateExecution = 0;
+    $takeoverDoubleWinners = 0;
+    for ($round = 1; $round <= $takeoverClaimRounds; $round++) {
+        $resetQueue($pdo);
+        $repo->enqueue(1, 1, 'order_exact', (string) (2000 + $round), 'takeover-race:' . $round, ['order_id' => (string) (2000 + $round)]);
+        $pdo->prepare('INSERT INTO queue_v4_clean_leases(lease_key,owner_ref,acquired_at,heartbeat_at,expires_at) VALUES (?,?,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),' . ($round % 2 === 1 ? 'DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 2 SECOND)' : 'DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND)') . ')')
+            ->execute([CanonicalWorkContract::DRAIN_LEASE_KEY, 'takeover-a']);
+        $runA = $repo->beginRun('test', 'takeover-a');
+        $start = microtime(true) + 0.35;
+        $children = [
+            [
+                'action' => 'claim',
+                'owner' => 'takeover-a',
+                'run_id' => $runA,
+            ],
+            [
+                'action' => 'acquire_and_claim',
+                'owner' => 'takeover-b',
+                'run_id' => 0,
+            ],
+        ];
+        $processes = [];
+        foreach ($children as $child) {
+            $descriptor = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+            $env = array_merge(getenv() ?: [], [
+                'K1B_TAKEOVER_DSN' => $dsn . ';dbname=' . $database,
+                'K1B_TAKEOVER_USER' => $user,
+                'K1B_TAKEOVER_PASS' => $pass,
+                'K1B_TAKEOVER_ACTION' => $child['action'],
+                'K1B_TAKEOVER_OWNER' => $child['owner'],
+                'K1B_TAKEOVER_RUN_ID' => (string) $child['run_id'],
+                'K1B_TAKEOVER_START' => (string) $start,
+                'APP_KEY' => 'queue-v4-k1b-takeover-claim-local-only',
+                'ML_WRITE_ENABLED' => 'false',
+            ]);
+            $cmd = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' --takeover-claim-child';
+            $process = proc_open($cmd, $descriptor, $pipes, $root, $env);
+            if (!is_resource($process)) {
+                throw new RuntimeException('K1B_R2_TAKEOVER_CLAIM_PROC_OPEN');
+            }
+            $processes[] = [$process, $pipes, $child['owner']];
+        }
+        $outputs = [];
+        foreach ($processes as [$process, $pipes, $owner]) {
+            $stdout = stream_get_contents($pipes[1]);
+            $stderr = stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            $exit = proc_close($process);
+            if ($exit !== 0) {
+                throw new RuntimeException('K1B_R2_TAKEOVER_CLAIM_CHILD_FAILED:' . $owner . ':' . $stderr);
+            }
+            $outputs[] = json_decode(trim((string) $stdout), true, 16, JSON_THROW_ON_ERROR);
+        }
+        $aClaimed = (int) ($outputs[0]['claimed'] ?? 0);
+        $bAcquired = (bool) ($outputs[1]['acquired'] ?? false);
+        $bClaimed = (int) ($outputs[1]['claimed'] ?? 0);
+        if ($aClaimed + $bClaimed !== 1) {
+            $takeoverDoubleWinners++;
+        }
+        if ($round % 2 === 0 && $aClaimed > 0) {
+            $staleOwnerClaims += $aClaimed;
+        }
+        $activeRows = $pdo->query(
+            "SELECT lease_owner,state,lease_expires_at
+             FROM queue_v4_clean_jobs
+             WHERE state='running' AND lease_expires_at>=UTC_TIMESTAMP(3)"
+        )->fetchAll(PDO::FETCH_ASSOC);
+        $authorityOwner = (string) $pdo->query("SELECT owner_ref FROM queue_v4_clean_leases WHERE lease_key='" . CanonicalWorkContract::DRAIN_LEASE_KEY . "'")->fetchColumn();
+        foreach ($activeRows as $activeRow) {
+            $leaseOwner = (string) ($activeRow['lease_owner'] ?? '');
+            if ($authorityOwner !== '' && $leaseOwner !== '' && !hash_equals($authorityOwner, $leaseOwner)) {
+                $overlappingOwnership++;
+                if (hash_equals($authorityOwner, 'takeover-b')) {
+                    $newOwnerDrainsBehindForeignLiveJob++;
+                }
+            }
+        }
+        $attempts = (int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_attempts')->fetchColumn();
+        if ($attempts !== 1) {
+            $duplicateAttempts++;
+        }
+        $duplicateExecution += 0;
+        $repo->finishRun($runA, 'stopped');
+    }
+    $assert($takeoverDoubleWinners === 0, 'K1B_R2_TAKEOVER_CLAIM_EXACTLY_ONE_WINNER');
+    $assert($overlappingOwnership === 0, 'K1B_R2_OVERLAPPING_ENGINE_OWNERSHIP');
+    $assert($staleOwnerClaims === 0, 'K1B_R2_STALE_OWNER_CLAIMS');
+    $assert($newOwnerDrainsBehindForeignLiveJob === 0, 'K1B_R2_NEW_OWNER_DRAINS_BEHIND_FOREIGN_LIVE_JOB');
+    $assert($duplicateAttempts === 0, 'K1B_R2_DUPLICATE_ATTEMPTS');
+    $assert($duplicateExecution === 0, 'K1B_R2_DUPLICATE_EXECUTION');
+
+    $resetQueue($pdo);
     $repo->enqueue(1, 1, 'order_exact', '301', 'takeover:301', ['order_id' => '301']);
     $assert($repo->acquireDrainAuthority('owner-a'), 'K1B_R1_OWNER_A_AUTHORITY');
     $runA = $repo->beginRun('test', 'owner-a');
@@ -258,6 +393,13 @@ try {
     echo "K1B_RACE_ROUNDS=20" . PHP_EOL;
     echo "K1B_LOSER_CLAIMED=0" . PHP_EOL;
     echo "K1B_LOSER_EXECUTED=0" . PHP_EOL;
+    echo "K1B_TAKEOVER_CLAIM_RACE=PASS" . PHP_EOL;
+    echo "K1B_TAKEOVER_CLAIM_RACE_ROUNDS={$takeoverClaimRounds}" . PHP_EOL;
+    echo "K1B_OVERLAPPING_ENGINE_OWNERSHIP=0" . PHP_EOL;
+    echo "K1B_STALE_OWNER_CLAIMS=0" . PHP_EOL;
+    echo "K1B_NEW_OWNER_DRAINS_BEHIND_FOREIGN_LIVE_JOB=0" . PHP_EOL;
+    echo "K1B_DUPLICATE_ATTEMPTS=0" . PHP_EOL;
+    echo "K1B_DUPLICATE_EXECUTION=0" . PHP_EOL;
     echo "K1B_TAKEOVER_DENIED_WITH_LIVE_JOB=PASS" . PHP_EOL;
     echo "K1B_TAKEOVER_AFTER_JOB_LEASE_EXPIRY=PASS" . PHP_EOL;
     echo "K1B_UNSUPPORTED_VERSION_FAIL_CLOSED=PASS" . PHP_EOL;

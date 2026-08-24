@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\QueueV4Clean\CanonicalWorkContract;
 use PDO;
 use RuntimeException;
 
@@ -67,7 +68,7 @@ final class CronAdmissionService
         if (strlen($storedKey) > 190) {
             throw new RuntimeException('cron_admission_idempotency_key_too_long');
         }
-        $document = ['capability' => $capability, 'source_id' => $sourceId];
+        $document = CanonicalWorkContract::payloadWithVersion(['capability' => $capability, 'source_id' => $sourceId]);
         if ($payload !== []) {
             $document['payload'] = $payload;
         }

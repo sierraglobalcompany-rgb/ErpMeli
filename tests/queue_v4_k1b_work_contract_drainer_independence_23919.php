@@ -3,9 +3,61 @@
 declare(strict_types=1);
 
 use App\Core\Database;
+use App\QueueV4Clean\CanonicalFifoDrainer;
 use App\QueueV4Clean\CanonicalWorkContract;
 use App\QueueV4Clean\QueueV4CleanRepository;
 use App\QueueV4Clean\QueueV4CleanWorker;
+
+$root = dirname(__DIR__);
+spl_autoload_register(static function (string $class) use ($root): void {
+    if (!str_starts_with($class, 'App\\')) {
+        return;
+    }
+    $path = $root . '/app/' . str_replace('\\', '/', substr($class, 4)) . '.php';
+    if (is_file($path)) {
+        require $path;
+    }
+});
+
+$connect = static function (string $dsn, string $user, string $pass): PDO {
+    $pdo = new PDO($dsn, $user, $pass, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES => false,
+    ]);
+    $pdo->exec("SET time_zone='+00:00'");
+    return $pdo;
+};
+
+if (($argv[1] ?? '') === '--race-child') {
+    putenv('APP_KEY=queue-v4-k1b-race-local-only');
+    $_ENV['APP_KEY'] = 'queue-v4-k1b-race-local-only';
+    putenv('ML_WRITE_ENABLED=false');
+    $_ENV['ML_WRITE_ENABLED'] = 'false';
+    $pdo = $connect((string) getenv('K1B_RACE_DSN'), (string) getenv('K1B_RACE_USER'), (string) getenv('K1B_RACE_PASS'));
+    $repo = new QueueV4CleanRepository($pdo);
+    $owner = (string) getenv('K1B_RACE_OWNER');
+    $start = (float) getenv('K1B_RACE_START');
+    while (microtime(true) < $start) {
+        usleep(1000);
+    }
+    $executed = 0;
+    $drainer = new CanonicalFifoDrainer($pdo, $repo, null, null, static function (array $job) use (&$executed): void {
+        $executed++;
+    });
+    $readyBefore = (int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state='ready' AND available_at<=UTC_TIMESTAMP(3)")->fetchColumn();
+    $control = $repo->control();
+    $result = $drainer->run('test', 1, 10);
+    echo json_encode([
+        'owner' => $owner,
+        'ready_before' => $readyBefore,
+        'control' => [(string) ($control['engine_state'] ?? ''), (string) ($control['readiness_state'] ?? '')],
+        'result' => $result,
+        'metrics' => $drainer->lastMetrics(),
+        'executed' => $executed,
+    ], JSON_THROW_ON_ERROR) . PHP_EOL;
+    exit(0);
+}
 
 $dsn = trim((string) getenv('ERP_MIGRATOR_TEST_DSN'));
 $user = (string) getenv('ERP_MIGRATOR_TEST_USER');
@@ -15,9 +67,8 @@ if ($dsn === '' || !str_starts_with(strtolower($dsn), 'mysql:') || stripos($dsn,
     exit(2);
 }
 
-$root = dirname(__DIR__);
-$database = 'erp_k1b_' . bin2hex(random_bytes(5));
-$temporary = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'erp-k1b-' . bin2hex(random_bytes(5));
+$database = 'erp_k1b_r1_' . bin2hex(random_bytes(5));
+$temporary = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'erp-k1b-r1-' . bin2hex(random_bytes(5));
 @mkdir($temporary, 0770, true);
 
 $checks = 0;
@@ -29,35 +80,31 @@ $assert = static function (bool $condition, string $message) use (&$checks): voi
 };
 $quote = static fn (string $name): string => '`' . str_replace('`', '``', $name) . '`';
 
+$seedOrder = static function (QueueV4CleanRepository $repo, int $from, int $to, string $prefix = 'k1b'): void {
+    for ($i = $from; $i <= $to; $i++) {
+        $repo->enqueue(1, 1, 'order_exact', (string) $i, $prefix . ':' . $i, ['order_id' => (string) $i]);
+    }
+};
+
+$resetQueue = static function (PDO $pdo): void {
+    $pdo->exec('DELETE FROM queue_v4_clean_attempts');
+    $pdo->exec('DELETE FROM queue_v4_clean_runs');
+    $pdo->exec('DELETE FROM queue_v4_clean_jobs');
+    $pdo->exec('DELETE FROM queue_v4_clean_leases');
+};
+
 try {
-    putenv('APP_KEY=queue-v4-k1b-local-only');
-    $_ENV['APP_KEY'] = 'queue-v4-k1b-local-only';
+    putenv('APP_KEY=queue-v4-k1b-r1-local-only');
+    $_ENV['APP_KEY'] = 'queue-v4-k1b-r1-local-only';
     putenv('ML_WRITE_ENABLED=false');
     $_ENV['ML_WRITE_ENABLED'] = 'false';
     define('ERP_SHARED_ROOT', $temporary);
-    spl_autoload_register(static function (string $class) use ($root): void {
-        if (!str_starts_with($class, 'App\\')) {
-            return;
-        }
-        $path = $root . '/app/' . str_replace('\\', '/', substr($class, 4)) . '.php';
-        if (is_file($path)) {
-            require $path;
-        }
-    });
 
-    $server = new PDO($dsn, $user, $pass, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES => false,
-    ]);
+    $server = $connect($dsn, $user, $pass);
     $server->exec('CREATE DATABASE ' . $quote($database) . ' CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
-    $pdo = new PDO($dsn . ';dbname=' . $database, $user, $pass, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES => false,
-    ]);
-    $pdo->exec("SET time_zone='+00:00'");
+    $pdo = $connect($dsn . ';dbname=' . $database, $user, $pass);
     Database::setConnection($pdo);
+
     $pdo->exec("CREATE TABLE companies(id BIGINT UNSIGNED NOT NULL PRIMARY KEY,name VARCHAR(191) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $pdo->exec("CREATE TABLE meli_accounts(id BIGINT UNSIGNED NOT NULL,company_id BIGINT UNSIGNED NOT NULL,meli_user_id VARCHAR(64) NULL,account_name VARCHAR(191) NULL,status VARCHAR(32) NOT NULL,PRIMARY KEY(id),UNIQUE KEY uq_meli_accounts_company_id(company_id,id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $pdo->exec("CREATE TABLE queue_v4_clean_control(control_key VARCHAR(32) NOT NULL PRIMARY KEY,engine_state ENUM('STOPPED','CERTIFIED','ACTIVE') NOT NULL DEFAULT 'STOPPED',readiness_state ENUM('NOT_READY','READY_TO_TEST','TESTING','CERTIFIED','FAILED') NOT NULL DEFAULT 'NOT_READY',scheduler_enabled TINYINT(1) NOT NULL DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
@@ -66,96 +113,156 @@ try {
     $pdo->exec("CREATE TABLE queue_v4_clean_runs(id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,launcher ENUM('scheduler','manual','test') NOT NULL,worker_ref VARCHAR(96) NOT NULL,status ENUM('running','completed','failed','stopped') NOT NULL DEFAULT 'running',jobs_claimed INT UNSIGNED NOT NULL DEFAULT 0,jobs_completed INT UNSIGNED NOT NULL DEFAULT 0,jobs_deferred INT UNSIGNED NOT NULL DEFAULT 0,started_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),finished_at DATETIME(3) NULL,PRIMARY KEY(id),KEY idx_qv4_runs_status(status,started_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $pdo->exec("CREATE TABLE queue_v4_clean_leases(lease_key VARCHAR(64) NOT NULL PRIMARY KEY,owner_ref VARCHAR(96) NULL,acquired_at DATETIME(3) NULL,heartbeat_at DATETIME(3) NULL,expires_at DATETIME(3) NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $pdo->exec("INSERT INTO queue_v4_clean_control(control_key,engine_state,readiness_state,scheduler_enabled) VALUES ('primary','ACTIVE','CERTIFIED',1)");
-    $pdo->exec("INSERT INTO companies(id,name) VALUES (1,'K1B')");
-    $pdo->exec("INSERT INTO meli_accounts(id,company_id,meli_user_id,account_name,status) VALUES (1,1,1001,'K1B','conectado')");
+    $pdo->exec("INSERT INTO companies(id,name) VALUES (1,'K1B R1')");
+    $pdo->exec("INSERT INTO meli_accounts(id,company_id,meli_user_id,account_name,status) VALUES (1,1,1001,'K1B R1','conectado')");
 
     $repo = new QueueV4CleanRepository($pdo);
     $seen = [];
-    for ($i = 1; $i <= 100; $i++) {
-        $repo->enqueue(1, 1, 'order_exact', (string) $i, 'k1b:' . $i, ['order_id' => (string) $i]);
-    }
-    $worker = new QueueV4CleanWorker($pdo, $repo, null, null, static function (array $job) use (&$seen): void {
+    $seedOrder($repo, 1, 100);
+    $handler = static function (array $job) use (&$seen): void {
         $seen[] = (int) $job['resource_id'];
-    });
-    $v4a = $worker->run('scheduler', 15, 10);
-    $v4b = $worker->run('scheduler', 10, 10);
-    $v4 = [
-        'claimed' => $v4a['claimed'] + $v4b['claimed'],
-        'completed' => $v4a['completed'] + $v4b['completed'],
-        'deferred' => $v4a['deferred'] + $v4b['deferred'],
-    ];
-
-    $manualDrain = static function (QueueV4CleanRepository $repository, string $launcher, string $owner, int $limit) use (&$seen): array {
-        if (!$repository->acquireDrainAuthority($owner)) {
-            return ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
-        }
-        $runId = $repository->beginRun($launcher, $owner);
-        $claimed = $completed = 0;
-        try {
-            while ($claimed < $limit) {
-                $job = $repository->claim($runId, $owner, 60);
-                if ($job === null) {
-                    break;
-                }
-                $seen[] = (int) $job['resource_id'];
-                $repository->complete($job, $runId);
-                $claimed++;
-                $completed++;
-            }
-            $repository->finishRun($runId, 'completed');
-            return ['claimed' => $claimed, 'completed' => $completed, 'deferred' => 0];
-        } finally {
-            $repository->releaseDrainAuthority($owner);
-        }
     };
-    $manual = $manualDrain($repo, 'manual', 'k1b-manual', 25);
-    $future = $manualDrain($repo, 'test', 'k1b-future', 50);
-    $assert($v4['claimed'] === 25 && $manual['claimed'] === 25 && $future['claimed'] === 50, 'K1B_HANDOFF_COUNTS');
-    $assert($seen === range(1, 100), 'K1B_FIFO_ORDER_EXACT');
-    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state<>"completed"')->fetchColumn() === 0, 'K1B_ALL_COMPLETED_ONCE');
+    $v4Worker = new QueueV4CleanWorker($pdo, $repo, null, null, $handler);
+    $manualKernel = new CanonicalFifoDrainer($pdo, $repo, null, null, $handler);
+    $futureKernel = new CanonicalFifoDrainer($pdo, $repo, null, null, $handler);
 
-    $repo->enqueue(1, 1, 'order_exact', '201', 'k1b-race-a', ['order_id' => '201']);
-    $assert($repo->acquireDrainAuthority('k1b-winner'), 'K1B_WINNER_ACQUIRED');
-    $assert(!$repo->acquireDrainAuthority('k1b-loser'), 'K1B_LOSER_REJECTED');
-    $loserRun = $repo->beginRun('manual', 'k1b-loser');
-    $assert($repo->claim($loserRun, 'k1b-loser', 60) === null, 'K1B_LOSER_CLAIMED_WORK');
-    $repo->finishRun($loserRun, 'stopped');
-    $assert((int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_attempts WHERE lease_owner='k1b-loser'")->fetchColumn() === 0, 'K1B_LOSER_MUTATED_ATTEMPTS');
-    $repo->releaseDrainAuthority('k1b-winner');
+    $drainUntil = static function (object $drainer, string $launcher, int $target): int {
+        $claimed = 0;
+        for ($turn = 0; $claimed < $target && $turn < 50; $turn++) {
+            /** @var array{claimed:int,completed:int,deferred:int} $result */
+            $result = $drainer->run($launcher, min(15, $target - $claimed), 10);
+            if ($result['claimed'] < 1) {
+                break;
+            }
+            $claimed += $result['claimed'];
+        }
+        return $claimed;
+    };
+    $phaseClaimed = [
+        'v4' => $drainUntil($v4Worker, 'scheduler', 25),
+        'manual' => $drainUntil($manualKernel, 'manual', 25),
+        'future' => $drainUntil($futureKernel, 'test', 50),
+    ];
+    $assert($phaseClaimed === ['v4' => 25, 'manual' => 25, 'future' => 50], 'K1B_R1_HANDOFF_COUNTS:' . json_encode($phaseClaimed));
+    $assert($seen === range(1, 100), 'K1B_R1_FIFO_ORDER_EXACT');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state<>"completed"')->fetchColumn() === 0, 'K1B_R1_ALL_COMPLETED_ONCE');
+    $assert((int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_attempts WHERE outcome='completed'")->fetchColumn() === 100, 'K1B_R1_ATTEMPT_COUNT');
 
-    $repo->enqueue(1, 1, 'order_exact', '301', 'k1b-stale', ['order_id' => '301']);
-    $assert($repo->acquireDrainAuthority('k1b-stale-owner'), 'K1B_STALE_OWNER_ACQUIRED');
+    $resetQueue($pdo);
+    $raceWins = $raceLoserClaimed = $raceLoserExecuted = 0;
+    for ($round = 1; $round <= 20; $round++) {
+        $repo->enqueue(1, 1, 'order_exact', (string) (1000 + $round), 'race:' . $round, ['order_id' => (string) (1000 + $round)]);
+        $start = microtime(true) + 0.35;
+        $outputs = [];
+        $processes = [];
+        foreach (['a', 'b'] as $suffix) {
+            $owner = 'race-' . $round . '-' . $suffix;
+            $descriptor = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+            $env = array_merge(getenv() ?: [], [
+                'K1B_RACE_DSN' => $dsn . ';dbname=' . $database,
+                'K1B_RACE_USER' => $user,
+                'K1B_RACE_PASS' => $pass,
+                'K1B_RACE_OWNER' => $owner,
+                'K1B_RACE_START' => (string) $start,
+                'APP_KEY' => 'queue-v4-k1b-race-local-only',
+                'ML_WRITE_ENABLED' => 'false',
+            ]);
+            $cmd = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' --race-child';
+            $process = proc_open($cmd, $descriptor, $pipes, $root, $env);
+            if (!is_resource($process)) {
+                throw new RuntimeException('K1B_R1_RACE_PROC_OPEN');
+            }
+            $processes[] = [$process, $pipes, $owner];
+        }
+        foreach ($processes as [$process, $pipes, $owner]) {
+            $stdout = stream_get_contents($pipes[1]);
+            $stderr = stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            $exit = proc_close($process);
+            if ($exit !== 0) {
+                throw new RuntimeException('K1B_R1_RACE_CHILD_FAILED:' . $owner . ':' . $stderr);
+            }
+            $decoded = json_decode(trim((string) $stdout), true, 16, JSON_THROW_ON_ERROR);
+            $outputs[] = $decoded;
+        }
+        $roundWinners = 0;
+        foreach ($outputs as $output) {
+            $claimed = (int) ($output['result']['claimed'] ?? 0);
+            $executed = (int) ($output['executed'] ?? 0);
+            if ($claimed === 1) {
+                $roundWinners++;
+                $raceWins++;
+            } else {
+                $raceLoserClaimed += $claimed;
+                $raceLoserExecuted += $executed;
+            }
+        }
+        $assert($roundWinners === 1, 'K1B_R1_RACE_ONE_WINNER_ROUND_' . $round . ':' . json_encode($outputs));
+    }
+    $assert($raceWins === 20, 'K1B_R1_RACE_WIN_COUNT');
+    $assert($raceLoserClaimed === 0 && $raceLoserExecuted === 0, 'K1B_R1_RACE_LOSER_MUTATION');
+    $assert((int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state='completed'")->fetchColumn() === 20, 'K1B_R1_RACE_COMPLETED');
+
+    $resetQueue($pdo);
+    $repo->enqueue(1, 1, 'order_exact', '301', 'takeover:301', ['order_id' => '301']);
+    $assert($repo->acquireDrainAuthority('owner-a'), 'K1B_R1_OWNER_A_AUTHORITY');
+    $runA = $repo->beginRun('test', 'owner-a');
+    $jobA = $repo->claim($runA, 'owner-a', 60);
+    $assert(is_array($jobA), 'K1B_R1_OWNER_A_CLAIM');
     $pdo->exec("UPDATE queue_v4_clean_leases SET expires_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE lease_key='" . CanonicalWorkContract::DRAIN_LEASE_KEY . "'");
-    $assert($repo->acquireDrainAuthority('k1b-takeover'), 'K1B_TAKEOVER_ACQUIRED');
-    $staleRun = $repo->beginRun('test', 'k1b-stale-owner');
-    $assert($repo->compactLocalFifoPrefix($staleRun, 'k1b-stale-owner', 60)['claimed'] === 0, 'K1B_STALE_COMPACTED');
-    $assert($repo->claim($staleRun, 'k1b-stale-owner', 60) === null, 'K1B_STALE_CLAIMED');
-    $repo->finishRun($staleRun, 'stopped');
-    $repo->releaseDrainAuthority('k1b-takeover');
+    $assert(!$repo->acquireDrainAuthority('owner-b'), 'K1B_R1_TAKEOVER_DENIED_WITH_LIVE_JOB');
+    $pdo->exec("UPDATE queue_v4_clean_jobs SET lease_expires_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE id=" . (int) $jobA['id']);
+    $assert($repo->expireLeases() === 1, 'K1B_R1_LEASE_EXPIRED');
+    $pdo->exec("UPDATE queue_v4_clean_jobs SET available_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE id=" . (int) $jobA['id']);
+    $repo->releaseDueWaiting();
+    $takeoverSeen = [];
+    $takeover = new CanonicalFifoDrainer($pdo, $repo, null, null, static function (array $job) use (&$takeoverSeen): void {
+        $takeoverSeen[] = (int) $job['resource_id'];
+    });
+    $takeoverResult = $takeover->run('test', 1, 10);
+    $assert($takeoverResult['claimed'] === 1 && $takeoverSeen === [301], 'K1B_R1_TAKEOVER_AFTER_JOB_LEASE_EXPIRY');
 
-    $pdo->exec('DELETE FROM queue_v4_clean_attempts');
-    $pdo->exec('DELETE FROM queue_v4_clean_jobs');
-    $badPayload = json_encode(['capability' => 'unsupported'], JSON_THROW_ON_ERROR);
-    $goodPayload = json_encode(['order_id' => '402'], JSON_THROW_ON_ERROR);
-    $pdo->prepare(
-        "INSERT INTO queue_v4_clean_jobs(company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json)
-         VALUES (1,1,'domain_exact','401','k1b-unsupported-head',?),(1,1,'order_exact','402','k1b-supported-behind',?)"
-    )->execute([$badPayload, $goodPayload]);
-    $assert($repo->acquireDrainAuthority('k1b-unsupported'), 'K1B_UNSUPPORTED_AUTHORITY_ACQUIRED');
-    $unsupportedRun = $repo->beginRun('test', 'k1b-unsupported');
-    $assert($repo->claim($unsupportedRun, 'k1b-unsupported', 60) === null, 'K1B_UNSUPPORTED_HEAD_CLAIMED');
+    $resetQueue($pdo);
+    $payloadV2 = json_encode(['order_id' => '401', CanonicalWorkContract::PAYLOAD_VERSION_KEY => 2], JSON_THROW_ON_ERROR);
+    $payloadV1 = json_encode(['order_id' => '402', CanonicalWorkContract::PAYLOAD_VERSION_KEY => 1], JSON_THROW_ON_ERROR);
+    $pdo->prepare("INSERT INTO queue_v4_clean_jobs(company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json) VALUES (1,1,'order_exact','401','unsupported-version-head',?),(1,1,'order_exact','402','valid-behind-version',?)")->execute([$payloadV2, $payloadV1]);
+    $assert($repo->acquireDrainAuthority('unsupported-version'), 'K1B_R1_UNSUPPORTED_VERSION_AUTH');
+    $unsupportedRun = $repo->beginRun('test', 'unsupported-version');
+    $assert($repo->compactLocalFifoPrefix($unsupportedRun, 'unsupported-version', 60)['claimed'] === 0, 'K1B_R1_UNSUPPORTED_VERSION_COMPACTED');
+    $assert($repo->claim($unsupportedRun, 'unsupported-version', 60) === null, 'K1B_R1_UNSUPPORTED_VERSION_CLAIMED');
     $repo->finishRun($unsupportedRun, 'stopped');
-    $repo->releaseDrainAuthority('k1b-unsupported');
+    $repo->releaseDrainAuthority('unsupported-version');
     $states = $pdo->query('SELECT resource_id,state FROM queue_v4_clean_jobs ORDER BY id')->fetchAll(PDO::FETCH_KEY_PAIR);
-    $assert($states === ['401' => 'ready', '402' => 'ready'], 'K1B_UNSUPPORTED_LEAPFROGGED');
+    $assert($states === ['401' => 'ready', '402' => 'ready'], 'K1B_R1_UNSUPPORTED_VERSION_LEAPFROG');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_attempts')->fetchColumn() === 0, 'K1B_R1_UNSUPPORTED_VERSION_ATTEMPT');
+
+    $resetQueue($pdo);
+    $payloadFinancial = json_encode(['capability' => 'financial_recalc', 'source_id' => 501, CanonicalWorkContract::PAYLOAD_VERSION_KEY => 1], JSON_THROW_ON_ERROR);
+    $payloadOrder = json_encode(['order_id' => '502', CanonicalWorkContract::PAYLOAD_VERSION_KEY => 1], JSON_THROW_ON_ERROR);
+    $pdo->prepare("INSERT INTO queue_v4_clean_jobs(company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json) VALUES (1,1,'domain_exact','501','unsupported-type-head',?),(1,1,'order_exact','502','valid-behind-type',?)")->execute([$payloadFinancial, $payloadOrder]);
+    $assert($repo->acquireDrainAuthority('unsupported-type'), 'K1B_R1_UNSUPPORTED_TYPE_AUTH');
+    $unsupportedTypeRun = $repo->beginRun('test', 'unsupported-type');
+    $assert($repo->claim($unsupportedTypeRun, 'unsupported-type', 60, CanonicalWorkContract::VERSION, [CanonicalWorkContract::TYPE_ORDER_EXACT]) === null, 'K1B_R1_UNSUPPORTED_TYPE_CLAIMED');
+    $repo->finishRun($unsupportedTypeRun, 'stopped');
+    $repo->releaseDrainAuthority('unsupported-type');
+    $states = $pdo->query('SELECT resource_id,state FROM queue_v4_clean_jobs ORDER BY id')->fetchAll(PDO::FETCH_KEY_PAIR);
+    $assert($states === ['501' => 'ready', '502' => 'ready'], 'K1B_R1_UNSUPPORTED_TYPE_LEAPFROG');
 
     echo "CANONICAL_WORK_CONTRACT_VERSION=" . CanonicalWorkContract::VERSION . PHP_EOL;
     echo "CANONICAL_FIFO_COUNT=1" . PHP_EOL;
     echo "ACTIVE_FIFO_DRAINERS_MAX=1" . PHP_EOL;
+    echo "K1B_REAL_SHARED_KERNEL=PASS" . PHP_EOL;
     echo "K1B_HANDOFF_FIFO=PASS" . PHP_EOL;
-    echo "K1B_DRAINER_SINGLETON=PASS" . PHP_EOL;
-    echo "K1B_STALE_OWNER_FENCED=PASS" . PHP_EOL;
-    echo "K1B_UNSUPPORTED_HEAD_FAIL_CLOSED=PASS" . PHP_EOL;
+    echo "K1B_REAL_TWO_PROCESS_RACE=PASS" . PHP_EOL;
+    echo "K1B_RACE_ROUNDS=20" . PHP_EOL;
+    echo "K1B_LOSER_CLAIMED=0" . PHP_EOL;
+    echo "K1B_LOSER_EXECUTED=0" . PHP_EOL;
+    echo "K1B_TAKEOVER_DENIED_WITH_LIVE_JOB=PASS" . PHP_EOL;
+    echo "K1B_TAKEOVER_AFTER_JOB_LEASE_EXPIRY=PASS" . PHP_EOL;
+    echo "K1B_UNSUPPORTED_VERSION_FAIL_CLOSED=PASS" . PHP_EOL;
+    echo "K1B_UNSUPPORTED_TYPE_FAIL_CLOSED=PASS" . PHP_EOL;
+    echo "MANUAL_DIRECT_COMPLETE_WITHOUT_EXECUTION=0" . PHP_EOL;
     echo "REAL_MELI_HTTP=0" . PHP_EOL;
     echo "CHECKS={$checks}" . PHP_EOL;
 } finally {

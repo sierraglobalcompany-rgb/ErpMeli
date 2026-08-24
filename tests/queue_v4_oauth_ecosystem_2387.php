@@ -15,6 +15,7 @@ $read = static fn (string $path): string => (string) file_get_contents($root . '
 $scheduler = $read('app/QueueV4Clean/QueueV4CleanScheduler.php');
 $supervisor = $read('app/QueueV4Clean/QueueV4CleanOAuthSupervisor.php');
 $worker = $read('app/QueueV4Clean/QueueV4CleanWorker.php');
+$drainer = $read('app/QueueV4Clean/CanonicalFifoDrainer.php');
 $sales = $read('app/Services/SalesAuditRunService.php');
 $producer = $read('app/QueueV4Clean/QueueV4CleanProducer.php');
 $recovery = $read('app/QueueV4Clean/QueueV4CleanUncertainReadRecoveryService.php');
@@ -32,9 +33,10 @@ $assert(strpos($scheduler, "(\$salesAudit['abort_scheduler'] ?? false) === true"
 $assert(str_contains($scheduler, "'producer' => ['skipped' => true]")
     && str_contains($scheduler, "'worker' => ['skipped' => true]"), 'sales_abort_does_not_skip_remote_stages');
 
-$assert(strpos($worker, 'catch (OAuthRefreshRequiredException)') < strpos($worker, 'catch (RuntimeException'),
+$assert(strpos($drainer, 'catch (OAuthRefreshRequiredException)') < strpos($drainer, 'catch (RuntimeException'),
     'worker_oauth_is_a_functional_failure');
-$assert(str_contains($worker, 'deferWithoutAttemptPenalty'), 'worker_oauth_attempt_refund_missing');
+$assert(str_contains($worker, 'new CanonicalFifoDrainer(')
+    && str_contains($drainer, 'deferWithoutAttemptPenalty'), 'worker_oauth_attempt_refund_missing');
 $assert(!str_contains($worker, 'JOIN meli_tokens'), 'commercial_fifo_was_prefiltered_by_oauth');
 
 $assert(str_contains($stage, 'processDue(1, $deadline)'), 'sales_stage_is_not_one_page_bounded');

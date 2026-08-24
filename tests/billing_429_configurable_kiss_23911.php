@@ -18,6 +18,7 @@ $settingsSections = $read('app/Services/SettingsSectionService.php');
 $view = $read('app/Views/settings/api_workload.php');
 $definitions = $read('app/Repositories/SettingsDefinitionRepository.php');
 $worker = $read('app/QueueV4Clean/QueueV4CleanWorker.php');
+$drainer = $read('app/QueueV4Clean/CanonicalFifoDrainer.php');
 $repository = $read('app/QueueV4Clean/QueueV4CleanRepository.php');
 
 $keys = [
@@ -46,8 +47,10 @@ $assert(str_contains($view, 'Sólo aplica a Billing 429 remoto real'), 'SETTINGS
 $assert(str_contains($view, 'max="720"'), 'SETTINGS_CLAMPS_MAX_12H');
 
 $assert(str_contains($repository, 'parkFinancialReconciliationUntil'), 'GLOBAL_FINANCE_PARKING_UNCHANGED');
-$assert(str_contains($worker, "'financial_reconciliation'") && str_contains($worker, "'billing_429_backoff'"), 'GLOBAL_FINANCE_PARKING_UNCHANGED_worker_scope');
-$assert(str_contains($worker, "'domain_exact'"), 'NON_FINANCE_NOT_PARKED');
+$assert(str_contains($worker, 'new CanonicalFifoDrainer(')
+    && str_contains($drainer, "'financial_reconciliation'")
+    && str_contains($drainer, "'billing_429_backoff'"), 'GLOBAL_FINANCE_PARKING_UNCHANGED_worker_scope');
+$assert(str_contains($drainer, "'domain_exact'"), 'NON_FINANCE_NOT_PARKED');
 
 fwrite(
     STDOUT,

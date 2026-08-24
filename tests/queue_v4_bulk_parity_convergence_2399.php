@@ -1130,6 +1130,7 @@ PHP);
     $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE status="awaiting_remote"')->fetchColumn() === 1, 'BILLING_PER_ORDER_PROCESSING_STATE');
 
     $worker = $read('app/QueueV4Clean/QueueV4CleanWorker.php');
+    $drainer = $read('app/QueueV4Clean/CanonicalFifoDrainer.php');
     $producer = $read('app/QueueV4Clean/QueueV4CleanProducer.php');
     $repository = $read('app/QueueV4Clean/QueueV4CleanRepository.php');
     $client = $read('app/Services/MeliApiClient.php');
@@ -1141,22 +1142,24 @@ PHP);
     $deadlineContext = $read('app/Services/CronDeadlineContext.php');
     $suite = $read('tests/current_release_suite_2399.php');
 
-    $freshBlockStart = strpos($worker, "if (\$type === 'fresh_orders_discovery')");
-    $orderExactBlockStart = strpos($worker, "if (\$type === 'order_exact')");
+    $freshBlockStart = strpos($drainer, "if (\$type === 'fresh_orders_discovery')");
+    $orderExactBlockStart = strpos($drainer, "if (\$type === 'order_exact')");
     $assert($freshBlockStart !== false && $orderExactBlockStart !== false, 'fresh_or_order_exact_block_missing');
-    $freshBlock = substr($worker, (int) $freshBlockStart, (int) $orderExactBlockStart - (int) $freshBlockStart);
+    $freshBlock = substr($drainer, (int) $freshBlockStart, (int) $orderExactBlockStart - (int) $freshBlockStart);
     $assert(str_contains($freshBlock, 'persistSearchSnapshotForQueueV4Clean'), 'fresh_does_not_persist_search_snapshot');
     $assert(!str_contains($freshBlock, "'order_exact'"), 'fresh_still_enqueues_order_exact');
     $assert(str_contains($producer, '(new SyncSettingsService())->pageLimit()'), 'producer_not_using_sync_page_limit_authority');
-    $assert(str_contains($worker, '(new SyncSettingsService())->pageLimit()'), 'worker_not_using_sync_page_limit_authority');
+    $assert(str_contains($worker, 'new CanonicalFifoDrainer(')
+        && str_contains($drainer, '(new SyncSettingsService())->pageLimit()'), 'worker_not_using_sync_page_limit_authority');
     $assert(!str_contains($freshBlock, 'min(20'), 'fresh_keeps_hardcoded_20');
     $assert(str_contains($orderSync, 'function persistSearchSnapshotForQueueV4Clean'), 'queue_v4_snapshot_persistence_entry_missing');
     $assert(str_contains($orderSync, 'persistOrder($order, false, $beforePersist, false, false)'), 'snapshot_persistence_fanout_not_disabled');
     $assert(str_contains($orderSync, 'OrderInventoryService') && str_contains($orderSync, 'project($companyId'), 'snapshot_inventory_projection_missing');
 
     $assert(str_contains($finance, 'BILLING_MAX_ORDER_IDS = 60'), 'billing_batch_limit_missing');
-    $assert(!str_contains($worker, '$deadline = microtime(true)'), 'K1_WORKER_MUST_NOT_CREATE_SECOND_DEADLINE');
-    $assert(str_contains($worker, 'CronDeadlineContext::start') && str_contains($worker, 'CronDeadlineContext::clear'), 'K1_WORKER_CLOCK_CONTEXT_MISSING');
+    $assert(!str_contains($worker . $drainer, '$deadline = microtime(true)'), 'K1_WORKER_MUST_NOT_CREATE_SECOND_DEADLINE');
+    $assert(str_contains($worker, 'new CanonicalFifoDrainer(')
+        && str_contains($drainer, 'CronDeadlineContext::start') && str_contains($drainer, 'CronDeadlineContext::clear'), 'K1_WORKER_CLOCK_CONTEXT_MISSING');
     $assert(str_contains($scheduler, 'CronDeadlineContext::deadline()') && !str_contains($scheduler, '$startedAt +'), 'K1_SCHEDULER_MUST_USE_SHARED_CLOCK');
     $assert(QueueV4CleanWorker::normalizeRuntimeSeconds(4) === 5, 'K1_RUNTIME_4_CLAMPS_TO_5');
     $assert(QueueV4CleanWorker::normalizeRuntimeSeconds(5) === 5, 'K1_RUNTIME_5_STAYS_5');
@@ -1174,8 +1177,9 @@ PHP);
     }
     $assert($outerBefore['deadline_unix'] === $outerAfter['deadline_unix'], 'K1_OUTER_CLOCK_NOT_EXTENDED_BY_WORKER');
     $assert($outerBefore['accept_until_unix'] === $outerAfter['accept_until_unix'], 'K1_OUTER_ACCEPT_WINDOW_NOT_RESTARTED');
-    $assert(str_contains($worker, 'MAX_SCAN_ROWS = 60') && str_contains($worker, 'MAX_SCAN_TIME_MS = 1000'), 'K1_BOUNDED_RUNNABLE_SCAN_MISSING');
-    $assert(str_contains($worker, "'effective' => \$effective") && str_contains($worker, "'local_completed' => \$localCompleted") && str_contains($worker, "'local_deferred' => \$localDeferred"), 'K1_EFFECTIVE_WORK_METRICS_MISSING');
+    $assert(str_contains($worker, 'MAX_SCAN_ROWS = CanonicalFifoDrainer::MAX_SCAN_ROWS')
+        && str_contains($drainer, 'MAX_SCAN_ROWS = 60') && str_contains($drainer, 'MAX_SCAN_TIME_MS = 1000'), 'K1_BOUNDED_RUNNABLE_SCAN_MISSING');
+    $assert(str_contains($drainer, "'effective' => \$effective") && str_contains($drainer, "'local_completed' => \$localCompleted") && str_contains($drainer, "'local_deferred' => \$localDeferred"), 'K1_EFFECTIVE_WORK_METRICS_MISSING');
     $assert(str_contains($finance, 'CronDeadlineContext::assertCanStartRemote(3.0)') && str_contains($finance, 'CronDeadlineDeferredException $error'), 'K1_BILLING_DEADLINE_FENCES_MISSING');
     $assert(str_contains($deadlineContext, 'CronExecutionWindow') && str_contains($deadlineContext, 'assertCanStartRemote'), 'K1_SINGLE_CLOCK_AUTHORITY_MISSING');
     $assert(str_contains($repository, 'function contiguousFinancialReconciliationSourceIds'), 'billing_queue_owned_candidate_claim_missing');
@@ -1186,7 +1190,7 @@ PHP);
     $assert(str_contains($finance, 'function hasUnattributedBillingLines'), 'billing_unattributed_demux_guard_missing');
     $assert(!str_contains($finance, 'ORDER BY j.priority_tier,j.next_run_at,j.id'), 'billing_candidate_priority_order_leaks_into_batch');
     $assert(!str_contains($finance, 'batch_capacity_deferred'), 'billing_batch_capacity_retry_leak');
-    $assert(str_contains($worker, 'parkFinancialReconciliationUntil'), 'billing_batch_429_pointer_parking_missing');
+    $assert(str_contains($drainer, 'parkFinancialReconciliationUntil'), 'billing_batch_429_pointer_parking_missing');
     $assert(str_contains($finance, "'bulk' => true"), 'billing_transport_metadata_not_bulk');
     $assert(str_contains($finance, 'expected_resource_ids'), 'billing_expected_resources_missing');
     $assert(!str_contains($finance, 'queue_v4_clean_jobs'), 'SALE_FINANCIAL_KNOWS_QUEUE_V4');

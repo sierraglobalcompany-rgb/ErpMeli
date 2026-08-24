@@ -1,0 +1,747 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\QueueV4Clean;
+
+use App\Services\ApiExecutionMetadataContext;
+use App\Services\ApiBudgetExhaustedException;
+use App\Services\ApiRhythmDeferredException;
+use App\Services\ApiRhythmPolicyService;
+use App\Services\CronDeadlineContext;
+use App\Services\CronDeadlineDeferredException;
+use App\Services\MeliApiClient;
+use App\Services\MeliApiException;
+use App\Services\MeliReadClientInterface;
+use App\Services\MeliTransportSourcePolicy;
+use App\Services\OAuthRefreshRequiredException;
+use App\Services\OrderFinancialRecalcJobService;
+use App\Services\OrderSyncService;
+use App\Services\QueueV4PreTransportDeferredException;
+use App\Services\RemoteResultUncertainException;
+use App\Services\SaleFinancialService;
+use App\Services\SyncSettingsService;
+use PDO;
+use RuntimeException;
+use Throwable;
+
+final class CanonicalFifoDrainer
+{
+    public const DEFAULT_MAX_JOBS = 15;
+    public const HARD_MAX_JOBS = 15;
+    public const MIN_RUNTIME_SECONDS = 5;
+    public const MAX_RUNTIME_SECONDS = 45;
+    /**
+     * A runnable scan is deliberately capped at the same cardinality as one
+     * Billing request.  It lets a short prefix of local-only finance rows get
+     * their normal safe deferral without turning a worker turn into a table
+     * scan.
+     */
+    public const MAX_SCAN_ROWS = 60;
+    public const MAX_SCAN_TIME_MS = 1000;
+
+    /** @var \Closure(int):MeliReadClientInterface */
+    private \Closure $clientFactory;
+    /** @var \Closure(int):OrderSyncService */
+    private \Closure $syncFactory;
+    /** @var null|\Closure(array<string,mixed>):void */
+    private ?\Closure $jobHandler;
+    /** @var null|\Closure(string,int,int):void */
+    private ?\Closure $domainHandler;
+    /** @var \Closure():SaleFinancialService */
+    private \Closure $financialFactory;
+
+    /** @var array{scanned:int,claimed:int,effective:int,completed:int,deferred:int,local_completed:int,local_deferred:int,remote_deferred:int} */
+    private array $lastMetrics = [
+        'scanned' => 0,
+        'claimed' => 0,
+        'effective' => 0,
+        'completed' => 0,
+        'deferred' => 0,
+        'local_completed' => 0,
+        'local_deferred' => 0,
+        'remote_deferred' => 0,
+    ];
+    /** @var list<string> */
+    private array $supportedWorkTypes;
+
+    /**
+     * @param null|callable(int):MeliReadClientInterface $clientFactory
+     * @param null|callable(int):OrderSyncService $syncFactory
+     * @param null|callable(array<string,mixed>):void $jobHandler Test-only/local fixture seam.
+     * @param null|callable(string,int,int):void $domainHandler Test-only domain source seam.
+     * @param null|callable():SaleFinancialService $financialFactory Test-only billing transport seam.
+     * @param null|list<string> $supportedWorkTypes
+     */
+    public function __construct(
+        private readonly PDO $pdo,
+        private readonly QueueV4CleanRepository $repository,
+        ?callable $clientFactory = null,
+        ?callable $syncFactory = null,
+        ?callable $jobHandler = null,
+        ?callable $domainHandler = null,
+        ?callable $financialFactory = null,
+        private readonly int $supportedWorkContractVersion = CanonicalWorkContract::VERSION,
+        ?array $supportedWorkTypes = null,
+    ) {
+        $this->clientFactory = $clientFactory !== null
+            ? \Closure::fromCallable($clientFactory)
+            : static fn (int $accountId): MeliReadClientInterface => new MeliApiClient($accountId);
+        $this->syncFactory = $syncFactory !== null
+            ? \Closure::fromCallable($syncFactory)
+            : static fn (int $accountId): OrderSyncService => new OrderSyncService($accountId);
+        $this->jobHandler = $jobHandler !== null ? \Closure::fromCallable($jobHandler) : null;
+        $this->domainHandler = $domainHandler !== null ? \Closure::fromCallable($domainHandler) : null;
+        $this->financialFactory = $financialFactory !== null
+            ? \Closure::fromCallable($financialFactory)
+            : static fn (): SaleFinancialService => new SaleFinancialService();
+        $this->supportedWorkTypes = $supportedWorkTypes !== null
+            ? array_values(array_unique(array_map('strval', $supportedWorkTypes)))
+            : CanonicalWorkContract::supportedTypes();
+    }
+
+    /** @return array{claimed:int,completed:int,deferred:int} Legacy result contract; see lastMetrics(). */
+    public function run(string $launcher, int $maxJobs = self::DEFAULT_MAX_JOBS, int $runtimeSeconds = 45): array
+    {
+        $runtimeSeconds = self::normalizeRuntimeSeconds($runtimeSeconds);
+        $ownsDeadline = !CronDeadlineContext::active();
+        if ($ownsDeadline) {
+            CronDeadlineContext::start($runtimeSeconds, max(1, $runtimeSeconds - 5), 8, 3);
+        }
+        if ($maxJobs < 1) {
+            if ($ownsDeadline) {
+                CronDeadlineContext::clear();
+            }
+            return $this->emptySummary();
+        }
+        $control = $this->repository->control();
+        if ((string) $control['engine_state'] !== 'ACTIVE') {
+            if ($ownsDeadline) {
+                CronDeadlineContext::clear();
+            }
+            return $this->emptySummary();
+        }
+        $maxJobs = min(self::HARD_MAX_JOBS, $maxJobs);
+        $owner = bin2hex(random_bytes(16));
+        if (!$this->repository->acquireDrainAuthority($owner, CanonicalWorkContract::DRAIN_LEASE_TTL_SECONDS)) {
+            if ($ownsDeadline) {
+                CronDeadlineContext::clear();
+            }
+            return $this->emptySummary();
+        }
+        $runId = $this->repository->beginRun($launcher, $owner);
+        $scanned = $claimed = $effective = $completed = $deferred = $localCompleted = $localDeferred = $remoteDeferred = 0;
+        /** @var list<array{job:array<string,mixed>,classification:string,next_safe_at:?string}> $pendingLocalDefers */
+        $pendingLocalDefers = [];
+        /** @var list<array<string,mixed>> $pendingLocalCompletes */
+        $pendingLocalCompletes = [];
+        $flushLocalDefers = function () use (&$pendingLocalDefers, $runId): void {
+            if ($pendingLocalDefers === []) {
+                return;
+            }
+            $this->repository->deferLocalWithoutAttemptPenaltyBatch($pendingLocalDefers, $runId);
+            $pendingLocalDefers = [];
+        };
+        $flushLocalCompletes = function () use (&$pendingLocalCompletes, $runId): void {
+            if ($pendingLocalCompletes === []) {
+                return;
+            }
+            $this->repository->completeLocalBatch($pendingLocalCompletes, $runId);
+            $pendingLocalCompletes = [];
+        };
+        $flushLocalOutcomes = function () use ($flushLocalDefers, $flushLocalCompletes): void {
+            $flushLocalDefers();
+            $flushLocalCompletes();
+        };
+        $scanStartedAt = hrtime(true);
+        try {
+            $this->repository->expireLeases();
+            $this->repository->releaseDueWaiting();
+            while ($effective < $maxJobs
+                && $scanned < self::MAX_SCAN_ROWS
+                && $this->scanTimeRemaining($scanStartedAt)
+                && CronDeadlineContext::canAcceptWork(2)) {
+                $prefix = $this->repository->compactLocalFifoPrefix(
+                    $runId,
+                    $owner,
+                    self::MAX_SCAN_ROWS - $scanned,
+                    $this->supportedWorkContractVersion,
+                    $this->supportedWorkTypes,
+                );
+                if ($prefix['scanned'] > 0) {
+                    $scanned += $prefix['scanned'];
+                    $claimed += $prefix['claimed'];
+                    $completed += $prefix['local_completed'];
+                    $deferred += $prefix['local_deferred'];
+                    $localCompleted += $prefix['local_completed'];
+                    $localDeferred += $prefix['local_deferred'];
+                    continue;
+                }
+                $job = $this->repository->claim(
+                    $runId,
+                    $owner,
+                    60,
+                    $this->supportedWorkContractVersion,
+                    $this->supportedWorkTypes,
+                );
+                if ($job === null) {
+                    break;
+                }
+                $scanned++;
+                $claimed++;
+                try {
+                    $outcome = $this->handle($job);
+                } catch (OAuthRefreshRequiredException) {
+                    $flushLocalOutcomes();
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        'oauth_refresh_required',
+                        $this->repository->nextOAuthOpportunity(
+                            (int) $job['company_id'],
+                            (int) $job['meli_account_id'],
+                        ),
+                    );
+                    $deferred++;
+                    $remoteDeferred++;
+                    $effective++;
+                    continue;
+                } catch (ApiRhythmDeferredException $error) {
+                    $flushLocalOutcomes();
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        'rate_limit_deferred:' . $this->safeToken($error->blockingScope),
+                        $error->nextSafeAt,
+                    );
+                    if ($this->shouldParkFinancialReconciliation($job, $error)) {
+                        $this->repository->parkFinancialReconciliationUntil(
+                            $error->nextSafeAt,
+                            (int) ($job['id'] ?? 0),
+                        );
+                    }
+                    $deferred++;
+                    $remoteDeferred++;
+                    $effective++;
+                    continue;
+                } catch (ApiBudgetExhaustedException $error) {
+                    $flushLocalOutcomes();
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        'capacity_deferred:budget',
+                        $error->nextSafeAt,
+                    );
+                    $deferred++;
+                    $remoteDeferred++;
+                    $effective++;
+                    continue;
+                } catch (CronDeadlineDeferredException $error) {
+                    $flushLocalOutcomes();
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        'capacity_deferred:cron_deadline',
+                        $error->nextSafeAt,
+                    );
+                    $deferred++;
+                    $localDeferred++;
+                    break;
+                } catch (QueueV4PreTransportDeferredException $error) {
+                    $flushLocalOutcomes();
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        'pre_transport_deferred',
+                        $error->nextSafeAt,
+                    );
+                    $deferred++;
+                    $remoteDeferred++;
+                    $effective++;
+                    continue;
+                } catch (RemoteResultUncertainException) {
+                    $flushLocalOutcomes();
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        'remote_result_uncertain_safe_get',
+                        gmdate('Y-m-d H:i:s', time() + 60),
+                    );
+                    $deferred++;
+                    $remoteDeferred++;
+                    $effective++;
+                    continue;
+                } catch (MeliApiException $error) {
+                    $flushLocalOutcomes();
+                    if ($error->httpStatus === 429) {
+                        $this->repository->deferWithoutAttemptPenalty(
+                            $job,
+                            $runId,
+                            'rate_limit_deferred:http_429_fallback',
+                            (new ApiRhythmPolicyService())->conservativeRateLimitNextSafeAt(),
+                        );
+                        $deferred++;
+                        $remoteDeferred++;
+                        $effective++;
+                        continue;
+                    }
+                    $this->functionalFailure($job, $runId, $error);
+                    $deferred++;
+                    $effective++;
+                    continue;
+                } catch (RuntimeException $error) {
+                    $flushLocalOutcomes();
+                    $this->functionalFailure($job, $runId, $error);
+                    $deferred++;
+                    $effective++;
+                    continue;
+                }
+                if (($outcome['state'] ?? '') === 'waiting') {
+                    $isEffective = ($outcome['effective'] ?? true) === true;
+                    if (!$isEffective) {
+                        $pendingLocalDefers[] = [
+                            'job' => $job,
+                            'classification' => (string) ($outcome['classification'] ?? 'domain_source_waiting'),
+                            'next_safe_at' => isset($outcome['next_safe_at']) ? (string) $outcome['next_safe_at'] : null,
+                        ];
+                        $deferred++;
+                        $localDeferred++;
+                        continue;
+                    }
+                    $flushLocalOutcomes();
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        (string) ($outcome['classification'] ?? 'domain_source_waiting'),
+                        isset($outcome['next_safe_at']) ? (string) $outcome['next_safe_at'] : null,
+                    );
+                    $deferred++;
+                    if ($isEffective) {
+                        $remoteDeferred++;
+                        $effective++;
+                    } else {
+                        $localDeferred++;
+                    }
+                    continue;
+                }
+                if (($outcome['state'] ?? '') === 'review') {
+                    $flushLocalOutcomes();
+                    $this->repository->review(
+                        $job,
+                        $runId,
+                        (string) ($outcome['classification'] ?? 'domain_source_review'),
+                    );
+                    $deferred++;
+                    $effective++;
+                    continue;
+                }
+                if (($outcome['state'] ?? '') !== 'completed') {
+                    $flushLocalOutcomes();
+                    throw new RuntimeException('queue_v4_clean_worker_outcome_invalid');
+                }
+                if (($outcome['effective'] ?? true) === true) {
+                    $flushLocalOutcomes();
+                } else {
+                    $pendingLocalCompletes[] = $job;
+                    $completed++;
+                    $localCompleted++;
+                    continue;
+                }
+                $this->repository->complete($job, $runId);
+                $completed++;
+                if (($outcome['effective'] ?? true) === true) {
+                    $effective++;
+                }
+            }
+            $flushLocalOutcomes();
+            $this->repository->finishRun($runId, 'completed');
+            $this->lastMetrics = [
+                'scanned' => $scanned,
+                'claimed' => $claimed,
+                'effective' => $effective,
+                'completed' => $completed,
+                'deferred' => $deferred,
+                'local_completed' => $localCompleted,
+                'local_deferred' => $localDeferred,
+                'remote_deferred' => $remoteDeferred,
+            ];
+            return [
+                'claimed' => $claimed,
+                'completed' => $completed,
+                'deferred' => $deferred,
+            ];
+        } catch (Throwable $error) {
+            try {
+                $flushLocalOutcomes();
+            } catch (Throwable) {
+                // Preserve the original failure while avoiding a best-effort
+                // local flush from masking the real worker error.
+            }
+            $this->repository->finishRun($runId, 'failed');
+            throw $error;
+        } finally {
+            $this->repository->releaseDrainAuthority($owner);
+            if ($ownsDeadline) {
+                CronDeadlineContext::clear();
+            }
+        }
+    }
+
+    /** @return array{scanned:int,claimed:int,effective:int,completed:int,deferred:int,local_completed:int,local_deferred:int,remote_deferred:int} */
+    private function emptySummary(): array
+    {
+        $this->lastMetrics = [
+            'scanned' => 0,
+            'claimed' => 0,
+            'effective' => 0,
+            'completed' => 0,
+            'deferred' => 0,
+            'local_completed' => 0,
+            'local_deferred' => 0,
+            'remote_deferred' => 0,
+        ];
+        return ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
+    }
+
+    /** @return array{scanned:int,claimed:int,effective:int,completed:int,deferred:int,local_completed:int,local_deferred:int,remote_deferred:int} */
+    public function lastMetrics(): array
+    {
+        return $this->lastMetrics;
+    }
+
+    public static function normalizeRuntimeSeconds(int $runtimeSeconds): int
+    {
+        return max(self::MIN_RUNTIME_SECONDS, min(self::MAX_RUNTIME_SECONDS, $runtimeSeconds));
+    }
+
+    private function scanTimeRemaining(int $startedAtNanoseconds): bool
+    {
+        return (hrtime(true) - $startedAtNanoseconds) < self::MAX_SCAN_TIME_MS * 1_000_000;
+    }
+
+    /**
+     * @param array<string,mixed> $job
+     * @return array{state:string,classification?:string,next_safe_at?:?string,effective?:bool,execution_class?:string}
+     */
+    private function handle(array $job): array
+    {
+        if ($this->jobHandler !== null) {
+            ($this->jobHandler)($job);
+            return ['state' => 'completed'];
+        }
+        $companyId = (int) $job['company_id'];
+        $accountId = (int) $job['meli_account_id'];
+        $type = (string) $job['job_type'];
+        $payload = is_array($job['payload']) ? $job['payload'] : [];
+        if ($type === 'fresh_orders_discovery') {
+            $account = $this->pdo->prepare(
+                'SELECT meli_user_id FROM meli_accounts WHERE company_id=? AND id=? LIMIT 1'
+            );
+            $account->execute([$companyId, $accountId]);
+            $sellerId = trim((string) $account->fetchColumn());
+            if ($sellerId === '') {
+                throw new RuntimeException('queue_v4_clean_payload_account_identity');
+            }
+            $from = trim((string) ($payload['from'] ?? ''));
+            $to = trim((string) ($payload['to'] ?? ''));
+            if ($from === '' || $to === '') {
+                throw new RuntimeException('queue_v4_clean_payload_window');
+            }
+            $client = ($this->clientFactory)($accountId);
+            $offset = max(0, (int) ($payload['offset'] ?? 0));
+            $limit = (new SyncSettingsService())->pageLimit();
+            $response = ApiExecutionMetadataContext::run(
+                [
+                    'source' => 'queue_v4_clean',
+                    'job_type' => 'fresh_orders_discovery',
+                    'company_id' => $companyId,
+                    'account_id' => $accountId,
+                    'source_queue_key' => 'queue_v4_clean',
+                    'source_work_id' => (string) $job['id'],
+                    'bulk' => false,
+                ] + $this->transportMeta($job),
+                static fn (): array => $client->get('/orders/search', [
+                    'seller' => $sellerId,
+                    'order.date_created.from' => $from,
+                    'order.date_created.to' => $to,
+                    'sort' => 'date_asc',
+                    'offset' => $offset,
+                    'limit' => $limit,
+                ])
+            );
+            $results = is_array($response['results'] ?? null) ? $response['results'] : [];
+            $sync = ($this->syncFactory)($accountId);
+            foreach ($results as $order) {
+                $id = trim((string) ($order['id'] ?? ''));
+                if ($id === '' || !ctype_digit($id)) {
+                    continue;
+                }
+                $sync->persistSearchSnapshotForQueueV4Clean($order, $companyId);
+            }
+            $total = max(0, (int) ($response['paging']['total'] ?? count($results)));
+            $responseOffset = max(0, (int) ($response['paging']['offset'] ?? $offset));
+            if ($responseOffset !== $offset || ($total > $offset && $results === [])) {
+                throw new RuntimeException('queue_v4_clean_remote_paging_invalid');
+            }
+            $nextOffset = $offset + count($results);
+            if ($nextOffset < $total) {
+                $this->repository->enqueue(
+                    $companyId,
+                    $accountId,
+                    'fresh_orders_discovery',
+                    null,
+                    'fresh:' . hash('sha256', $from . '|' . $to) . ':offset:' . $nextOffset,
+                    ['from' => $from, 'to' => $to, 'offset' => $nextOffset, 'limit' => $limit],
+                    3,
+                );
+            } else {
+                $watermark = strtotime($to);
+                if ($watermark === false) {
+                    throw new RuntimeException('queue_v4_clean_payload_window');
+                }
+                $checkpoint = $this->pdo->prepare(
+                    "UPDATE queue_v4_clean_checkpoints
+                     SET watermark_at=?,next_due_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 60 SECOND)
+                     WHERE producer_key='fresh_orders' AND company_id=? AND meli_account_id=?"
+                );
+                $checkpoint->execute([gmdate('Y-m-d H:i:s', $watermark), $companyId, $accountId]);
+                if ($checkpoint->rowCount() !== 1) {
+                    throw new RuntimeException('queue_v4_clean_checkpoint_lost');
+                }
+            }
+            return ['state' => 'completed'];
+        }
+        if ($type === 'order_exact') {
+            $orderId = trim((string) ($payload['order_id'] ?? $job['resource_id'] ?? ''));
+            if ($orderId === '' || !ctype_digit($orderId)) {
+                throw new RuntimeException('queue_v4_clean_payload_order_identity');
+            }
+            $sync = ($this->syncFactory)($accountId);
+            $metadata = [
+                'source' => 'queue_v4_clean',
+                'job_type' => 'order_exact',
+                'company_id' => $companyId,
+                'account_id' => $accountId,
+                'source_queue_key' => 'queue_v4_clean',
+                'source_work_id' => (string) $job['id'],
+                'bulk' => false,
+            ] + $this->transportMeta($job);
+            ApiExecutionMetadataContext::run(
+                $metadata,
+                static fn (): int => $sync->syncOrderByIdForQueueV4Clean($orderId, $metadata),
+            );
+            return ['state' => 'completed'];
+        }
+        if ($type === 'domain_exact') {
+            return $this->handleDomainExact($job, $companyId, $accountId, $payload);
+        }
+        throw new RuntimeException('queue_v4_clean_payload_job_type');
+    }
+
+    /**
+     * @param array<string,mixed> $job
+     * @param array<string,mixed> $payload
+     * @return array{state:string,classification?:string,next_safe_at?:?string,effective?:bool,execution_class?:string}
+     */
+    private function handleDomainExact(array $job, int $companyId, int $accountId, array $payload): array
+    {
+        $capability = trim((string) ($payload['capability'] ?? ''));
+        $sourceId = (int) ($payload['source_id'] ?? $job['resource_id'] ?? 0);
+        if (!in_array($capability, ['financial_recalc', 'financial_reconciliation'], true) || $sourceId < 1) {
+            return ['state' => 'review', 'classification' => 'domain_payload_invalid'];
+        }
+        $resourceId = trim((string) ($job['resource_id'] ?? ''));
+        if ($resourceId === '' || !ctype_digit($resourceId) || (int) $resourceId !== $sourceId) {
+            return ['state' => 'review', 'classification' => 'domain_payload_source_mismatch'];
+        }
+        if (!$this->domainTenantExists($companyId, $accountId)) {
+            return ['state' => 'review', 'classification' => 'domain_source_tenant_mismatch'];
+        }
+
+        $source = $this->domainSource($capability, $sourceId, $companyId, $accountId);
+        if ($source === null) {
+            return ['state' => 'review', 'classification' => 'domain_source_missing'];
+        }
+        $before = $this->domainOutcome($capability, $source);
+        if ($before['state'] !== 'waiting') {
+            return $before + ['effective' => false];
+        }
+        if (($before['effective'] ?? true) === false) {
+            return $before;
+        }
+
+        $batchSourceIds = $capability === 'financial_reconciliation'
+            ? $this->repository->contiguousFinancialReconciliationSourceIds($job, 60)
+            : [$sourceId];
+        $batchOutcomes = [];
+        $domainResult = null;
+
+        try {
+            ApiExecutionMetadataContext::run(
+                [
+                    'source' => MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT,
+                    'job_type' => 'domain_exact',
+                    'company_id' => $companyId,
+                    'account_id' => $accountId,
+                    'source_queue_key' => $capability,
+                    'source_work_id' => (string) $sourceId,
+                    'bulk' => count($batchSourceIds) > 1,
+                ] + $this->transportMeta($job),
+                function () use ($capability, $sourceId, $accountId, $companyId, $batchSourceIds, &$batchOutcomes, &$domainResult): void {
+                    if ($this->domainHandler !== null) {
+                        $domainResult = ($this->domainHandler)($capability, $sourceId, $accountId);
+                        return;
+                    }
+                    if ($capability === 'financial_recalc') {
+                        $domainResult = (new OrderFinancialRecalcJobService())->processExact($sourceId, $accountId, 1);
+                        return;
+                    }
+                    $batchOutcomes = ($this->financialFactory)()->processDomainExactBatch(
+                        $batchSourceIds,
+                        $companyId,
+                        $accountId,
+                    )['outcomes'];
+                }
+            );
+        } catch (Throwable $error) {
+            if ($capability === 'financial_reconciliation' && count($batchSourceIds) > 1) {
+                $this->repository->alignReadyFinancialReconciliationPointersFromSources(
+                    $companyId,
+                    $accountId,
+                    $batchSourceIds,
+                    $sourceId,
+                );
+            }
+            throw $error;
+        }
+        if ($capability === 'financial_reconciliation' && $batchOutcomes !== []) {
+            $this->repository->alignReadyFinancialReconciliationPointers(
+                $companyId,
+                $accountId,
+                $batchOutcomes,
+                $sourceId,
+            );
+            if (isset($batchOutcomes[$sourceId]) && is_array($batchOutcomes[$sourceId])) {
+                return $batchOutcomes[$sourceId];
+            }
+        }
+
+        $source = $this->domainSource($capability, $sourceId, $companyId, $accountId);
+        if ($source === null) {
+            return ['state' => 'review', 'classification' => 'domain_source_missing_after_process'];
+        }
+        return $this->domainOutcome($capability, $source, true, $this->domainEffectiveWork($capability, $domainResult));
+    }
+
+    /** @return array<string,mixed>|null */
+    private function domainSource(string $capability, int $sourceId, int $companyId, int $accountId): ?array
+    {
+        $sql = $capability === 'financial_recalc'
+            ? 'SELECT id,company_id,meli_account_id,status,NULL next_run_at
+               FROM order_financial_recalc_jobs
+               WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1'
+            : 'SELECT id,company_id,meli_account_id,status,next_run_at
+               FROM sale_financial_reconciliation_jobs
+               WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1';
+        $statement = $this->pdo->prepare($sql);
+        $statement->execute([$sourceId, $companyId, $accountId]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        return is_array($row) ? $row : null;
+    }
+
+    private function domainTenantExists(int $companyId, int $accountId): bool
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT 1 FROM meli_accounts WHERE id=? AND company_id=? LIMIT 1'
+        );
+        $statement->execute([$accountId, $companyId]);
+        return $statement->fetchColumn() !== false;
+    }
+
+    /**
+     * @param array<string,mixed> $source
+     * @return array{state:string,classification?:string,next_safe_at?:?string,effective?:bool,execution_class?:string}
+     */
+    private function domainOutcome(string $capability, array $source, bool $afterProcessing = false, bool $effectiveWork = false): array
+    {
+        $status = strtolower(trim((string) ($source['status'] ?? '')));
+        if ($status === 'complete') {
+            return [
+                'state' => 'completed',
+                'effective' => $afterProcessing,
+                'execution_class' => $afterProcessing ? 'remote_candidate' : 'local_only',
+            ];
+        }
+        if (in_array($status, ['pending', 'running', 'retry', 'awaiting_remote'], true)) {
+            $next = trim((string) ($source['next_run_at'] ?? ''));
+            $isFuture = $next !== '' && strtotime($next . ' UTC') > time();
+            return [
+                'state' => 'waiting',
+                'classification' => ($isFuture ? 'domain_source_not_due:' : 'domain_source_waiting:') . $capability,
+                'next_safe_at' => $next !== '' ? $next : gmdate('Y-m-d H:i:s', time() + 5),
+                'effective' => !$isFuture && (!$afterProcessing || $effectiveWork),
+                'execution_class' => $isFuture || ($afterProcessing && !$effectiveWork) ? 'local_only' : 'remote_candidate',
+            ];
+        }
+        return [
+            'state' => 'review',
+            'classification' => 'domain_source_' . ($status !== '' ? $this->safeToken($status) : 'unknown'),
+        ];
+    }
+
+    /** @param mixed $domainResult */
+    private function domainEffectiveWork(string $capability, $domainResult): bool
+    {
+        if ($capability !== 'financial_recalc' || !is_array($domainResult)) {
+            return false;
+        }
+        return (int) ($domainResult['processed'] ?? 0) > 0;
+    }
+
+    private function failureClass(Throwable $error): string
+    {
+        return substr(strtolower((new \ReflectionClass($error))->getShortName()), 0, 100);
+    }
+
+    /** @param array<string,mixed> $job */
+    private function functionalFailure(array $job, int $runId, RuntimeException $error): void
+    {
+        if (str_starts_with($error->getMessage(), 'queue_v4_clean_payload_')) {
+            $this->repository->dead($job, $runId, $error->getMessage());
+        } elseif ((int) $job['attempt_count'] >= (int) $job['max_attempts']) {
+            $this->repository->review($job, $runId, $this->failureClass($error));
+        } else {
+            $this->repository->wait($job, $runId, $this->failureClass($error), 30);
+        }
+    }
+
+    private function safeToken(string $value): string
+    {
+        return substr(preg_replace('/[^a-z0-9_]+/', '_', strtolower($value)) ?: 'rhythm', 0, 70);
+    }
+
+    /** @param array<string,mixed> $job */
+    private function shouldParkFinancialReconciliation(array $job, ApiRhythmDeferredException $error): bool
+    {
+        if (!in_array($error->blockingScope, ['billing_endpoint_interval', 'billing_429_backoff'], true)) {
+            return false;
+        }
+        if ((string) ($job['job_type'] ?? '') !== 'domain_exact') {
+            return false;
+        }
+        $payload = is_array($job['payload'] ?? null) ? $job['payload'] : [];
+        return (string) ($payload['capability'] ?? '') === 'financial_reconciliation';
+    }
+
+    /** @param array<string,mixed> $job @return array<string,mixed> */
+    private function transportMeta(array $job): array
+    {
+        return [
+            'queue_v4_job_id' => (int) ($job['id'] ?? 0),
+            'queue_v4_attempt_id' => (int) ($job['attempt_id'] ?? 0),
+            'queue_v4_lease_owner' => (string) ($job['lease_owner'] ?? ''),
+            'queue_v4_lease_generation' => (int) ($job['lease_generation'] ?? 0),
+        ];
+    }
+}
+

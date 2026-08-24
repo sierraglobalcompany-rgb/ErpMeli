@@ -14,6 +14,7 @@ namespace App\QueueV4Clean;
 final class CanonicalWorkContract
 {
     public const VERSION = 1;
+    public const PAYLOAD_VERSION_KEY = 'work_contract_version';
 
     public const TYPE_FRESH_ORDERS_DISCOVERY = 'fresh_orders_discovery';
     public const TYPE_ORDER_EXACT = 'order_exact';
@@ -54,5 +55,44 @@ final class CanonicalWorkContract
             return $capability;
         }
         return null;
+    }
+
+    /** @param array<string,mixed> $work */
+    public static function versionOf(array $work): int
+    {
+        $payload = $work['payload'] ?? null;
+        if (!is_array($payload)) {
+            $decoded = json_decode((string) ($work['payload_json'] ?? ''), true);
+            $payload = is_array($decoded) ? $decoded : [];
+        }
+        $version = $payload[self::PAYLOAD_VERSION_KEY] ?? null;
+        if ($version === null || $version === '') {
+            return self::VERSION;
+        }
+        if (is_int($version)) {
+            return $version;
+        }
+        if (is_string($version) && ctype_digit($version)) {
+            return (int) $version;
+        }
+        return -1;
+    }
+
+    /** @param array<string,mixed> $payload @return array<string,mixed> */
+    public static function payloadWithVersion(array $payload): array
+    {
+        if (!array_key_exists(self::PAYLOAD_VERSION_KEY, $payload)) {
+            $payload[self::PAYLOAD_VERSION_KEY] = self::VERSION;
+        }
+        return $payload;
+    }
+
+    /** @param array<string,mixed> $work @param list<string> $supportedTypes */
+    public static function isSupportedBy(array $work, int $supportedVersion, array $supportedTypes): bool
+    {
+        $canonicalType = self::canonicalType($work);
+        return self::versionOf($work) === $supportedVersion
+            && $canonicalType !== null
+            && in_array($canonicalType, $supportedTypes, true);
     }
 }

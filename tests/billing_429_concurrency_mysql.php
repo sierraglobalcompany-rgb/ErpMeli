@@ -16,6 +16,7 @@ $read = static fn (string $path): string => (string) file_get_contents($root . '
 $policy = $read('app/Services/ApiRhythmPolicyService.php');
 $repository = $read('app/QueueV4Clean/QueueV4CleanRepository.php');
 $worker = $read('app/QueueV4Clean/QueueV4CleanWorker.php');
+$drainer = $read('app/QueueV4Clean/CanonicalFifoDrainer.php');
 $client = $read('app/Services/MeliApiClient.php');
 $controller = $read('app/Controllers/SettingsController.php');
 $workloadView = $read('app/Views/settings/api_workload.php');
@@ -58,10 +59,11 @@ $assert(str_contains($parkingBody, "JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.ca
 $assert(!preg_match('/attempt_count\s*=/', $parkingBody), 'finance_parking_mutates_attempt_count');
 $assert(!preg_match('/lease_generation\s*=/', $parkingBody), 'finance_parking_mutates_lease_generation');
 
-$assert(str_contains($worker, 'shouldParkFinancialReconciliation'), 'worker_parking_gate_missing');
-$assert(str_contains($worker, "'billing_endpoint_interval'") && str_contains($worker, "'billing_429_backoff'"), 'worker_scope_gate_missing');
-$assert(str_contains($worker, "(string) (\$payload['capability'] ?? '')") && str_contains($worker, "'financial_reconciliation'"), 'worker_capability_gate_missing');
-$assert(str_contains($worker, "'domain_exact'"), 'worker_job_type_gate_missing');
+$assert(str_contains($worker, 'new CanonicalFifoDrainer(')
+    && str_contains($drainer, 'shouldParkFinancialReconciliation'), 'worker_parking_gate_missing');
+$assert(str_contains($drainer, "'billing_endpoint_interval'") && str_contains($drainer, "'billing_429_backoff'"), 'worker_scope_gate_missing');
+$assert(str_contains($drainer, "(string) (\$payload['capability'] ?? '')") && str_contains($drainer, "'financial_reconciliation'"), 'worker_capability_gate_missing');
+$assert(str_contains($drainer, "'domain_exact'"), 'worker_job_type_gate_missing');
 
 $assert(str_contains($client, 'dispatch') || str_contains($client, 'rateLimitNextSafeAt'), 'client_transport_authority_unexpected');
 

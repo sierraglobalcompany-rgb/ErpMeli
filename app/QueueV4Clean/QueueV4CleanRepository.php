@@ -25,6 +25,18 @@ final class QueueV4CleanRepository
             $this->pdo->prepare(
                 'INSERT IGNORE INTO queue_v4_clean_leases (lease_key) VALUES (?)'
             )->execute([CanonicalWorkContract::DRAIN_LEASE_KEY]);
+            $foreignRunning = $this->pdo->prepare(
+                "SELECT COUNT(*) FROM queue_v4_clean_jobs
+                 WHERE state='running'
+                   AND lease_owner IS NOT NULL
+                   AND lease_owner<>?
+                   AND lease_expires_at>=UTC_TIMESTAMP(3)"
+            );
+            $foreignRunning->execute([$owner]);
+            if ((int) $foreignRunning->fetchColumn() > 0) {
+                $this->pdo->commit();
+                return false;
+            }
             $statement = $this->pdo->prepare(
                 'UPDATE queue_v4_clean_leases
                  SET owner_ref=?,acquired_at=UTC_TIMESTAMP(3),heartbeat_at=UTC_TIMESTAMP(3),
@@ -39,6 +51,10 @@ final class QueueV4CleanRepository
         } catch (Throwable $error) {
             if ($this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
+            }
+            if ($error instanceof \PDOException
+                && in_array((string) $error->getCode(), ['40001', '1213'], true)) {
+                return false;
             }
             throw $error;
         }
@@ -187,6 +203,7 @@ final class QueueV4CleanRepository
         if (!in_array($jobType, ['fresh_orders_discovery', 'order_exact'], true)) {
             throw new RuntimeException('queue_v4_clean_job_type_invalid');
         }
+        $payload = CanonicalWorkContract::payloadWithVersion($payload);
         $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         $statement = $this->pdo->prepare(
             'INSERT INTO queue_v4_clean_jobs
@@ -213,8 +230,16 @@ final class QueueV4CleanRepository
     }
 
     /** @return array<string,mixed>|null */
-    public function claim(int $runId, string $owner, int $leaseSeconds = 60): ?array
-    {
+    public function claim(
+        int $runId,
+        string $owner,
+        int $leaseSeconds = 60,
+        int $supportedWorkContractVersion = CanonicalWorkContract::VERSION,
+        ?array $supportedWorkTypes = null,
+    ): ?array {
+        $supportedWorkTypes = $supportedWorkTypes !== null
+            ? array_values(array_unique(array_map('strval', $supportedWorkTypes)))
+            : CanonicalWorkContract::supportedTypes();
         $this->pdo->beginTransaction();
         try {
             if (!$this->drainAuthorityOwnedForUpdate($owner)) {
@@ -232,8 +257,7 @@ final class QueueV4CleanRepository
             }
             $companyId = (int) $row['company_id'];
             $accountId = (int) $row['meli_account_id'];
-            $canonicalType = CanonicalWorkContract::canonicalType($row);
-            if ($canonicalType === null || !in_array($canonicalType, CanonicalWorkContract::supportedTypes(), true)) {
+            if (!CanonicalWorkContract::isSupportedBy($row, $supportedWorkContractVersion, $supportedWorkTypes)) {
                 $this->pdo->commit();
                 return null;
             }
@@ -550,8 +574,16 @@ final class QueueV4CleanRepository
     }
 
     /** @return array{scanned:int,claimed:int,local_completed:int,local_deferred:int} */
-    public function compactLocalFifoPrefix(int $runId, string $owner, int $limit): array
-    {
+    public function compactLocalFifoPrefix(
+        int $runId,
+        string $owner,
+        int $limit,
+        int $supportedWorkContractVersion = CanonicalWorkContract::VERSION,
+        ?array $supportedWorkTypes = null,
+    ): array {
+        $supportedWorkTypes = $supportedWorkTypes !== null
+            ? array_values(array_unique(array_map('strval', $supportedWorkTypes)))
+            : CanonicalWorkContract::supportedTypes();
         $limit = max(0, min(60, $limit));
         if ($limit < 1) {
             return ['scanned' => 0, 'claimed' => 0, 'local_completed' => 0, 'local_deferred' => 0];
@@ -583,7 +615,12 @@ final class QueueV4CleanRepository
 
             $financialKeys = [];
             $recalcKeys = [];
+            $contractWindow = [];
             foreach ($window as $row) {
+                if (!CanonicalWorkContract::isSupportedBy($row, $supportedWorkContractVersion, $supportedWorkTypes)) {
+                    break;
+                }
+                $contractWindow[] = $row;
                 $payload = json_decode((string) ($row['payload_json'] ?? ''), true);
                 if (!is_array($payload)) {
                     continue;
@@ -599,7 +636,7 @@ final class QueueV4CleanRepository
             $recalcSources = $this->localPrefixRecalcSources($recalcKeys);
 
             $compact = [];
-            foreach ($window as $row) {
+            foreach ($contractWindow as $row) {
                 $outcome = $this->localPrefixOutcome($row, $financialSources, $recalcSources);
                 if ($outcome === null) {
                     break;

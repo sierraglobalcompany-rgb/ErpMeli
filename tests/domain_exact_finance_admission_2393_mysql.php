@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Core\Database;
+use App\QueueV4Clean\CanonicalFifoDrainer;
 use App\QueueV4Clean\QueueV4CleanCycleBudget;
 use App\QueueV4Clean\QueueV4CleanDatabaseContract;
 use App\QueueV4Clean\QueueV4CleanDispatchFence;
@@ -662,7 +663,7 @@ try {
 
     // Corrupt/missing pointer mapping is inspected directly because Repository::claim already
     // rejects a mismatched company/account pair before the Worker can receive it.
-    $worker = new QueueV4CleanWorker($pdo, new QueueV4CleanRepository($pdo), null, null, null, $domainHandler);
+    $worker = new CanonicalFifoDrainer($pdo, new QueueV4CleanRepository($pdo), null, null, null, $domainHandler);
     $handleDomain = new ReflectionMethod($worker, 'handleDomainExact');
     $tenantMismatch = $handleDomain->invoke(
         $worker,
@@ -683,6 +684,7 @@ try {
 
     $repairSource = (string) file_get_contents($root . '/app/Services/SalesAuditExactRepairService.php');
     $workerSource = (string) file_get_contents($root . '/app/QueueV4Clean/QueueV4CleanWorker.php');
+    $drainerSource = (string) file_get_contents($root . '/app/QueueV4Clean/CanonicalFifoDrainer.php');
     $schedulerSource = (string) file_get_contents($root . '/app/QueueV4Clean/QueueV4CleanScheduler.php');
     $repositorySource = (string) file_get_contents($root . '/app/QueueV4Clean/QueueV4CleanRepository.php');
     $saleSource = (string) file_get_contents($root . '/app/Services/SaleFinancialService.php');
@@ -693,9 +695,10 @@ try {
     $assert(!str_contains($saleSource, 'saleBillingCapture('), 'automatic_finance_v3_dependency_still_present');
     $assert(str_contains($repositorySource, 'ORDER BY available_at ASC,id ASC'), 'fifo_sql_changed');
     $assert(!str_contains($schedulerSource, 'domain_exact'), 'domain_stage_added_to_scheduler');
-    $assert(str_contains($workerSource, "if (\$type === 'domain_exact')"), 'worker_domain_handler_missing');
-    $assert(str_contains($workerSource, 'processExact($sourceId, $accountId, 1)'), 'financial_recalc_not_exact_one');
-    $assert(str_contains($workerSource, 'processDomainExactBatch('), 'financial_reconciliation_not_queue_owned_batch');
+    $assert(str_contains($workerSource, 'new CanonicalFifoDrainer(')
+        && str_contains($drainerSource, "if (\$type === 'domain_exact')"), 'worker_domain_handler_missing');
+    $assert(str_contains($drainerSource, 'processExact($sourceId, $accountId, 1)'), 'financial_recalc_not_exact_one');
+    $assert(str_contains($drainerSource, 'processDomainExactBatch('), 'financial_reconciliation_not_queue_owned_batch');
 
     fwrite(STDOUT, 'DOMAIN_EXACT_FINANCE_ADMISSION_2393=PASS checks=' . $checks
         . ' schema=299 fake_http=1 real_http=0 max_jobs=3 historical=0 tenant_null=0' . PHP_EOL);

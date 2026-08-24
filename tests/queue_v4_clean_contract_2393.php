@@ -35,6 +35,7 @@ $assert($new === $old, 'schema299_contract_contains_unrelated_drift');
 
 $admission = $read('app/Services/CronAdmissionService.php');
 $worker = $read('app/QueueV4Clean/QueueV4CleanWorker.php');
+$drainer = $read('app/QueueV4Clean/CanonicalFifoDrainer.php');
 $scheduler = $read('app/QueueV4Clean/QueueV4CleanScheduler.php');
 $repository = $read('app/QueueV4Clean/QueueV4CleanRepository.php');
 $policy = $read('app/Services/MeliTransportSourcePolicy.php');
@@ -49,12 +50,13 @@ $assert(str_contains($admission, "'financial_recalc'")
 $assert(str_contains($admission, "'domain_exact'")
     && str_contains($admission, 'ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)')
     && !str_contains($admission, 'state=IF'), 'domain_duplicate_reactivation_detected');
-$assert(!str_contains($worker, 'domainSourceExists(')
-    && str_contains($worker, 'domain_source_tenant_mismatch')
-    && str_contains($worker, 'domain_source_missing')
-    && str_contains($worker, 'WHERE id=? AND company_id=? LIMIT 1'), 'domain_tenant_classification_invalid');
-$assert(str_contains($worker, "if (\$type === 'domain_exact')")
-    && str_contains($worker, 'handleDomainExact('), 'domain_worker_missing');
+$assert(!str_contains($worker . $drainer, 'domainSourceExists(')
+    && str_contains($drainer, 'domain_source_tenant_mismatch')
+    && str_contains($drainer, 'domain_source_missing')
+    && str_contains($drainer, 'WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1'), 'domain_tenant_classification_invalid');
+$assert(str_contains($worker, 'new CanonicalFifoDrainer(')
+    && str_contains($drainer, "if (\$type === 'domain_exact')")
+    && str_contains($drainer, 'handleDomainExact('), 'domain_worker_missing');
 $assert(!str_contains($scheduler, 'domain_exact'), 'parallel_domain_scheduler_stage_detected');
 $assert(str_contains($repository, 'ORDER BY available_at ASC,id ASC'), 'fifo_changed');
 $assert(str_contains($repository, "['fresh_orders_discovery', 'order_exact']"), 'legacy_enqueue_semantics_changed');

@@ -10,6 +10,9 @@ use Throwable;
 
 final class QueueV4CleanRepository
 {
+    /** @var array<string,bool> */
+    private array $tableExistsCache = [];
+
     public function __construct(private readonly PDO $pdo)
     {
     }
@@ -463,6 +466,253 @@ final class QueueV4CleanRepository
         $this->finish($job, $runId, 'completed', 'completed', null, null);
     }
 
+    /** @return array{scanned:int,claimed:int,local_completed:int,local_deferred:int} */
+    public function compactLocalFifoPrefix(int $runId, string $owner, int $limit): array
+    {
+        $limit = max(0, min(60, $limit));
+        if ($limit < 1) {
+            return ['scanned' => 0, 'claimed' => 0, 'local_completed' => 0, 'local_deferred' => 0];
+        }
+        $this->pdo->beginTransaction();
+        try {
+            $firstId = (int) $this->pdo->query(
+                "SELECT id FROM queue_v4_clean_jobs
+                 WHERE state='ready' AND available_at<=UTC_TIMESTAMP(3)
+                 ORDER BY available_at ASC,id ASC LIMIT 1"
+            )->fetchColumn();
+            if ($firstId < 1) {
+                $this->pdo->commit();
+                return ['scanned' => 0, 'claimed' => 0, 'local_completed' => 0, 'local_deferred' => 0];
+            }
+            $window = $this->pdo->query(
+                "SELECT * FROM queue_v4_clean_jobs
+                 WHERE state='ready' AND available_at<=UTC_TIMESTAMP(3)
+                 ORDER BY available_at ASC,id ASC LIMIT {$limit} FOR UPDATE SKIP LOCKED"
+            )->fetchAll(PDO::FETCH_ASSOC);
+            if ($window === [] || (int) ($window[0]['id'] ?? 0) !== $firstId) {
+                $this->pdo->commit();
+                return ['scanned' => 0, 'claimed' => 0, 'local_completed' => 0, 'local_deferred' => 0];
+            }
+
+            $financialKeys = [];
+            $recalcKeys = [];
+            foreach ($window as $row) {
+                $payload = json_decode((string) ($row['payload_json'] ?? ''), true);
+                if (!is_array($payload)) {
+                    continue;
+                }
+                $sourceId = (int) ($payload['source_id'] ?? $row['resource_id'] ?? 0);
+                if ((string) ($payload['capability'] ?? '') === 'financial_reconciliation' && $sourceId > 0) {
+                    $financialKeys[$sourceId] = [(int) $row['company_id'], (int) $row['meli_account_id']];
+                } elseif ((string) ($payload['capability'] ?? '') === 'financial_recalc' && $sourceId > 0) {
+                    $recalcKeys[$sourceId] = [(int) $row['company_id'], (int) $row['meli_account_id']];
+                }
+            }
+            $financialSources = $this->localPrefixFinancialSources($financialKeys);
+            $recalcSources = $this->localPrefixRecalcSources($recalcKeys);
+
+            $compact = [];
+            foreach ($window as $row) {
+                $outcome = $this->localPrefixOutcome($row, $financialSources, $recalcSources);
+                if ($outcome === null) {
+                    break;
+                }
+                $compact[] = ['job' => $row, 'outcome' => $outcome];
+            }
+            if ($compact === []) {
+                $this->pdo->commit();
+                return ['scanned' => 0, 'claimed' => 0, 'local_completed' => 0, 'local_deferred' => 0];
+            }
+
+            $ids = [];
+            $stateCases = [];
+            $availableCases = [];
+            $errorCases = [];
+            $completedCases = [];
+            $attemptCases = [];
+            $stateParameters = [];
+            $availableParameters = [];
+            $attemptParametersForUpdate = [];
+            $errorParameters = [];
+            $completedParameters = [];
+            $attemptValues = [];
+            $attemptParameters = [];
+            $completed = 0;
+            $deferred = 0;
+            foreach ($compact as $item) {
+                $job = $item['job'];
+                $outcome = $item['outcome'];
+                $companyId = (int) $job['company_id'];
+                $accountId = (int) $job['meli_account_id'];
+                if ($companyId < 1 || $accountId < 1) {
+                    throw new RuntimeException('queue_v4_clean_prefix_tenant_invalid');
+                }
+                $id = (int) $job['id'];
+                $ids[] = $id;
+                $generation = (int) ($job['lease_generation'] ?? 0) + 1;
+                $state = (string) $outcome['state'];
+                $classification = $state === 'waiting'
+                    ? substr((string) $outcome['classification'], 0, 100)
+                    : null;
+                $availableAt = $state === 'waiting'
+                    ? $this->safeUtcDateTime((string) $outcome['next_safe_at'])
+                    : null;
+                $stateCases[] = 'WHEN ? THEN ?';
+                $stateParameters[] = $id;
+                $stateParameters[] = $state;
+                $availableCases[] = 'WHEN ? THEN ?';
+                $availableParameters[] = $id;
+                $availableParameters[] = $availableAt ?? (string) $job['available_at'];
+                $errorCases[] = 'WHEN ? THEN ?';
+                $errorParameters[] = $id;
+                $errorParameters[] = $classification;
+                $completedCases[] = 'WHEN ? THEN ' . ($state === 'completed' ? 'UTC_TIMESTAMP(3)' : 'NULL');
+                $completedParameters[] = $id;
+                $attemptCases[] = 'WHEN ? THEN attempt_count+' . ($state === 'completed' ? '1' : '0');
+                $attemptParametersForUpdate[] = $id;
+                if ((string) $outcome['state'] === 'completed') {
+                    $completed++;
+                } else {
+                    $deferred++;
+                }
+                $attemptValues[] = '(?,?,?,?,?,?,?,?,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3))';
+                array_push(
+                    $attemptParameters,
+                    $id,
+                    $runId,
+                    $companyId,
+                    $accountId,
+                    $owner,
+                    $generation,
+                    $state === 'completed' ? 'completed' : 'waiting',
+                    $classification,
+                );
+            }
+            $in = implode(',', array_fill(0, count($ids), '?'));
+            $update = $this->pdo->prepare(
+                'UPDATE queue_v4_clean_jobs
+                 SET state=CASE id ' . implode(' ', $stateCases) . ' ELSE state END,
+                     available_at=CASE id ' . implode(' ', $availableCases) . ' ELSE available_at END,
+                     lease_owner=NULL,
+                     lease_expires_at=NULL,
+                     lease_generation=lease_generation+1,
+                     attempt_count=CASE id ' . implode(' ', $attemptCases) . ' ELSE attempt_count END,
+                     last_error_class=CASE id ' . implode(' ', $errorCases) . ' ELSE last_error_class END,
+                     completed_at=CASE id ' . implode(' ', $completedCases) . ' ELSE completed_at END
+                 WHERE id IN (' . $in . ') AND state="ready"'
+            );
+            $update->execute(array_merge(
+                $stateParameters,
+                $availableParameters,
+                $attemptParametersForUpdate,
+                $errorParameters,
+                $completedParameters,
+                $ids,
+            ));
+            if ($update->rowCount() !== count($compact)) {
+                throw new RuntimeException('queue_v4_clean_prefix_update_cas_lost');
+            }
+            $attempt = $this->pdo->prepare(
+                'INSERT INTO queue_v4_clean_attempts
+                 (job_id,run_id,company_id,meli_account_id,lease_owner,lease_generation,outcome,error_class,finished_at,source_closed_at)
+                 VALUES ' . implode(',', $attemptValues)
+            );
+            $attempt->execute($attemptParameters);
+            if ($attempt->rowCount() !== count($compact)) {
+                throw new RuntimeException('queue_v4_clean_prefix_attempt_insert_lost');
+            }
+            $run = $this->pdo->prepare(
+                'UPDATE queue_v4_clean_runs
+                 SET jobs_claimed=jobs_claimed+?,jobs_completed=jobs_completed+?,jobs_deferred=jobs_deferred+?
+                 WHERE id=? AND status="running"'
+            );
+            $run->execute([count($compact), $completed, $deferred, $runId]);
+            if ($run->rowCount() !== 1) {
+                throw new RuntimeException('queue_v4_clean_prefix_run_cas_lost');
+            }
+            $this->pdo->commit();
+            return [
+                'scanned' => count($compact),
+                'claimed' => count($compact),
+                'local_completed' => $completed,
+                'local_deferred' => $deferred,
+            ];
+        } catch (Throwable $error) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
+    /**
+     * @param list<array<string,mixed>> $jobs
+     */
+    public function completeLocalBatch(array $jobs, int $runId): void
+    {
+        if ($jobs === []) {
+            return;
+        }
+        $this->pdo->beginTransaction();
+        try {
+            $jobUpdate = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_jobs
+                 SET state='completed',lease_owner=NULL,lease_expires_at=NULL,last_error_class=NULL,
+                     completed_at=UTC_TIMESTAMP(3)
+                 WHERE id=? AND company_id=? AND meli_account_id=? AND state='running'
+                   AND lease_owner=? AND lease_generation=?"
+            );
+            $attemptUpdate = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_attempts
+                 SET outcome='completed',error_class=NULL,finished_at=UTC_TIMESTAMP(3),source_closed_at=UTC_TIMESTAMP(3)
+                 WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=?
+                   AND lease_owner=? AND lease_generation=? AND outcome='running'"
+            );
+            $closed = 0;
+            foreach ($jobs as $job) {
+                $companyId = (int) ($job['company_id'] ?? 0);
+                $accountId = (int) ($job['meli_account_id'] ?? 0);
+                $this->assertTenant($companyId, $accountId);
+                $jobUpdate->execute([
+                    (int) $job['id'],
+                    $companyId,
+                    $accountId,
+                    (string) $job['lease_owner'],
+                    (int) $job['lease_generation'],
+                ]);
+                if ($jobUpdate->rowCount() !== 1) {
+                    throw new RuntimeException('queue_v4_clean_local_complete_cas_lost');
+                }
+                $attemptUpdate->execute([
+                    (int) $job['attempt_id'],
+                    (int) $job['id'],
+                    $companyId,
+                    $accountId,
+                    (string) $job['lease_owner'],
+                    (int) $job['lease_generation'],
+                ]);
+                if ($attemptUpdate->rowCount() !== 1) {
+                    throw new RuntimeException('queue_v4_clean_local_complete_attempt_cas_lost');
+                }
+                $closed++;
+            }
+            $run = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_runs SET jobs_completed=jobs_completed+?
+                 WHERE id=? AND status='running'"
+            );
+            $run->execute([$closed, $runId]);
+            if ($run->rowCount() !== 1) {
+                throw new RuntimeException('queue_v4_clean_local_complete_run_cas_lost');
+            }
+            $this->pdo->commit();
+        } catch (Throwable $error) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
     public function wait(array $job, int $runId, string $errorClass, int $delaySeconds = 30): void
     {
         $this->finish($job, $runId, 'waiting', 'waiting', $errorClass, max(1, min(3600, $delaySeconds)));
@@ -531,6 +781,85 @@ final class QueueV4CleanRepository
             $run->execute([$runId]);
             if ($run->rowCount() !== 1) {
                 throw new RuntimeException('queue_v4_clean_non_failure_run_cas_lost');
+            }
+            $this->pdo->commit();
+        } catch (Throwable $error) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
+    /**
+     * Cierra aplazamientos locales non-failure del mismo turno en una sola
+     * transacción. Mantiene los mismos CAS de deferWithoutAttemptPenalty():
+     * job running, owner, generation, attempt running y attempts esperado.
+     *
+     * @param list<array{job:array<string,mixed>,classification:string,next_safe_at:?string}> $items
+     */
+    public function deferLocalWithoutAttemptPenaltyBatch(array $items, int $runId): void
+    {
+        if ($items === []) {
+            return;
+        }
+        $this->pdo->beginTransaction();
+        try {
+            $jobUpdate = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_jobs
+                 SET state='waiting',available_at=?,lease_owner=NULL,lease_expires_at=NULL,
+                     attempt_count=GREATEST(attempt_count-1,0),last_error_class=?,completed_at=NULL
+                 WHERE id=? AND company_id=? AND meli_account_id=?
+                   AND state='running' AND lease_owner=? AND lease_generation=? AND attempt_count=?"
+            );
+            $attemptUpdate = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_attempts
+                 SET outcome='waiting',error_class=?,finished_at=UTC_TIMESTAMP(3),source_closed_at=UTC_TIMESTAMP(3)
+                 WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=?
+                   AND lease_owner=? AND lease_generation=? AND outcome='running'"
+            );
+            $closed = 0;
+            foreach ($items as $item) {
+                $job = $item['job'];
+                $companyId = (int) ($job['company_id'] ?? 0);
+                $accountId = (int) ($job['meli_account_id'] ?? 0);
+                $this->assertTenant($companyId, $accountId);
+                $classification = substr((string) $item['classification'], 0, 100);
+                $availableAt = $this->safeUtcDateTime($item['next_safe_at']);
+                $jobUpdate->execute([
+                    $availableAt,
+                    $classification,
+                    (int) $job['id'],
+                    $companyId,
+                    $accountId,
+                    (string) $job['lease_owner'],
+                    (int) $job['lease_generation'],
+                    (int) $job['attempt_count'],
+                ]);
+                if ($jobUpdate->rowCount() !== 1) {
+                    throw new RuntimeException('queue_v4_clean_local_non_failure_defer_cas_lost');
+                }
+                $attemptUpdate->execute([
+                    $classification,
+                    (int) $job['attempt_id'],
+                    (int) $job['id'],
+                    $companyId,
+                    $accountId,
+                    (string) $job['lease_owner'],
+                    (int) $job['lease_generation'],
+                ]);
+                if ($attemptUpdate->rowCount() !== 1) {
+                    throw new RuntimeException('queue_v4_clean_local_non_failure_attempt_cas_lost');
+                }
+                $closed++;
+            }
+            $run = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_runs SET jobs_deferred=jobs_deferred+?
+                 WHERE id=? AND status='running'"
+            );
+            $run->execute([$closed, $runId]);
+            if ($run->rowCount() !== 1) {
+                throw new RuntimeException('queue_v4_clean_local_non_failure_run_cas_lost');
             }
             $this->pdo->commit();
         } catch (Throwable $error) {
@@ -723,6 +1052,149 @@ final class QueueV4CleanRepository
             }
             throw $error;
         }
+    }
+
+    /**
+     * @param array<string,mixed> $job
+     * @param array<int,array{company_id:int,meli_account_id:int,status:string,next_run_at:?string}> $financialSources
+     * @param array<int,array{company_id:int,meli_account_id:int,status:string}> $recalcSources
+     * @return array{state:string,classification?:string,next_safe_at?:string}|null
+     */
+    private function localPrefixOutcome(array $job, array $financialSources, array $recalcSources): ?array
+    {
+        if ((string) ($job['job_type'] ?? '') !== 'domain_exact') {
+            return null;
+        }
+        $resourceId = trim((string) ($job['resource_id'] ?? ''));
+        if ($resourceId === '' || !ctype_digit($resourceId)) {
+            return null;
+        }
+        $payload = json_decode((string) ($job['payload_json'] ?? ''), true);
+        if (!is_array($payload)) {
+            return null;
+        }
+        $capability = trim((string) ($payload['capability'] ?? ''));
+        $sourceId = (int) ($payload['source_id'] ?? $resourceId);
+        if ($sourceId < 1 || (int) $resourceId !== $sourceId) {
+            return null;
+        }
+        $companyId = (int) ($job['company_id'] ?? 0);
+        $accountId = (int) ($job['meli_account_id'] ?? 0);
+        if ($capability === 'financial_recalc') {
+            $source = $recalcSources[$sourceId] ?? null;
+            if ($source === null
+                || (int) $source['company_id'] !== $companyId
+                || (int) $source['meli_account_id'] !== $accountId) {
+                return null;
+            }
+            return strtolower((string) $source['status']) === 'complete' ? ['state' => 'completed'] : null;
+        }
+        if ($capability !== 'financial_reconciliation') {
+            return null;
+        }
+        $source = $financialSources[$sourceId] ?? null;
+        if ($source === null
+            || (int) $source['company_id'] !== $companyId
+            || (int) $source['meli_account_id'] !== $accountId) {
+            return null;
+        }
+        $status = strtolower(trim((string) ($source['status'] ?? '')));
+        if ($status === 'complete') {
+            return ['state' => 'completed'];
+        }
+        if (!in_array($status, ['pending', 'running', 'retry', 'awaiting_remote'], true)) {
+            return null;
+        }
+        $next = trim((string) ($source['next_run_at'] ?? ''));
+        $timestamp = $next !== '' ? strtotime($next . ' UTC') : false;
+        if ($timestamp === false || $timestamp <= time()) {
+            return null;
+        }
+        return [
+            'state' => 'waiting',
+            'classification' => 'domain_source_not_due:financial_reconciliation',
+            'next_safe_at' => $next,
+        ];
+    }
+
+    /** @param array<int,array{0:int,1:int}> $keys @return array<int,array{company_id:int,meli_account_id:int,status:string,next_run_at:?string}> */
+    private function localPrefixFinancialSources(array $keys): array
+    {
+        if ($keys === []) {
+            return [];
+        }
+        if (!$this->tableExists('sale_financial_reconciliation_jobs')) {
+            return [];
+        }
+        $where = [];
+        $parameters = [];
+        foreach ($keys as $sourceId => $tenant) {
+            $where[] = '(id=? AND company_id=? AND meli_account_id=?)';
+            $parameters[] = (int) $sourceId;
+            $parameters[] = (int) $tenant[0];
+            $parameters[] = (int) $tenant[1];
+        }
+        $statement = $this->pdo->prepare(
+            'SELECT id,company_id,meli_account_id,status,next_run_at
+             FROM sale_financial_reconciliation_jobs WHERE ' . implode(' OR ', $where)
+        );
+        $statement->execute($parameters);
+        $sources = [];
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $sources[(int) $row['id']] = [
+                'company_id' => (int) $row['company_id'],
+                'meli_account_id' => (int) $row['meli_account_id'],
+                'status' => (string) $row['status'],
+                'next_run_at' => isset($row['next_run_at']) ? (string) $row['next_run_at'] : null,
+            ];
+        }
+        return $sources;
+    }
+
+    /** @param array<int,array{0:int,1:int}> $keys @return array<int,array{company_id:int,meli_account_id:int,status:string}> */
+    private function localPrefixRecalcSources(array $keys): array
+    {
+        if ($keys === []) {
+            return [];
+        }
+        if (!$this->tableExists('order_financial_recalc_jobs')) {
+            return [];
+        }
+        $where = [];
+        $parameters = [];
+        foreach ($keys as $sourceId => $tenant) {
+            $where[] = '(id=? AND company_id=? AND meli_account_id=?)';
+            $parameters[] = (int) $sourceId;
+            $parameters[] = (int) $tenant[0];
+            $parameters[] = (int) $tenant[1];
+        }
+        $statement = $this->pdo->prepare(
+            'SELECT id,company_id,meli_account_id,status
+             FROM order_financial_recalc_jobs WHERE ' . implode(' OR ', $where)
+        );
+        $statement->execute($parameters);
+        $sources = [];
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $sources[(int) $row['id']] = [
+                'company_id' => (int) $row['company_id'],
+                'meli_account_id' => (int) $row['meli_account_id'],
+                'status' => (string) $row['status'],
+            ];
+        }
+        return $sources;
+    }
+
+    private function tableExists(string $table): bool
+    {
+        if (array_key_exists($table, $this->tableExistsCache)) {
+            return $this->tableExistsCache[$table];
+        }
+        $statement = $this->pdo->prepare(
+            'SELECT 1 FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? LIMIT 1'
+        );
+        $statement->execute([$table]);
+        return $this->tableExistsCache[$table] = $statement->fetchColumn() !== false;
     }
 
     private function assertTenant(int $companyId, int $accountId): void

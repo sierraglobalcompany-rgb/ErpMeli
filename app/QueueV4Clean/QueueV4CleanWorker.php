@@ -117,6 +117,28 @@ final class QueueV4CleanWorker
         $owner = bin2hex(random_bytes(16));
         $runId = $this->repository->beginRun($launcher, $owner);
         $scanned = $claimed = $effective = $completed = $deferred = $localCompleted = $localDeferred = $remoteDeferred = 0;
+        /** @var list<array{job:array<string,mixed>,classification:string,next_safe_at:?string}> $pendingLocalDefers */
+        $pendingLocalDefers = [];
+        /** @var list<array<string,mixed>> $pendingLocalCompletes */
+        $pendingLocalCompletes = [];
+        $flushLocalDefers = function () use (&$pendingLocalDefers, $runId): void {
+            if ($pendingLocalDefers === []) {
+                return;
+            }
+            $this->repository->deferLocalWithoutAttemptPenaltyBatch($pendingLocalDefers, $runId);
+            $pendingLocalDefers = [];
+        };
+        $flushLocalCompletes = function () use (&$pendingLocalCompletes, $runId): void {
+            if ($pendingLocalCompletes === []) {
+                return;
+            }
+            $this->repository->completeLocalBatch($pendingLocalCompletes, $runId);
+            $pendingLocalCompletes = [];
+        };
+        $flushLocalOutcomes = function () use ($flushLocalDefers, $flushLocalCompletes): void {
+            $flushLocalDefers();
+            $flushLocalCompletes();
+        };
         $scanStartedAt = hrtime(true);
         try {
             $this->repository->expireLeases();
@@ -125,6 +147,16 @@ final class QueueV4CleanWorker
                 && $scanned < self::MAX_SCAN_ROWS
                 && $this->scanTimeRemaining($scanStartedAt)
                 && CronDeadlineContext::canAcceptWork(2)) {
+                $prefix = $this->repository->compactLocalFifoPrefix($runId, $owner, self::MAX_SCAN_ROWS - $scanned);
+                if ($prefix['scanned'] > 0) {
+                    $scanned += $prefix['scanned'];
+                    $claimed += $prefix['claimed'];
+                    $completed += $prefix['local_completed'];
+                    $deferred += $prefix['local_deferred'];
+                    $localCompleted += $prefix['local_completed'];
+                    $localDeferred += $prefix['local_deferred'];
+                    continue;
+                }
                 $job = $this->repository->claim($runId, $owner, 60);
                 if ($job === null) {
                     break;
@@ -134,6 +166,7 @@ final class QueueV4CleanWorker
                 try {
                     $outcome = $this->handle($job);
                 } catch (OAuthRefreshRequiredException) {
+                    $flushLocalOutcomes();
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
                         $runId,
@@ -148,6 +181,7 @@ final class QueueV4CleanWorker
                     $effective++;
                     continue;
                 } catch (ApiRhythmDeferredException $error) {
+                    $flushLocalOutcomes();
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
                         $runId,
@@ -165,6 +199,7 @@ final class QueueV4CleanWorker
                     $effective++;
                     continue;
                 } catch (ApiBudgetExhaustedException $error) {
+                    $flushLocalOutcomes();
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
                         $runId,
@@ -176,6 +211,7 @@ final class QueueV4CleanWorker
                     $effective++;
                     continue;
                 } catch (CronDeadlineDeferredException $error) {
+                    $flushLocalOutcomes();
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
                         $runId,
@@ -186,6 +222,7 @@ final class QueueV4CleanWorker
                     $localDeferred++;
                     break;
                 } catch (QueueV4PreTransportDeferredException $error) {
+                    $flushLocalOutcomes();
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
                         $runId,
@@ -197,6 +234,7 @@ final class QueueV4CleanWorker
                     $effective++;
                     continue;
                 } catch (RemoteResultUncertainException) {
+                    $flushLocalOutcomes();
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
                         $runId,
@@ -208,6 +246,7 @@ final class QueueV4CleanWorker
                     $effective++;
                     continue;
                 } catch (MeliApiException $error) {
+                    $flushLocalOutcomes();
                     if ($error->httpStatus === 429) {
                         $this->repository->deferWithoutAttemptPenalty(
                             $job,
@@ -225,6 +264,7 @@ final class QueueV4CleanWorker
                     $effective++;
                     continue;
                 } catch (RuntimeException $error) {
+                    $flushLocalOutcomes();
                     $this->functionalFailure($job, $runId, $error);
                     $deferred++;
                     $effective++;
@@ -232,6 +272,17 @@ final class QueueV4CleanWorker
                 }
                 if (($outcome['state'] ?? '') === 'waiting') {
                     $isEffective = ($outcome['effective'] ?? true) === true;
+                    if (!$isEffective) {
+                        $pendingLocalDefers[] = [
+                            'job' => $job,
+                            'classification' => (string) ($outcome['classification'] ?? 'domain_source_waiting'),
+                            'next_safe_at' => isset($outcome['next_safe_at']) ? (string) $outcome['next_safe_at'] : null,
+                        ];
+                        $deferred++;
+                        $localDeferred++;
+                        continue;
+                    }
+                    $flushLocalOutcomes();
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
                         $runId,
@@ -248,6 +299,7 @@ final class QueueV4CleanWorker
                     continue;
                 }
                 if (($outcome['state'] ?? '') === 'review') {
+                    $flushLocalOutcomes();
                     $this->repository->review(
                         $job,
                         $runId,
@@ -258,16 +310,24 @@ final class QueueV4CleanWorker
                     continue;
                 }
                 if (($outcome['state'] ?? '') !== 'completed') {
+                    $flushLocalOutcomes();
                     throw new RuntimeException('queue_v4_clean_worker_outcome_invalid');
+                }
+                if (($outcome['effective'] ?? true) === true) {
+                    $flushLocalOutcomes();
+                } else {
+                    $pendingLocalCompletes[] = $job;
+                    $completed++;
+                    $localCompleted++;
+                    continue;
                 }
                 $this->repository->complete($job, $runId);
                 $completed++;
                 if (($outcome['effective'] ?? true) === true) {
                     $effective++;
-                } else {
-                    $localCompleted++;
                 }
             }
+            $flushLocalOutcomes();
             $this->repository->finishRun($runId, 'completed');
             $this->lastMetrics = [
                 'scanned' => $scanned,
@@ -285,6 +345,12 @@ final class QueueV4CleanWorker
                 'deferred' => $deferred,
             ];
         } catch (Throwable $error) {
+            try {
+                $flushLocalOutcomes();
+            } catch (Throwable) {
+                // Preserve the original failure while avoiding a best-effort
+                // local flush from masking the real worker error.
+            }
             $this->repository->finishRun($runId, 'failed');
             throw $error;
         } finally {

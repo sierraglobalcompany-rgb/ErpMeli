@@ -12,6 +12,8 @@ Trace producer → source table → V4 pointer → canonical contract → draine
 
 Keep business source ownership outside Queue V4. Keep physical FIFO, leases and drain authority inside Queue V4.
 
+For notification/webhook work, `meli_notification_work_items` is the durable business source and K2 may only mutate rows strictly after the stored forward activation watermark. Historical notification rows require a separate recovery prompt.
+
 ## 4. KISS constraint
 
 Prefer one boundary fix over new tables, queues, crons or generalized frameworks. If the change needs a new authority, stop and ask.

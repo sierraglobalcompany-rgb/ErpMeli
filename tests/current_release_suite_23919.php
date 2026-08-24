@@ -24,6 +24,7 @@ $tests = [
     'api_incident_materializer_visibility_23915.php', 'cron_api_risks_2416.php',
     'operational_surface_contract_23917.php', 'queue_v4_bulk_parity_convergence_2399.php',
     'finance_admission_transition_23919.php', 'queue_v4_k2_notifications_forward_path_23919.php',
+    'queue_v4_k2_notifications_forward_path_r1_23919.php',
     'queue_v4_update_transition_23919.php',
     'runtime_publication_policy_2380.php', 'managed_runtime_package_2361.php',
     'runtime_package_attestation_b21a.php',

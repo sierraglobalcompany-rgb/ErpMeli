@@ -138,9 +138,25 @@
 ## notifications / webhooks
 
 - WORK_TYPE: notification/webhook processing
-- PLANE: DEFERRED_K2
-- STATUS: NO_CERTIFICADO_FOR_K1B_KERNEL
-- NOTE: buffered/work-item paths need separate ownership audit before automatic claims.
+- PLANE: K2_CANONICAL_FORWARD
+- PRODUCER: `WebhookSpoolService` / `NotificationWorkItemService` durable ingress
+- BUSINESS_SOURCE_OF_TRUTH: `meli_notification_work_items`
+- ADMISSION_BOUNDARY: `QueueV4CleanNotificationAdmissionStage` -> `CronAdmissionService::submitOrderExact`
+- PHYSICAL_FIFO_MAPPING: `queue_v4_clean_jobs.job_type=order_exact`
+- CANONICAL_WORK_TYPE: V1 `order_exact` for order/order only
+- IDEMPOTENCY_AUTHORITY: `notification:order_exact:work:<work_item_id>`
+- AVAILABLE/FIFO_RULE: V4 `available_at ASC, id ASC` after canonical pointer admission
+- DRAIN_AUTHORITY: canonical FIFO drainer
+- CANONICAL_EXECUTOR: `CanonicalFifoDrainer`
+- DOMAIN_HANDLER: `OrderSyncService::processEnrichmentResource`
+- REMOTE_ALLOWED: only when the later `order_exact` pointer is claimed by V4
+- RHYTHM_AUTHORITY: normal order endpoint rhythm, not Billing breaker
+- DEADLINE_AUTHORITY: K2 admission stage wall-time bound plus kernel deadline
+- RETRY_AUTHORITY: Queue V4 for canonical pointer; unsupported notification topics safe-paused
+- EFFECTIVE_RULE: forward-only; work_item.id must be greater than activation watermark for every K2 mutation
+- FINALIZATION_OWNER: source-pointer reconciliation in K2 admission stage
+- LEGACY_PATHS: notification/webhook legacy consumers remain retired/blocked, not physically deleted in K2 R1
+- STATUS: K2_CANONICAL_FORWARD for order/order; BUFFERED_UNSUPPORTED for shipment/payment/item/question/claim/message/unknown
 
 ## legacy Queue Core / V3
 

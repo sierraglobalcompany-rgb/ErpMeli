@@ -198,8 +198,13 @@ This index is intentionally human-readable. It names the current execution surfa
 
 ### Notifications/webhooks
 
-- ROLE: event buffering and work-item processing.
-- OWNER: mixed legacy/manual services.
-- FILES: `WebhookSpoolService`, `NotificationWorkItemService`.
-- STATUS: DEFERRED_K2 for canonical ownership decision.
-- NOTES: not certified as part of K1B execution kernel.
+- ROLE: durable event buffering plus forward-only canonical work admission.
+- OWNER: K2 notification forward path.
+- FILES: `WebhookSpoolService`, `NotificationWorkItemService`, `QueueV4CleanNotificationAdmissionStage`, `CronAdmissionService`.
+- STATE AUTHORITY: `meli_notification_events` ingress and `meli_notification_work_items` durable source; `queue_v4_clean_jobs` remains the technical pointer.
+- ADMISSION: `QueueV4CleanNotificationAdmissionStage` reads only rows after `app_settings.notifications.k2.forward_from_work_item_id`.
+- CANONICAL CONTRACT: order/order notifications become Canonical Work Contract V1 `order_exact` via `CronAdmissionService::submitOrderExact`.
+- EXECUTION: `CanonicalFifoDrainer` executes the resulting V4 pointer; source-pointer reconciliation marks completed/review/dead outcomes back to the work item.
+- UNSUPPORTED TOPICS: shipment/payment/item/question/claim/message/unknown remain buffered then safe-paused with visible classification; no fake completion.
+- STATUS: K2_CANONICAL_FORWARD for order/order, BUFFERED_UNSUPPORTED for other topic families.
+- NOTES: historical rows before activation are not replayed or mutated.

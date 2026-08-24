@@ -22,6 +22,7 @@ final class QueueV4CleanNotificationAdmissionStage
     private const WATERMARK_ID_KEY = 'notifications.k2.forward_from_work_item_id';
     private const WATERMARK_AT_KEY = 'notifications.k2.forward_from_utc';
     private const MAX_LIMIT = 30;
+    private const WALL_TIME_SECONDS = 2.0;
 
     public function __construct(private readonly PDO $pdo)
     {
@@ -30,6 +31,7 @@ final class QueueV4CleanNotificationAdmissionStage
     /** @return array<string,mixed> */
     public function run(int $limit = 15): array
     {
+        $startedAt = microtime(true);
         if (!$this->hasTable('meli_notification_work_items') || !$this->hasTable('meli_notification_events')) {
             return ['available' => false, 'activated' => false, 'admitted' => 0, 'unsupported' => 0, 'reconciled' => 0];
         }
@@ -50,15 +52,20 @@ final class QueueV4CleanNotificationAdmissionStage
             'deferred' => false,
         ];
 
+        if (!$this->canContinue($startedAt)) {
+            $summary['deferred'] = true;
+            return $summary;
+        }
+
         $watermark = $this->watermarkId();
-        if ($watermark < 1) {
+        if ($watermark === null) {
             $summary['activated'] = true;
             $summary['watermark_id'] = $this->activateForwardWatermark();
             return $summary;
         }
         $summary['watermark_id'] = $watermark;
-        $summary = $this->reconcileQueued($summary, $limit);
-        if (!CronDeadlineContext::canAcceptWork(1)) {
+        $summary = $this->reconcileQueued($summary, $limit, $watermark, $startedAt);
+        if (!$this->canContinue($startedAt)) {
             $summary['deferred'] = true;
             return $summary;
         }
@@ -66,6 +73,10 @@ final class QueueV4CleanNotificationAdmissionStage
         $this->pdo->beginTransaction();
         try {
             foreach ($this->candidatesForUpdate($watermark, $limit) as $row) {
+                if (!$this->canContinue($startedAt)) {
+                    $summary['deferred'] = true;
+                    break;
+                }
                 $summary['read']++;
                 $decision = $this->classify($row);
                 if ($decision['action'] === 'quarantine') {
@@ -91,6 +102,13 @@ final class QueueV4CleanNotificationAdmissionStage
                     ],
                 );
                 if (!$receipt['accepted']) {
+                    if ($receipt['reason'] === 'ALREADY_COMPLETED' && $receipt['job_id'] !== null) {
+                        $this->markComplete((int) $row['id'], (int) $row['latest_event_id']);
+                        $summary['deduplicated']++;
+                        $summary['reconciled']++;
+                        $summary['completed']++;
+                        continue;
+                    }
                     $this->markAdmissionHeld((int) $row['id'], $receipt['reason']);
                     $summary['errors']++;
                     continue;
@@ -112,12 +130,16 @@ final class QueueV4CleanNotificationAdmissionStage
         return $summary;
     }
 
-    private function watermarkId(): int
+    private function watermarkId(): ?int
     {
         $stmt = $this->pdo->prepare('SELECT setting_value FROM app_settings WHERE setting_key=? LIMIT 1');
         $stmt->execute([self::WATERMARK_ID_KEY]);
         $value = $stmt->fetchColumn();
-        return is_numeric($value) ? (int) $value : 0;
+        if ($value === false) {
+            return null;
+        }
+
+        return is_numeric($value) ? max(0, (int) $value) : 0;
     }
 
     private function activateForwardWatermark(): int
@@ -128,15 +150,20 @@ final class QueueV4CleanNotificationAdmissionStage
             $stmt = $this->pdo->prepare(
                 'INSERT INTO app_settings(setting_key,setting_value,is_encrypted,setting_group)
                  VALUES (?, ?, 0, "notifications")
-                 ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),is_encrypted=0,setting_group="notifications"'
+                 ON DUPLICATE KEY UPDATE setting_key=setting_key'
             );
             $stmt->execute([self::WATERMARK_ID_KEY, (string) $max]);
             $stmt->execute([self::WATERMARK_AT_KEY, gmdate('Y-m-d H:i:s')]);
+            $authoritative = $this->watermarkId();
             $this->pdo->commit();
-            return $max;
+            return $authoritative ?? $max;
         } catch (Throwable $error) {
             if ($this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
+            }
+            $authoritative = $this->watermarkId();
+            if ($authoritative !== null) {
+                return $authoritative;
             }
             throw $error;
         }
@@ -146,23 +173,34 @@ final class QueueV4CleanNotificationAdmissionStage
      * @param array<string,mixed> $summary
      * @return array<string,mixed>
      */
-    private function reconcileQueued(array $summary, int $limit): array
+    private function reconcileQueued(array $summary, int $limit, int $watermark, float $startedAt): array
     {
+        if (!$this->canContinue($startedAt)) {
+            $summary['deferred'] = true;
+            return $summary;
+        }
         $this->pdo->beginTransaction();
         try {
-            $rows = $this->pdo->query(
+            $stmt = $this->pdo->prepare(
                 'SELECT w.id,w.meli_account_id,w.latest_event_id,j.state,j.completed_at
                  FROM meli_notification_work_items w
                  JOIN queue_v4_clean_jobs j
-                   ON j.idempotency_key=CONCAT("notification:order_exact:work:",w.id)
+                  ON j.idempotency_key=CONCAT("notification:order_exact:work:",w.id)
                   AND j.meli_account_id=w.meli_account_id
                   AND j.job_type="order_exact"
                  WHERE w.status="queued"
+                   AND w.id>?
                  ORDER BY w.id ASC
                  LIMIT ' . max(1, min(self::MAX_LIMIT, $limit)) . '
                  FOR UPDATE'
-            )->fetchAll(PDO::FETCH_ASSOC);
+            );
+            $stmt->execute([$watermark]);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
             foreach ($rows as $row) {
+                if (!$this->canContinue($startedAt)) {
+                    $summary['deferred'] = true;
+                    break;
+                }
                 $state = (string) $row['state'];
                 if ($state === 'completed') {
                     $this->markComplete((int) $row['id'], (int) $row['latest_event_id']);
@@ -210,6 +248,15 @@ final class QueueV4CleanNotificationAdmissionStage
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute([$watermark]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    private function canContinue(float $startedAt, float $reserveSeconds = 0.2): bool
+    {
+        if ((microtime(true) - $startedAt) >= self::WALL_TIME_SECONDS) {
+            return false;
+        }
+
+        return CronDeadlineContext::remainingSeconds() > $reserveSeconds;
     }
 
     /**

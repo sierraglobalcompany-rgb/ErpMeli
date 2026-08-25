@@ -14,37 +14,63 @@ final class MeliTransportSourcePolicy
     public const QUEUE_V4_SALES_REPAIR = 'queue_v4_clean_sales_repair';
     public const QUEUE_V4_DOMAIN_EXACT = 'queue_v4_clean_domain_exact';
 
-    /** @return array{known:bool,single_dispatch:bool,blocks_redirects:bool,queue_rate_limit_deferral:bool,current_oauth_fence:bool} */
+    /**
+     * @return array{
+     *   known:bool,
+     *   single_dispatch:bool,
+     *   blocks_redirects:bool,
+     *   queue_rate_limit_deferral:bool,
+     *   current_oauth_fence:bool,
+     *   queue_v4_read_fence:bool,
+     *   primary_rhythm:bool,
+     *   pacing_compatibility:bool,
+     *   legacy_cron_v3:bool,
+     *   queue_core_context:bool,
+     *   manual_emergency_canary:bool,
+     *   manual_emergency_oauth_refresh:bool,
+     *   module_source:bool,
+     *   target:string
+     * }
+     */
     public static function capabilities(string $source): array
     {
         $hardened = [
-            'cron' => [false, false, false, false],
-            'web' => [false, false, false, false],
-            'queue_core' => [true, true, true, false],
-            'queue_core_webhook' => [true, true, true, false],
-            'queue_v4_clean' => [true, true, true, false],
-            self::QUEUE_V4_SALES_AUDIT => [true, true, true, false],
-            self::QUEUE_V4_SALES_REPAIR => [true, true, true, false],
-            self::QUEUE_V4_DOMAIN_EXACT => [true, true, true, false],
-            'queue_v4_clean_readiness' => [true, true, true, false],
-            'cron_v3_remote' => [true, true, false, false],
-            'cron_v3' => [true, true, false, false],
-            'manual_campaign' => [true, false, false, false],
-            'manual_exact' => [true, true, false, false],
-            'webhook_worker' => [true, true, false, false],
-            'manual_emergency_canary' => [true, true, false, false],
-            'manual_emergency_oauth_refresh' => [true, true, false, false],
-            self::QUEUE_V4_OAUTH => [true, true, true, true],
+            'cron' => ['single_dispatch' => false, 'blocks_redirects' => false, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'pacing_compatibility' => true, 'target' => 'compatibility_only'],
+            'web' => ['single_dispatch' => false, 'blocks_redirects' => false, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'pacing_compatibility' => true, 'target' => 'manual_only'],
+            'queue_core' => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => true, 'current_oauth_fence' => false, 'pacing_compatibility' => false, 'queue_core_context' => true, 'target' => 'compatibility_only'],
+            'queue_core_webhook' => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => true, 'current_oauth_fence' => false, 'pacing_compatibility' => false, 'queue_core_context' => true, 'target' => 'compatibility_only'],
+            'queue_v4_clean' => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => true, 'current_oauth_fence' => false, 'queue_v4_read_fence' => true, 'primary_rhythm' => true, 'pacing_compatibility' => false, 'target' => 'active_automatic'],
+            self::QUEUE_V4_SALES_AUDIT => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => true, 'current_oauth_fence' => false, 'queue_v4_read_fence' => true, 'primary_rhythm' => true, 'pacing_compatibility' => false, 'target' => 'active_automatic'],
+            self::QUEUE_V4_SALES_REPAIR => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => true, 'current_oauth_fence' => false, 'queue_v4_read_fence' => true, 'primary_rhythm' => true, 'pacing_compatibility' => false, 'target' => 'active_automatic'],
+            self::QUEUE_V4_DOMAIN_EXACT => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => true, 'current_oauth_fence' => false, 'queue_v4_read_fence' => true, 'primary_rhythm' => true, 'pacing_compatibility' => false, 'target' => 'active_automatic'],
+            'queue_v4_clean_readiness' => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => true, 'current_oauth_fence' => false, 'queue_v4_read_fence' => true, 'pacing_compatibility' => false, 'target' => 'active_automatic'],
+            'cron_v3_remote' => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'pacing_compatibility' => true, 'legacy_cron_v3' => true, 'target' => 'logically_retired'],
+            'cron_v3' => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'pacing_compatibility' => true, 'legacy_cron_v3' => true, 'target' => 'logically_retired'],
+            'manual_campaign' => ['single_dispatch' => true, 'blocks_redirects' => false, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'primary_rhythm' => true, 'pacing_compatibility' => false, 'target' => 'manual_only'],
+            'manual_exact' => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'pacing_compatibility' => true, 'target' => 'manual_only'],
+            'webhook_worker' => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'pacing_compatibility' => true, 'target' => 'compatibility_only'],
+            'manual_emergency_canary' => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'pacing_compatibility' => true, 'manual_emergency_canary' => true, 'target' => 'manual_only'],
+            'manual_emergency_oauth_refresh' => ['single_dispatch' => true, 'blocks_redirects' => false, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'pacing_compatibility' => true, 'manual_emergency_oauth_refresh' => true, 'target' => 'manual_only'],
+            self::QUEUE_V4_OAUTH => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => true, 'current_oauth_fence' => true, 'pacing_compatibility' => false, 'target' => 'active_automatic'],
         ];
-        $row = str_starts_with($source, 'module:')
-            ? [true, true, false, false]
+        $row = preg_match('/^module:meli-[a-z0-9_-]+$/i', $source) === 1
+            ? ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'pacing_compatibility' => true, 'module_source' => true, 'target' => 'manual_only']
             : ($hardened[$source] ?? null);
         return [
             'known' => $row !== null,
-            'single_dispatch' => (bool) ($row[0] ?? false),
-            'blocks_redirects' => (bool) ($row[1] ?? false),
-            'queue_rate_limit_deferral' => (bool) ($row[2] ?? false),
-            'current_oauth_fence' => (bool) ($row[3] ?? false),
+            'single_dispatch' => (bool) ($row['single_dispatch'] ?? false),
+            'blocks_redirects' => (bool) ($row['blocks_redirects'] ?? false),
+            'queue_rate_limit_deferral' => (bool) ($row['queue_rate_limit_deferral'] ?? false),
+            'current_oauth_fence' => (bool) ($row['current_oauth_fence'] ?? false),
+            'queue_v4_read_fence' => (bool) ($row['queue_v4_read_fence'] ?? false),
+            'primary_rhythm' => (bool) ($row['primary_rhythm'] ?? false),
+            'pacing_compatibility' => (bool) ($row['pacing_compatibility'] ?? false),
+            'legacy_cron_v3' => (bool) ($row['legacy_cron_v3'] ?? false),
+            'queue_core_context' => (bool) ($row['queue_core_context'] ?? false),
+            'manual_emergency_canary' => (bool) ($row['manual_emergency_canary'] ?? false),
+            'manual_emergency_oauth_refresh' => (bool) ($row['manual_emergency_oauth_refresh'] ?? false),
+            'module_source' => (bool) ($row['module_source'] ?? false),
+            'target' => (string) ($row['target'] ?? 'unknown'),
         ];
     }
 
@@ -105,13 +131,7 @@ final class MeliTransportSourcePolicy
 
     public static function usesPrimaryRhythmAuthority(string $source): bool
     {
-        return in_array($source, [
-            'queue_v4_clean',
-            self::QUEUE_V4_SALES_AUDIT,
-            self::QUEUE_V4_SALES_REPAIR,
-            self::QUEUE_V4_DOMAIN_EXACT,
-            'manual_campaign',
-        ], true);
+        return self::capabilities($source)['primary_rhythm'];
     }
 
     public static function requiresCurrentOAuthFence(string $source): bool
@@ -121,9 +141,31 @@ final class MeliTransportSourcePolicy
 
     public static function requiresQueueV4ReadFence(string $source): bool
     {
-        return $source === 'queue_v4_clean'
-            || $source === self::QUEUE_V4_SALES_AUDIT
-            || $source === self::QUEUE_V4_SALES_REPAIR
-            || $source === self::QUEUE_V4_DOMAIN_EXACT;
+        return self::capabilities($source)['queue_v4_read_fence'];
+    }
+
+    public static function requiresPacingCompatibility(string $source): bool
+    {
+        return self::capabilities($source)['pacing_compatibility'];
+    }
+
+    public static function isQueueCoreContext(string $source): bool
+    {
+        return self::capabilities($source)['queue_core_context'];
+    }
+
+    public static function isLegacyCronV3(string $source): bool
+    {
+        return self::capabilities($source)['legacy_cron_v3'];
+    }
+
+    public static function isManualEmergencyCanary(string $source): bool
+    {
+        return self::capabilities($source)['manual_emergency_canary'];
+    }
+
+    public static function isManualEmergencyOAuthRefresh(string $source): bool
+    {
+        return self::capabilities($source)['manual_emergency_oauth_refresh'];
     }
 }

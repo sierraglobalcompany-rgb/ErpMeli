@@ -43,6 +43,7 @@
 - REMOTE_ALLOWED: YES, one exact resource path
 - REMOTE_ENDPOINT: order exact endpoint
 - RHYTHM_AUTHORITY: API rhythm, not Billing endpoint breaker
+- TRANSPORT_SOURCE_AUTHORITY: `MeliTransportSourcePolicy` capability snapshot; no direct source-string policy inside `MeliApiClient`
 - DEADLINE_AUTHORITY: kernel deadline
 - RETRY_AUTHORITY: Queue V4 retry/defer
 - EFFECTIVE_RULE: one claimed pointer
@@ -95,6 +96,7 @@
 - REMOTE_ALLOWED: YES, Billing endpoint when permitted
 - REMOTE_ENDPOINT: `/billing/integration/group/ML/order/details`
 - RHYTHM_AUTHORITY: Billing 900s and B429 30/120/360/720
+- TRANSPORT_SOURCE_AUTHORITY: `queue_v4_clean_domain_exact` may call only the Billing group endpoint; adjacent order/search endpoints are denied
 - DEADLINE_AUTHORITY: kernel deadline plus capacity deferral
 - RETRY_AUTHORITY: functional retry vs non-failure defer split
 - EFFECTIVE_RULE: Queue V4 claims the primary pointer; Queue V4 selects same-tenant/account contiguous eligible sources; SaleFinancialService executes Billing without owning Queue V4 tables
@@ -163,4 +165,17 @@
 - WORK_TYPE: legacy
 - PLANE: RETIRED
 - STATUS: RETIRED_BLOCKED
-- NOTE: not a canonical launcher.
+- NOTE: not a canonical launcher. K4 classifies legacy sources through `MeliTransportSourcePolicy` as `logically_retired` or `compatibility_only`; they must not bypass persistent rhythm in the current normal path.
+
+## API execution source taxonomy
+
+- WORK_TYPE: remote execution source labels
+- PLANE: CONTROL_PLANE
+- BUSINESS_SOURCE_OF_TRUTH: none; source is a transport/security capability label, not business truth
+- AUTHORITY: `MeliTransportSourcePolicy::capabilities()`
+- CURRENT_AUTOMATIC: `queue_v4_clean`, `queue_v4_clean_sales_audit`, `queue_v4_clean_sales_repair`, `queue_v4_clean_domain_exact`, `queue_v4_clean_oauth`
+- MANUAL/COMPATIBILITY: `manual_campaign`, `manual_exact`, `manual_emergency_canary`, `manual_emergency_oauth_refresh`, `web`, `cron`, `module:*`
+- LOGICALLY_RETIRED: `cron_v3`, `cron_v3_remote`, Queue Core automatic launcher paths
+- RHYTHM_AUTHORITY: `ApiRhythmPolicyService` for current automatic execution
+- PACING_COMPATIBILITY: allowed only for compatibility/manual labels when persistent rhythm is unavailable
+- STATUS: K4_SIMPLIFIED

@@ -116,7 +116,17 @@ This index is intentionally human-readable. It names the current execution surfa
 - METHOD/SYMBOL: request execution internals.
 - STATE AUTHORITY: API response/fake transport in tests.
 - NEXT CALL: transport, rhythm and result classifiers.
-- NOTES: R3 made no transport policy change.
+- NOTES: K4 resolves the transport source once through `MeliTransportSourcePolicy::capabilities()` and then consumes that snapshot. It does not own finance, notification, OAuth or sales business semantics.
+
+### MeliTransportSourcePolicy
+
+- ROLE: source capability and security boundary authority.
+- OWNER: remote execution policy.
+- FILE: `app/Services/MeliTransportSourcePolicy.php`.
+- METHOD/SYMBOL: `capabilities()`, `assertAllowed()`.
+- STATE AUTHORITY: static source contract, endpoint deny matrix and target classification.
+- NEXT CALL: `MeliApiClient`, `CurlMeliHttpTransport`, Queue V4 dispatch fences.
+- NOTES: K4 keeps security boundaries explicit. Reduction means removing duplicate interpretation in the client, not collapsing sales, order exact, Billing or OAuth into one generic source.
 
 ### ApiRhythmPolicyService
 
@@ -126,7 +136,16 @@ This index is intentionally human-readable. It names the current execution surfa
 - METHOD/SYMBOL: `rateLimitNextSafeAt()`, `dispatched()`.
 - STATE AUTHORITY: API rhythm tables.
 - NEXT CALL: MeliApiClient/Queue V4 deferral.
-- NOTES: Billing 30/120/360/720 and 900s minimum unchanged.
+- NOTES: Billing 30/120/360/720 and 900s minimum unchanged. Normal current automatic sources use this as the primary rhythm authority; `ApiPacingService` is compatibility only.
+
+### ApiPacingService
+
+- ROLE: legacy compatibility spacing when persistent rhythm schema is unavailable for compatibility/manual paths.
+- OWNER: compatibility layer.
+- FILE: `app/Services/ApiPacingService.php`.
+- STATE AUTHORITY: `api_request_pacing_state`.
+- NEXT CALL: none for Queue V4 normal automatic execution.
+- NOTES: K4 keeps the class but disconnects it from current V4 automatic sources. It is not a second normal rhythm authority.
 
 ### QueueV4CleanDispatchFence
 

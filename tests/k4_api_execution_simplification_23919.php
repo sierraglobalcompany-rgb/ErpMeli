@@ -1,0 +1,103 @@
+<?php
+
+declare(strict_types=1);
+
+$root = dirname(__DIR__);
+spl_autoload_register(static function (string $class) use ($root): void {
+    if (!str_starts_with($class, 'App\\')) {
+        return;
+    }
+    $path = $root . '/app/' . str_replace('\\', '/', substr($class, 4)) . '.php';
+    if (is_file($path)) {
+        require $path;
+    }
+});
+
+$checks = 0;
+$assert = static function (bool $condition, string $message) use (&$checks): void {
+    $checks++;
+    if (!$condition) {
+        throw new RuntimeException($message);
+    }
+};
+$allowed = static function (string $source, string $method, string $path): bool {
+    try {
+        App\Services\MeliTransportSourcePolicy::assertAllowed($source, $method, $path);
+        return true;
+    } catch (RuntimeException) {
+        return false;
+    }
+};
+
+$active = [
+    App\Services\MeliTransportSourcePolicy::QUEUE_V4_OAUTH => ['POST', '/oauth/token', 'GET', '/orders/search'],
+    'queue_v4_clean' => ['GET', '/orders/123', 'GET', '/billing/integration/group/ML/order/details'],
+    App\Services\MeliTransportSourcePolicy::QUEUE_V4_SALES_AUDIT => ['GET', '/orders/search', 'GET', '/orders/123'],
+    App\Services\MeliTransportSourcePolicy::QUEUE_V4_SALES_REPAIR => ['GET', '/orders/123', 'GET', '/orders/search'],
+    App\Services\MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT => ['GET', '/billing/integration/group/ML/order/details', 'GET', '/orders/search'],
+];
+foreach ($active as $source => [$okMethod, $okPath, $badMethod, $badPath]) {
+    $capabilities = App\Services\MeliTransportSourcePolicy::capabilities((string) $source);
+    $assert($capabilities['known'], 'SOURCE_NOT_KNOWN:' . $source);
+    $assert($capabilities['target'] === 'active_automatic', 'ACTIVE_SOURCE_TARGET_DRIFT:' . $source);
+    $assert($allowed((string) $source, (string) $okMethod, (string) $okPath), 'ACTIVE_SOURCE_ALLOWED_ENDPOINT_DENIED:' . $source);
+    $assert(!$allowed((string) $source, (string) $badMethod, (string) $badPath), 'ACTIVE_SOURCE_PERMISSION_EXPANDED:' . $source);
+}
+
+$assert(!$allowed('not_registered_anywhere', 'GET', '/orders/search'), 'UNKNOWN_SOURCE_NOT_FAIL_CLOSED');
+$assert(!$allowed(App\Services\MeliTransportSourcePolicy::QUEUE_V4_OAUTH, 'GET', '/users/me'), 'OAUTH_SOURCE_CAN_READ_BUSINESS_ENDPOINT');
+$assert(!$allowed(App\Services\MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT, 'GET', '/orders/123'), 'DOMAIN_EXACT_CAN_READ_ORDER_EXACT');
+
+$module = App\Services\MeliTransportSourcePolicy::capabilities('module:meli-safe-local');
+$assert($module['known'] && $module['module_source'], 'MODULE_SOURCE_NOT_EXPLICITLY_CLASSIFIED');
+$assert($module['target'] === 'manual_only', 'MODULE_SOURCE_BECAME_AUTOMATIC');
+$assert(!App\Services\MeliTransportSourcePolicy::usesPrimaryRhythmAuthority('module:meli-safe-local'), 'MODULE_SOURCE_GAINED_PRIMARY_RHYTHM');
+$assert(!$allowed('module:unknown', 'GET', '/orders/search'), 'UNKNOWN_MODULE_SOURCE_NOT_FAIL_CLOSED');
+
+$queueV4 = App\Services\MeliTransportSourcePolicy::capabilities('queue_v4_clean');
+$assert($queueV4['primary_rhythm'], 'QUEUE_V4_PRIMARY_RHYTHM_DISABLED');
+$assert(!$queueV4['pacing_compatibility'], 'QUEUE_V4_CAN_USE_LEGACY_PACING');
+$assert($queueV4['queue_v4_read_fence'], 'QUEUE_V4_READ_FENCE_MISSING');
+
+$legacy = App\Services\MeliTransportSourcePolicy::capabilities('cron_v3_remote');
+$assert($legacy['known'], 'LEGACY_CRON_V3_NOT_CLASSIFIED');
+$assert($legacy['legacy_cron_v3'], 'LEGACY_CRON_V3_FLAG_MISSING');
+$assert($legacy['target'] === 'logically_retired', 'LEGACY_CRON_V3_NOT_LOGICALLY_RETIRED');
+$assert($legacy['pacing_compatibility'], 'LEGACY_CRON_V3_COMPATIBILITY_BOUNDARY_MISSING');
+$assert(!App\Services\MeliTransportSourcePolicy::usesPrimaryRhythmAuthority('cron_v3_remote'), 'LEGACY_CRON_V3_PRIMARY_RHYTHM_ENABLED');
+
+$client = (string) file_get_contents($root . '/app/Services/MeliApiClient.php');
+$policy = (string) file_get_contents($root . '/app/Services/MeliTransportSourcePolicy.php');
+$assert(str_contains($client, '$transportCapabilities = MeliTransportSourcePolicy::capabilities($source);'), 'CLIENT_DOES_NOT_RESOLVE_SOURCE_ONCE');
+$assert(!str_contains($client, "'cron_v3_rate_gate'"), 'CLIENT_STILL_HAS_CRON_V3_RHYTHM_BYPASS');
+$assert(!str_contains($client, "=== 'cron_v3_remote'"), 'CLIENT_STILL_INTERPRETS_CRON_V3_LITERAL');
+$assert(!str_contains($client, "=== 'queue_core'"), 'CLIENT_STILL_INTERPRETS_QUEUE_CORE_LITERAL');
+$assert(str_contains($client, '$pacingCompatibility && empty($rhythmPermit[\'enabled\'])'), 'PACING_COMPATIBILITY_NOT_EXPLICIT');
+$assert(str_contains($client, '$primaryRhythmAuthority'), 'PRIMARY_RHYTHM_SNAPSHOT_NOT_USED');
+$assert(str_contains($client, '$queueRateLimitDeferral'), 'QUEUE_RATE_LIMIT_DEFERRAL_SNAPSHOT_NOT_USED');
+$assert(substr_count($policy, 'active_automatic') >= 5, 'ACTIVE_AUTOMATIC_SOURCES_NOT_EXPLICIT');
+
+$transport = (string) file_get_contents($root . '/app/Services/CurlMeliHttpTransport.php');
+$assert(substr_count($transport, 'curl_exec(') === 1, 'PHYSICAL_TRANSPORT_NOT_SINGLE_CURL_EXEC');
+$assert(str_contains($transport, 'MeliTransportSourcePolicy::assertAllowed'), 'TRANSPORT_LAYER_LACKS_SOURCE_ASSERTION');
+
+$direct = [];
+$paths = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root . '/app', FilesystemIterator::SKIP_DOTS));
+foreach ($paths as $file) {
+    if (!$file->isFile() || $file->getExtension() !== 'php') {
+        continue;
+    }
+    $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($root) + 1));
+    $source = (string) file_get_contents($file->getPathname());
+    $looksLikeMeliTransport = str_contains($source, 'api.mercadolibre.com')
+        || str_contains($source, 'MELI_API_BASE')
+        || str_contains($source, 'Mercado Libre API');
+    if ($looksLikeMeliTransport
+        && str_contains($source, 'curl_exec(')
+        && $relative !== 'app/Services/CurlMeliHttpTransport.php') {
+        $direct[] = $relative;
+    }
+}
+$assert($direct === [], 'UNAUTHORIZED_DIRECT_CURL_EXEC:' . implode(',', $direct));
+
+fwrite(STDOUT, 'K4_API_EXECUTION_SIMPLIFICATION_23919=PASS checks=' . $checks . PHP_EOL);

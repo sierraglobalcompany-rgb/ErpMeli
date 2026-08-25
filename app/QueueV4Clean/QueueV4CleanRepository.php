@@ -433,8 +433,10 @@ final class QueueV4CleanRepository
                     || (string) ($row['queue_capability'] ?? '') !== 'financial_reconciliation') {
                     break;
                 }
-                if (!in_array((string) ($row['source_status'] ?? ''), ['pending', 'retry', 'awaiting_remote'], true)
-                    || str_starts_with((string) ($row['safe_message'] ?? ''), 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED')) {
+                if (str_starts_with((string) ($row['safe_message'] ?? ''), 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED')) {
+                    break;
+                }
+                if (!in_array((string) ($row['source_status'] ?? ''), ['pending', 'retry', 'awaiting_remote'], true)) {
                     continue;
                 }
                 $rowSourceId = (int) ($row['source_id'] ?? 0);

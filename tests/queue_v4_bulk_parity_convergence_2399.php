@@ -511,6 +511,47 @@ try {
         );
         return $worker->run('test', $maxJobs, 45);
     };
+    $externalSaleIds = static function (array $sourceIds) use ($pdo): array {
+        if ($sourceIds === []) {
+            return [];
+        }
+        $placeholders = implode(',', array_fill(0, count($sourceIds), '?'));
+        $stmt = $pdo->prepare(
+            'SELECT id,external_sale_id
+               FROM sale_financial_reconciliation_jobs
+              WHERE id IN (' . $placeholders . ')'
+        );
+        $stmt->execute(array_map('intval', $sourceIds));
+        $rows = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+        $ordered = [];
+        foreach ($sourceIds as $sourceId) {
+            $ordered[] = (string) ($rows[(int) $sourceId] ?? '');
+        }
+        return $ordered;
+    };
+    $markExactFallback = static function (int $sourceId) use ($pdo): void {
+        $pdo->prepare(
+            "UPDATE sale_financial_reconciliation_jobs
+                SET safe_message='BILLING_BATCH_EXACT_FALLBACK_REQUIRED: fixture'
+              WHERE id=?"
+        )->execute([$sourceId]);
+    };
+    $makeSourcesReady = static function (array $sourceIds) use ($pdo): void {
+        if ($sourceIds === []) {
+            return;
+        }
+        $placeholders = implode(',', array_fill(0, count($sourceIds), '?'));
+        $pdo->prepare(
+            'UPDATE sale_financial_reconciliation_jobs
+                SET status=IF(status="complete","complete","retry"),next_run_at=UTC_TIMESTAMP(),lock_owner=NULL,lease_expires_at=NULL,lease_generation=lease_generation+1
+              WHERE id IN (' . $placeholders . ')'
+        )->execute(array_map('intval', $sourceIds));
+        $pdo->prepare(
+            'UPDATE queue_v4_clean_jobs
+                SET state=IF(state="completed","completed","ready"),available_at=UTC_TIMESTAMP(3),lease_owner=NULL,lease_expires_at=NULL,lease_generation=lease_generation+1
+              WHERE resource_id IN (' . $placeholders . ')'
+        )->execute(array_map('strval', $sourceIds));
+    };
     $runConcurrentK1Workers = static function (int $maxJobs = 3) use ($dsn, $user, $pass, $database, $root, $temporary): array {
         $childScript = $temporary . DIRECTORY_SEPARATOR . 'k1-concurrent-worker.php';
         if (!is_file($childScript)) {
@@ -889,7 +930,7 @@ PHP);
     $skipOfficial = $seedFinancial(101, 1, 'SKIP_OFFICIAL')[0];
     $skipStale = $seedFinancial(101, 1, 'SKIP_STALE')[0];
     $skipExtra = $seedFinancial(101, 1, 'SKIP_EXTRA')[0];
-    $pdo->prepare("UPDATE sale_financial_reconciliation_jobs SET safe_message='BILLING_BATCH_EXACT_FALLBACK_REQUIRED: fixture' WHERE id=?")->execute([$skipFallback]);
+    $markExactFallback($skipFallback);
     $pdo->prepare('UPDATE sale_financial_state st JOIN sale_financial_reconciliation_jobs s ON s.company_id=st.company_id AND s.meli_account_id=st.meli_account_id AND s.sale_key=st.sale_key SET st.official_status="complete",st.official_net_amount=1 WHERE s.id=?')->execute([$skipOfficial]);
     $pdo->prepare('UPDATE sale_financial_state st JOIN sale_financial_reconciliation_jobs s ON s.company_id=st.company_id AND s.meli_account_id=st.meli_account_id AND s.sale_key=st.sale_key SET st.input_version=? WHERE s.id=?')->execute([hash('sha256', 'stale-fixture'), $skipStale]);
     $skipSnapshots = [];
@@ -900,7 +941,7 @@ PHP);
     }
     $transportSkipped = new BulkBillingFakeTransport();
     $runBilling($transportSkipped);
-    $assert(count($transportSkipped->calls) === 1 && count($transportSkipped->calls[0]['order_ids']) === 3, 'SAME_TENANT_SIMPLE_BATCH calls=' . json_encode($transportSkipped->calls));
+    $assert(count($transportSkipped->calls) === 1 && $transportSkipped->calls[0]['order_ids'] === $externalSaleIds([$skipPrimary]), 'EXACT_FALLBACK_IS_FIFO_BOUNDARY calls=' . json_encode($transportSkipped->calls));
     $skipAfter = [];
     foreach ([$skipPack, $skipFallback, $skipOfficial, $skipStale] as $sourceId) {
         $stmt = $pdo->prepare('SELECT q.state,q.available_at,s.status source_status,s.attempts source_attempts,s.next_run_at FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE q.resource_id=? LIMIT 1');
@@ -908,13 +949,78 @@ PHP);
         $after = $stmt->fetch(PDO::FETCH_ASSOC);
         $skipAfter[$sourceId] = $after;
     }
-    $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id IN (' . (int) $skipPrimary . ',' . (int) $skipStale . ',' . (int) $skipExtra . ') AND status="complete"')->fetchColumn() === 3, 'SELECTED_ALIGNMENT_ONLY');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $skipPrimary . ' AND status="complete"')->fetchColumn() === 1, 'SELECTED_ALIGNMENT_ONLY');
     $assert(is_array($skipAfter[$skipPack])
         && $skipAfter[$skipPack]['state'] === 'waiting'
         && $skipAfter[$skipPack]['source_status'] === 'retry'
         && (int) $skipAfter[$skipPack]['source_attempts'] === (int) $skipSnapshots[$skipPack]['source_attempts'], 'SAME_TENANT_PACK_LOCAL_NONFAILURE');
     $assert(count(array_filter($transportSkipped->calls[0]['order_ids'], static fn (string $id): bool => str_starts_with($id, 'PACK-'))) === 0, 'SAME_TENANT_MULTIORDER_SKIPPED_FROM_HTTP');
     $assert($skipAfter[$skipFallback] === $skipSnapshots[$skipFallback], 'SAME_TENANT_EXACT_FALLBACK_SKIPPED');
+    $assert($skipAfter[$skipOfficial] === $skipSnapshots[$skipOfficial]
+        && $skipAfter[$skipStale] === $skipSnapshots[$skipStale], 'POST_FALLBACK_LEAPFROG=0');
+
+    $resetBilling();
+    [$boundaryA] = $seedFinancial(101, 1, 'R3_BOUNDARY_A');
+    [$boundaryF] = $seedFinancial(101, 1, 'R3_BOUNDARY_F');
+    [$boundaryB] = $seedFinancial(101, 1, 'R3_BOUNDARY_B');
+    $markExactFallback($boundaryF);
+    $transportBoundary = new BulkBillingFakeTransport();
+    $runBilling($transportBoundary);
+    $assert($transportBoundary->calls[0]['order_ids'] === $externalSaleIds([$boundaryA]), 'FIRST_BILLING_REQUEST_A_ONLY');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id IN (' . (int) $boundaryF . ',' . (int) $boundaryB . ') AND state="ready"')->fetchColumn() === 2, 'F_AND_B_REMAIN_READY_AFTER_A');
+    $resetRhythm();
+    $makeSourcesReady([$boundaryF, $boundaryB]);
+    $runBilling($transportBoundary);
+    $assert($transportBoundary->calls[1]['order_ids'] === $externalSaleIds([$boundaryF]), 'SECOND_BILLING_REQUEST_F_SINGLETON');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id=' . (int) $boundaryB . ' AND state="ready"')->fetchColumn() === 1, 'B_REMAINS_UNTOUCHED_BEHIND_F');
+    $resetRhythm();
+    $makeSourcesReady([$boundaryB]);
+    $runBilling($transportBoundary);
+    $assert($transportBoundary->calls[2]['order_ids'] === $externalSaleIds([$boundaryB]), 'THIRD_BILLING_REQUEST_B_ONLY');
+
+    $resetBilling();
+    $multiA = $seedFinancial(101, 2, 'R3_MULTI_A');
+    [$multiF] = $seedFinancial(101, 1, 'R3_MULTI_F');
+    $multiB = $seedFinancial(101, 2, 'R3_MULTI_B');
+    $markExactFallback($multiF);
+    $transportMulti = new BulkBillingFakeTransport();
+    $runBilling($transportMulti);
+    $assert($transportMulti->calls[0]['order_ids'] === $externalSaleIds($multiA), 'MULTI_PREFIX_STOPS_AT_FALLBACK');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id IN (' . implode(',', array_map('intval', array_merge([$multiF], $multiB))) . ') AND state="ready"')->fetchColumn() === 3, 'POST_BOUNDARY_REMOTE_CALLS_BEFORE_F=0');
+    $resetRhythm();
+    $makeSourcesReady(array_merge([$multiF], $multiB));
+    $runBilling($transportMulti);
+    $assert($transportMulti->calls[1]['order_ids'] === $externalSaleIds([$multiF]), 'MULTI_FALLBACK_SECOND_SINGLETON');
+    $resetRhythm();
+    $makeSourcesReady($multiB);
+    $runBilling($transportMulti);
+    $assert($transportMulti->calls[2]['order_ids'] === $externalSaleIds($multiB), 'MULTI_SUFFIX_REACHED_AFTER_FALLBACK');
+
+    $resetBilling();
+    [$packBoundaryA] = $seedFinancial(101, 1, 'R3_PACK_A');
+    [$packBoundaryF] = $seedFinancial(101, 1, 'R3_PACK_F');
+    $packBoundaryP = $seedExcludedPack(101, 'R3_PACK_P');
+    [$packBoundaryB] = $seedFinancial(101, 1, 'R3_PACK_B');
+    $markExactFallback($packBoundaryF);
+    $packBefore = $pdo->query('SELECT q.state,s.status,s.attempts,s.next_run_at FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE s.id=' . (int) $packBoundaryP)->fetch(PDO::FETCH_ASSOC);
+    $transportPackBoundary = new BulkBillingFakeTransport();
+    $runBilling($transportPackBoundary);
+    $assert($transportPackBoundary->calls[0]['order_ids'] === $externalSaleIds([$packBoundaryA]), 'PACK_AFTER_FALLBACK_FIRST_A_ONLY');
+    $packAfterFirst = $pdo->query('SELECT q.state,s.status,s.attempts,s.next_run_at FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE s.id=' . (int) $packBoundaryP)->fetch(PDO::FETCH_ASSOC);
+    $assert($packAfterFirst === $packBefore, 'PACK_AFTER_FALLBACK_EARLY_MUTATION=0');
+    $resetRhythm();
+    $makeSourcesReady([$packBoundaryF, $packBoundaryP, $packBoundaryB]);
+    $packBeforeSecond = $pdo->query('SELECT q.state,s.status,s.attempts,s.next_run_at FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE s.id=' . (int) $packBoundaryP)->fetch(PDO::FETCH_ASSOC);
+    $runBilling($transportPackBoundary);
+    $assert($transportPackBoundary->calls[1]['order_ids'] === $externalSaleIds([$packBoundaryF]), 'PACK_AFTER_FALLBACK_SECOND_F_ONLY');
+    $packAfterSecond = $pdo->query('SELECT q.state,s.status,s.attempts,s.next_run_at FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE s.id=' . (int) $packBoundaryP)->fetch(PDO::FETCH_ASSOC);
+    $assert($packAfterSecond === $packBeforeSecond, 'PACK_STILL_UNTOUCHED_AFTER_F_SINGLETON');
+    $resetRhythm();
+    $makeSourcesReady([$packBoundaryP, $packBoundaryB]);
+    $runBilling($transportPackBoundary);
+    $packAfterThird = $pdo->query('SELECT q.state,s.status,s.attempts FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE s.id=' . (int) $packBoundaryP)->fetch(PDO::FETCH_ASSOC);
+    $assert(is_array($packAfterThird) && $packAfterThird['state'] === 'waiting' && $packAfterThird['status'] === 'retry' && (int) $packAfterThird['attempts'] === 0, 'PACK_AFTER_FALLBACK_LOCAL_DEFER_AFTER_BOUNDARY');
+    $assert($transportPackBoundary->calls[2]['order_ids'] === $externalSaleIds([$packBoundaryB]), 'PACK_AFTER_FALLBACK_B_REACHED_AFTER_LOCAL_DEFER');
 
     $resetBilling();
     $racePrimary = $seedFinancial(101, 1, 'R2_RACE_PRIMARY')[0];
@@ -949,8 +1055,8 @@ PHP);
     $assert((string) $raceRows[1]['status'] === 'complete' && (int) $raceRows[1]['attempts'] === 1, 'SECONDARY_LOCAL_RACE_SOURCE_FINALIZED rows=' . json_encode($raceRows) . ' pointers=' . json_encode($racePointers));
     $assert((string) $racePointers[1]['state'] === 'completed' && (int) $racePointers[1]['attempt_count'] === 0, 'SECONDARY_LOCAL_RACE_POINTER_FINALIZED_NO_ATTEMPT_PENALTY rows=' . json_encode($raceRows) . ' pointers=' . json_encode($racePointers));
     $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id="' . (int) $raceSecondary . '" AND state="running"')->fetchColumn() === 0, 'SECONDARY_LOCAL_RACE_NO_RUNNING_LEAK');
-    $assert(is_array($skipAfter[$skipOfficial]) && $skipAfter[$skipOfficial]['state'] === 'completed', 'SAME_TENANT_OFFICIAL_COMPLETE_LOCAL');
-    $assert(is_array($skipAfter[$skipStale]) && $skipAfter[$skipStale]['state'] === 'completed', 'SAME_TENANT_VALID_DOMAIN_COMPLETED');
+    $assert($skipAfter[$skipOfficial] === $skipSnapshots[$skipOfficial], 'SAME_TENANT_OFFICIAL_AFTER_FALLBACK_NOT_LEAPFROGGED');
+    $assert($skipAfter[$skipStale] === $skipSnapshots[$skipStale], 'SAME_TENANT_STALE_AFTER_FALLBACK_NOT_LEAPFROGGED');
 
     $resetBilling();
     $tenantAPrimary = $seedFinancial(101, 1, 'KISS_TENANT_A1')[0];

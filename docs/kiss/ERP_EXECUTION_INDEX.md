@@ -126,7 +126,7 @@ This index is intentionally human-readable. It names the current execution surfa
 - METHOD/SYMBOL: `capabilities()`, `assertAllowed()`.
 - STATE AUTHORITY: static source contract, endpoint deny matrix and target classification.
 - NEXT CALL: `MeliApiClient`, `CurlMeliHttpTransport`, Queue V4 dispatch fences.
-- NOTES: K4 keeps security boundaries explicit. Reduction means removing duplicate interpretation in the client, not collapsing sales, order exact, Billing or OAuth into one generic source.
+- NOTES: K4 R1 keeps security boundaries explicit. Reduction means removing duplicate interpretation in the client, not collapsing sales, order exact, Billing, readiness or OAuth into one generic source. `queue_v4_clean_readiness` is a preflight-only source for `GET /users/me`; `module:*` is not a wildcard transport family.
 
 ### ApiRhythmPolicyService
 
@@ -145,7 +145,7 @@ This index is intentionally human-readable. It names the current execution surfa
 - FILE: `app/Services/ApiPacingService.php`.
 - STATE AUTHORITY: `api_request_pacing_state`.
 - NEXT CALL: none for Queue V4 normal automatic execution.
-- NOTES: K4 keeps the class but disconnects it from current V4 automatic sources. It is not a second normal rhythm authority.
+- NOTES: K4 R1 keeps the class but disconnects it from current V4 automatic sources. It is not a second normal rhythm authority; compatibility callers fail closed if pacing cannot return an enabled reservation.
 
 ### QueueV4CleanDispatchFence
 

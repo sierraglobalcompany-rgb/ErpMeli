@@ -174,8 +174,10 @@
 - BUSINESS_SOURCE_OF_TRUTH: none; source is a transport/security capability label, not business truth
 - AUTHORITY: `MeliTransportSourcePolicy::capabilities()`
 - CURRENT_AUTOMATIC: `queue_v4_clean`, `queue_v4_clean_sales_audit`, `queue_v4_clean_sales_repair`, `queue_v4_clean_domain_exact`, `queue_v4_clean_oauth`
-- MANUAL/COMPATIBILITY: `manual_campaign`, `manual_exact`, `manual_emergency_canary`, `manual_emergency_oauth_refresh`, `web`, `cron`, `module:*`
+- PREFLIGHT: `queue_v4_clean_readiness` may only execute `GET /users/me` under primary rhythm authority; it is not business queue work.
+- MANUAL/COMPATIBILITY: `manual_campaign`, `manual_exact`, `manual_emergency_canary`, `manual_emergency_oauth_refresh`, `web`, `cron`
+- REMOVED_WILDCARD: `module:*` has no certified runtime caller in K4 R1 and is not a transport source family. Future module HTTP must add a named source with explicit endpoint permission.
 - LOGICALLY_RETIRED: `cron_v3`, `cron_v3_remote`, Queue Core automatic launcher paths
 - RHYTHM_AUTHORITY: `ApiRhythmPolicyService` for current automatic execution
-- PACING_COMPATIBILITY: allowed only for compatibility/manual labels when persistent rhythm is unavailable
-- STATUS: K4_SIMPLIFIED
+- PACING_COMPATIBILITY: allowed only for compatibility/manual labels when persistent rhythm is unavailable, and fail-closed if `ApiPacingService` is disabled or its table is unavailable
+- STATUS: K4_R1_SIMPLIFIED

@@ -218,7 +218,14 @@ final class MeliApiClient implements MeliReadClientInterface
                 // Compatibilidad durante la ventana entre subir archivos y
                 // aplicar la migración que crea la autoridad persistente.
                 if ($pacingCompatibility && empty($rhythmPermit['enabled'])) {
-                    (new ApiPacingService())->reserve($this->accountId, $method, $path, $meta);
+                    $pacingReservation = (new ApiPacingService())->reserve($this->accountId, $method, $path, $meta);
+                    if (empty($pacingReservation['enabled'])) {
+                        throw new ApiRhythmDeferredException(
+                            'La fuente de compatibilidad no iniciará HTTP sin autoridad de pacing.',
+                            gmdate('Y-m-d H:i:s', time() + 60),
+                            'pacing_authority_unavailable'
+                        );
+                    }
                 } elseif (empty($rhythmPermit['enabled'])) {
                     throw new ApiRhythmDeferredException(
                         'La fuente actual no iniciará HTTP sin la autoridad persistente de ritmo.',
@@ -410,7 +417,7 @@ final class MeliApiClient implements MeliReadClientInterface
                         throw $transportBlocked;
                     }
                 }
-                if (MeliTransportSourcePolicy::requiresCurrentOAuthFence($source)) {
+                if ($oauthControlPlane) {
                     $oauthFence = \App\QueueV4Clean\QueueV4CleanOAuthDispatchFence::state([
                         'id' => (int) ($meta['oauth_operation_id'] ?? 0),
                         'company_id' => (int) ($meta['company_id'] ?? 0),

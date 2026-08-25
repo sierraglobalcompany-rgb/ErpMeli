@@ -44,6 +44,8 @@ Do not report local policy pauses as remote HTTP 429. Do not promise automatic p
 
 For API execution changes, resolve each transport source once through `MeliTransportSourcePolicy::capabilities()` and keep the API client generic. Do not merge source labels unless the endpoint permissions, dispatch fences, rhythm authority, budget behavior and manual/automatic boundary are identical.
 
+Readiness and module labels are especially narrow: readiness is preflight-only (`GET /users/me`), while module HTTP has no wildcard authority. If a module needs Mercado Libre transport, add one explicit source and prove its endpoint matrix first.
+
 ## 10. Production
 
 Production install/recovery is a separate explicit prompt. Use dry-run, selection hash, rollback gates and small cohorts for data repair.
@@ -51,3 +53,5 @@ Production install/recovery is a separate explicit prompt. Use dry-run, selectio
 ## 11. API authority
 
 `ApiRhythmPolicyService` is the primary persistent timing authority for current automatic Mercado Libre requests. `ApiBudgetService` is a workload allowance, not timing. `ApiPacingService` is compatibility only unless a future prompt proves otherwise.
+
+Compatibility pacing is not a blind fallback: if persistent rhythm is unavailable and pacing cannot produce an enabled reservation, the request must fail closed before fake or real transport.

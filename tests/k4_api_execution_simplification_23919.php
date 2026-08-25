@@ -48,10 +48,20 @@ $assert(!$allowed('not_registered_anywhere', 'GET', '/orders/search'), 'UNKNOWN_
 $assert(!$allowed(App\Services\MeliTransportSourcePolicy::QUEUE_V4_OAUTH, 'GET', '/users/me'), 'OAUTH_SOURCE_CAN_READ_BUSINESS_ENDPOINT');
 $assert(!$allowed(App\Services\MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT, 'GET', '/orders/123'), 'DOMAIN_EXACT_CAN_READ_ORDER_EXACT');
 
+$readiness = App\Services\MeliTransportSourcePolicy::capabilities('queue_v4_clean_readiness');
+$assert($readiness['known'], 'READINESS_SOURCE_NOT_KNOWN');
+$assert($readiness['target'] === 'preflight_readiness', 'READINESS_SOURCE_TARGET_NOT_PREFLIGHT');
+$assert($readiness['primary_rhythm'], 'READINESS_SOURCE_PRIMARY_RHYTHM_DISABLED');
+$assert(!$readiness['queue_rate_limit_deferral'], 'READINESS_SOURCE_CAN_DEFER_QUEUE');
+$assert(!$readiness['queue_v4_read_fence'], 'READINESS_SOURCE_USES_QUEUE_POINTER_FENCE');
+$assert($allowed('queue_v4_clean_readiness', 'GET', '/users/me'), 'READINESS_USERS_ME_DENIED');
+$assert(!$allowed('queue_v4_clean_readiness', 'GET', '/orders/search'), 'READINESS_CAN_READ_BUSINESS_ENDPOINT');
+$assert(!$allowed('queue_v4_clean_readiness', 'POST', '/oauth/token'), 'READINESS_CAN_REFRESH_OAUTH');
+
 $module = App\Services\MeliTransportSourcePolicy::capabilities('module:meli-safe-local');
-$assert($module['known'] && $module['module_source'], 'MODULE_SOURCE_NOT_EXPLICITLY_CLASSIFIED');
-$assert($module['target'] === 'manual_only', 'MODULE_SOURCE_BECAME_AUTOMATIC');
-$assert(!App\Services\MeliTransportSourcePolicy::usesPrimaryRhythmAuthority('module:meli-safe-local'), 'MODULE_SOURCE_GAINED_PRIMARY_RHYTHM');
+$assert(!$module['known'], 'MODULE_WILDCARD_STILL_AUTHORIZES_SOURCE');
+$assert(!$module['module_source'], 'MODULE_WILDCARD_STILL_CLASSIFIES_SOURCE');
+$assert(!$allowed('module:meli-safe-local', 'GET', '/orders/search'), 'MODULE_WILDCARD_STILL_ALLOWS_TRANSPORT');
 $assert(!$allowed('module:unknown', 'GET', '/orders/search'), 'UNKNOWN_MODULE_SOURCE_NOT_FAIL_CLOSED');
 
 $queueV4 = App\Services\MeliTransportSourcePolicy::capabilities('queue_v4_clean');
@@ -69,13 +79,17 @@ $assert(!App\Services\MeliTransportSourcePolicy::usesPrimaryRhythmAuthority('cro
 $client = (string) file_get_contents($root . '/app/Services/MeliApiClient.php');
 $policy = (string) file_get_contents($root . '/app/Services/MeliTransportSourcePolicy.php');
 $assert(str_contains($client, '$transportCapabilities = MeliTransportSourcePolicy::capabilities($source);'), 'CLIENT_DOES_NOT_RESOLVE_SOURCE_ONCE');
+$assert(substr_count($client, 'MeliTransportSourcePolicy::capabilities($source)') === 1, 'CLIENT_REINTERPRETS_SOURCE_AFTER_SNAPSHOT');
 $assert(!str_contains($client, "'cron_v3_rate_gate'"), 'CLIENT_STILL_HAS_CRON_V3_RHYTHM_BYPASS');
 $assert(!str_contains($client, "=== 'cron_v3_remote'"), 'CLIENT_STILL_INTERPRETS_CRON_V3_LITERAL');
 $assert(!str_contains($client, "=== 'queue_core'"), 'CLIENT_STILL_INTERPRETS_QUEUE_CORE_LITERAL');
+$assert(!str_contains($client, 'MeliTransportSourcePolicy::requiresCurrentOAuthFence($source)'), 'CLIENT_RECHECKS_OAUTH_SOURCE_POLICY_AFTER_SNAPSHOT');
 $assert(str_contains($client, '$pacingCompatibility && empty($rhythmPermit[\'enabled\'])'), 'PACING_COMPATIBILITY_NOT_EXPLICIT');
+$assert(str_contains($client, 'pacing_authority_unavailable'), 'PACING_COMPATIBILITY_NOT_FAIL_CLOSED');
 $assert(str_contains($client, '$primaryRhythmAuthority'), 'PRIMARY_RHYTHM_SNAPSHOT_NOT_USED');
 $assert(str_contains($client, '$queueRateLimitDeferral'), 'QUEUE_RATE_LIMIT_DEFERRAL_SNAPSHOT_NOT_USED');
 $assert(substr_count($policy, 'active_automatic') >= 5, 'ACTIVE_AUTOMATIC_SOURCES_NOT_EXPLICIT');
+$assert(!str_contains($policy, 'preg_match(\'/^module:meli-'), 'MODULE_SOURCE_REGEX_STILL_PRESENT');
 
 $transport = (string) file_get_contents($root . '/app/Services/CurlMeliHttpTransport.php');
 $assert(substr_count($transport, 'curl_exec(') === 1, 'PHYSICAL_TRANSPORT_NOT_SINGLE_CURL_EXEC');

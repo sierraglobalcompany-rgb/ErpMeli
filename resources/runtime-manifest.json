@@ -2586,8 +2586,8 @@
         },
         "runtime_app_services_meliapiclient_php": {
             "path": "app/Services/MeliApiClient.php",
-            "sha256": "640d84966faf80a5e40b072a58db7f70f76bf297dd3c5746d2dfaa30b2a3772e",
-            "sha256_lf": "640d84966faf80a5e40b072a58db7f70f76bf297dd3c5746d2dfaa30b2a3772e",
+            "sha256": "4cb209a0d8ba2ddea0f907518c6af72173139c7c6af84920d32c7de60b6aa419",
+            "sha256_lf": "4cb209a0d8ba2ddea0f907518c6af72173139c7c6af84920d32c7de60b6aa419",
             "text": true
         },
         "runtime_app_services_meliapiexception_php": {
@@ -2700,8 +2700,8 @@
         },
         "runtime_app_services_melitransportsourcepolicy_php": {
             "path": "app/Services/MeliTransportSourcePolicy.php",
-            "sha256": "f671693af5d59d4e1252758f98724a96d56702a9660c0487d068897dfd408a82",
-            "sha256_lf": "f671693af5d59d4e1252758f98724a96d56702a9660c0487d068897dfd408a82",
+            "sha256": "0a13714c028629c05cc003ac929727295efa489be11a5bc3efa34f0b02e49cd0",
+            "sha256_lf": "0a13714c028629c05cc003ac929727295efa489be11a5bc3efa34f0b02e49cd0",
             "text": true
         },
         "runtime_app_services_meliworkloadpolicyservice_php": {

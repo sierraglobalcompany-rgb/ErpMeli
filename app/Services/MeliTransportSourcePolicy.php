@@ -43,7 +43,7 @@ final class MeliTransportSourcePolicy
             self::QUEUE_V4_SALES_AUDIT => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => true, 'current_oauth_fence' => false, 'queue_v4_read_fence' => true, 'primary_rhythm' => true, 'pacing_compatibility' => false, 'target' => 'active_automatic'],
             self::QUEUE_V4_SALES_REPAIR => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => true, 'current_oauth_fence' => false, 'queue_v4_read_fence' => true, 'primary_rhythm' => true, 'pacing_compatibility' => false, 'target' => 'active_automatic'],
             self::QUEUE_V4_DOMAIN_EXACT => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => true, 'current_oauth_fence' => false, 'queue_v4_read_fence' => true, 'primary_rhythm' => true, 'pacing_compatibility' => false, 'target' => 'active_automatic'],
-            'queue_v4_clean_readiness' => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => true, 'current_oauth_fence' => false, 'queue_v4_read_fence' => true, 'pacing_compatibility' => false, 'target' => 'active_automatic'],
+            'queue_v4_clean_readiness' => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'queue_v4_read_fence' => false, 'primary_rhythm' => true, 'pacing_compatibility' => false, 'target' => 'preflight_readiness'],
             'cron_v3_remote' => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'pacing_compatibility' => true, 'legacy_cron_v3' => true, 'target' => 'logically_retired'],
             'cron_v3' => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'pacing_compatibility' => true, 'legacy_cron_v3' => true, 'target' => 'logically_retired'],
             'manual_campaign' => ['single_dispatch' => true, 'blocks_redirects' => false, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'primary_rhythm' => true, 'pacing_compatibility' => false, 'target' => 'manual_only'],
@@ -53,9 +53,7 @@ final class MeliTransportSourcePolicy
             'manual_emergency_oauth_refresh' => ['single_dispatch' => true, 'blocks_redirects' => false, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'pacing_compatibility' => true, 'manual_emergency_oauth_refresh' => true, 'target' => 'manual_only'],
             self::QUEUE_V4_OAUTH => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => true, 'current_oauth_fence' => true, 'pacing_compatibility' => false, 'target' => 'active_automatic'],
         ];
-        $row = preg_match('/^module:meli-[a-z0-9_-]+$/i', $source) === 1
-            ? ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'pacing_compatibility' => true, 'module_source' => true, 'target' => 'manual_only']
-            : ($hardened[$source] ?? null);
+        $row = $hardened[$source] ?? null;
         return [
             'known' => $row !== null,
             'single_dispatch' => (bool) ($row['single_dispatch'] ?? false),
@@ -103,6 +101,12 @@ final class MeliTransportSourcePolicy
             if (strtoupper($method) !== 'GET'
                 || !hash_equals('/billing/integration/group/ML/order/details', $path)) {
                 throw new RuntimeException('queue_v4_clean_domain_transport_capability_denied');
+            }
+            return;
+        }
+        if ($source === 'queue_v4_clean_readiness') {
+            if (strtoupper($method) !== 'GET' || !hash_equals('/users/me', $path)) {
+                throw new RuntimeException('queue_v4_clean_readiness_transport_capability_denied');
             }
             return;
         }

@@ -1367,7 +1367,7 @@ PHP);
     $assert(str_contains($finance, 'expected_resource_ids'), 'billing_expected_resources_missing');
     $assert(!str_contains($finance, 'queue_v4_clean_jobs'), 'SALE_FINANCIAL_KNOWS_QUEUE_V4');
     $assert(str_contains($repository, 'alignReadyFinancialReconciliationPointers'), 'QUEUE_POINTER_STATE_OWNER');
-    $assert(str_contains($policy, 'usesPrimaryRhythmAuthority'), 'RHYTHM_PRIMARY_AUTHORITY_policy');
+    $assert(str_contains($policy, "'primary_rhythm' => true"), 'RHYTHM_PRIMARY_AUTHORITY_policy');
     $assert(str_contains($client, '$primaryRhythmAuthority = (bool) $transportCapabilities[\'primary_rhythm\']'), 'RHYTHM_PRIMARY_AUTHORITY_client');
     $assert(str_contains($client, "? [\n                        'allowed' => true"), 'API_BUDGET_SECOND_NORMAL_THROTTLE');
 

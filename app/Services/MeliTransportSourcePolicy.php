@@ -13,6 +13,7 @@ final class MeliTransportSourcePolicy
     public const QUEUE_V4_SALES_AUDIT = 'queue_v4_clean_sales_audit';
     public const QUEUE_V4_SALES_REPAIR = 'queue_v4_clean_sales_repair';
     public const QUEUE_V4_DOMAIN_EXACT = 'queue_v4_clean_domain_exact';
+    public const MODULE_MELI_LOGISTICS = 'module:meli-logistics';
 
     /**
      * @return array{
@@ -52,6 +53,7 @@ final class MeliTransportSourcePolicy
             'manual_emergency_canary' => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'pacing_compatibility' => true, 'manual_emergency_canary' => true, 'target' => 'manual_only'],
             'manual_emergency_oauth_refresh' => ['single_dispatch' => true, 'blocks_redirects' => false, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'pacing_compatibility' => true, 'manual_emergency_oauth_refresh' => true, 'target' => 'manual_only'],
             self::QUEUE_V4_OAUTH => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => true, 'current_oauth_fence' => true, 'pacing_compatibility' => false, 'target' => 'active_automatic'],
+            self::MODULE_MELI_LOGISTICS => ['single_dispatch' => true, 'blocks_redirects' => true, 'queue_rate_limit_deferral' => false, 'current_oauth_fence' => false, 'queue_v4_read_fence' => false, 'pacing_compatibility' => true, 'module_source' => true, 'target' => 'module_confirmed'],
         ];
         $row = $hardened[$source] ?? null;
         return [
@@ -110,6 +112,12 @@ final class MeliTransportSourcePolicy
             }
             return;
         }
+        if ($source === self::MODULE_MELI_LOGISTICS) {
+            if (strtoupper($method) !== 'GET' || preg_match('#^/shipments/[0-9]+$#D', $path) !== 1) {
+                throw new RuntimeException('module_meli_logistics_transport_capability_denied');
+            }
+            return;
+        }
         if ($source !== self::QUEUE_V4_OAUTH) {
             return;
         }
@@ -128,16 +136,6 @@ final class MeliTransportSourcePolicy
         return self::capabilities($source)['blocks_redirects'];
     }
 
-    public static function usesQueueRateLimitDeferral(string $source): bool
-    {
-        return self::capabilities($source)['queue_rate_limit_deferral'];
-    }
-
-    public static function usesPrimaryRhythmAuthority(string $source): bool
-    {
-        return self::capabilities($source)['primary_rhythm'];
-    }
-
     public static function requiresCurrentOAuthFence(string $source): bool
     {
         return self::capabilities($source)['current_oauth_fence'];
@@ -148,28 +146,4 @@ final class MeliTransportSourcePolicy
         return self::capabilities($source)['queue_v4_read_fence'];
     }
 
-    public static function requiresPacingCompatibility(string $source): bool
-    {
-        return self::capabilities($source)['pacing_compatibility'];
-    }
-
-    public static function isQueueCoreContext(string $source): bool
-    {
-        return self::capabilities($source)['queue_core_context'];
-    }
-
-    public static function isLegacyCronV3(string $source): bool
-    {
-        return self::capabilities($source)['legacy_cron_v3'];
-    }
-
-    public static function isManualEmergencyCanary(string $source): bool
-    {
-        return self::capabilities($source)['manual_emergency_canary'];
-    }
-
-    public static function isManualEmergencyOAuthRefresh(string $source): bool
-    {
-        return self::capabilities($source)['manual_emergency_oauth_refresh'];
-    }
 }

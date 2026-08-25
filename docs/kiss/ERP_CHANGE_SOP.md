@@ -44,7 +44,7 @@ Do not report local policy pauses as remote HTTP 429. Do not promise automatic p
 
 For API execution changes, resolve each transport source once through `MeliTransportSourcePolicy::capabilities()` and keep the API client generic. Do not merge source labels unless the endpoint permissions, dispatch fences, rhythm authority, budget behavior and manual/automatic boundary are identical.
 
-Readiness and module labels are especially narrow: readiness is preflight-only (`GET /users/me`), while module HTTP has no wildcard authority. If a module needs Mercado Libre transport, add one explicit source and prove its endpoint matrix first.
+Readiness and module labels are especially narrow: readiness is preflight-only (`GET /users/me`), while module HTTP has no wildcard authority. If a module needs Mercado Libre transport, add one explicit source, one exact endpoint family, one caller census, and one behavioral fake-transport test proving allowed and denied paths. K4 R2's only module source is `module:meli-logistics` for `GET /shipments/{numeric}`.
 
 ## 10. Production
 

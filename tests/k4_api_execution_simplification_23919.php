@@ -74,7 +74,23 @@ $assert($legacy['known'], 'LEGACY_CRON_V3_NOT_CLASSIFIED');
 $assert($legacy['legacy_cron_v3'], 'LEGACY_CRON_V3_FLAG_MISSING');
 $assert($legacy['target'] === 'logically_retired', 'LEGACY_CRON_V3_NOT_LOGICALLY_RETIRED');
 $assert($legacy['pacing_compatibility'], 'LEGACY_CRON_V3_COMPATIBILITY_BOUNDARY_MISSING');
-$assert(!App\Services\MeliTransportSourcePolicy::usesPrimaryRhythmAuthority('cron_v3_remote'), 'LEGACY_CRON_V3_PRIMARY_RHYTHM_ENABLED');
+$assert(!$legacy['primary_rhythm'], 'LEGACY_CRON_V3_PRIMARY_RHYTHM_ENABLED');
+
+$logistics = App\Services\MeliTransportSourcePolicy::capabilities(App\Services\MeliTransportSourcePolicy::MODULE_MELI_LOGISTICS);
+$assert($logistics['known'], 'MODULE_LOGISTICS_SOURCE_NOT_KNOWN');
+$assert($logistics['target'] === 'module_confirmed', 'MODULE_LOGISTICS_TARGET_DRIFT');
+$assert($logistics['module_source'], 'MODULE_LOGISTICS_NOT_MODULE_SOURCE');
+$assert($logistics['single_dispatch'], 'MODULE_LOGISTICS_NOT_SINGLE_DISPATCH');
+$assert($logistics['blocks_redirects'], 'MODULE_LOGISTICS_REDIRECTS_NOT_BLOCKED');
+$assert(!$logistics['queue_v4_read_fence'], 'MODULE_LOGISTICS_GOT_QUEUE_FENCE');
+$assert(!$logistics['current_oauth_fence'], 'MODULE_LOGISTICS_GOT_OAUTH_FENCE');
+$assert(!$logistics['queue_rate_limit_deferral'], 'MODULE_LOGISTICS_GOT_QUEUE_RATE_DEFERRAL');
+$assert($logistics['pacing_compatibility'], 'MODULE_LOGISTICS_LOST_PACING_COMPATIBILITY');
+$assert($allowed(App\Services\MeliTransportSourcePolicy::MODULE_MELI_LOGISTICS, 'GET', '/shipments/123'), 'MODULE_LOGISTICS_SHIPMENT_DENIED');
+$assert(!$allowed(App\Services\MeliTransportSourcePolicy::MODULE_MELI_LOGISTICS, 'GET', '/orders/123'), 'MODULE_LOGISTICS_CAN_READ_ORDERS');
+$assert(!$allowed(App\Services\MeliTransportSourcePolicy::MODULE_MELI_LOGISTICS, 'GET', '/orders/search'), 'MODULE_LOGISTICS_CAN_SEARCH_ORDERS');
+$assert(!$allowed(App\Services\MeliTransportSourcePolicy::MODULE_MELI_LOGISTICS, 'GET', '/users/me'), 'MODULE_LOGISTICS_CAN_READ_USERS_ME');
+$assert(!$allowed(App\Services\MeliTransportSourcePolicy::MODULE_MELI_LOGISTICS, 'GET', '/billing/integration/group/ML/order/details'), 'MODULE_LOGISTICS_CAN_READ_BILLING');
 
 $client = (string) file_get_contents($root . '/app/Services/MeliApiClient.php');
 $policy = (string) file_get_contents($root . '/app/Services/MeliTransportSourcePolicy.php');

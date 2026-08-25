@@ -33,6 +33,7 @@ $tests = [
     'k4_api_execution_simplification_23919.php',
     'k4_r1_api_execution_final_23919.php',
     'k4_r1_pacing_compatibility_enabled_23919.php',
+    'k4_r2_module_logistics_transport_23919.php',
     'benchmark_queue_v4_k3_finance.php',
     'queue_v4_update_transition_23919.php',
     'runtime_publication_policy_2380.php', 'managed_runtime_package_2361.php',

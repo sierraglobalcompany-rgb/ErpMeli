@@ -126,7 +126,17 @@ This index is intentionally human-readable. It names the current execution surfa
 - METHOD/SYMBOL: `capabilities()`, `assertAllowed()`.
 - STATE AUTHORITY: static source contract, endpoint deny matrix and target classification.
 - NEXT CALL: `MeliApiClient`, `CurlMeliHttpTransport`, Queue V4 dispatch fences.
-- NOTES: K4 R1 keeps security boundaries explicit. Reduction means removing duplicate interpretation in the client, not collapsing sales, order exact, Billing, readiness or OAuth into one generic source. `queue_v4_clean_readiness` is a preflight-only source for `GET /users/me`; `module:*` is not a wildcard transport family.
+- NOTES: K4 R2 keeps security boundaries explicit. Reduction means removing duplicate interpretation in the client, not collapsing sales, order exact, Billing, readiness, OAuth or modules into one generic source. `queue_v4_clean_readiness` is a preflight-only source for `GET /users/me`; `module:meli-logistics` is the only confirmed module source and may call only `GET /shipments/{numeric}`. `module:*` and `module:meli-*` remain retired.
+
+### MeliReadGateway / meli-logistics
+
+- ROLE: narrow module read gateway for Logistics shipment detail.
+- OWNER: module transport boundary.
+- FILES: `app/Modules/Shared/Services/MeliReadGateway.php`, `app/Modules/MeliLogistics/Services/LogisticsSyncService.php`.
+- METHOD/SYMBOL: `MeliReadGateway::get('meli-logistics', ..., '/shipments/{id}')`.
+- STATE AUTHORITY: module caller supplies `module:meli-logistics`; `MeliEndpointRegistry` confirms `/shipments/{numeric}`.
+- NEXT CALL: `MeliApiClient` with fake/real transport through normal rhythm, budget and telemetry.
+- NOTES: K4 R2 permits only `GET /shipments/{numeric}`. Orders, users, Billing, OAuth, questions and claims are denied for this source; other module ids still fail closed until explicitly certified.
 
 ### ApiRhythmPolicyService
 

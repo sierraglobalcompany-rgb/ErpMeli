@@ -383,11 +383,10 @@ final class QueueV4CleanRepository
         }
 
         $sourceIds = [$sourceId];
-        // The global FIFO winner remains eligible to run normally even when it
-        // cannot join a bulk request. In that case it must be the only source:
-        // never claim later sources before the primary's real order cardinality
-        // and current input are known.
-        if (!$this->financialSourceIsCurrentSimpleBatchCandidate($companyId, $accountId, $sourceId)) {
+        // Exact fallback is intentionally singleton. Every other contiguous
+        // financial source remains domain-owned: the financial service decides
+        // whether it is remote-effective or local-only.
+        if ($this->financialSourceRequiresExactFallback($companyId, $accountId, $sourceId)) {
             return $sourceIds;
         }
 
@@ -411,21 +410,12 @@ final class QueueV4CleanRepository
                         q.company_id queue_company_id,q.meli_account_id queue_account_id,
                         q.job_type queue_job_type,
                         JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability")) queue_capability,
-                        s.id source_id,s.status source_status,s.sale_key,s.input_version,s.safe_message,
-                        st.input_version state_input_version,COALESCE(st.official_status,"missing") official_status,
-                        (SELECT COUNT(*)
-                           FROM meli_orders o
-                          WHERE o.meli_account_id=s.meli_account_id
-                            AND CONCAT(IF(o.external_pack_id IS NULL,"O:","P:"),COALESCE(o.external_pack_id,o.external_order_id))=s.sale_key) order_count
+                        s.id source_id,s.status source_status,s.safe_message
                    FROM queue_v4_clean_jobs q
                    LEFT JOIN sale_financial_reconciliation_jobs s
                      ON s.id=CAST(q.resource_id AS UNSIGNED)
                     AND s.company_id=q.company_id
                     AND s.meli_account_id=q.meli_account_id
-                   LEFT JOIN sale_financial_state st
-                     ON st.company_id=s.company_id
-                    AND st.meli_account_id=s.meli_account_id
-                    AND st.sale_key=s.sale_key
                   WHERE q.state="ready"
                     AND q.available_at<=UTC_TIMESTAMP(3)
                     AND (q.available_at>? OR (q.available_at=? AND q.id>?))
@@ -444,11 +434,6 @@ final class QueueV4CleanRepository
                     break;
                 }
                 if (!in_array((string) ($row['source_status'] ?? ''), ['pending', 'retry', 'awaiting_remote'], true)
-                    || !str_starts_with((string) ($row['sale_key'] ?? ''), 'O:')
-                    || (int) ($row['order_count'] ?? 0) !== 1
-                    || (string) ($row['official_status'] ?? 'missing') === 'complete'
-                    || preg_match('/^[a-f0-9]{64}$/', (string) ($row['input_version'] ?? '')) !== 1
-                    || !hash_equals((string) ($row['input_version'] ?? ''), (string) ($row['state_input_version'] ?? ''))
                     || str_starts_with((string) ($row['safe_message'] ?? ''), 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED')) {
                     continue;
                 }
@@ -472,21 +457,12 @@ final class QueueV4CleanRepository
         return $sourceIds;
     }
 
-    private function financialSourceIsCurrentSimpleBatchCandidate(int $companyId, int $accountId, int $sourceId): bool
+    private function financialSourceRequiresExactFallback(int $companyId, int $accountId, int $sourceId): bool
     {
         try {
             $statement = $this->pdo->prepare(
-                'SELECT s.status,s.sale_key,s.input_version,s.safe_message,
-                        st.input_version state_input_version,COALESCE(st.official_status,"missing") official_status,
-                        (SELECT COUNT(*)
-                           FROM meli_orders o
-                          WHERE o.meli_account_id=s.meli_account_id
-                            AND CONCAT(IF(o.external_pack_id IS NULL,"O:","P:"),COALESCE(o.external_pack_id,o.external_order_id))=s.sale_key) order_count
+                'SELECT s.safe_message
                    FROM sale_financial_reconciliation_jobs s
-                   LEFT JOIN sale_financial_state st
-                     ON st.company_id=s.company_id
-                    AND st.meli_account_id=s.meli_account_id
-                    AND st.sale_key=s.sale_key
                   WHERE s.id=?
                     AND s.company_id=?
                     AND s.meli_account_id=?
@@ -499,13 +475,7 @@ final class QueueV4CleanRepository
         }
 
         return is_array($row)
-            && in_array((string) ($row['status'] ?? ''), ['pending', 'retry', 'awaiting_remote'], true)
-            && str_starts_with((string) ($row['sale_key'] ?? ''), 'O:')
-            && (int) ($row['order_count'] ?? 0) === 1
-            && (string) ($row['official_status'] ?? 'missing') !== 'complete'
-            && preg_match('/^[a-f0-9]{64}$/', (string) ($row['input_version'] ?? '')) === 1
-            && hash_equals((string) ($row['input_version'] ?? ''), (string) ($row['state_input_version'] ?? ''))
-            && !str_starts_with((string) ($row['safe_message'] ?? ''), 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED');
+            && str_starts_with((string) ($row['safe_message'] ?? ''), 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED');
     }
 
     /**
@@ -1229,7 +1199,7 @@ final class QueueV4CleanRepository
 
     /**
      * @param array<string,mixed> $job
-     * @param array<int,array{company_id:int,meli_account_id:int,status:string,next_run_at:?string,identity_type:?string,pack_integrity_status:?string}> $financialSources
+     * @param array<int,array{company_id:int,meli_account_id:int,status:string,next_run_at:?string}> $financialSources
      * @param array<int,array{company_id:int,meli_account_id:int,status:string}> $recalcSources
      * @return array{state:string,classification?:string,next_safe_at?:string}|null
      */
@@ -1281,14 +1251,6 @@ final class QueueV4CleanRepository
         $next = trim((string) ($source['next_run_at'] ?? ''));
         $timestamp = $next !== '' ? strtotime($next . ' UTC') : false;
         if ($timestamp === false || $timestamp <= time()) {
-            if (strtolower(trim((string) ($source['identity_type'] ?? ''))) === 'pack'
-                && strtolower(trim((string) ($source['pack_integrity_status'] ?? ''))) === 'incomplete') {
-                return [
-                    'state' => 'waiting',
-                    'classification' => 'financial_local_pack_incomplete',
-                    'next_safe_at' => gmdate('Y-m-d H:i:s', time() + 3600),
-                ];
-            }
             return null;
         }
         return [
@@ -1298,7 +1260,7 @@ final class QueueV4CleanRepository
         ];
     }
 
-    /** @param array<int,array{0:int,1:int}> $keys @return array<int,array{company_id:int,meli_account_id:int,status:string,next_run_at:?string,identity_type:?string,pack_integrity_status:?string}> */
+    /** @param array<int,array{0:int,1:int}> $keys @return array<int,array{company_id:int,meli_account_id:int,status:string,next_run_at:?string}> */
     private function localPrefixFinancialSources(array $keys): array
     {
         if ($keys === []) {
@@ -1307,7 +1269,6 @@ final class QueueV4CleanRepository
         if (!$this->tableExists('sale_financial_reconciliation_jobs')) {
             return [];
         }
-        $canInspectPackIntegrity = $this->tableExists('sale_financial_state') && $this->tableExists('meli_packs');
         $where = [];
         $parameters = [];
         foreach ($keys as $sourceId => $tenant) {
@@ -1316,23 +1277,9 @@ final class QueueV4CleanRepository
             $parameters[] = (int) $tenant[0];
             $parameters[] = (int) $tenant[1];
         }
-        $sql = $canInspectPackIntegrity
-            ? 'SELECT s.id,s.company_id,s.meli_account_id,s.status,s.next_run_at,
-                      st.identity_type,p.integrity_status AS pack_integrity_status
-                 FROM sale_financial_reconciliation_jobs s
-                 LEFT JOIN sale_financial_state st
-                   ON st.company_id=s.company_id
-                  AND st.meli_account_id=s.meli_account_id
-                  AND st.sale_key=s.sale_key
-                  AND st.input_version=s.input_version
-                 LEFT JOIN meli_packs p
-                   ON p.meli_account_id=s.meli_account_id
-                  AND p.external_pack_id=s.external_sale_id
-                WHERE ' . implode(' OR ', $where)
-            : 'SELECT s.id,s.company_id,s.meli_account_id,s.status,s.next_run_at,
-                      NULL AS identity_type,NULL AS pack_integrity_status
-                 FROM sale_financial_reconciliation_jobs s
-                WHERE ' . implode(' OR ', $where);
+        $sql = 'SELECT s.id,s.company_id,s.meli_account_id,s.status,s.next_run_at
+                  FROM sale_financial_reconciliation_jobs s
+                 WHERE ' . implode(' OR ', $where);
         $statement = $this->pdo->prepare($sql);
         $statement->execute($parameters);
         $sources = [];
@@ -1342,8 +1289,6 @@ final class QueueV4CleanRepository
                 'meli_account_id' => (int) $row['meli_account_id'],
                 'status' => (string) $row['status'],
                 'next_run_at' => isset($row['next_run_at']) ? (string) $row['next_run_at'] : null,
-                'identity_type' => isset($row['identity_type']) ? (string) $row['identity_type'] : null,
-                'pack_integrity_status' => isset($row['pack_integrity_status']) ? (string) $row['pack_integrity_status'] : null,
             ];
         }
         return $sources;

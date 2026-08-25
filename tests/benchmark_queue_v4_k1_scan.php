@@ -139,6 +139,9 @@ if ($rawCsvPath !== '') {
         'fake_billing_call_count',
         'pack_sources_deferred',
         'pack_attempt_penalty',
+        'downstream_job_status',
+        'downstream_item_status',
+        'downstream_item_error',
     ], ',', '"', '\\');
 } else {
     $rawCsv = null;
@@ -203,11 +206,12 @@ try {
         );
     }
     $pdo->exec('CREATE TABLE companies(id BIGINT UNSIGNED PRIMARY KEY,name VARCHAR(160) NULL) ENGINE=InnoDB');
-    $pdo->exec('CREATE TABLE internal_products(id BIGINT UNSIGNED PRIMARY KEY) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE users(id BIGINT UNSIGNED PRIMARY KEY,name VARCHAR(160) NULL) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE internal_products(id BIGINT UNSIGNED PRIMARY KEY,manual_cost DECIMAL(18,2) NULL,deleted_at DATETIME NULL) ENGINE=InnoDB');
     $pdo->exec('CREATE TABLE IF NOT EXISTS app_settings(setting_key VARCHAR(190) PRIMARY KEY,setting_value TEXT NULL,is_encrypted TINYINT(1) NOT NULL DEFAULT 0) ENGINE=InnoDB');
     $pdo->exec((string) file_get_contents($root . '/database/migrations/299_queue_v4_domain_exact_admission_2_39_3.sql'));
     $pdo->exec('CREATE TABLE order_financial_recalc_jobs(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,company_id BIGINT UNSIGNED NULL,meli_account_id BIGINT UNSIGNED NULL,mode VARCHAR(30) NOT NULL,source_type VARCHAR(40) NOT NULL,source_id BIGINT NULL,status VARCHAR(30) NOT NULL DEFAULT "pending",created_by BIGINT NULL,current_phase VARCHAR(30) NULL,settings_snapshot_json LONGTEXT NULL,total_items INT NOT NULL DEFAULT 0,processed_items INT NOT NULL DEFAULT 0,error_items INT NOT NULL DEFAULT 0,safe_message VARCHAR(500) NULL,started_at DATETIME NULL,completed_at DATETIME NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-    $pdo->exec('CREATE TABLE order_financial_recalc_job_items(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,order_financial_recalc_job_id BIGINT UNSIGNED NOT NULL,meli_order_id BIGINT UNSIGNED NOT NULL,external_order_id VARCHAR(64) NOT NULL,status VARCHAR(30) NOT NULL DEFAULT "pending",phase VARCHAR(30) NULL,billing_status VARCHAR(30) NULL,financial_status VARCHAR(30) NULL,UNIQUE KEY uq_recalc_item(order_financial_recalc_job_id,meli_order_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE order_financial_recalc_job_items(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,order_financial_recalc_job_id BIGINT UNSIGNED NOT NULL,meli_order_id BIGINT UNSIGNED NOT NULL,external_order_id VARCHAR(64) NOT NULL,status VARCHAR(30) NOT NULL DEFAULT "pending",phase VARCHAR(30) NULL,requires_billing TINYINT(1) NULL,billing_status VARCHAR(30) NULL,financial_status VARCHAR(30) NULL,missing_flags VARCHAR(255) NULL,error_message VARCHAR(500) NULL,diagnostic_message VARCHAR(500) NULL,processed_at DATETIME NULL,UNIQUE KEY uq_recalc_item(order_financial_recalc_job_id,meli_order_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
     $pdo->exec("INSERT INTO companies(id,name) VALUES (10,'K1 Scan')");
     $pdo->exec("INSERT INTO meli_accounts(id,company_id,meli_user_id,account_name,status) VALUES (101,10,101001,'K1 Scan','conectado')");
     $pdo->exec("INSERT INTO queue_v4_clean_control(control_key,engine_state,readiness_state,scheduler_enabled) VALUES ('primary','ACTIVE','CERTIFIED',1)");
@@ -216,11 +220,14 @@ try {
         ->execute([101, Crypto::encrypt('k1-scan-access'), Crypto::encrypt('k1-scan-refresh'), gmdate('Y-m-d H:i:s', time() + 3600)]);
 
     $pdo->exec('CREATE TABLE meli_orders(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_account_id BIGINT UNSIGNED NOT NULL,external_order_id VARCHAR(80) NOT NULL,external_pack_id VARCHAR(80) NULL,external_shipping_id VARCHAR(80) NULL,date_created DATETIME NULL,date_created_local DATETIME NULL,status VARCHAR(40) NULL,total_amount DECIMAL(18,2) NOT NULL DEFAULT 0,paid_amount DECIMAL(18,2) NOT NULL DEFAULT 0,currency_id VARCHAR(10) NULL,enrichment_status VARCHAR(40) NULL,UNIQUE KEY uq_order_account_external(meli_account_id,external_order_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE meli_items(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_account_id BIGINT UNSIGNED NOT NULL,external_item_id VARCHAR(80) NOT NULL,UNIQUE KEY uq_item_account_external(meli_account_id,external_item_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE product_meli_links(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_account_id BIGINT UNSIGNED NOT NULL,meli_item_id BIGINT UNSIGNED NOT NULL,meli_variation_id VARCHAR(80) NOT NULL DEFAULT "0",internal_product_id BIGINT UNSIGNED NOT NULL,status VARCHAR(20) NOT NULL DEFAULT "active",conversion_factor DECIMAL(18,6) NOT NULL DEFAULT 1,KEY idx_link_item(meli_account_id,meli_item_id,meli_variation_id,status)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
     $pdo->exec('CREATE TABLE meli_order_items(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_order_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,external_item_id VARCHAR(80) NOT NULL,external_variation_id VARCHAR(80) NULL,quantity DECIMAL(18,4) NOT NULL DEFAULT 1,unit_price DECIMAL(18,2) NOT NULL DEFAULT 100,full_unit_price DECIMAL(18,2) NULL,sale_fee DECIMAL(18,2) NOT NULL DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
     $pdo->exec('CREATE TABLE meli_payments(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_account_id BIGINT UNSIGNED NOT NULL,meli_order_id BIGINT UNSIGNED NOT NULL,external_payment_id VARCHAR(80) NOT NULL,status VARCHAR(40) NULL,status_detail VARCHAR(100) NULL,transaction_amount DECIMAL(18,2) NOT NULL DEFAULT 0,shipping_cost DECIMAL(18,2) NOT NULL DEFAULT 0,coupon_amount DECIMAL(18,2) NOT NULL DEFAULT 0,total_paid_amount DECIMAL(18,2) NOT NULL DEFAULT 0,marketplace_fee DECIMAL(18,2) NOT NULL DEFAULT 0,date_approved_utc DATETIME NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-    $pdo->exec('CREATE TABLE meli_shipments(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_account_id BIGINT UNSIGNED NOT NULL,external_shipment_id VARCHAR(80),status VARCHAR(40),substatus VARCHAR(40),logistic_type VARCHAR(40),gross_cost DECIMAL(18,2),seller_cost DECIMAL(18,2),buyer_cost DECIMAL(18,2),discounts DECIMAL(18,2)) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE meli_shipments(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_account_id BIGINT UNSIGNED NOT NULL,meli_order_id BIGINT UNSIGNED NULL,external_shipment_id VARCHAR(80),status VARCHAR(40),substatus VARCHAR(40),logistic_type VARCHAR(40),gross_cost DECIMAL(18,2),seller_cost DECIMAL(18,2),buyer_cost DECIMAL(18,2),discounts DECIMAL(18,2),KEY idx_shipment_order(meli_order_id)) ENGINE=InnoDB');
     $pdo->exec('CREATE TABLE meli_packs(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_account_id BIGINT UNSIGNED NOT NULL,external_pack_id VARCHAR(80) NOT NULL,integrity_status VARCHAR(40) NULL,UNIQUE KEY uq_pack(meli_account_id,external_pack_id)) ENGINE=InnoDB');
-    $pdo->exec('CREATE TABLE meli_order_financials(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,company_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,meli_order_id BIGINT UNSIGNED NOT NULL,product_sold_amount DECIMAL(18,2) NOT NULL DEFAULT 100,local_estimated_net_amount DECIMAL(18,2) NULL,ml_net_amount DECIMAL(18,2) NULL) ENGINE=InnoDB');
+    $pdo->exec('CREATE TABLE meli_order_financials(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,company_id BIGINT UNSIGNED NULL,meli_account_id BIGINT UNSIGNED NOT NULL,meli_order_id BIGINT UNSIGNED NOT NULL,external_order_id VARCHAR(80) NULL,currency_id VARCHAR(10) NULL,product_sold_amount DECIMAL(18,2) NOT NULL DEFAULT 100,discount_amount DECIMAL(18,2) NOT NULL DEFAULT 0,buyer_shipping_paid DECIMAL(18,2) NOT NULL DEFAULT 0,buyer_paid_total DECIMAL(18,2) NOT NULL DEFAULT 0,sale_fee_amount DECIMAL(18,2) NOT NULL DEFAULT 0,sale_fee_rate DECIMAL(18,4) NULL,ml_shipping_charge DECIMAL(18,2) NOT NULL DEFAULT 0,shipping_net_amount DECIMAL(18,2) NOT NULL DEFAULT 0,other_charges_amount DECIMAL(18,2) NOT NULL DEFAULT 0,bonifications_amount DECIMAL(18,2) NOT NULL DEFAULT 0,taxes_amount DECIMAL(18,2) NOT NULL DEFAULT 0,withholdings_amount DECIMAL(18,2) NOT NULL DEFAULT 0,adjustments_amount DECIMAL(18,2) NOT NULL DEFAULT 0,ml_net_amount DECIMAL(18,2) NULL,internal_cost_amount DECIMAL(18,2) NULL,packaging_cost_amount DECIMAL(18,2) NOT NULL DEFAULT 0,other_internal_costs_amount DECIMAL(18,2) NOT NULL DEFAULT 0,erp_profit_amount DECIMAL(18,2) NULL,erp_margin_percent DECIMAL(18,4) NULL,erp_calculated_net DECIMAL(18,2) NOT NULL DEFAULT 0,difference_amount DECIMAL(18,2) NOT NULL DEFAULT 0,missing_cost_items_count INT NOT NULL DEFAULT 0,missing_link_items_count INT NOT NULL DEFAULT 0,billing_status VARCHAR(40) NOT NULL DEFAULT "pending",reconciliation_status VARCHAR(40) NOT NULL DEFAULT "pending",source VARCHAR(40) NULL,safe_message VARCHAR(500) NULL,last_billing_sync_at DATETIME NULL,raw_summary_json LONGTEXT NULL,tax_withholding_amount DECIMAL(18,2) NOT NULL DEFAULT 0,tax_retention_source_amount DECIMAL(18,2) NOT NULL DEFAULT 0,tax_reteiva_amount DECIMAL(18,2) NOT NULL DEFAULT 0,tax_other_amount DECIMAL(18,2) NOT NULL DEFAULT 0,local_estimated_net_amount DECIMAL(18,2) NULL,billing_reconciled_net_amount DECIMAL(18,2) NULL,reconciliation_difference DECIMAL(18,2) NULL,financial_source VARCHAR(40) NULL,billing_import_status VARCHAR(40) NULL,billing_imported_at DATETIME NULL,UNIQUE KEY uq_financial_order(meli_order_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE meli_order_billing_details(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,meli_account_id BIGINT UNSIGNED NOT NULL,meli_order_id BIGINT UNSIGNED NOT NULL,meli_order_financial_id BIGINT UNSIGNED NOT NULL,external_order_id VARCHAR(80) NULL,detail_id VARCHAR(120) NULL,detail_type VARCHAR(80) NULL,detail_subtype VARCHAR(80) NULL,description VARCHAR(500) NULL,amount DECIMAL(18,2) NULL,currency_id VARCHAR(10) NULL,source_endpoint VARCHAR(40) NOT NULL,source_status VARCHAR(40) NOT NULL,raw_json LONGTEXT NULL,KEY idx_billing_order(meli_order_id,source_status,source_endpoint)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
     $pdo->exec('CREATE TABLE sale_financial_state(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,company_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,sale_key VARCHAR(191) NOT NULL,external_sale_id VARCHAR(191) NOT NULL,identity_type VARCHAR(20) NOT NULL,input_version CHAR(64) NOT NULL,currency_id VARCHAR(8) NOT NULL,commercial_status VARCHAR(30) NOT NULL,logistics_status VARCHAR(30) NOT NULL,provisional_status VARCHAR(30) NOT NULL,official_status VARCHAR(30) NOT NULL DEFAULT "missing",products_amount DECIMAL(18,2) NULL,provisional_net_amount DECIMAL(18,2) NULL,official_net_amount DECIMAL(18,2) NULL,unknown_concepts_amount DECIMAL(18,2) NULL,official_capture_id BIGINT UNSIGNED NULL,missing_flags_json LONGTEXT NULL,close_impact VARCHAR(40) NULL,sales_control_close_id BIGINT UNSIGNED NULL,projected_at DATETIME NULL,official_at DATETIME NULL,UNIQUE KEY uq_sale_state(company_id,meli_account_id,sale_key)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
     $pdo->exec('CREATE TABLE sale_financial_evidence(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,company_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,sale_key VARCHAR(191) NOT NULL,input_version CHAR(64) NOT NULL,evidence_type VARCHAR(60) NOT NULL,evidence_status VARCHAR(40) NOT NULL,source_id BIGINT UNSIGNED NULL,payload_hash CHAR(64) NOT NULL,provisional_net_amount DECIMAL(18,2) NULL,official_net_amount DECIMAL(18,2) NULL,evidence_json LONGTEXT NOT NULL,UNIQUE KEY uq_evidence(company_id,meli_account_id,sale_key,input_version,evidence_type,payload_hash)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
     $pdo->exec('CREATE TABLE sale_financial_reconciliation_jobs(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,company_id BIGINT UNSIGNED NOT NULL,meli_account_id BIGINT UNSIGNED NOT NULL,sale_key VARCHAR(191) NOT NULL,external_sale_id VARCHAR(191) NOT NULL,input_version CHAR(64) NOT NULL,status VARCHAR(30) NOT NULL DEFAULT "pending",priority_tier INT NOT NULL DEFAULT 30,origin_type VARCHAR(40) NOT NULL,origin_id BIGINT NULL,created_by BIGINT NULL,next_run_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP,remote_pending_since DATETIME NULL,retry_until DATETIME NULL,last_remote_state VARCHAR(30) NULL,safe_message VARCHAR(500) NULL,completed_at DATETIME NULL,lock_owner VARCHAR(96) NULL,lease_generation BIGINT UNSIGNED NOT NULL DEFAULT 0,lease_expires_at DATETIME NULL,heartbeat_at DATETIME NULL,attempts INT NOT NULL DEFAULT 0,UNIQUE KEY uq_sale_reconciliation(company_id,meli_account_id,sale_key,input_version)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
@@ -264,6 +271,9 @@ try {
         $external = '301' . sprintf('%010u', crc32($prefix . microtime(true))) . random_int(1000, 9999);
         $pdo->prepare('INSERT INTO meli_orders(meli_account_id,external_order_id,date_created,date_created_local,status,total_amount,paid_amount,currency_id) VALUES (101,?,UTC_TIMESTAMP(),UTC_TIMESTAMP(),"paid",100,100,"COP")')->execute([$external]);
         $orderId = (int) $pdo->lastInsertId();
+        $pdo->prepare('INSERT INTO meli_order_items(meli_order_id,meli_account_id,external_item_id,quantity,unit_price,sale_fee) VALUES (?,101,?,1,100,10)')->execute([$orderId, 'ITEM-' . $external]);
+        $pdo->prepare('INSERT INTO meli_payments(meli_order_id,meli_account_id,external_payment_id,status,transaction_amount,total_paid_amount,marketplace_fee) VALUES (?,101,?,"approved",100,100,10)')->execute([$orderId, 'PAY-' . $external]);
+        $pdo->prepare('INSERT INTO meli_order_financials(company_id,meli_account_id,meli_order_id,product_sold_amount,local_estimated_net_amount) VALUES (10,101,?,100,90)')->execute([$orderId]);
         $pdo->prepare('INSERT INTO order_financial_recalc_jobs(company_id,meli_account_id,mode,source_type,status,total_items,processed_items) VALUES (10,101,"repaired","k1_scan","pending",1,0)')->execute();
         $sourceId = (int) $pdo->lastInsertId();
         $pdo->prepare('INSERT INTO order_financial_recalc_job_items(order_financial_recalc_job_id,meli_order_id,external_order_id,status) VALUES (?,?,?,"pending")')->execute([$sourceId, $orderId, $external]);
@@ -362,20 +372,16 @@ try {
                 $transport = new K1ScanFakeBillingTransport();
                 $repo = new QueueV4CleanRepository($pdo);
                 $service = new SaleFinancialService(static fn (int $accountId): MeliApiClient => new MeliApiClient($accountId, $transport));
-                $domainHandler = static function (string $capability, int $sourceId, int $accountId) use ($pdo): array {
-                    if ($capability !== 'financial_recalc') {
-                        throw new RuntimeException('unexpected_domain_handler_capability');
-                    }
-                    $pdo->prepare('UPDATE order_financial_recalc_jobs SET processed_items=processed_items+1,status="complete",completed_at=UTC_TIMESTAMP() WHERE id=? AND meli_account_id=?')
-                        ->execute([$sourceId, $accountId]);
-                    return ['processed' => 1];
-                };
-                $worker = new QueueV4CleanWorker($pdo, $repo, null, null, null, $domainHandler, static fn (): SaleFinancialService => $service);
+                $worker = new QueueV4CleanWorker($pdo, $repo, null, null, null, null, static fn (): SaleFinancialService => $service);
                 $started = hrtime(true);
                 $worker->run('test', 1, 45);
                 $elapsed = (hrtime(true) - $started) / 1_000_000;
                 $metrics = $worker->lastMetrics();
                 $downstreamSourceProcessed = (int) $pdo->query('SELECT processed_items FROM order_financial_recalc_jobs WHERE id=' . (int) $effectiveSourceId)->fetchColumn();
+                $downstreamJobStatus = (string) $pdo->query('SELECT status FROM order_financial_recalc_jobs WHERE id=' . (int) $effectiveSourceId)->fetchColumn();
+                $downstreamItem = $pdo->query('SELECT status,error_message FROM order_financial_recalc_job_items WHERE order_financial_recalc_job_id=' . (int) $effectiveSourceId . ' ORDER BY id ASC LIMIT 1')->fetch(PDO::FETCH_ASSOC) ?: [];
+                $downstreamItemStatus = (string) ($downstreamItem['status'] ?? '');
+                $downstreamItemError = substr(preg_replace('/[\\r\\n]+/', ' ', (string) ($downstreamItem['error_message'] ?? '')) ?: '', 0, 160);
                 $downstreamPointerCompleted = (int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE id=' . (int) $effective['pointer_id'] . ' AND state="completed"')->fetchColumn();
                 $packSourcesDeferred = (int) $pdo->query(
                     'SELECT COUNT(*)
@@ -419,6 +425,9 @@ try {
                     'fake_billing_call_count' => count($transport->calls),
                     'pack_sources_deferred' => $packSourcesDeferred,
                     'pack_attempt_penalty' => $packAttemptPenalty,
+                    'downstream_job_status' => $downstreamJobStatus,
+                    'downstream_item_status' => $downstreamItemStatus,
+                    'downstream_item_error' => $downstreamItemError,
                 ];
                 if (is_resource($rawCsv)) {
                     fputcsv($rawCsv, [
@@ -438,6 +447,9 @@ try {
                         count($transport->calls),
                         $packSourcesDeferred,
                         $packAttemptPenalty,
+                        $downstreamJobStatus,
+                        $downstreamItemStatus,
+                        $downstreamItemError,
                     ], ',', '"', '\\');
                     fflush($rawCsv);
                 }
@@ -472,10 +484,14 @@ try {
     if (isset($rawCsv) && is_resource($rawCsv)) {
         fclose($rawCsv);
     }
-    $server->exec('DROP DATABASE IF EXISTS ' . $quote($database));
+    if ((string) getenv('K1_SCAN_KEEP_DB') === '1') {
+        fwrite(STDERR, 'K1_SCAN_KEEP_DB=' . $database . PHP_EOL);
+    } else {
+        $server->exec('DROP DATABASE IF EXISTS ' . $quote($database));
+    }
 }
 
-$prefix59 = array_values(array_filter($rawRows, static fn (array $row): bool => (int) $row['prefix'] === 59 && (int) $row['effective'] === 1 && (int) $row['rows_scanned'] === 60 && (string) $row['termination_reason'] === 'EFFECTIVE_FOUND'));
+$prefix59 = array_values(array_filter($rawRows, static fn (array $row): bool => (int) $row['prefix'] === 59 && (int) $row['effective'] === 1 && (int) $row['rows_scanned'] <= $maxScanRows && (string) $row['termination_reason'] === 'EFFECTIVE_FOUND'));
 $prefix60 = array_values(array_filter($rawRows, static fn (array $row): bool => (int) $row['prefix'] === 60 && (int) $row['effective'] === 0 && (int) $row['rows_scanned'] === 60 && (string) $row['termination_reason'] === 'MAX_SCAN_ROWS'));
 $prefix59Expected = in_array(59, $prefixes, true) ? count($modes) * $iterations : 0;
 $prefix60Expected = in_array(60, $prefixes, true) ? count($modes) * $iterations : 0;

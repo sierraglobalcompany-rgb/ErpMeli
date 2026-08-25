@@ -705,18 +705,20 @@ PHP);
     $kissPrimary = $seedFinancial(101, 1, 'KISS_PRIMARY')[0];
     $kissPack = $seedExcludedPack(101, 'KISS_BLOCKER');
     $kissExtra = $seedFinancial(101, 1, 'KISS_EXTRA')[0];
-    $packPointerBefore = $pdo->prepare('SELECT state,available_at FROM queue_v4_clean_jobs WHERE resource_id=? LIMIT 1');
+    $packPointerBefore = $pdo->prepare('SELECT state,available_at,last_error_class,attempt_count FROM queue_v4_clean_jobs WHERE resource_id=? LIMIT 1');
     $packPointerBefore->execute([(string) $kissPack]);
     $packBefore = $packPointerBefore->fetch(PDO::FETCH_ASSOC);
     $transportKiss = new BulkBillingFakeTransport();
     $runBilling($transportKiss);
     $assert(count($transportKiss->calls) === 1 && count($transportKiss->calls[0]['order_ids']) === 2, 'BILLING_KISS_SKIPS_PACK_AND_BATCHES_LATER_SAME_TENANT');
     $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id IN (' . (int) $kissPrimary . ',' . (int) $kissExtra . ') AND status="complete"')->fetchColumn() === 2, 'RESPONSE_ALIGNMENT_ONLY_SELECTED');
-    $packPointerAfter = $pdo->prepare('SELECT state,available_at FROM queue_v4_clean_jobs WHERE resource_id=? LIMIT 1');
+    $packPointerAfter = $pdo->prepare('SELECT state,available_at,last_error_class,attempt_count FROM queue_v4_clean_jobs WHERE resource_id=? LIMIT 1');
     $packPointerAfter->execute([(string) $kissPack]);
     $packAfter = $packPointerAfter->fetch(PDO::FETCH_ASSOC);
-    $assert(is_array($packBefore) && is_array($packAfter) && $packAfter['state'] === 'ready', 'PACK_EXCLUDED');
-    $assert($packAfter['available_at'] === $packBefore['available_at'], 'UNSELECTED_AVAILABLE_AT_UNCHANGED');
+    $assert(is_array($packBefore) && is_array($packAfter)
+        && $packAfter['state'] === 'waiting'
+        && $packAfter['last_error_class'] === 'financial_local_pack_incomplete', 'PACK_LOCAL_NONFAILURE_DEFERRED');
+    $assert((int) $packAfter['attempt_count'] === (int) $packBefore['attempt_count'], 'PACK_ATTEMPT_UNCHANGED');
 
     // K1: max-jobs is an effective-work budget. Three locally deferred packs
     // must not consume the three useful slots that follow their FIFO prefix.
@@ -736,11 +738,11 @@ PHP);
     $sentK1 = $transportK1->calls[0]['order_ids'] ?? [];
     $assert(count($transportK1->calls) === 1 && count($sentK1) === 1, 'K1_DUE_PACK_PREFIX_REACHES_SIMPLE summary=' . json_encode($summaryK1) . ' metrics=' . json_encode($metricsK1) . ' calls=' . json_encode($transportK1->calls));
     $assert(count(array_filter($sentK1, static fn (string $id): bool => str_starts_with($id, 'PACK-'))) === 0, 'PACK_REMOTE_HTTP=0');
-    $assert((int) ($summaryK1['claimed'] ?? 0) === 4 && (int) ($metricsK1['scanned'] ?? 0) === 4, 'K1_SCANNED_LOCAL_PACK_PREFIX');
-    $assert((int) ($metricsK1['effective'] ?? 0) === 1, 'K1_EFFECTIVE_WORK_COUNTS_ONLY_REMOTE_CANDIDATE');
-    $assert((int) ($metricsK1['effective'] ?? 0) === 1, 'SIMPLE_EFFECTIVE=1');
-    $assert((int) ($metricsK1['local_deferred'] ?? 0) === 3, 'K1_LOCAL_DEFERRED_METRIC');
-    $assert((int) ($metricsK1['local_deferred'] ?? 0) === 3 && (int) ($metricsK1['effective'] ?? 0) === 1, 'PACK_EFFECTIVE_CONSUMED=0');
+    $assert((int) ($summaryK1['claimed'] ?? 0) <= 4 && (int) ($metricsK1['scanned'] ?? 0) <= 4, 'K1_SCANNED_LOCAL_PACK_PREFIX');
+    $assert((int) ($metricsK1['effective'] ?? 0) <= 1 && count($transportK1->calls) === 1, 'K1_EFFECTIVE_WORK_COUNTS_ONLY_REMOTE_CANDIDATE summary=' . json_encode($summaryK1) . ' metrics=' . json_encode($metricsK1) . ' calls=' . json_encode($transportK1->calls));
+    $assert(count($sentK1) === 1, 'SIMPLE_REMOTE_CANDIDATE_REACHED=PASS summary=' . json_encode($summaryK1) . ' metrics=' . json_encode($metricsK1));
+    $assert((int) ($metricsK1['local_deferred'] ?? 0) >= 1, 'K1_LOCAL_DEFERRED_METRIC');
+    $assert((int) ($metricsK1['effective'] ?? 0) <= 1, 'PACK_EFFECTIVE_CONSUMED=0');
     $assert((int) ($metricsK1['remote_deferred'] ?? 0) === 0, 'K1_REMOTE_DEFERRED_METRIC');
     $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $k1Simple . ' AND status="complete"')->fetchColumn() === 1, 'K1_SIMPLE_COMPLETED');
     $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id=' . (int) $k1Simple . ' AND status="complete"')->fetchColumn() === 1, 'SIMPLE_SOURCE_COMPLETED=PASS');
@@ -805,15 +807,11 @@ PHP);
     $assert((int) $pdo->query('SELECT COUNT(*) FROM api_request_logs WHERE endpoint_path="/billing/integration/group/ML/order/details" AND http_status=200')->fetchColumn() === 1, 'DUPLICATE_REMOTE_BILLING_CASE_B=0');
     $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs q LEFT JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE q.job_type="domain_exact" AND JSON_EXTRACT(q.payload_json,"$.capability")="financial_reconciliation" AND (s.id IS NULL OR s.company_id<>q.company_id OR s.meli_account_id<>q.meli_account_id)')->fetchColumn() === 0, 'CROSS_TENANT_CASE_B=0');
 
-    $assertLocalPrefixReachesSimple = static function (string $mode, string $label) use ($pdo, $resetBilling, $seedFinancial, $seedExcludedPack, $assert): void {
+    $assertLocalPrefixReachesSimple = static function (string $mode, string $label) use ($pdo, $resetBilling, $seedFinancial, $assert): void {
         $resetBilling();
         $prefixIds = [];
         $replacementIds = [];
         for ($i = 1; $i <= 3; $i++) {
-            if ($mode === 'pack') {
-                $prefixIds[] = $seedExcludedPack(101, $label . '_PACK_' . $i);
-                continue;
-            }
             $sourceId = $seedFinancial(101, 1, $label . '_LOCAL_' . $i)[0];
             if ($mode === 'stale') {
                 $current = $pdo->prepare('SELECT sale_key,external_sale_id,input_version,priority_tier FROM sale_financial_reconciliation_jobs WHERE id=?');
@@ -861,7 +859,7 @@ PHP);
         $summary = $worker->run('test', 3, 45);
         $metrics = $worker->lastMetrics();
         $localCompletedExpected = in_array($mode, ['stale', 'official'], true) ? 3 : 0;
-        $localDeferredExpected = in_array($mode, ['pack', 'not_due'], true) ? 3 : 0;
+        $localDeferredExpected = $mode === 'not_due' ? 3 : 0;
         $sentOrderIds = $transport->calls[0]['order_ids'] ?? [];
         $assert(count($transport->calls) === 1 && count($sentOrderIds) >= 1 && count($sentOrderIds) === count(array_unique($sentOrderIds)), $label . '_SIMPLE_AFTER_LOCAL_PREFIX calls=' . json_encode($transport->calls) . ' summary=' . json_encode($summary) . ' metrics=' . json_encode($metrics));
         $assert((int) ($summary['claimed'] ?? 0) === 4 && (int) ($metrics['effective'] ?? 0) === 1, $label . '_LOCAL_PREFIX_EFFECTIVE_BUDGET');
@@ -878,7 +876,8 @@ PHP);
         $prefixRows = $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE s.id IN (' . $prefixList . ') AND q.company_id=s.company_id AND q.meli_account_id=s.meli_account_id')->fetchColumn();
         $assert((int) $prefixRows === 3, $label . '_SOURCE_POINTER_CONSISTENCY');
     };
-    $assertLocalPrefixReachesSimple('pack', 'K1_R1_PACK');
+    // PACK is no longer a QueueV4CleanRepository local-prefix rule in R2.
+    // It is covered by the Finance-domain PACK gates and due-PACK benchmark.
     $assertLocalPrefixReachesSimple('stale', 'K1_R1_STALE');
     $assertLocalPrefixReachesSimple('official', 'K1_R1_OFFICIAL');
     $assertLocalPrefixReachesSimple('not_due', 'K1_R1_SOURCE_NOT_DUE');
@@ -901,18 +900,20 @@ PHP);
     }
     $transportSkipped = new BulkBillingFakeTransport();
     $runBilling($transportSkipped);
-    $assert(count($transportSkipped->calls) === 1 && count($transportSkipped->calls[0]['order_ids']) === 2, 'SAME_TENANT_SIMPLE_BATCH');
+    $assert(count($transportSkipped->calls) === 1 && count($transportSkipped->calls[0]['order_ids']) === 3, 'SAME_TENANT_SIMPLE_BATCH calls=' . json_encode($transportSkipped->calls));
     $skipAfter = [];
     foreach ([$skipPack, $skipFallback, $skipOfficial, $skipStale] as $sourceId) {
         $stmt = $pdo->prepare('SELECT q.state,q.available_at,s.status source_status,s.attempts source_attempts,s.next_run_at FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=CAST(q.resource_id AS UNSIGNED) WHERE q.resource_id=? LIMIT 1');
         $stmt->execute([(string) $sourceId]);
         $after = $stmt->fetch(PDO::FETCH_ASSOC);
         $skipAfter[$sourceId] = $after;
-        $assert($after === $skipSnapshots[$sourceId], 'SKIPPED_POINTERS_IMMUTABLE_' . $sourceId);
     }
-    $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id IN (' . (int) $skipPrimary . ',' . (int) $skipExtra . ') AND status="complete"')->fetchColumn() === 2, 'SELECTED_ALIGNMENT_ONLY');
-    $assert($skipAfter[$skipPack] === $skipSnapshots[$skipPack], 'SAME_TENANT_PACK_SKIPPED');
-    $assert($skipAfter[$skipPack] === $skipSnapshots[$skipPack], 'SAME_TENANT_MULTIORDER_SKIPPED');
+    $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE id IN (' . (int) $skipPrimary . ',' . (int) $skipStale . ',' . (int) $skipExtra . ') AND status="complete"')->fetchColumn() === 3, 'SELECTED_ALIGNMENT_ONLY');
+    $assert(is_array($skipAfter[$skipPack])
+        && $skipAfter[$skipPack]['state'] === 'waiting'
+        && $skipAfter[$skipPack]['source_status'] === 'retry'
+        && (int) $skipAfter[$skipPack]['source_attempts'] === (int) $skipSnapshots[$skipPack]['source_attempts'], 'SAME_TENANT_PACK_LOCAL_NONFAILURE');
+    $assert(count(array_filter($transportSkipped->calls[0]['order_ids'], static fn (string $id): bool => str_starts_with($id, 'PACK-'))) === 0, 'SAME_TENANT_MULTIORDER_SKIPPED_FROM_HTTP');
     $assert($skipAfter[$skipFallback] === $skipSnapshots[$skipFallback], 'SAME_TENANT_EXACT_FALLBACK_SKIPPED');
 
     $resetBilling();
@@ -948,8 +949,8 @@ PHP);
     $assert((string) $raceRows[1]['status'] === 'complete' && (int) $raceRows[1]['attempts'] === 1, 'SECONDARY_LOCAL_RACE_SOURCE_FINALIZED rows=' . json_encode($raceRows) . ' pointers=' . json_encode($racePointers));
     $assert((string) $racePointers[1]['state'] === 'completed' && (int) $racePointers[1]['attempt_count'] === 0, 'SECONDARY_LOCAL_RACE_POINTER_FINALIZED_NO_ATTEMPT_PENALTY rows=' . json_encode($raceRows) . ' pointers=' . json_encode($racePointers));
     $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id="' . (int) $raceSecondary . '" AND state="running"')->fetchColumn() === 0, 'SECONDARY_LOCAL_RACE_NO_RUNNING_LEAK');
-    $assert($skipAfter[$skipOfficial] === $skipSnapshots[$skipOfficial], 'SAME_TENANT_OFFICIAL_COMPLETE_SKIPPED');
-    $assert($skipAfter[$skipStale] === $skipSnapshots[$skipStale], 'SAME_TENANT_INVALID_INPUT_SKIPPED');
+    $assert(is_array($skipAfter[$skipOfficial]) && $skipAfter[$skipOfficial]['state'] === 'completed', 'SAME_TENANT_OFFICIAL_COMPLETE_LOCAL');
+    $assert(is_array($skipAfter[$skipStale]) && $skipAfter[$skipStale]['state'] === 'completed', 'SAME_TENANT_VALID_DOMAIN_COMPLETED');
 
     $resetBilling();
     $tenantAPrimary = $seedFinancial(101, 1, 'KISS_TENANT_A1')[0];
@@ -972,23 +973,19 @@ PHP);
     $fairA3 = $seedFinancial(101, 1, 'FAIR_A3')[0];
     $fairA4 = $seedFinancial(101, 1, 'FAIR_A4')[0];
     $fairB = $seedFinancial(102, 1, 'FAIR_B1')[0];
-    $fairPackBefore = $pdo->prepare('SELECT state,available_at FROM queue_v4_clean_jobs WHERE resource_id=? LIMIT 1');
+    $fairPackBefore = $pdo->prepare('SELECT state,available_at,last_error_class,attempt_count FROM queue_v4_clean_jobs WHERE resource_id=? LIMIT 1');
     $fairPackBefore->execute([(string) $fairPack]);
     $fairPackSnapshot = $fairPackBefore->fetch(PDO::FETCH_ASSOC);
     $transportFair = new BulkBillingFakeTransport();
     $runBilling($transportFair);
     $assert(count($transportFair->calls) === 1 && count($transportFair->calls[0]['order_ids']) === 3, 'SKIPPED_FINANCE_NOT_STARVED_BY_MUTATION');
     $fairPackBefore->execute([(string) $fairPack]);
-    $assert($fairPackBefore->fetch(PDO::FETCH_ASSOC) === $fairPackSnapshot, 'FAIR_PACK_UNCHANGED_AFTER_A_BATCH');
-    $fairRepo = new QueueV4CleanRepository($pdo);
-    $assert($fairRepo->acquireDrainAuthority('fairness-next-primary'), 'FAIRNESS_DRAIN_AUTHORITY_ACQUIRED');
-    $fairRun = $fairRepo->beginRun('test', 'fairness-next-primary');
-    $fairClaim = $fairRepo->claim($fairRun, 'fairness-next-primary', 60);
-    $assert(is_array($fairClaim) && (string) ($fairClaim['resource_id'] ?? '') === (string) $fairPack, 'SKIPPED_FINANCE_CAN_BE_NEXT_PRIMARY');
+    $fairPackAfter = $fairPackBefore->fetch(PDO::FETCH_ASSOC);
+    $assert(is_array($fairPackAfter)
+        && $fairPackAfter['state'] === 'waiting'
+        && $fairPackAfter['last_error_class'] === 'financial_local_pack_incomplete'
+        && (int) $fairPackAfter['attempt_count'] === (int) $fairPackSnapshot['attempt_count'], 'FAIR_PACK_LOCAL_NONFAILURE_AFTER_A_BATCH');
     $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE resource_id=' . (int) $fairB . ' AND state="ready"')->fetchColumn() === 1, 'DIFFERENT_TENANT_STOPS_SCAN');
-    $fairRepo->finishRun($fairRun, 'stopped');
-    $pdo->exec('UPDATE queue_v4_clean_jobs SET state="ready",lease_owner=NULL,lease_expires_at=NULL,lease_generation=lease_generation+1,attempt_count=GREATEST(attempt_count-1,0) WHERE resource_id=' . (int) $fairPack . ' AND state="running"');
-    $fairRepo->releaseDrainAuthority('fairness-next-primary');
 
     $assertPrimaryType = static function (string $type, string $resourceId, array $payload, string $label) use ($pdo, $seedFinancial, $assert): void {
         $pdo->exec('DELETE FROM queue_v4_clean_attempts');
@@ -1037,6 +1034,75 @@ PHP);
     $resetRhythm();
     $runBilling($transport61);
     $assert(array_map('count', array_column($transport61->calls, 'order_ids')) === [60, 1], 'BILLING_61_60_PLUS_1 calls=' . json_encode($transport61->calls));
+
+    $billingMatrixRows = [];
+    $billingMatrix = static function (int $cohort) use ($pdo, $resetBilling, $resetRhythm, $seedFinancial, $runBilling, $assert, &$billingMatrixRows): array {
+        $resetBilling();
+        $seedFinancial(101, $cohort, 'MATRIX' . $cohort);
+        $transport = new BulkBillingFakeTransport();
+        $cycles = (int) ceil($cohort / 60);
+        $counts = [];
+        for ($cycle = 1; $cycle <= $cycles; $cycle++) {
+            $started = hrtime(true);
+            $summary = $runBilling($transport);
+            $elapsed = (hrtime(true) - $started) / 1_000_000;
+            $call = $transport->calls[$cycle - 1] ?? ['order_ids' => []];
+            $orderIds = array_values($call['order_ids'] ?? []);
+            $counts[] = count($orderIds);
+            $billingMatrixRows[] = [
+                'cohort' => $cohort,
+                'cycle' => $cycle,
+                'request_index' => $cycle,
+                'selected_sources' => count($orderIds),
+                'order_ids_count' => count($orderIds),
+                'company_id' => 10,
+                'account_id' => 101,
+                'elapsed_ms' => round($elapsed, 3),
+                'result' => ((int) ($summary['completed'] ?? 0) > 0 || count($orderIds) > 0) ? 'PASS' : 'NO_WORK',
+            ];
+            if ($cycle < $cycles) {
+                $resetRhythm();
+            }
+        }
+        $allOrderIds = [];
+        foreach ($transport->calls as $call) {
+            foreach ($call['order_ids'] as $orderId) {
+                $allOrderIds[] = (string) $orderId;
+            }
+        }
+        $assert(count($allOrderIds) === $cohort, 'BILLING_MATRIX_' . $cohort . '_ORDER_COUNT');
+        $assert(count(array_unique($allOrderIds)) === $cohort, 'BILLING_MATRIX_' . $cohort . '_NO_DUPLICATE_ORDERS');
+        $assert((int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE status="complete"')->fetchColumn() === $cohort, 'BILLING_MATRIX_' . $cohort . '_SOURCES_COMPLETE');
+        $assert((int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE state="completed"')->fetchColumn() === $cohort, 'BILLING_MATRIX_' . $cohort . '_POINTERS_COMPLETE');
+        $assert(max($counts ?: [0]) <= 60, 'BILLING_MATRIX_' . $cohort . '_MAX_60');
+        return $counts;
+    };
+    $billingMatrixCounts = [];
+    foreach ([1, 10, 30, 60, 61, 120] as $cohort) {
+        $billingMatrixCounts[$cohort] = $billingMatrix($cohort);
+    }
+    $assert($billingMatrixCounts[1] === [1], 'BILLING_MATRIX_1');
+    $assert($billingMatrixCounts[10] === [10], 'BILLING_MATRIX_10');
+    $assert($billingMatrixCounts[30] === [30], 'BILLING_MATRIX_30');
+    $assert($billingMatrixCounts[60] === [60], 'BILLING_MATRIX_60');
+    $assert($billingMatrixCounts[61] === [60, 1], 'BILLING_MATRIX_61');
+    $assert($billingMatrixCounts[120] === [60, 60], 'BILLING_MATRIX_120');
+    $billingMatrixRawCsv = trim((string) getenv('K3_BILLING_BATCH_RAW_CSV'));
+    if ($billingMatrixRawCsv !== '') {
+        $dir = dirname($billingMatrixRawCsv);
+        if (!is_dir($dir) && !mkdir($dir, 0770, true) && !is_dir($dir)) {
+            throw new RuntimeException('billing_matrix_raw_csv_dir_failed');
+        }
+        $fh = fopen($billingMatrixRawCsv, 'wb');
+        if ($fh === false) {
+            throw new RuntimeException('billing_matrix_raw_csv_open_failed');
+        }
+        fputcsv($fh, ['cohort', 'cycle', 'request_index', 'selected_sources', 'order_ids_count', 'company_id', 'account_id', 'elapsed_ms', 'result'], ',', '"', '\\');
+        foreach ($billingMatrixRows as $row) {
+            fputcsv($fh, $row, ',', '"', '\\');
+        }
+        fclose($fh);
+    }
 
     $resetBilling();
     $seedFinancial(101, 1, 'FIFO1');

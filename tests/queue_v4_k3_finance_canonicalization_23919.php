@@ -48,13 +48,16 @@ $assert(str_contains($repository, 'ORDER BY available_at ASC,id ASC LIMIT 1 FOR 
 $assert(str_contains($repository, 'MAX_SCAN_ROWS = 60') || str_contains($drainer, 'MAX_SCAN_ROWS = 60'), 'scan_bound_60_missing');
 $assert(str_contains($repository, 'contiguousFinancialReconciliationSourceIds'), 'billing_batch_boundary_not_queue_owned');
 $assert(str_contains($repository, 'min(60, $maxOrderIds)'), 'billing_batch_limit_not_capped_60');
-$assert(str_contains($repository, 'financialSourceIsCurrentSimpleBatchCandidate'), 'primary_billing_candidate_guard_missing');
+$assert(str_contains($repository, 'financialSourceRequiresExactFallback'), 'exact_fallback_singleton_guard_missing');
 $assert(str_contains($repository, 'queue_company_id') && str_contains($repository, 'queue_account_id'), 'billing_batch_tenant_columns_missing');
 $assert(str_contains($repository, 'DIFFERENT_TENANT_STOPS_SCAN') || str_contains($repository, 'queue_account_id'), 'billing_batch_cross_tenant_stop_not_visible');
 $assert(str_contains($repository, 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED'), 'exact_fallback_batch_guard_missing');
 $assert(str_contains($repository, 'alignReadyFinancialReconciliationPointers'), 'secondary_pointer_alignment_missing');
 $assert(str_contains($repository, 'alignReadyFinancialReconciliationPointersFromSources'), 'secondary_invalidation_alignment_missing');
 $assert(str_contains($repository, "state IN ('ready','waiting')"), 'financial_parking_must_not_touch_terminal_or_running');
+$assert(!str_contains($repository, 'meli_packs'), 'queue_repository_must_not_read_pack_integrity');
+$assert(!str_contains($repository, 'pack_integrity_status'), 'queue_repository_pack_integrity_policy_leak');
+$assert(!str_contains($repository, 'financial_local_pack_incomplete'), 'queue_repository_pack_policy_classification_leak');
 
 $assert(str_contains($finance, 'BILLING_MAX_ORDER_IDS = 60'), 'billing_max_order_ids_missing');
 $assert(str_contains($finance, 'CronDeadlineContext::assertCanStartRemote(3.0)'), 'billing_deadline_pretransport_guard_missing');
@@ -65,6 +68,9 @@ $assert(str_contains($finance, 'hasUnattributedBillingLines'), 'billing_unattrib
 $assert(str_contains($finance, 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED'), 'billing_exact_fallback_marker_missing');
 $assert(str_contains($finance, 'PACK_INCOMPLETE_RECHECK_MINUTES = 60'), 'pack_recheck_60_missing');
 $assert(str_contains($finance, 'deferWithoutAttemptPenalty'), 'pack_nonfailure_defer_missing');
+$assert(str_contains($finance, 'financial_local_pack_incomplete'), 'pack_policy_authority_not_sale_financial_service');
+$assert(str_contains($finance, "\$outcome['effective'] = false"), 'finance_local_outcome_must_be_non_effective');
+$assert(str_contains($finance, "\$outcome['execution_class'] = 'local_only'"), 'finance_local_outcome_must_be_local_only');
 $assert(str_contains($finance, 'requiresAutomaticDomainAdmission'), 'automatic_reconciliation_admission_gate_missing');
 $assert(str_contains($finance, "return \$originType !== 'manual';"), 'manual_reconciliation_must_not_auto_admit');
 $assert(str_contains($finance, 'new CronAdmissionService($pdo)'), 'reconciliation_admission_boundary_missing');
@@ -98,6 +104,8 @@ fwrite(
     . ' BILLING_BATCH_STATIC_MAX=60'
     . ' BILLING_MIN_INTERVAL_SECONDS_STATIC=900'
     . ' B429_STATIC=UNCHANGED'
+    . ' PACK_POLICY_AUTHORITY=SaleFinancialService'
+    . ' QUEUE_REPOSITORY_PACK_BUSINESS_POLICY=0'
     . ' NEW_BILLING_QUEUE_STATIC=0'
     . ' NEW_FINANCE_ORCHESTRATOR_V2_STATIC=0'
     . ' NEW_FINANCE_EVENT_BUS_STATIC=0'

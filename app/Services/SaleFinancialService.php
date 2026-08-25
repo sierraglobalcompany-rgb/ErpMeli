@@ -161,7 +161,15 @@ final class SaleFinancialService
         $remote = [];
         $remaining = self::BILLING_MAX_ORDER_IDS;
         $claimedAny = false;
+        $localPackOutcomes = $this->deferPackIncompleteSourcesWithoutAttemptPenalty($sourceIds, $companyId, $accountId);
         foreach (array_slice($sourceIds, 0, self::BILLING_MAX_ORDER_IDS) as $index => $sourceId) {
+            if (isset($localPackOutcomes[$sourceId])) {
+                $outcomes[$sourceId] = $localPackOutcomes[$sourceId];
+                $summary['processed']++;
+                $summary['deferred']++;
+                $summary['stop_reason'] = 'partial_response';
+                continue;
+            }
             $job = $this->claimSpecificBillingJob($sourceId, $companyId, $accountId);
             if ($job === null) {
                 $outcomes[$sourceId] = $this->sourceOutcome($sourceId, $companyId, $accountId);
@@ -188,6 +196,17 @@ final class SaleFinancialService
                 && $candidateOrderCount <= $remaining) {
                 $remote[] = $prepared;
                 $remaining -= $candidateOrderCount;
+                continue;
+            }
+            if (($prepared['ready'] ?? false) === false
+                && ($prepared['finalized'] ?? false) === true
+                && ($prepared['non_failure'] ?? false) === true) {
+                $this->applyPreparedLocalOutcome($job, $prepared, $summary);
+                $outcomes[(int) $job['id']] = $this->localOnlyOutcome($this->sourceOutcome(
+                    (int) $job['id'],
+                    (int) $job['company_id'],
+                    (int) $job['meli_account_id'],
+                ), $prepared);
                 continue;
             }
             if ($index > 0) {
@@ -403,6 +422,87 @@ final class SaleFinancialService
             'review_count' => $reviewCount,
         ]);
         return ['summary' => $summary, 'outcomes' => $outcomes];
+    }
+
+    /**
+     * @param list<int> $sourceIds
+     * @return array<int,array{state:string,classification:string,next_safe_at:string,effective:bool,execution_class:string}>
+     */
+    private function deferPackIncompleteSourcesWithoutAttemptPenalty(array $sourceIds, int $companyId, int $accountId): array
+    {
+        $sourceIds = array_values(array_unique(array_filter(array_map('intval', $sourceIds), static fn (int $id): bool => $id > 0)));
+        if ($sourceIds === []) {
+            return [];
+        }
+        $pdo = Database::connection();
+        $placeholders = implode(',', array_fill(0, count($sourceIds), '?'));
+        $next = gmdate('Y-m-d H:i:s', time() + self::PACK_INCOMPLETE_RECHECK_MINUTES * 60);
+        $message = 'La venta agrupada todavía está completando sus órdenes. Se verificará nuevamente.';
+        $ownTransaction = !$pdo->inTransaction();
+        if ($ownTransaction) {
+            $pdo->beginTransaction();
+        }
+        try {
+            $stmt = $pdo->prepare(
+                'SELECT s.id
+                   FROM sale_financial_reconciliation_jobs s
+                   JOIN meli_packs p
+                     ON p.meli_account_id=s.meli_account_id
+                    AND p.external_pack_id=s.external_sale_id
+                  WHERE s.company_id=?
+                    AND s.meli_account_id=?
+                    AND s.id IN (' . $placeholders . ')
+                    AND s.status IN ("pending","retry","awaiting_remote")
+                    AND s.next_run_at<=UTC_TIMESTAMP()
+                    AND (s.lease_expires_at IS NULL OR s.lease_expires_at<UTC_TIMESTAMP())
+                    AND s.sale_key LIKE "P:%"
+                    AND COALESCE(p.integrity_status,"")<>"complete"
+                  FOR UPDATE'
+            );
+            $stmt->execute(array_merge([$companyId, $accountId], $sourceIds));
+            $ids = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+            if ($ids === []) {
+                if ($ownTransaction) {
+                    $pdo->commit();
+                }
+                return [];
+            }
+
+            $update = $pdo->prepare(
+                'UPDATE sale_financial_reconciliation_jobs
+                    SET status="retry",safe_message=?,next_run_at=?,completed_at=NULL
+                  WHERE company_id=?
+                    AND meli_account_id=?
+                    AND id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')
+                    AND status IN ("pending","retry","awaiting_remote")
+                    AND next_run_at<=UTC_TIMESTAMP()
+                    AND (lease_expires_at IS NULL OR lease_expires_at<UTC_TIMESTAMP())'
+            );
+            $update->execute(array_merge([$message, $next, $companyId, $accountId], $ids));
+            if ($update->rowCount() !== count($ids)) {
+                throw new RuntimeException('financial_local_pack_batch_cas_lost');
+            }
+            if ($ownTransaction) {
+                $pdo->commit();
+            }
+        } catch (Throwable $error) {
+            if ($ownTransaction && $pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
+        }
+
+        $outcomes = [];
+        foreach ($ids as $id) {
+            $outcomes[$id] = [
+                'state' => 'waiting',
+                'classification' => 'financial_local_pack_incomplete',
+                'next_safe_at' => $next,
+                'effective' => false,
+                'execution_class' => 'local_only',
+            ];
+        }
+        return $outcomes;
     }
 
     /** @return array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} */

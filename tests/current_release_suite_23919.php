@@ -23,6 +23,7 @@ $tests = [
     'api_log_transport_truth_23914.php', 'alert_429_transport_truth_23917.php',
     'api_incident_materializer_visibility_23915.php', 'cron_api_risks_2416.php',
     'operational_surface_contract_23917.php', 'k5_health_legacy_delete_23919.php',
+    'k5_health_behavioral_mysql_23919.php',
     'queue_v4_bulk_parity_convergence_2399.php',
     'finance_admission_transition_23919.php', 'queue_v4_k2_notifications_forward_path_23919.php',
     'queue_v4_k2_notifications_forward_path_r1_23919.php',

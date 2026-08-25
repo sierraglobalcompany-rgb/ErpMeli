@@ -1512,8 +1512,8 @@
         },
         "runtime_app_services_automationruntimestatusservice_php": {
             "path": "app/Services/AutomationRuntimeStatusService.php",
-            "sha256": "56be94a3a89df48ea8326ac4a37b4cf116fc49a1c77a8081a9eb514880583f0c",
-            "sha256_lf": "56be94a3a89df48ea8326ac4a37b4cf116fc49a1c77a8081a9eb514880583f0c",
+            "sha256": "eeaf5cc4ae31056f600a630d1ad45f2290ae3e804973971c77a026ab93378d94",
+            "sha256_lf": "eeaf5cc4ae31056f600a630d1ad45f2290ae3e804973971c77a026ab93378d94",
             "text": true
         },
         "runtime_app_services_backuparchiveservice_php": {
@@ -5760,8 +5760,8 @@
         },
         "runtime_resources_release_updater_authority_2_39_19_json": {
             "path": "resources/release/updater-authority-2.39.19.json",
-            "sha256": "efaad242b6ec6f22a92e23d2540177441fc31372aa24c0f942097a01fde4d6e2",
-            "sha256_lf": "efaad242b6ec6f22a92e23d2540177441fc31372aa24c0f942097a01fde4d6e2",
+            "sha256": "3abff630a17b317182b1a6200e7eb59c6fc3ecbd16be411c4f7b8a37a9852726",
+            "sha256_lf": "3abff630a17b317182b1a6200e7eb59c6fc3ecbd16be411c4f7b8a37a9852726",
             "text": true
         },
         "runtime_resources_release_updater_authority_2_39_2_json": {

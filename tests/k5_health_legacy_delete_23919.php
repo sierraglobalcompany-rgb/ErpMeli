@@ -30,6 +30,10 @@ foreach ([
 }
 $assert(str_contains($runtime, 'jobs/queue_v4_clean.php --runtime=45 --max-jobs=3'), 'single_physical_cron_not_declared');
 $assert(!str_contains($runtime, 'process_sync_queue.php --runtime'), 'legacy_cron_declared_in_health');
+$assert(!str_contains($runtime, "'status' => 'PRIMARY'"), 'topology_must_not_report_primary_as_live_health');
+$assert(!str_contains($runtime, "'status' => 'INSIDE_SINGLE_LAUNCHER'"), 'topology_must_not_report_launcher_membership_as_live_health');
+$assert(substr_count($runtime, "'status' => 'TOPOLOGY_ONLY'") >= 3, 'topology_only_authorities_not_labeled');
+$assert(str_contains($runtime, "'live_state_authority' => 'CronApiRiskSummaryService'"), 'api_rhythm_live_state_authority_missing');
 
 $controller = $source('app/Controllers/SettingsController.php');
 $cronStatusAt = strpos($controller, 'public function cronStatus(): void');

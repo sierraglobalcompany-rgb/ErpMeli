@@ -58,18 +58,21 @@ final class AutomationRuntimeStatusService
                         'classification' => 'V4_CONTROL_PLANE',
                     ],
                     'notifications_k2' => [
-                        'status' => 'INSIDE_SINGLE_LAUNCHER',
+                        'status' => 'TOPOLOGY_ONLY',
                         'authority' => 'QueueV4CleanNotificationAdmissionStage',
+                        'live_state_authority' => 'Notification read surface',
                         'classification' => 'V4_AUTOMATIC',
                     ],
                     'finance_k3' => [
-                        'status' => 'INSIDE_SINGLE_LAUNCHER',
+                        'status' => 'TOPOLOGY_ONLY',
                         'authority' => 'SaleFinancialService plus Queue V4 pointer authority',
+                        'live_state_authority' => 'QueueV4CleanHealthSnapshotService plus finance read surface',
                         'classification' => 'V4_AUTOMATIC',
                     ],
                     'api_rhythm_k4' => [
-                        'status' => 'PRIMARY',
+                        'status' => 'TOPOLOGY_ONLY',
                         'authority' => 'ApiRhythmPolicyService',
+                        'live_state_authority' => 'CronApiRiskSummaryService',
                         'classification' => 'V4_AUTOMATIC',
                     ],
                     'legacy_compatibility' => [

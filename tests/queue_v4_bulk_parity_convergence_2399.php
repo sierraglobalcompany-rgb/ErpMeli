@@ -734,7 +734,7 @@ PHP);
     $summaryK1 = $workerK1->run('test', 3, 45);
     $metricsK1 = $workerK1->lastMetrics();
     $sentK1 = $transportK1->calls[0]['order_ids'] ?? [];
-    $assert(count($transportK1->calls) === 1 && count($sentK1) === 1, 'K1_DUE_PACK_PREFIX_REACHES_SIMPLE');
+    $assert(count($transportK1->calls) === 1 && count($sentK1) === 1, 'K1_DUE_PACK_PREFIX_REACHES_SIMPLE summary=' . json_encode($summaryK1) . ' metrics=' . json_encode($metricsK1) . ' calls=' . json_encode($transportK1->calls));
     $assert(count(array_filter($sentK1, static fn (string $id): bool => str_starts_with($id, 'PACK-'))) === 0, 'PACK_REMOTE_HTTP=0');
     $assert((int) ($summaryK1['claimed'] ?? 0) === 4 && (int) ($metricsK1['scanned'] ?? 0) === 4, 'K1_SCANNED_LOCAL_PACK_PREFIX');
     $assert((int) ($metricsK1['effective'] ?? 0) === 1, 'K1_EFFECTIVE_WORK_COUNTS_ONLY_REMOTE_CANDIDATE');

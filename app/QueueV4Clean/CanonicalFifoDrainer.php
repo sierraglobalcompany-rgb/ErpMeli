@@ -304,6 +304,7 @@ final class CanonicalFifoDrainer
                             'classification' => (string) ($outcome['classification'] ?? 'domain_source_waiting'),
                             'next_safe_at' => isset($outcome['next_safe_at']) ? (string) $outcome['next_safe_at'] : null,
                         ];
+                        $flushLocalDefers();
                         $deferred++;
                         $localDeferred++;
                         continue;

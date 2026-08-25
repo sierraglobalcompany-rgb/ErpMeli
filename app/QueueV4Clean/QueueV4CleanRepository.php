@@ -1229,7 +1229,7 @@ final class QueueV4CleanRepository
 
     /**
      * @param array<string,mixed> $job
-     * @param array<int,array{company_id:int,meli_account_id:int,status:string,next_run_at:?string}> $financialSources
+     * @param array<int,array{company_id:int,meli_account_id:int,status:string,next_run_at:?string,identity_type:?string,pack_integrity_status:?string}> $financialSources
      * @param array<int,array{company_id:int,meli_account_id:int,status:string}> $recalcSources
      * @return array{state:string,classification?:string,next_safe_at?:string}|null
      */
@@ -1281,6 +1281,14 @@ final class QueueV4CleanRepository
         $next = trim((string) ($source['next_run_at'] ?? ''));
         $timestamp = $next !== '' ? strtotime($next . ' UTC') : false;
         if ($timestamp === false || $timestamp <= time()) {
+            if (strtolower(trim((string) ($source['identity_type'] ?? ''))) === 'pack'
+                && strtolower(trim((string) ($source['pack_integrity_status'] ?? ''))) === 'incomplete') {
+                return [
+                    'state' => 'waiting',
+                    'classification' => 'financial_local_pack_incomplete',
+                    'next_safe_at' => gmdate('Y-m-d H:i:s', time() + 3600),
+                ];
+            }
             return null;
         }
         return [
@@ -1290,7 +1298,7 @@ final class QueueV4CleanRepository
         ];
     }
 
-    /** @param array<int,array{0:int,1:int}> $keys @return array<int,array{company_id:int,meli_account_id:int,status:string,next_run_at:?string}> */
+    /** @param array<int,array{0:int,1:int}> $keys @return array<int,array{company_id:int,meli_account_id:int,status:string,next_run_at:?string,identity_type:?string,pack_integrity_status:?string}> */
     private function localPrefixFinancialSources(array $keys): array
     {
         if ($keys === []) {
@@ -1299,18 +1307,33 @@ final class QueueV4CleanRepository
         if (!$this->tableExists('sale_financial_reconciliation_jobs')) {
             return [];
         }
+        $canInspectPackIntegrity = $this->tableExists('sale_financial_state') && $this->tableExists('meli_packs');
         $where = [];
         $parameters = [];
         foreach ($keys as $sourceId => $tenant) {
-            $where[] = '(id=? AND company_id=? AND meli_account_id=?)';
+            $where[] = '(s.id=? AND s.company_id=? AND s.meli_account_id=?)';
             $parameters[] = (int) $sourceId;
             $parameters[] = (int) $tenant[0];
             $parameters[] = (int) $tenant[1];
         }
-        $statement = $this->pdo->prepare(
-            'SELECT id,company_id,meli_account_id,status,next_run_at
-             FROM sale_financial_reconciliation_jobs WHERE ' . implode(' OR ', $where)
-        );
+        $sql = $canInspectPackIntegrity
+            ? 'SELECT s.id,s.company_id,s.meli_account_id,s.status,s.next_run_at,
+                      st.identity_type,p.integrity_status AS pack_integrity_status
+                 FROM sale_financial_reconciliation_jobs s
+                 LEFT JOIN sale_financial_state st
+                   ON st.company_id=s.company_id
+                  AND st.meli_account_id=s.meli_account_id
+                  AND st.sale_key=s.sale_key
+                  AND st.input_version=s.input_version
+                 LEFT JOIN meli_packs p
+                   ON p.meli_account_id=s.meli_account_id
+                  AND p.external_pack_id=s.external_sale_id
+                WHERE ' . implode(' OR ', $where)
+            : 'SELECT s.id,s.company_id,s.meli_account_id,s.status,s.next_run_at,
+                      NULL AS identity_type,NULL AS pack_integrity_status
+                 FROM sale_financial_reconciliation_jobs s
+                WHERE ' . implode(' OR ', $where);
+        $statement = $this->pdo->prepare($sql);
         $statement->execute($parameters);
         $sources = [];
         foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
@@ -1319,6 +1342,8 @@ final class QueueV4CleanRepository
                 'meli_account_id' => (int) $row['meli_account_id'],
                 'status' => (string) $row['status'],
                 'next_run_at' => isset($row['next_run_at']) ? (string) $row['next_run_at'] : null,
+                'identity_type' => isset($row['identity_type']) ? (string) $row['identity_type'] : null,
+                'pack_integrity_status' => isset($row['pack_integrity_status']) ? (string) $row['pack_integrity_status'] : null,
             ];
         }
         return $sources;

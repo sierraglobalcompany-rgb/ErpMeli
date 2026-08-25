@@ -122,7 +122,24 @@ if ($rawCsvPath !== '') {
     if ($rawCsv === false) {
         throw new RuntimeException('k1_scan_raw_csv_open_failed');
     }
-    fputcsv($rawCsv, ['mode', 'prefix', 'iteration', 'elapsed_ms', 'rows_scanned', 'claimed', 'effective', 'local_completed', 'local_deferred', 'termination_reason'], ',', '"', '\\');
+    fputcsv($rawCsv, [
+        'mode',
+        'prefix',
+        'iteration',
+        'elapsed_ms',
+        'rows_scanned',
+        'claimed',
+        'effective',
+        'local_completed',
+        'local_deferred',
+        'termination_reason',
+        'downstream_source_id',
+        'downstream_source_processed',
+        'downstream_pointer_completed',
+        'fake_billing_call_count',
+        'pack_sources_deferred',
+        'pack_attempt_penalty',
+    ], ',', '"', '\\');
 } else {
     $rawCsv = null;
 }
@@ -287,7 +304,7 @@ try {
         $pdo->prepare('INSERT INTO meli_packs(meli_account_id,external_pack_id,integrity_status) VALUES (101,?,"incomplete")')->execute([$external]);
         $pdo->prepare('INSERT INTO sale_financial_state(company_id,meli_account_id,sale_key,external_sale_id,identity_type,input_version,currency_id,commercial_status,logistics_status,provisional_status,official_status) VALUES (10,101,?,?,"pack",?,"COP","complete","complete","complete","missing")')->execute([$saleKey, $external, $inputVersion]);
         $nextRunSql = $packDue ? 'UTC_TIMESTAMP()' : 'DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR)';
-        $pdo->prepare('INSERT INTO sale_financial_reconciliation_jobs(company_id,meli_account_id,sale_key,external_sale_id,input_version,status,origin_type,next_run_at,attempts,safe_message) VALUES (10,101,?,?,?,"retry","k1_scan_pack",' . $nextRunSql . ',0,"PACK_INCOMPLETE")')->execute([$saleKey, $external, $inputVersion]);
+        $pdo->prepare('INSERT INTO sale_financial_reconciliation_jobs(company_id,meli_account_id,sale_key,external_sale_id,input_version,status,origin_type,next_run_at,attempts) VALUES (10,101,?,?,?,"pending","k1_scan_pack",' . $nextRunSql . ',0)')->execute([$saleKey, $external, $inputVersion]);
         $sourceId = (int) $pdo->lastInsertId();
         $payload = json_encode(['capability' => 'financial_reconciliation', 'source_id' => $sourceId], JSON_THROW_ON_ERROR);
         $pdo->prepare('INSERT INTO queue_v4_clean_jobs(company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,state,available_at,max_attempts) VALUES (10,101,"domain_exact",?,?,?,"ready","2026-01-01 00:00:00.000",3)')->execute([(string) $sourceId, 'k1-scan-pack:' . $prefix . ':' . $sourceId, $payload]);
@@ -349,7 +366,7 @@ try {
                     if ($capability !== 'financial_recalc') {
                         throw new RuntimeException('unexpected_domain_handler_capability');
                     }
-                    $pdo->prepare('UPDATE order_financial_recalc_jobs SET processed_items=processed_items+1 WHERE id=? AND meli_account_id=?')
+                    $pdo->prepare('UPDATE order_financial_recalc_jobs SET processed_items=processed_items+1,status="complete",completed_at=UTC_TIMESTAMP() WHERE id=? AND meli_account_id=?')
                         ->execute([$sourceId, $accountId]);
                     return ['processed' => 1];
                 };
@@ -358,6 +375,27 @@ try {
                 $worker->run('test', 1, 45);
                 $elapsed = (hrtime(true) - $started) / 1_000_000;
                 $metrics = $worker->lastMetrics();
+                $downstreamSourceProcessed = (int) $pdo->query('SELECT processed_items FROM order_financial_recalc_jobs WHERE id=' . (int) $effectiveSourceId)->fetchColumn();
+                $downstreamPointerCompleted = (int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE id=' . (int) $effective['pointer_id'] . ' AND state="completed"')->fetchColumn();
+                $packSourcesDeferred = (int) $pdo->query(
+                    'SELECT COUNT(*)
+                       FROM queue_v4_clean_jobs q
+                       JOIN sale_financial_reconciliation_jobs s
+                         ON s.id=CAST(q.resource_id AS UNSIGNED)
+                      WHERE q.job_type="domain_exact"
+                        AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability"))="financial_reconciliation"
+                        AND q.state="waiting"
+                        AND q.last_error_class="financial_local_pack_incomplete"'
+                )->fetchColumn();
+                $packAttemptPenalty = (int) $pdo->query(
+                    'SELECT COALESCE(SUM(q.attempt_count),0)+COALESCE(SUM(s.attempts),0)
+                       FROM queue_v4_clean_jobs q
+                       JOIN sale_financial_reconciliation_jobs s
+                         ON s.id=CAST(q.resource_id AS UNSIGNED)
+                      WHERE q.job_type="domain_exact"
+                        AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability"))="financial_reconciliation"
+                        AND q.last_error_class="financial_local_pack_incomplete"'
+                )->fetchColumn();
                 $termination = (int) $metrics['effective'] > 0
                     ? 'EFFECTIVE_FOUND'
                     : ((int) $metrics['scanned'] >= $maxScanRows ? 'MAX_SCAN_ROWS' : 'END_OF_QUEUE');
@@ -375,6 +413,12 @@ try {
                     'local_completed' => (int) $metrics['local_completed'],
                     'local_deferred' => (int) $metrics['local_deferred'],
                     'termination_reason' => $termination,
+                    'downstream_source_id' => $effectiveSourceId,
+                    'downstream_source_processed' => $downstreamSourceProcessed,
+                    'downstream_pointer_completed' => $downstreamPointerCompleted,
+                    'fake_billing_call_count' => count($transport->calls),
+                    'pack_sources_deferred' => $packSourcesDeferred,
+                    'pack_attempt_penalty' => $packAttemptPenalty,
                 ];
                 if (is_resource($rawCsv)) {
                     fputcsv($rawCsv, [
@@ -388,6 +432,12 @@ try {
                         (int) $metrics['local_completed'],
                         (int) $metrics['local_deferred'],
                         $termination,
+                        $effectiveSourceId,
+                        $downstreamSourceProcessed,
+                        $downstreamPointerCompleted,
+                        count($transport->calls),
+                        $packSourcesDeferred,
+                        $packAttemptPenalty,
                     ], ',', '"', '\\');
                     fflush($rawCsv);
                 }
@@ -427,19 +477,21 @@ try {
 
 $prefix59 = array_values(array_filter($rawRows, static fn (array $row): bool => (int) $row['prefix'] === 59 && (int) $row['effective'] === 1 && (int) $row['rows_scanned'] === 60 && (string) $row['termination_reason'] === 'EFFECTIVE_FOUND'));
 $prefix60 = array_values(array_filter($rawRows, static fn (array $row): bool => (int) $row['prefix'] === 60 && (int) $row['effective'] === 0 && (int) $row['rows_scanned'] === 60 && (string) $row['termination_reason'] === 'MAX_SCAN_ROWS'));
+$prefix59Expected = in_array(59, $prefixes, true) ? count($modes) * $iterations : 0;
+$prefix60Expected = in_array(60, $prefixes, true) ? count($modes) * $iterations : 0;
 $allElapsed = array_map(static fn (array $row): float => (float) $row['elapsed_ms'], $rawRows);
 $allP = k1ScanPercentiles($allElapsed);
 $timeStopped = array_values(array_filter($rawRows, static fn (array $row): bool => (string) $row['termination_reason'] === 'MAX_SCAN_TIME_MS'));
-$pass = count($prefix59) === count($modes) * $iterations
-    && count($prefix60) === count($modes) * $iterations
+$pass = ($prefix59Expected === 0 || count($prefix59) === $prefix59Expected)
+    && ($prefix60Expected === 0 || count($prefix60) === $prefix60Expected)
     && max(array_map(static fn (array $row): int => (int) $row['rows_scanned'], $rawRows)) <= $maxScanRows
     && $timeStopped === [];
 
 fwrite(STDOUT, 'QUEUE_V4_K1_REAL_WORKER_SCAN_BENCHMARK=' . ($pass ? 'PASS' : 'FAIL')
     . ' MAX_SCAN_ROWS=' . $maxScanRows
     . ' MAX_SCAN_TIME_MS=' . $maxScanTimeMs
-    . ' PREFIX_59_EFFECTIVE_REACHED=' . (count($prefix59) === count($modes) * $iterations ? 'PASS' : 'FAIL')
-    . ' PREFIX_60_ROW_CAP=' . (count($prefix60) === count($modes) * $iterations ? 'PASS' : 'FAIL')
+    . ' PREFIX_59_EFFECTIVE_REACHED=' . ($prefix59Expected === 0 ? 'NOT_RUN' : (count($prefix59) === $prefix59Expected ? 'PASS' : 'FAIL'))
+    . ' PREFIX_60_ROW_CAP=' . ($prefix60Expected === 0 ? 'NOT_RUN' : (count($prefix60) === $prefix60Expected ? 'PASS' : 'FAIL'))
     . ' SCAN_P50_MS=' . round($allP[50], 3)
     . ' SCAN_P95_MS=' . round($allP[95], 3)
     . ' SCAN_P99_MS=' . round($allP[99], 3)

@@ -55,3 +55,13 @@ Production install/recovery is a separate explicit prompt. Use dry-run, selectio
 `ApiRhythmPolicyService` is the primary persistent timing authority for current automatic Mercado Libre requests. `ApiBudgetService` is a workload allowance, not timing. `ApiPacingService` is compatibility only unless a future prompt proves otherwise.
 
 Compatibility pacing is not a blind fallback: if persistent rhythm is unavailable and pacing cannot produce an enabled reservation, the request must fail closed before fake or real transport.
+
+## 12. K5 health and operability
+
+Health is observability only. A status, health, diagnostic or Cron preflight surface may read scoped aggregates, readiness, heartbeat, OAuth state, API risk telemetry and release integrity, but it must not claim Queue work, create pointers, run producer work, reserve API permits, refresh OAuth, call Billing, start Cron or perform Mercado Libre HTTP.
+
+Use the existing `AutomationRuntimeStatusService` plus Queue V4 readiness snapshot as the human-facing authority. Do not create another health platform unless the existing aggregate cannot represent the state. Legacy file presence never means active execution authority.
+
+## 13. K5 deletion rule
+
+Physical deletion follows DELETE > MERGE > REUSE > NEW, but only after the full gate passes. If a candidate is still referenced by runtime manifest, updater package, tests, diagnostic tooling, compatibility, or K6 recovery evidence, classify it as `DELETE_LATER`, `manual_offline_only`, `diagnostic_only` or `K6_RECOVERY`; do not delete it to improve a metric.

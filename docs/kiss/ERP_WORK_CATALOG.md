@@ -167,6 +167,41 @@
 - STATUS: RETIRED_BLOCKED
 - NOTE: not a canonical launcher. K4 classifies legacy sources through `MeliTransportSourcePolicy` as `logically_retired` or `compatibility_only`; they must not bypass persistent rhythm in the current normal path.
 
+## health_operability
+
+- WORK_TYPE: health_operability
+- PLANE: OBSERVABILITY
+- PRODUCER: authenticated operator GET surfaces only
+- BUSINESS_SOURCE_OF_TRUTH: none; it summarizes certified sources without owning them
+- ADMISSION_BOUNDARY: not applicable
+- PHYSICAL_FIFO_MAPPING: none
+- CANONICAL_WORK_TYPE: none
+- IDEMPOTENCY_AUTHORITY: not applicable
+- AVAILABLE/FIFO_RULE: read-only aggregate; no claim or lease
+- DRAIN_AUTHORITY: none
+- CANONICAL_EXECUTOR: none
+- DOMAIN_HANDLER: `AutomationRuntimeStatusService` and bounded read presenters
+- REMOTE_ALLOWED: NO
+- REMOTE_ENDPOINT: none
+- RHYTHM_AUTHORITY: observes `ApiRhythmPolicyService`; does not reserve permits
+- DEADLINE_AUTHORITY: view/controller timeouts only
+- RETRY_AUTHORITY: browser retry for read-only JSON, no business retry
+- EFFECTIVE_RULE: health rows may be read but never mutated by the surface
+- FINALIZATION_OWNER: none
+- OBSERVABILITY: Queue V4 readiness snapshot, Cron risk card, API health diagnostics
+- LEGACY_PATHS: V3/Core/process_sync appear only as retired/compatibility inventory, never as active authority
+- STATUS: LOCAL_ONLY / READ_ONLY
+
+## k5_legacy_delete_wave_1
+
+- WORK_TYPE: physical legacy deletion gate
+- PLANE: BUILD / CLEANUP
+- PRODUCER: source trace and manifest evidence
+- BUSINESS_SOURCE_OF_TRUTH: `K5_DELETE_GATE_MATRIX.csv`
+- EFFECTIVE_RULE: delete only when runtime callers, route refs, includes, cron refs, transport/canonical/updater/K6 dependencies and tests all pass
+- RESULT: zero files deleted in K5 because candidates remain referenced or reserved
+- STATUS: DELETE_LATER
+
 ## API execution source taxonomy
 
 - WORK_TYPE: remote execution source labels

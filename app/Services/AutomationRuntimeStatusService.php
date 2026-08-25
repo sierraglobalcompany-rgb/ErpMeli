@@ -33,6 +33,51 @@ final class AutomationRuntimeStatusService
                 'message' => $recent
                     ? 'El único lanzador Queue V4 registró heartbeat reciente.'
                     : 'Revise el estado V4, OAuth y el Cron físico antes de iniciar trabajo manual.',
+                'read_only' => true,
+                'health_authority' => QueueV4CleanReadinessService::class,
+                'legacy_state_consulted' => false,
+                'current_authorities' => [
+                    'physical_cron' => [
+                        'status' => $physical,
+                        'launcher' => 'jobs/queue_v4_clean.php --runtime=45 --max-jobs=3',
+                        'classification' => 'V4_AUTOMATIC',
+                    ],
+                    'canonical_fifo' => [
+                        'status' => $engine === 'ACTIVE' && $readiness === 'CERTIFIED' ? 'CERTIFIED' : 'ATTENTION',
+                        'authority' => 'queue_v4_clean_jobs.available_at ASC,id ASC',
+                        'classification' => 'V4_AUTOMATIC',
+                    ],
+                    'drain_authority' => [
+                        'status' => (string) ($snapshot['scheduler'] ?? 'inactive'),
+                        'authority' => 'QueueV4CleanRepository drain authority',
+                        'classification' => 'V4_AUTOMATIC',
+                    ],
+                    'oauth' => [
+                        'status' => $oauth === 3 ? 'HEALTHY' : 'ATTENTION',
+                        'accounts' => $oauth,
+                        'classification' => 'V4_CONTROL_PLANE',
+                    ],
+                    'notifications_k2' => [
+                        'status' => 'INSIDE_SINGLE_LAUNCHER',
+                        'authority' => 'QueueV4CleanNotificationAdmissionStage',
+                        'classification' => 'V4_AUTOMATIC',
+                    ],
+                    'finance_k3' => [
+                        'status' => 'INSIDE_SINGLE_LAUNCHER',
+                        'authority' => 'SaleFinancialService plus Queue V4 pointer authority',
+                        'classification' => 'V4_AUTOMATIC',
+                    ],
+                    'api_rhythm_k4' => [
+                        'status' => 'PRIMARY',
+                        'authority' => 'ApiRhythmPolicyService',
+                        'classification' => 'V4_AUTOMATIC',
+                    ],
+                    'legacy_compatibility' => [
+                        'status' => 'RETIRED_BLOCKED_OR_MANUAL_OFFLINE',
+                        'authority' => 'RuntimeProcessInventoryService classification, not file presence',
+                        'classification' => 'RETIRED_BLOCKED',
+                    ],
+                ],
                 'entry' => null,
                 'entry_is_current_build' => null,
                 'entry_age_seconds' => null,
@@ -56,6 +101,10 @@ final class AutomationRuntimeStatusService
                 'state' => 'unknown',
                 'label' => 'Queue V4 no se pudo comprobar',
                 'message' => 'La comprobación read-only de Queue V4 no devolvió evidencia suficiente.',
+                'read_only' => true,
+                'health_authority' => QueueV4CleanReadinessService::class,
+                'legacy_state_consulted' => false,
+                'current_authorities' => [],
                 'entry' => null,
                 'entry_is_current_build' => null,
                 'entry_age_seconds' => null,

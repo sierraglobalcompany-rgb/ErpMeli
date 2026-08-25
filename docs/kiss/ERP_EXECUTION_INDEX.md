@@ -225,6 +225,30 @@ This index is intentionally human-readable. It names the current execution surfa
 - NEXT CALL: none for canonical automatic processing.
 - NOTES: catalogued for deletion backlog, not removed in R3.
 
+## F. K5 health / operability boundary
+
+### Human health authority
+
+- ROLE: operator-facing read-only health summary.
+- OWNER: `AutomationRuntimeStatusService` reusing `QueueV4CleanReadinessService`.
+- STATE AUTHORITY: current Queue V4 readiness snapshot plus scoped direct health reads.
+- NEXT CALL: none; health never claims work, creates pointers, refreshes OAuth, runs Billing, starts Cron or performs Mercado Libre HTTP.
+- NOTES: K5 makes the existing aggregate explicit instead of creating a new Health platform. The returned model lists the current authorities (`physical_cron`, `canonical_fifo`, `drain_authority`, `oauth`, `notifications_k2`, `finance_k3`, `api_rhythm_k4`) and declares `legacy_state_consulted=false`.
+
+### Current physical Cron
+
+- ROLE: only automatic launcher visible to operators.
+- OWNER: Hostinger/CLI.
+- FILE: `jobs/queue_v4_clean.php`.
+- COMMAND: `php .../jobs/queue_v4_clean.php --runtime=45 --max-jobs=3`.
+- STATE AUTHORITY: Queue V4 heartbeat/readiness evidence, not Cron V3 or Queue Core file presence.
+- NOTES: K5 does not introduce or rename a launcher.
+
+### K5 legacy delete wave #1
+
+- RESULT: zero physical deletions.
+- REASON: every reviewed legacy launcher candidate still has manifest, updater, test, compatibility, diagnostic or K6 recovery dependency evidence. The safe KISS action is to keep them classified as `RETIRED_BLOCKED`, `manual_offline_only`, `diagnostic_only` or `K6_RECOVERY` until a later file-by-file deletion gate passes.
+
 ### Notifications/webhooks
 
 - ROLE: durable event buffering plus forward-only canonical work admission.

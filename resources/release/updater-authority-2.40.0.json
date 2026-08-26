@@ -479,10 +479,6 @@
             "sha256": "0cb22fe09ff7f135c8641d78ae18ec4227dc8dbe767eb14cce93da77b7232809"
         },
         {
-            "path": "database/migrations/284_queue_core_sales_pipeline_b2.sql",
-            "sha256": "51d539f2da9fb0f58f9c63c3ef8a8a3fb516983c2c976e27af89ec77878ae2f5"
-        },
-        {
             "path": "database/migrations/296_queue_v4_clean_oauth_control_plane_2_38_3.sql",
             "sha256": "6ac2493e1b4b61de0c768274452e43169f59345792ecef88af77061c7e1fc64e"
         },
@@ -708,7 +704,7 @@
         },
         {
             "path": "resources/release/managed-runtime-dependencies-2.40.0.json",
-            "sha256": "24b892534750ae37836729de9bb22d38802d77ef288d856d2a93187a6c1cd841"
+            "sha256": "6239835ba707b069e64be531c88f295e7ffbbafa7c0cb72169f2bce487ad5099"
         },
         {
             "path": "resources/release/queue-v4-canonical-db-contract-2.38.3.json",

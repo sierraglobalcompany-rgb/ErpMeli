@@ -4500,8 +4500,8 @@
         },
         "runtime_database_migrations_284_queue_core_sales_pipeline_b2_sql": {
             "path": "database/migrations/284_queue_core_sales_pipeline_b2.sql",
-            "sha256": "51d539f2da9fb0f58f9c63c3ef8a8a3fb516983c2c976e27af89ec77878ae2f5",
-            "sha256_lf": "51d539f2da9fb0f58f9c63c3ef8a8a3fb516983c2c976e27af89ec77878ae2f5",
+            "sha256": "4c78be7c47ef607038478eb4403ffda123296b6455280bb606c391a318b5a763",
+            "sha256_lf": "4c78be7c47ef607038478eb4403ffda123296b6455280bb606c391a318b5a763",
             "text": true
         },
         "runtime_database_migrations_285_queue_core_webhook_ownership_b2_sql": {

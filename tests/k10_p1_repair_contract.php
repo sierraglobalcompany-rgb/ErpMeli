@@ -30,6 +30,8 @@ $assert(str_contains($service, 'PROFILE_GENERATION_MISMATCH'), 'generation_fence
 $assert(str_contains($service, 'private function hasTable(') && str_contains($service, 'TABLE_SCHEMA=DATABASE()'), 'service_must_inspect_injected_pdo_schema');
 $assert(str_contains($service, 'remote_calls_per_burst') && str_contains($service, 'min(60'), 'burst_not_configurable');
 $assert(str_contains($service, 'manual_physical_http_burst_limit'), 'manual_burst_limit_not_in_execution_context');
+$assert(str_contains($service, 'burst_remote_calls_current') && str_contains($service, 'burstRemaining('), 'burst_session_accumulation_missing');
+$assert(str_contains($service, "'burst_current_after' => \$burstAfter"), 'burst_receipt_accumulation_missing');
 $assert(str_contains($service, "ApiExecutionMetadataContext::run(\n                ["), 'manual_step_not_wrapped_by_shared_context');
 
 $assert(str_contains($worker, 'receiptForRun') && str_contains($worker, 'physicalHttpCallsForRun'), 'worker_receipt_missing');
@@ -37,6 +39,7 @@ $assert(str_contains($worker, 'queue_v4_clean_transport_events') && str_contains
 $assert(str_contains($worker, 'ManualRemoteCallLimitException') && str_contains($worker, 'capacity_deferred:manual_burst'), 'manual_burst_limit_must_defer_without_review');
 $assert(str_contains($context, 'manualPhysicalHttpLimit') && str_contains($context, 'manual_physical_http_burst_limit'), 'manual_burst_not_enforced_before_transport');
 $assert(str_contains($context, 'self::$remoteCalls >= $manualMaximum'), 'manual_burst_not_counted_before_transport');
+$assert(str_contains($context, '$previousManualLimit') && str_contains($context, '$currentManualLimit'), 'nested_manual_context_must_not_reset_burst_counter');
 $assert(str_contains($manualLimit, 'public readonly ?string $nextSafeAt'), 'manual_limit_exception_missing_next_safe_at');
 $assert(!str_contains($service, '$remoteBefore = $this->transportCount()'), 'global_transport_delta_still_used');
 $assert(str_contains($service, "'burst_unit' => 'PHYSICAL_REMOTE_HTTP'"), 'burst_unit_not_physical_http');
@@ -56,7 +59,7 @@ $assert(str_contains($service, 'profile_revision=profile_revision+?'), 'auto_deg
 $assert(str_contains($view, 'Iniciar Manual'), 'start_ui_missing');
 $assert(str_contains($view, 'Pausar') && str_contains($view, 'Reanudar'), 'pause_resume_ui_missing');
 $assert(str_contains($view, 'Finalizar / devolver a Auto'), 'stop_return_to_auto_missing');
-$assert(str_contains($view, 'data-k10-burst-current') && str_contains($view, 'data-k10-next-safe'), 'burst_or_429_panel_missing');
+$assert(str_contains($view, 'data-k10-burst-current') && str_contains($view, 'burst_remote_calls_current') && str_contains($view, 'data-k10-next-safe'), 'burst_or_429_panel_missing');
 $assert(str_contains($view, 'data-k10-action="heartbeat"'), 'heartbeat_form_missing');
 $assert(str_contains($view, 'if (!token || inFlight) return;'), 'heartbeat_must_not_overlap_step');
 $assert(str_contains($view, "action === 'pause'") && str_contains($view, "state !== 'PAUSED'"), 'pause_resume_visibility_must_follow_state');

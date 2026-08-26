@@ -23,6 +23,7 @@ $assert(str_contains($migration, 'CREATE TABLE IF NOT EXISTS manual_drain_sessio
 $assert(str_contains($migration, 'session_token CHAR(64) NOT NULL'), 'session_token_missing');
 $assert(str_contains($migration, 'UNIQUE KEY uq_manual_drain_session_token'), 'session_token_unique_missing');
 $assert(str_contains($migration, 'status_ui VARCHAR(30) NOT NULL'), 'metadata_state_missing');
+$assert(str_contains($migration, 'burst_remote_calls_current INT UNSIGNED NOT NULL DEFAULT 0'), 'burst_accumulator_column_missing');
 $assert(!str_contains($migration, 'queue_core_jobs'), 'k10_migration_must_not_create_queue_core_dependency');
 
 $assert(str_contains($service, 'QueueExecutionLeaseService'), 'global_execution_lease_not_used');
@@ -65,6 +66,7 @@ $assert(str_contains($mutationBody, "'profile' => \$service->profile"), 'manual_
 $assert(str_contains($service, 'profile_revision=profile_revision+1'), 'manual_profile_live_revision_missing');
 $assert(str_contains($service, "'remote_calls_per_burst' => max(1, min(60"), 'manual_burst_must_not_be_forced_to_one');
 $assert(str_contains($service, 'manual_physical_http_burst_limit'), 'manual_burst_limit_not_bound_to_api_context');
+$assert(str_contains($service, 'burst_remote_calls_current') && str_contains($service, 'manual_burst_remaining'), 'manual_burst_accumulator_missing');
 $assert(str_contains($service, 'physical_http_calls'), 'manual_remote_counter_must_use_physical_http');
 $assert(!str_contains($service, '$remoteBefore = $this->transportCount()'), 'manual_remote_counter_must_not_use_global_before_after');
 $assert(str_contains($service, 'projectStepState'), 'manual_error_projection_missing');
@@ -84,7 +86,7 @@ $assert(str_contains($view, '/settings/manual-processing/drain/start'), 'manual_
 $assert(str_contains($view, '/settings/manual-processing/drain/step'), 'manual_drain_step_form_missing');
 $assert(str_contains($view, '/settings/manual-processing/drain/profile'), 'manual_drain_profile_form_missing');
 $assert(str_contains($view, '/settings/manual-processing/drain/pause') && str_contains($view, '/settings/manual-processing/drain/resume'), 'manual_drain_pause_resume_ui_missing');
-$assert(str_contains($view, 'data-k10-burst-current') && str_contains($view, 'data-k10-next-safe'), 'manual_drain_burst_429_panel_missing');
+$assert(str_contains($view, 'data-k10-burst-current') && str_contains($view, 'burst_remote_calls_current') && str_contains($view, 'data-k10-next-safe'), 'manual_drain_burst_429_panel_missing');
 $assert(str_contains($view, 'let inFlight = false') && str_contains($view, 'scheduleStep'), 'manual_drain_serial_browser_loop_missing');
 $assert(str_contains($view, 'runOneStepSoon()') && str_contains($view, 'Sin trabajo elegible'), 'manual_drain_no_work_loop_must_stop');
 $assert(str_contains($view, 'data-k10-feedback aria-live="polite"'), 'manual_drain_live_feedback_missing');

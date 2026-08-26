@@ -78,7 +78,7 @@ if (is_array($preview ?? null)) {
         <article><span>Estado</span><strong data-k10-state><?= View::e((string) ($smartDrain['state'] ?? 'OFF')) ?></strong></article>
         <article><span>Trabajos completados</span><strong data-k10-processed><?= (int) ($drainSession['jobs_processed'] ?? 0) ?></strong></article>
         <article><span>HTTP físicos observados</span><strong data-k10-remote><?= (int) ($drainSession['remote_calls_observed'] ?? 0) ?></strong></article>
-        <article><span>Burst actual / máximo</span><strong><span data-k10-burst-current><?= (int) (($drainSession['last_result']['physical_http_calls'] ?? 0)) ?></span>/<span data-k10-burst-max><?= (int) ($drainProfile['remote_calls_per_burst'] ?? 1) ?></span></strong></article>
+        <article><span>Burst actual / máximo</span><strong><span data-k10-burst-current><?= (int) ($drainSession['burst_remote_calls_current'] ?? 0) ?></span>/<span data-k10-burst-max><?= (int) ($drainProfile['remote_calls_per_burst'] ?? 1) ?></span></strong></article>
         <article><span>Perfil rev.</span><strong data-k10-profile-revision><?= (int) ($drainSession['profile_revision'] ?? 1) ?></strong></article>
         <article><span>Cooldown / 429</span><strong data-k10-next-safe><?= View::e((string) (($drainSession['last_result']['effective_next_safe_at'] ?? '') ?: 'N/A')) ?></strong></article>
         <article><span>Heartbeat</span><strong data-k10-heartbeat><?= View::e((string) ($drainSession['heartbeat_at'] ?? 'N/A')) ?></strong></article>
@@ -193,7 +193,7 @@ if (is_array($preview ?? null)) {
     if (heartbeatEl) heartbeatEl.textContent = session && session.heartbeat_at ? session.heartbeat_at : 'N/A';
     const last = session && session.last_result ? session.last_result : {};
     const profile = session && session.profile ? session.profile : {};
-    if (burstCurrentEl) burstCurrentEl.textContent = String(last.physical_http_calls || 0);
+    if (burstCurrentEl) burstCurrentEl.textContent = String(session && session.burst_remote_calls_current ? session.burst_remote_calls_current : 0);
     if (burstMaxEl) burstMaxEl.textContent = String(profile.remote_calls_per_burst || 1);
     if (nextSafeEl) nextSafeEl.textContent = last.effective_next_safe_at || payload.next_safe_at || 'N/A';
     if (profileRevisionEl) profileRevisionEl.textContent = String(session && session.profile_revision ? session.profile_revision : 1);

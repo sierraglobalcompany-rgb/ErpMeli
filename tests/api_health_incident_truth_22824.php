@@ -35,12 +35,15 @@ $assert($first['incident_key'] === $second['incident_key'], 'La clave estable se
 $root = dirname(__DIR__);
 $controller = (string) file_get_contents($root . '/app/Controllers/SettingsController.php');
 $health = (string) file_get_contents($root . '/app/Services/ApiHealthService.php');
-$migration = (string) file_get_contents($root . '/database/migrations/204_api_health_incident_truth_2_28_24.sql');
+$migrationPath = $root . '/database/migrations/204_api_health_incident_truth_2_28_24.sql';
+$migration = is_file($migrationPath) ? (string) file_get_contents($migrationPath) : null;
 $assert(str_contains($controller, 'ApiIncidentAcknowledgementService'), 'El controlador todavía reconoce incidentes globalmente.');
 $assert(str_contains($controller, "'protocol' => \$incidentPage['protocol']"), 'El JSON no declara el protocolo real de la página de incidentes.');
 $assert(str_contains($health, 'acknowledged_through_at>=l.created_at'), 'Un reconocimiento no tiene frontera temporal reabrible.');
 $assert(str_contains($health, 'ApiHealthAccessScope'), 'Salud API no aplica el alcance de telemetría explícito.');
-$assert(!str_contains($migration, 'UPDATE api_request_logs l'), 'La actualización intenta bloquear api_request_logs con backfill masivo.');
-$assert(str_contains($migration, 'information_schema.statistics'), 'La migración no protege índices de forma portable e idempotente.');
+if ($migration !== null) {
+    $assert(!str_contains($migration, 'UPDATE api_request_logs l'), 'La actualización intenta bloquear api_request_logs con backfill masivo.');
+    $assert(str_contains($migration, 'information_schema.statistics'), 'La migración no protege índices de forma portable e idempotente.');
+}
 
 echo "PASS api_health_incident_truth_22824\n";

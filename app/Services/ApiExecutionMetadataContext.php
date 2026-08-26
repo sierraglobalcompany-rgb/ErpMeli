@@ -40,9 +40,11 @@ final class ApiExecutionMetadataContext
     {
         $previous = self::$current;
         $previousCalls = self::$remoteCalls;
+        $previousManualLimit = self::manualPhysicalHttpLimitFrom($previous);
         self::$current = array_replace(self::$current, $metadata);
-        if (self::manualPhysicalHttpLimit() > 0
-            || MeliTransportSourcePolicy::isSingleDispatch((string) ($metadata['source'] ?? ''))) {
+        $currentManualLimit = self::manualPhysicalHttpLimit();
+        if (($currentManualLimit > 0 && $previousManualLimit < 1)
+            || ($currentManualLimit < 1 && MeliTransportSourcePolicy::isSingleDispatch((string) ($metadata['source'] ?? '')))) {
             self::$remoteCalls = 0;
         }
         try {
@@ -102,7 +104,13 @@ final class ApiExecutionMetadataContext
 
     private static function manualPhysicalHttpLimit(): int
     {
-        return max(0, (int) (self::$current['manual_physical_http_burst_limit'] ?? 0));
+        return self::manualPhysicalHttpLimitFrom(self::$current);
+    }
+
+    /** @param array<string,scalar|null> $metadata */
+    private static function manualPhysicalHttpLimitFrom(array $metadata): int
+    {
+        return max(0, (int) ($metadata['manual_physical_http_burst_limit'] ?? 0));
     }
 
     private static function manualNextSafeAt(): ?string

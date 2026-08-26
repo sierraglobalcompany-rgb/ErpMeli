@@ -12,6 +12,7 @@ $tests = [
     'k10_smart_manual_drain_contract.php',
     'k10_p1_repair_contract.php',
     'k10_schema_300_transition_mysql.php',
+    'k10_runtime_qualification_mysql.php',
 ];
 
 foreach ($tests as $test) {

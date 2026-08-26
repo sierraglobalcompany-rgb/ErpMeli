@@ -40,6 +40,7 @@ $assertTable = static function (PDO $pdo) use ($assert): void {
         'profile_snapshot_json',
         'jobs_processed',
         'remote_calls_observed',
+        'burst_remote_calls_current',
         'manual_interval_until',
         'manual_cooldown_until',
         'heartbeat_at',

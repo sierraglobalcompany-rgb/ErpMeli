@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS manual_drain_sessions (
     profile_snapshot_json MEDIUMTEXT NULL,
     jobs_processed INT UNSIGNED NOT NULL DEFAULT 0,
     remote_calls_observed INT UNSIGNED NOT NULL DEFAULT 0,
+    burst_remote_calls_current INT UNSIGNED NOT NULL DEFAULT 0,
     last_completed_job_id BIGINT UNSIGNED NULL,
     last_result_json MEDIUMTEXT NULL,
     manual_interval_until DATETIME(3) NULL,

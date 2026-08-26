@@ -23,7 +23,155 @@ $admin->exec("CREATE DATABASE `{$database}` CHARACTER SET utf8mb4 COLLATE {$coll
 try {
     $pdo = new PDO($dsn . ';dbname=' . $database, $user, $pass, $options);
     App\Core\Database::setConnection($pdo);
-    (new App\Services\Migrator($pdo, $root . '/database/migrations'))->run();
+    $pdo->exec("CREATE TABLE app_settings (
+        setting_key VARCHAR(191) NOT NULL PRIMARY KEY,
+        setting_value MEDIUMTEXT NULL,
+        is_encrypted TINYINT(1) NOT NULL DEFAULT 0,
+        setting_group VARCHAR(80) NULL
+    ) ENGINE=InnoDB");
+    $pdo->exec("CREATE TABLE users (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(160) NOT NULL,
+        email VARCHAR(191) NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        role VARCHAR(40) NOT NULL,
+        status TINYINT(1) NOT NULL DEFAULT 1,
+        is_temporary TINYINT(1) NOT NULL DEFAULT 0
+    ) ENGINE=InnoDB");
+    $pdo->exec("CREATE TABLE companies (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(191) NOT NULL,
+        status TINYINT(1) NOT NULL DEFAULT 1
+    ) ENGINE=InnoDB");
+    $pdo->exec("CREATE TABLE user_company_access (
+        user_id BIGINT UNSIGNED NOT NULL,
+        company_id BIGINT UNSIGNED NOT NULL,
+        access_role VARCHAR(40) NOT NULL,
+        granted_by BIGINT UNSIGNED NULL,
+        PRIMARY KEY (user_id, company_id)
+    ) ENGINE=InnoDB");
+    $pdo->exec("CREATE TABLE meli_accounts (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        company_id BIGINT UNSIGNED NOT NULL,
+        account_name VARCHAR(191) NOT NULL,
+        meli_user_id BIGINT UNSIGNED NULL,
+        site_id VARCHAR(10) NULL DEFAULT 'MLC',
+        status VARCHAR(40) NOT NULL DEFAULT 'conectado'
+    ) ENGINE=InnoDB");
+    $pdo->exec("CREATE TABLE api_request_logs (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        meli_account_id BIGINT UNSIGNED NULL,
+        company_id BIGINT UNSIGNED NULL,
+        scope_kind VARCHAR(40) NULL DEFAULT 'account',
+        request_id VARCHAR(191) NULL,
+        method VARCHAR(10) NOT NULL,
+        endpoint_path VARCHAR(255) NOT NULL,
+        http_status INT NULL,
+        duration_ms INT NULL,
+        retry_after_seconds INT NULL,
+        attempt INT NOT NULL DEFAULT 1,
+        was_blocked TINYINT(1) NOT NULL DEFAULT 0,
+        safe_message VARCHAR(500) NULL,
+        diagnostic_id VARCHAR(80) NULL,
+        error_type VARCHAR(100) NULL,
+        error_code VARCHAR(120) NULL,
+        is_retryable TINYINT(1) NOT NULL DEFAULT 0,
+        is_app_blocked_signal TINYINT(1) NOT NULL DEFAULT 0,
+        outcome_class VARCHAR(80) NULL,
+        reached_remote TINYINT(1) NOT NULL DEFAULT 0,
+        actionable TINYINT(1) NOT NULL DEFAULT 0,
+        risk_signal TINYINT(1) NOT NULL DEFAULT 0,
+        incident_key CHAR(64) NULL,
+        execution_source VARCHAR(40) NULL,
+        job_type VARCHAR(80) NULL,
+        source_queue_key VARCHAR(80) NULL,
+        source_work_id VARCHAR(100) NULL,
+        operation_key VARCHAR(120) NULL,
+        load_class VARCHAR(80) NULL,
+        workload_units INT NOT NULL DEFAULT 1,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        KEY idx_api_logs_incident (incident_key, outcome_class, created_at),
+        KEY idx_api_logs_scope (meli_account_id, company_id, scope_kind, created_at),
+        KEY idx_api_logs_endpoint (endpoint_path, http_status, created_at)
+    ) ENGINE=InnoDB");
+    $pdo->exec("CREATE TABLE api_incident_acknowledgements (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        incident_key CHAR(64) NOT NULL,
+        scope_key VARCHAR(191) NOT NULL,
+        scope_kind VARCHAR(40) NOT NULL,
+        company_id BIGINT UNSIGNED NULL,
+        meli_account_id BIGINT UNSIGNED NULL,
+        acknowledged_by BIGINT UNSIGNED NOT NULL,
+        acknowledged_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        acknowledged_through_at DATETIME(3) NOT NULL,
+        note VARCHAR(500) NULL,
+        UNIQUE KEY uq_api_incident_ack_scope (incident_key, scope_key)
+    ) ENGINE=InnoDB");
+    $pdo->exec("CREATE TABLE api_incident_acknowledgement_events (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        incident_key CHAR(64) NOT NULL,
+        scope_key VARCHAR(191) NOT NULL,
+        scope_kind VARCHAR(40) NOT NULL,
+        company_id BIGINT UNSIGNED NULL,
+        meli_account_id BIGINT UNSIGNED NULL,
+        acknowledged_by BIGINT UNSIGNED NOT NULL,
+        acknowledged_through_at DATETIME(3) NOT NULL,
+        note VARCHAR(500) NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    ) ENGINE=InnoDB");
+    $pdo->exec("CREATE TABLE api_circuit_breakers (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        meli_account_id BIGINT UNSIGNED NULL,
+        endpoint_path VARCHAR(255) NOT NULL DEFAULT '*',
+        reason VARCHAR(120) NOT NULL,
+        http_status INT NULL,
+        status VARCHAR(40) NOT NULL DEFAULT 'open',
+        blocked_until DATETIME(3) NULL,
+        last_message VARCHAR(500) NULL,
+        error_type VARCHAR(80) NULL,
+        failure_count INT NOT NULL DEFAULT 1,
+        window_started_at DATETIME(3) NULL,
+        next_retry_at DATETIME(3) NULL,
+        scope VARCHAR(40) NOT NULL DEFAULT 'endpoint',
+        closed_at DATETIME(3) NULL,
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+    ) ENGINE=InnoDB");
+    $pdo->exec("CREATE TABLE api_manual_pauses (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        scope VARCHAR(40) NOT NULL,
+        meli_account_id BIGINT UNSIGNED NULL,
+        status VARCHAR(40) NOT NULL DEFAULT 'active',
+        pause_mode VARCHAR(40) NOT NULL DEFAULT 'timed',
+        paused_until DATETIME(3) NULL,
+        reason VARCHAR(500) NULL,
+        created_by BIGINT UNSIGNED NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        resumed_at DATETIME(3) NULL,
+        resumed_by BIGINT UNSIGNED NULL,
+        resume_reason VARCHAR(500) NULL
+    ) ENGINE=InnoDB");
+    $pdo->exec("CREATE TABLE api_budget_windows (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        scope VARCHAR(40) NOT NULL,
+        scope_key VARCHAR(191) NOT NULL,
+        meli_account_id BIGINT UNSIGNED NULL,
+        endpoint_path VARCHAR(255) NULL,
+        job_type VARCHAR(80) NULL,
+        window_started_at DATETIME(3) NOT NULL,
+        window_seconds INT NOT NULL,
+        request_limit INT NOT NULL,
+        request_count INT NOT NULL DEFAULT 0,
+        error_400_count INT NOT NULL DEFAULT 0,
+        error_401_count INT NOT NULL DEFAULT 0,
+        error_403_count INT NOT NULL DEFAULT 0,
+        error_429_count INT NOT NULL DEFAULT 0,
+        error_5xx_count INT NOT NULL DEFAULT 0,
+        cooldown_until DATETIME(3) NULL,
+        last_request_at DATETIME(3) NULL,
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        UNIQUE KEY uq_api_budget_window (scope_key, window_started_at, window_seconds),
+        KEY idx_api_budget_account (meli_account_id, window_started_at)
+    ) ENGINE=InnoDB");
     App\Services\SchemaInspectorService::clearCache();
 
     $pdo->exec("INSERT INTO users (name,email,password_hash,role,status,is_temporary) VALUES

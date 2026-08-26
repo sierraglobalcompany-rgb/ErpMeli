@@ -21,9 +21,13 @@ final class ManualDrainSessionService
     private const DEFAULT_MIN_DELAY_SECONDS = 15;
     private const DEFAULT_COOLDOWN_SECONDS = 30;
 
-    public function __construct(private ?PDO $pdo = null)
+    /** @var null|\Closure(PDO,QueueV4CleanRepository):QueueV4CleanWorker */
+    private ?\Closure $workerFactory;
+
+    public function __construct(private ?PDO $pdo = null, ?callable $workerFactory = null)
     {
         $this->pdo ??= Database::connection();
+        $this->workerFactory = $workerFactory !== null ? \Closure::fromCallable($workerFactory) : null;
     }
 
     /**
@@ -147,18 +151,18 @@ final class ManualDrainSessionService
             if (($row['ready'] ?? false) !== true) {
                 return $row;
             }
-            $worker = new QueueV4CleanWorker($this->pdo, new QueueV4CleanRepository($this->pdo));
+            $repository = new QueueV4CleanRepository($this->pdo);
+            $worker = $this->workerFactory !== null
+                ? ($this->workerFactory)($this->pdo, $repository)
+                : new QueueV4CleanWorker($this->pdo, $repository);
             $profile = $this->profileFromRow($row);
-            $manualNext = max(
-                $this->timestampOrZero($row['manual_interval_until'] ?? null),
-                $this->timestampOrZero($row['manual_cooldown_until'] ?? null),
-            );
+            $remaining = max(0, (int) ($row['manual_burst_remaining'] ?? $this->burstRemaining($row, $profile)));
             $result = ApiExecutionMetadataContext::run(
                 [
                     'source' => 'manual',
                     'job_type' => 'manual_drain',
-                    'manual_physical_http_burst_limit' => max(1, min(60, (int) ($profile['remote_calls_per_burst'] ?? 1))),
-                    'manual_next_safe_at' => $manualNext > 0 ? gmdate('Y-m-d H:i:s', $manualNext) : null,
+                    'manual_physical_http_burst_limit' => $remaining,
+                    'manual_next_safe_at' => null,
                 ],
                 static fn (): array => $worker->run('manual', 1, 25)
             );
@@ -231,12 +235,22 @@ final class ManualDrainSessionService
                 $this->pdo->commit();
                 return $result;
             }
+            $now = time();
+            $profile = $this->profileFromRow($row);
+            $cooldownTs = $this->timestampOrZero($row['manual_cooldown_until'] ?? null);
+            $intervalTs = $this->timestampOrZero($row['manual_interval_until'] ?? null);
+            if (($cooldownTs > 0 && $cooldownTs <= $now) || ($intervalTs > 0 && $intervalTs <= $now)) {
+                $this->clearExpiredManualGates((int) $row['id'], $cooldownTs > 0 && $cooldownTs <= $now, $intervalTs > 0 && $intervalTs <= $now);
+                $row = $this->sessionByToken($token, true) ?? $row;
+                $cooldownTs = $this->timestampOrZero($row['manual_cooldown_until'] ?? null);
+                $intervalTs = $this->timestampOrZero($row['manual_interval_until'] ?? null);
+            }
             $manualNext = max(
-                $this->timestampOrZero($row['manual_interval_until'] ?? null),
-                $this->timestampOrZero($row['manual_cooldown_until'] ?? null),
+                $intervalTs,
+                $cooldownTs,
             );
-            if ($manualNext > time()) {
-                $blockedState = $state === 'RATE_LIMITED' ? 'RATE_LIMITED' : 'COOLING';
+            if ($manualNext > $now) {
+                $blockedState = $cooldownTs > $now ? 'COOLING' : ($state === 'RATE_LIMITED' ? 'RATE_LIMITED' : 'COOLING');
                 $this->updateStatus((int) $row['id'], $blockedState);
                 $fresh = $this->sessionByToken($token, true) ?? $row;
                 $this->pdo->commit();
@@ -249,8 +263,25 @@ final class ManualDrainSessionService
                     'session' => $this->present($fresh),
                 ];
             }
+            $remaining = $this->burstRemaining($row, $profile);
+            if ($remaining <= 0) {
+                $cooldownSeconds = max(0, (int) ($profile['cooldown_after_burst'] ?? self::DEFAULT_COOLDOWN_SECONDS));
+                $next = $cooldownSeconds > 0 ? $now + $cooldownSeconds : $now;
+                $this->startManualCooldown((int) $row['id'], $next);
+                $fresh = $this->sessionByToken($token, true) ?? $row;
+                $this->pdo->commit();
+                return [
+                    'ok' => true,
+                    'state' => 'COOLING',
+                    'claimed' => 0,
+                    'remote_calls' => 0,
+                    'next_safe_at' => gmdate('Y-m-d H:i:s', $next),
+                    'session' => $this->present($fresh),
+                ];
+            }
             $this->pdo->commit();
             $row['ready'] = true;
+            $row['manual_burst_remaining'] = $remaining;
             return $row;
         } catch (Throwable $error) {
             if ($this->pdo->inTransaction()) {
@@ -282,7 +313,10 @@ final class ManualDrainSessionService
         $nextState = $this->projectStepState($claimed, $completed, $deferred, $classification, $httpStatus, $profile);
         $delaySeconds = max(self::DEFAULT_MIN_DELAY_SECONDS, (int) ($profile['minimum_delay_between_remote_calls'] ?? self::DEFAULT_MIN_DELAY_SECONDS));
         $burstLimit = max(1, (int) ($profile['remote_calls_per_burst'] ?? 1));
-        $cooldownSeconds = $remoteDelta > 0 && $remoteDelta >= $burstLimit
+        $burstBefore = max(0, (int) ($row['burst_remote_calls_current'] ?? 0));
+        $burstRemainingBefore = max(0, (int) ($row['manual_burst_remaining'] ?? max(0, $burstLimit - $burstBefore)));
+        $burstAfter = $burstBefore + $remoteDelta;
+        $cooldownSeconds = $remoteDelta > 0 && $burstAfter >= $burstLimit
             ? max(0, (int) ($profile['cooldown_after_burst'] ?? self::DEFAULT_COOLDOWN_SECONDS))
             : 0;
         $manualIntervalUntil = $remoteDelta > 0 ? time() + $delaySeconds : 0;
@@ -305,6 +339,9 @@ final class ManualDrainSessionService
             'effective_next_safe_at' => $effectiveNextSafe > 0 ? gmdate('Y-m-d H:i:s', $effectiveNextSafe) : null,
             'burst_unit' => 'PHYSICAL_REMOTE_HTTP',
             'burst_limit' => $burstLimit,
+            'burst_current_before' => $burstBefore,
+            'burst_remaining_before' => $burstRemainingBefore,
+            'burst_current_after' => $burstAfter,
             '429_action' => (string) ($profile['429_action'] ?? 'pause_and_ask'),
             'auto_degraded' => $autoDegraded,
             'bounded_5xx_preferences' => (string) ($profile['bounded_5xx_preferences'] ?? 'pause_and_ask'),
@@ -313,6 +350,7 @@ final class ManualDrainSessionService
             'UPDATE manual_drain_sessions
              SET status_ui=?,heartbeat_at=UTC_TIMESTAMP(3),expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND),
                  jobs_processed=jobs_processed+?,remote_calls_observed=remote_calls_observed+?,
+                 burst_remote_calls_current=?,
                  last_completed_job_id=?,last_result_json=?,
                  profile_snapshot_json=?,
                  profile_revision=profile_revision+?,
@@ -326,6 +364,7 @@ final class ManualDrainSessionService
             self::LEASE_SECONDS,
             $completed,
             $remoteDelta,
+            $burstAfter,
             $lastJobId > 0 ? $lastJobId : null,
             json_encode($receipt, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
             json_encode($profile, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
@@ -471,6 +510,36 @@ final class ManualDrainSessionService
         $stmt->execute([$state, $id]);
     }
 
+    private function burstRemaining(array $row, array $profile): int
+    {
+        $limit = max(1, min(60, (int) ($profile['remote_calls_per_burst'] ?? 1)));
+        return max(0, $limit - max(0, (int) ($row['burst_remote_calls_current'] ?? 0)));
+    }
+
+    private function clearExpiredManualGates(int $id, bool $resetBurst, bool $clearInterval): void
+    {
+        $burstSql = $resetBurst ? 'burst_remote_calls_current=0,' : '';
+        $intervalSql = $clearInterval ? 'manual_interval_until=NULL,' : '';
+        $stmt = $this->pdo->prepare(
+            'UPDATE manual_drain_sessions
+             SET ' . $burstSql . $intervalSql . 'manual_cooldown_until=IF(?=1,NULL,manual_cooldown_until),
+                 status_ui=IF(status_ui IN ("COOLING","RATE_LIMITED"),"ACTIVE",status_ui),
+                 updated_at=UTC_TIMESTAMP(3)
+             WHERE id=?'
+        );
+        $stmt->execute([$resetBurst ? 1 : 0, $id]);
+    }
+
+    private function startManualCooldown(int $id, int $next): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE manual_drain_sessions
+             SET status_ui="COOLING",manual_cooldown_until=?,updated_at=UTC_TIMESTAMP(3)
+             WHERE id=?'
+        );
+        $stmt->execute([gmdate('Y-m-d H:i:s', $next), $id]);
+    }
+
     /** @return array<string,mixed> */
     private function markTerminal(array $row, string $state, string $message): array
     {
@@ -573,6 +642,7 @@ final class ManualDrainSessionService
             'profile' => $this->profileFromRow($row),
             'jobs_processed' => (int) ($row['jobs_processed'] ?? 0),
             'remote_calls_observed' => (int) ($row['remote_calls_observed'] ?? 0),
+            'burst_remote_calls_current' => (int) ($row['burst_remote_calls_current'] ?? 0),
             'last_completed_job_id' => (int) ($row['last_completed_job_id'] ?? 0),
             'last_result' => $last,
             'manual_interval_until' => $row['manual_interval_until'] ?? null,

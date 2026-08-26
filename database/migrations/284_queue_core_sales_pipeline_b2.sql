@@ -2,6 +2,9 @@
 -- It does not activate V4, import legacy queues, or call Mercado Libre.
 
 SET @queue_core_sql=IF(
+  (SELECT COUNT(*) FROM information_schema.tables
+   WHERE table_schema=DATABASE() AND table_name='meli_orders')=1
+  AND
   (SELECT COUNT(*) FROM information_schema.columns
    WHERE table_schema=DATABASE() AND table_name='meli_orders' AND column_name='queue_snapshot_version')=0,
   'ALTER TABLE meli_orders ADD COLUMN queue_snapshot_version CHAR(64) NULL AFTER synced_at',
@@ -12,6 +15,9 @@ EXECUTE queue_core_stmt;
 DEALLOCATE PREPARE queue_core_stmt;
 
 SET @queue_core_sql=IF(
+  (SELECT COUNT(*) FROM information_schema.tables
+   WHERE table_schema=DATABASE() AND table_name='meli_orders')=1
+  AND
   (SELECT COUNT(*) FROM information_schema.columns
    WHERE table_schema=DATABASE() AND table_name='meli_orders' AND column_name='queue_snapshot_at')=0,
   'ALTER TABLE meli_orders ADD COLUMN queue_snapshot_at DATETIME(3) NULL AFTER queue_snapshot_version',

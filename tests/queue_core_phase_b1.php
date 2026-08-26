@@ -1,7 +1,10 @@
 <?php
 declare(strict_types=1);
 
-$root=dirname(__DIR__);require $root.'/bootstrap.php';
+$root=dirname(__DIR__);
+if(!defined('ERP_RELEASE_ROOT')) define('ERP_RELEASE_ROOT',$root);
+if(!defined('ERP_INSTALLATION_ROOT')) define('ERP_INSTALLATION_ROOT',$root);
+require $root.'/bootstrap.php';
 use App\Core\Database;
 use App\QueueCore\FreshOrdersDiscoveryHandler;
 use App\QueueCore\FreshOrdersGateway;

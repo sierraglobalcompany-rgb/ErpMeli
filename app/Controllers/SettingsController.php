@@ -1370,7 +1370,7 @@ final class SettingsController
                 ));
             }
         }
-        // Una campaña puede pedir un ritmo más lento, nunca superar la autoridad global.
+        // El cálculo manual puede pedir un ritmo más lento, nunca superar la autoridad global.
         $blockSize = min($blockSize, $globalBlockSize);
         $intervalSeconds = max($intervalSeconds, $globalIntervalSeconds);
         $blockPauseSeconds = max($blockPauseSeconds, $globalPauseSeconds);
@@ -1382,7 +1382,7 @@ final class SettingsController
             'message' => $emergencyStop
                 ? 'Mercado Libre está bloqueado por mantenimiento. Las campañas existentes conservan todo su progreso.'
                 : ($campaignReady
-                    ? 'La campaña avanza con el lanzador normal de Hostinger y conserva cada resultado aprobado.'
+                    ? 'Procesar ahora ejecuta una confirmación exacta por vez; la automatización V4 sigue separada.'
                     : 'Complete la actualización para habilitar el procesamiento manual.'),
         ];
         $workerCommand = '';
@@ -1567,7 +1567,7 @@ final class SettingsController
             $session['engine_live'] = false;
             $session['display_state'] = 'waiting_launcher';
             $session['estimated_remaining_seconds'] = null;
-            $session['safe_message'] = 'La campaña está guardada. Esperando que Hostinger inicie el ERP.';
+            $session['safe_message'] = 'La sesión está guardada. Ejecute el siguiente paso exacto desde esta pestaña.';
         }
         $engine = [
             'ready' => true,
@@ -1705,7 +1705,7 @@ final class SettingsController
                 $session['engine_live'] = false;
                 $session['display_state'] = 'waiting_launcher';
                 $session['estimated_remaining_seconds'] = null;
-                $session['safe_message'] = 'La campaña está guardada. Esperando que Hostinger inicie el ERP.';
+                $session['safe_message'] = 'La sesión está guardada. Ejecute el siguiente paso exacto desde esta pestaña.';
             }
         }
         $changed = $session !== null

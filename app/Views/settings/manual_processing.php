@@ -90,7 +90,7 @@ if (is_array($preview ?? null)) {
       <label><span>Duración máxima</span><span class="input-with-unit"><input type="number" name="max_duration_minutes" min="0" max="10080" value="<?= (int) $maxDurationMinutes ?>"><em>minutos</em></span><small>0 significa sin límite.</small></label>
       <div class="manual-readonly-setting"><span>Ejecucion</span><strong>Un solo trabajo por confirmacion</strong></div>
     </fieldset>
-    <div class="alert info"><strong>Comparte el techo HTTP de Cron.</strong><p>La campaña guarda avance cada <?= (int) $blockSize ?> resultado(s), pero sus salidas HTTP respetan el techo global. Permitido ahora: <?= View::e(number_format((float) ($rhythmPreview['effective_rpm'] ?? 0), 1, ',', '.')) ?> HTTP/min, limitado por <?= View::e((string) ($rhythmPreview['limiting_scope'] ?? 'protección disponible')) ?>. Esta campaña puede ir más lento, nunca más rápido.</p></div>
+    <div class="alert info"><strong>Comparte el techo HTTP de Cron.</strong><p>El cálculo manual guarda avance cada <?= (int) $blockSize ?> resultado(s), pero cada confirmación procesa un único trabajo exacto y respeta el techo global. Permitido ahora: <?= View::e(number_format((float) ($rhythmPreview['effective_rpm'] ?? 0), 1, ',', '.')) ?> HTTP/min, limitado por <?= View::e((string) ($rhythmPreview['limiting_scope'] ?? 'protección disponible')) ?>. Puede ir más lento, nunca más rápido.</p></div>
     <div class="manual-quick-delays" aria-label="Intervalos rápidos">
       <?php foreach ([0,1,2,5,10,20,30,60,300] as $delay): ?><button type="button" class="chip" data-manual-delay="<?= $delay ?>"><?= $delay < 60 ? $delay . ' s' : ($delay / 60) . ' min' ?></button><?php endforeach; ?>
     </div>
@@ -153,7 +153,7 @@ if (is_array($preview ?? null)) {
         <ul><?php foreach (array_slice((array) $preview['excluded_jobs'], 0, 25) as $excluded): ?><li><strong><?= View::e((string) ($excluded['label'] ?? 'Trabajo')) ?>:</strong> <?= View::e((string) ($excluded['reason'] ?? 'No disponible.')) ?></li><?php endforeach; ?></ul>
       </details>
       <?php endif; ?>
-      <?php if (!empty($preview['selection_limited'])): ?><div class="alert info"><strong>La campaña tiene un límite.</strong><p>Los trabajos restantes seguirán disponibles para otra campaña o para la automatización.</p></div><?php endif; ?>
+      <?php if (!empty($preview['selection_limited'])): ?><div class="alert info"><strong>La selección tiene un límite.</strong><p>Los trabajos restantes seguirán disponibles para otra confirmación exacta o para la automatización V4.</p></div><?php endif; ?>
       <?php if (!empty($preview['contains_descriptions'])): ?><div class="alert warning"><strong>Incluye descripciones.</strong><p>Aunque solicite un intervalo menor, se aplicarán al menos 20 segundos y una descripción por bloque.</p></div><?php endif; ?>
       <form method="post" action="<?= View::e($base . '/settings/manual-processing/start') ?>" class="manual-confirm-form">
         <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>"><input type="hidden" name="scope" value="<?= View::e($scope) ?>">

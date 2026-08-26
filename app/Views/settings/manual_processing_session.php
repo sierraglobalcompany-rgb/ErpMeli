@@ -94,15 +94,15 @@ $reviewErrorsLink = $base . '/settings/manual-processing/session/items?' . http_
   <?php elseif (empty($session['engine_live'])): ?>
     <aside class="manual-runtime-notice" role="status">
       <div>
-        <strong>Esperando que Hostinger inicie el ERP</strong>
-        <p>La campaña #<?= (int) $session['id'] ?> conserva sus <?= $totalJobs ?> trabajos y <?= $totalUnits ?> unidades. No se ha perdido progreso.</p>
+        <strong>Esperando confirmación manual</strong>
+        <p>La sesión #<?= (int) $session['id'] ?> conserva sus <?= $totalJobs ?> trabajos y <?= $totalUnits ?> unidades. No se ha perdido progreso ni existe continuación en segundo plano.</p>
       </div>
       <a class="btn" href="<?= View::e($base) ?>/settings/cron">Ver diagnóstico del lanzador</a>
     </aside>
   <?php endif; ?>
   <aside class="manual-runtime-notice" role="status">
     <div>
-      <strong>Último ciclo Cron de esta campaña</strong>
+      <strong>Último ciclo observado</strong>
       <p>
         Selección: <span data-manual-cron-selected><?= View::e((string) ($session['last_cron_selected_label'] ?? 'Sin selección registrada')) ?></span> ·
         <span data-manual-cron-reason><?= View::e((string) ($session['waiting_reason_label'] ?? 'Aún no hay causa registrada por Cron.')) ?></span>
@@ -202,8 +202,8 @@ $reviewErrorsLink = $base . '/settings/manual-processing/session/items?' . http_
       <span>PRÓXIMA CONSULTA</span>
       <strong data-manual-countdown-value>—</strong>
       <small data-manual-countdown-caption><?= !empty($session['engine_live'])
-          ? (($session['wait_kind'] ?? '') === 'block_pause' ? 'Pausa segura entre bloques' : 'Esperando que Cron tome la campaña')
-          : 'Esperando el próximo ciclo automático' ?></small>
+          ? (($session['wait_kind'] ?? '') === 'block_pause' ? 'Pausa segura entre bloques' : 'Esperando una nueva confirmación exacta')
+          : 'Sin ejecución manual en segundo plano' ?></small>
       <div class="manual-time-track" aria-hidden="true"><i data-manual-time-fill></i></div>
     </div>
     <div class="manual-next-card">
@@ -228,7 +228,7 @@ $reviewErrorsLink = $base . '/settings/manual-processing/session/items?' . http_
           ? 'Campaña pausada'
           : ($failed > 0 ? $failed . ($failed === 1 ? ' trabajo requiere revisión' : ' trabajos requieren revisión') : 'Revisión disponible') ?></strong>
       <p data-manual-attention-message><?= $continuesWithAttention
-          ? 'Cron continúa con los demás trabajos. Los errores están aislados y no cuentan como completados.'
+          ? 'Los errores están aislados y no cuentan como completados; no se deja un proceso manual en segundo plano.'
           : View::e((string) ($attention['result_summary'] ?? '')) ?></p>
       <div class="manual-attention-actions">
         <a class="btn small primary" data-manual-review-errors href="<?= View::e($reviewErrorsLink) ?>">Revisar <?= $failed > 0 ? $failed : '' ?> trabajos</a>

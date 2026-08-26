@@ -10,8 +10,9 @@ namespace App\Services;
  * Este servicio elegía el siguiente trabajo genérico de una cola y solo
  * comparaba source_id después de procesar.
  * Esa secuencia podía avanzar un recurso diferente al congelado por la
- * campaña. Las campañas actuales se ejecutan exclusivamente desde
- * ResumableCampaignWorkerService con ManualCampaignAdapter::processExact().
+ * selección. El camino vigente de "Procesar ahora" entra por
+ * ManualSingleStepService -> ManualQueueLauncher -> QueueRunner, sin segundo
+ * motor web ni continuación en background.
  */
 final class ManualQueueExecutionService
 {
@@ -27,7 +28,7 @@ final class ManualQueueExecutionService
             'target_errored' => false,
             'queue_key' => (string) ($item['queue_key'] ?? ''),
             'source_id' => (string) ($item['source_id'] ?? ''),
-            'message' => 'Este ejecutor heredado está retirado. El lanzador CLI procesará el recurso mediante su adaptador exacto.',
+            'message' => 'Este ejecutor heredado está retirado. Use Procesar ahora: un paso exacto por confirmación, sin continuación en segundo plano.',
         ];
     }
 }

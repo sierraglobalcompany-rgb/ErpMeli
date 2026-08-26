@@ -510,6 +510,30 @@ try {
         ];
         $assert(($inventory['base_commit'] ?? null) === 'c4db6be5e41213a52f476dff03f099b10fae6624', 'overlay_base_not_23918_authority');
         $assert(count($overlayRows) === count($requiredOverlayPaths), 'overlay_redundant_or_missing_paths');
+    } elseif ($targetVersion === '2.40.0') {
+        $requiredOverlayPaths = [
+            'VERSION',
+            'app/Controllers/SettingsController.php',
+            'app/QueueCore/QueueExecutionLeaseService.php',
+            'app/QueueV4Clean/QueueV4CleanScheduler.php',
+            'app/QueueV4Clean/QueueV4CleanWorker.php',
+            'app/Services/ApiExecutionMetadataContext.php',
+            'app/Services/ManagedRuntimePublicationPolicy.php',
+            'app/Services/ManualDrainSessionService.php',
+            'app/Services/ManualQueueExecutionService.php',
+            'app/Services/ManualRemoteCallLimitException.php',
+            'app/Views/settings/manual_processing.php',
+            'app/Views/settings/manual_processing_session.php',
+            'app/Views/settings/manual_processing_setup.php',
+            'database/migrations/284_queue_core_sales_pipeline_b2.sql',
+            'database/migrations/300_manual_drain_sessions_2_40_0.sql',
+            'public/index.php',
+            'resources/release/managed-runtime-dependencies-2.40.0.json',
+            'resources/release/updater-authority-2.40.0.json',
+            'resources/runtime-manifest.json',
+        ];
+        $assert(($inventory['base_commit'] ?? null) === '30a3a3f8705d40eb0e31e94ac4a4755ff19c6aa4', 'overlay_base_not_23919_authority');
+        $assert(count($overlayRows) === count($requiredOverlayPaths), 'overlay_redundant_or_missing_paths');
     }
     foreach (array_values(array_unique($requiredOverlayPaths)) as $requiredOverlay) {
         $assert(isset($overlay[$requiredOverlay]), 'required_overlay_path_missing:' . $requiredOverlay);

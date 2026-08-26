@@ -7,10 +7,10 @@
     "publication_policy": {
         "base_commit": "b9d1644522e7b36d5729c5ba090279b3ffc50fb8",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 970,
-        "component_count": 969,
-        "paths_sha256": "66ba40899987e21f0f5f5a2828c41de7f73911b5508522aa85b86493558bd466",
-        "dependency_registry_sha256": "24b892534750ae37836729de9bb22d38802d77ef288d856d2a93187a6c1cd841",
+        "package_file_count": 971,
+        "component_count": 970,
+        "paths_sha256": "5038dd3ddb558e661acae78ff28e3ad9b408c43a7ae9f662ff41fc54afa2f892",
+        "dependency_registry_sha256": "6239835ba707b069e64be531c88f295e7ffbbafa7c0cb72169f2bce487ad5099",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -5448,8 +5448,8 @@
         },
         "runtime_resources_release_managed_runtime_dependencies_2_40_0_json": {
             "path": "resources/release/managed-runtime-dependencies-2.40.0.json",
-            "sha256": "24b892534750ae37836729de9bb22d38802d77ef288d856d2a93187a6c1cd841",
-            "sha256_lf": "24b892534750ae37836729de9bb22d38802d77ef288d856d2a93187a6c1cd841",
+            "sha256": "6239835ba707b069e64be531c88f295e7ffbbafa7c0cb72169f2bce487ad5099",
+            "sha256_lf": "6239835ba707b069e64be531c88f295e7ffbbafa7c0cb72169f2bce487ad5099",
             "text": true
         },
         "runtime_resources_release_production_legacy_quarantine_2_36_1_json": {
@@ -5810,6 +5810,12 @@
             "path": "resources/release/updater-authority-2.39.9.json",
             "sha256": "a3316897cf98f7cc5d8fbfef2e4b788c092b91c06f4b77e50efbc68706d9a3dd",
             "sha256_lf": "a3316897cf98f7cc5d8fbfef2e4b788c092b91c06f4b77e50efbc68706d9a3dd",
+            "text": true
+        },
+        "runtime_resources_release_updater_authority_2_40_0_json": {
+            "path": "resources/release/updater-authority-2.40.0.json",
+            "sha256": "a918d4a34ceac1807acc85d7eeb41d40dbb2e4a5aec16818d8fce6fa7df15cfc",
+            "sha256_lf": "a918d4a34ceac1807acc85d7eeb41d40dbb2e4a5aec16818d8fce6fa7df15cfc",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
     "authority_id": "k10-smart-manual-drain-release-2.40.0-runtime-dependencies",
-    "runtime_manifest_paths_sha256": "66ba40899987e21f0f5f5a2828c41de7f73911b5508522aa85b86493558bd466",
+    "runtime_manifest_paths_sha256": "5038dd3ddb558e661acae78ff28e3ad9b408c43a7ae9f662ff41fc54afa2f892",
     "coverage_base_commit": "b9d1644522e7b36d5729c5ba090279b3ffc50fb8",
     "classifications": {
         "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

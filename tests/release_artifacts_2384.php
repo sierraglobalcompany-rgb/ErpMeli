@@ -525,6 +525,7 @@ try {
             'app/Views/settings/manual_processing.php',
             'app/Views/settings/manual_processing_session.php',
             'app/Views/settings/manual_processing_setup.php',
+            'database/migrations/284_queue_core_sales_pipeline_b2.sql',
             'database/migrations/300_manual_drain_sessions_2_40_0.sql',
             'public/index.php',
             'resources/release/managed-runtime-dependencies-2.40.0.json',

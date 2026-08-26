@@ -147,6 +147,13 @@ $releaseSchema = trim((string) (getenv('ERP_RELEASE_SCHEMA') ?: '296'));
 $releaseMigrationNote = trim((string) (getenv('ERP_RELEASE_MIGRATION_NOTE') ?: 'no se agrega ninguna migración'));
 $releaseInstruction = trim((string) (getenv('ERP_RELEASE_INSTRUCTION') ?: 'Mantenga Cron deshabilitado y ejecute por SSH únicamente jobs/queue_v4_runtime_self_check.php.'));
 $releaseOverlayLabel = trim((string) (getenv('ERP_RELEASE_OVERLAY_LABEL') ?: 'FTP_REPAIR_OVERLAY'));
+$releaseForceOverlayPaths = array_values(array_filter(
+    array_map(
+        static fn (string $path): string => trim(str_replace('\\', '/', $path)),
+        preg_split('/[\r\n,]+/', (string) (getenv('ERP_RELEASE_FORCE_OVERLAY_PATHS') ?: '')) ?: []
+    ),
+    static fn (string $path): bool => $path !== ''
+));
 if (preg_match('/^[A-Z0-9_]+$/', $releaseOverlayLabel) !== 1) {
     throw new RuntimeException('release_overlay_label_invalid');
 }
@@ -197,13 +204,21 @@ try {
     foreach (ManagedRuntimePublicationPolicy::packageEntries($source, $baseCommit) as $entry) {
         $baseEntries[$entry['path']] = $entry;
     }
+    $forceOverlay = array_fill_keys($releaseForceOverlayPaths, true);
     $currentEntries = [];
     $overlayEntries = [];
     foreach ($entries as $entry) {
         $currentEntries[$entry['path']] = $entry;
-        if (!isset($baseEntries[$entry['path']]) || !hash_equals($baseEntries[$entry['path']]['sha256'], $entry['sha256'])) {
+        if (isset($forceOverlay[$entry['path']])
+            || !isset($baseEntries[$entry['path']])
+            || !hash_equals($baseEntries[$entry['path']]['sha256'], $entry['sha256'])
+        ) {
             $overlayEntries[] = $entry;
         }
+    }
+    $missingForcedOverlay = array_values(array_diff(array_keys($forceOverlay), array_keys($currentEntries)));
+    if ($missingForcedOverlay !== []) {
+        throw new RuntimeException('force_overlay_path_missing:' . implode(',', $missingForcedOverlay));
     }
     $deletedRuntime = array_values(array_diff(array_keys($baseEntries), array_keys($currentEntries)));
     if ($deletedRuntime !== []) {
@@ -277,11 +292,14 @@ try {
         '',
         '1. Extraiga ERP_MELI_' . $version . '_' . $releaseOverlayLabel . '.zip localmente.',
         '2. Suba únicamente los archivos incluidos sobre la carpeta existente erp-meli, conservando rutas.',
-        '3. Nunca sobrescriba config.env, shared/config.env, storage, OAuth, pausas, logs o backups.',
-        '4. Abra actualizar.php y complete ' . $releaseUpgradeFrom . ' → ' . $version . '; ' . $releaseMigrationNote . '.',
-        '5. Confirme VERSION, app.version y marker ' . $version . '; schema ' . $releaseSchema . ' y pendientes 0.',
-        '6. ' . $releaseInstruction,
-        '7. Verifique el estado operativo sin cambiar la configuración física del único Cron.',
+        '3. Use el overlay completo de esta release; no mezcle archivos de overlays anteriores.',
+        '4. Nunca sobrescriba config.env, shared/config.env, storage, OAuth, pausas, logs o backups.',
+        '5. No reanude un update run previamente fallido; si hubo bloqueo, cree un run nuevo después de restaurar coherencia de archivos.',
+        '6. No ejecute migraciones manualmente, no toque schema_migrations y no edite checksums productivos.',
+        '7. Abra actualizar.php y complete ' . $releaseUpgradeFrom . ' → ' . $version . '; ' . $releaseMigrationNote . '.',
+        '8. Confirme VERSION, app.version y marker ' . $version . '; schema ' . $releaseSchema . ' y pendientes 0.',
+        '9. ' . $releaseInstruction,
+        '10. Verifique el estado operativo sin cambiar la configuración física del único Cron.',
         '',
         'La instalación no crea Cron Hostinger, no ejecuta OAuth ni Queue V4 Clean y no ejecuta readiness automáticamente.',
         '',

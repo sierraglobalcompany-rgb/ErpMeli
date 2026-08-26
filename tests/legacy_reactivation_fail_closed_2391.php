@@ -181,7 +181,13 @@ try {
         'rollback_offline_disable_contract_missing',
     );
 
-    require_once $root . '/vendor/autoload.php';
+    if (!defined('ERP_RELEASE_ROOT')) {
+        define('ERP_RELEASE_ROOT', $root);
+    }
+    if (!defined('ERP_INSTALLATION_ROOT')) {
+        define('ERP_INSTALLATION_ROOT', $root);
+    }
+    require_once $root . '/bootstrap.php';
     $controller = (new ReflectionClass(\App\Controllers\SettingsController::class))->newInstanceWithoutConstructor();
     $guard = new ReflectionMethod(\App\Controllers\SettingsController::class, 'assertLegacyCronMutationDisabled');
     try {

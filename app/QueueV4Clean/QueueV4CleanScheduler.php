@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\QueueV4Clean;
 
 use App\Core\Env;
+use App\QueueCore\QueueExecutionLease;
+use App\QueueCore\QueueExecutionLeaseService;
 use App\Services\CronDeadlineContext;
 use App\Services\EmergencyControlService;
 use App\Services\SalesAuditExactRepairService;
@@ -40,6 +42,17 @@ final class QueueV4CleanScheduler
         $lease->execute([$owner]);
         if ($lease->rowCount() !== 1) {
             return ['ok' => true, 'status' => 'busy', 'processed' => 0];
+        }
+        $drainLeases = new QueueExecutionLeaseService($this->pdo);
+        $drainAuthority = $drainLeases->acquire('cron_v4', $owner, 60);
+        if (!$drainAuthority instanceof QueueExecutionLease) {
+            $release = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_leases
+                 SET owner_ref=NULL,acquired_at=NULL,heartbeat_at=NULL,expires_at=NULL
+                 WHERE lease_key='scheduler' AND owner_ref=?"
+            );
+            $release->execute([$owner]);
+            return ['ok' => true, 'status' => 'busy_drainer', 'processed' => 0, 'claimed_total' => 0];
         }
         QueueV4CleanCycleBudget::start(QueueV4CleanCycleBudget::CYCLE_HTTP_SAFETY_FUSE);
         try {
@@ -119,6 +132,10 @@ final class QueueV4CleanScheduler
                 'http_budget' => QueueV4CleanCycleBudget::snapshot(),
             ];
         } finally {
+            if (isset($drainLeases, $drainAuthority)
+                && $drainAuthority instanceof QueueExecutionLease) {
+                $drainLeases->release($drainAuthority);
+            }
             $release = $this->pdo->prepare(
                 "UPDATE queue_v4_clean_leases
                  SET owner_ref=NULL,acquired_at=NULL,heartbeat_at=NULL,expires_at=NULL

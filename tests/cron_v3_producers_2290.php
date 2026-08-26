@@ -2,7 +2,14 @@
 
 declare(strict_types=1);
 
-require dirname(__DIR__) . '/vendor/autoload.php';
+$root = dirname(__DIR__);
+if (!defined('ERP_RELEASE_ROOT')) {
+    define('ERP_RELEASE_ROOT', $root);
+}
+if (!defined('ERP_INSTALLATION_ROOT')) {
+    define('ERP_INSTALLATION_ROOT', $root);
+}
+require $root . '/bootstrap.php';
 
 use App\Services\CronV3ProducerService;
 use App\Services\WorkEnvelope;

@@ -1771,13 +1771,22 @@ final class SettingsController
         $this->manualDrainJsonMutation('stop');
     }
 
+    public function manualDrainProfile(): void
+    {
+        $this->manualDrainJsonMutation('profile');
+    }
+
     public function manualDrainStatus(): void
     {
-        $this->requireAdminPermanent();
+        $this->requireManualDrainGlobalAuthority();
         try {
+            $generation = isset($_GET['drain_generation']) && $_GET['drain_generation'] !== ''
+                ? max(0, (int) $_GET['drain_generation'])
+                : null;
             $this->json((new \App\Services\ManualDrainSessionService())->status(
                 (int) Auth::id(),
-                trim((string) ($_GET['session_token'] ?? ''))
+                trim((string) ($_GET['session_token'] ?? '')),
+                $generation
             ));
         } catch (\Throwable $error) {
             http_response_code(503);
@@ -2740,26 +2749,43 @@ final class SettingsController
 
     private function manualDrainJsonMutation(string $action): void
     {
-        $this->requireAdminPermanent();
+        $this->requireManualDrainGlobalAuthority();
         Csrf::validate($_POST['_token'] ?? null);
         $this->assertSameOrigin();
         try {
             $service = new \App\Services\ManualDrainSessionService();
             $token = trim((string) ($_POST['session_token'] ?? ''));
             $userId = (int) Auth::id();
+            $generation = isset($_POST['drain_generation']) && $_POST['drain_generation'] !== ''
+                ? max(0, (int) $_POST['drain_generation'])
+                : null;
+            if ($action !== 'start' && $generation === null) {
+                http_response_code(409);
+                $this->json([
+                    'ok' => false,
+                    'state' => 'OFF',
+                    'claimed' => 0,
+                    'remote_calls' => 0,
+                    'code' => 'PROFILE_GENERATION_REQUIRED',
+                    'message' => 'La acción K10 requiere generación de sesión. Recargue la página antes de continuar.',
+                ]);
+                return;
+            }
+            $profile = [
+                'remote_calls_per_burst' => (int) ($_POST['remote_calls_per_burst'] ?? 1),
+                'minimum_delay_between_remote_calls' => (int) ($_POST['minimum_delay_between_remote_calls'] ?? 15),
+                'cooldown_after_burst' => (int) ($_POST['cooldown_after_burst'] ?? 30),
+                '429_action' => (string) ($_POST['429_action'] ?? 'pause_and_ask'),
+                'bounded_5xx_preferences' => (string) ($_POST['bounded_5xx_preferences'] ?? 'pause_and_ask'),
+            ];
             $result = match ($action) {
-                'start' => $service->start($userId, [
-                    'remote_calls_per_burst' => (int) ($_POST['remote_calls_per_burst'] ?? 1),
-                    'minimum_delay_between_remote_calls' => (int) ($_POST['minimum_delay_between_remote_calls'] ?? 15),
-                    'cooldown_after_burst' => (int) ($_POST['cooldown_after_burst'] ?? 30),
-                    '429_action' => (string) ($_POST['429_action'] ?? 'pause'),
-                    'bounded_5xx_preferences' => (string) ($_POST['bounded_5xx_preferences'] ?? 'fail_closed'),
-                ]),
-                'step' => $service->step($userId, $token),
-                'heartbeat' => $service->heartbeat($userId, $token),
-                'pause' => $service->pause($userId, $token),
-                'resume' => $service->resume($userId, $token),
-                'stop' => $service->stop($userId, $token),
+                'start' => $service->start($userId, $profile),
+                'step' => $service->step($userId, $token, $generation),
+                'heartbeat' => $service->heartbeat($userId, $token, $generation),
+                'pause' => $service->pause($userId, $token, $generation),
+                'resume' => $service->resume($userId, $token, $generation),
+                'stop' => $service->stop($userId, $token, $generation),
+                'profile' => $service->profile($userId, $token, $generation, $profile),
                 default => ['ok' => false, 'state' => 'OFF', 'message' => 'Acción no soportada.'],
             };
             if (empty($result['ok']) && (string) ($result['code'] ?? '') === 'DRAIN_AUTHORITY_BUSY') {
@@ -2775,6 +2801,24 @@ final class SettingsController
                 'remote_calls' => 0,
                 'message' => \App\Services\SafeErrorPresenter::message($error, 'No se pudo ejecutar el paso manual.'),
             ]);
+        }
+    }
+
+    private function requireManualDrainGlobalAuthority(): void
+    {
+        $this->requireAdminPermanent();
+        $scope = (new \App\Services\ApiHealthAccessScope())->snapshot();
+        if (empty($scope['application'])) {
+            http_response_code(403);
+            $this->json([
+                'ok' => false,
+                'state' => 'OFF',
+                'claimed' => 0,
+                'remote_calls' => 0,
+                'code' => 'GLOBAL_APPLICATION_AUTHORITY_REQUIRED',
+                'message' => 'El drenador manual requiere autorización explícita de aplicación sobre todas las empresas activas.',
+            ]);
+            exit;
         }
     }
 

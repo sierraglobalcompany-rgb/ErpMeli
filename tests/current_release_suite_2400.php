@@ -10,6 +10,7 @@ $tests = [
     'billing_429_concurrency_mysql.php',
     'queue_v4_bulk_parity_convergence_2399.php',
     'k10_smart_manual_drain_contract.php',
+    'k10_p1_repair_contract.php',
     'k10_schema_300_transition_mysql.php',
 ];
 

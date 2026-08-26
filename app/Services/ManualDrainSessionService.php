@@ -77,9 +77,12 @@ final class ManualDrainSessionService
     }
 
     /** @return array<string,mixed> */
-    public function heartbeat(int $userId, string $token): array
+    public function heartbeat(int $userId, string $token, ?int $expectedGeneration = null): array
     {
-        return $this->withSessionLock($userId, $token, function (array $row): array {
+        return $this->withSessionLock($userId, $token, function (array $row) use ($expectedGeneration): array {
+            if (!$this->generationMatches($row, $expectedGeneration)) {
+                return $this->generationMismatch($row);
+            }
             if (!$this->heartbeatLease($row)) {
                 return $this->markTerminal($row, 'EXPIRED', 'La autoridad global expiró antes del heartbeat.');
             }
@@ -94,39 +97,45 @@ final class ManualDrainSessionService
     }
 
     /** @return array<string,mixed> */
-    public function pause(int $userId, string $token): array
+    public function pause(int $userId, string $token, ?int $expectedGeneration = null): array
     {
-        return $this->setState($userId, $token, 'PAUSED');
+        return $this->setState($userId, $token, 'PAUSED', $expectedGeneration);
     }
 
     /** @return array<string,mixed> */
-    public function resume(int $userId, string $token): array
+    public function resume(int $userId, string $token, ?int $expectedGeneration = null): array
     {
-        return $this->setState($userId, $token, 'ACTIVE');
+        return $this->setState($userId, $token, 'ACTIVE', $expectedGeneration);
     }
 
     /** @return array<string,mixed> */
-    public function stop(int $userId, string $token): array
+    public function stop(int $userId, string $token, ?int $expectedGeneration = null): array
     {
-        return $this->withSessionLock($userId, $token, function (array $row): array {
+        return $this->withSessionLock($userId, $token, function (array $row) use ($expectedGeneration): array {
+            if (!$this->generationMatches($row, $expectedGeneration)) {
+                return $this->generationMismatch($row);
+            }
             $this->releaseLease($row);
             return $this->markTerminal($row, 'RELEASING', 'Sesión detenida por el operador.');
         });
     }
 
     /** @return array<string,mixed> */
-    public function status(int $userId, string $token = ''): array
+    public function status(int $userId, string $token = '', ?int $expectedGeneration = null): array
     {
         $this->assertInstalled();
         $row = $token !== '' ? $this->sessionByToken($token, false) : $this->activeSessionForUser($userId);
         if ($row === null || (int) ($row['owner_user_id'] ?? 0) !== $userId) {
             return ['ok' => false, 'state' => 'OFF', 'session' => null];
         }
+        if ($token !== '' && !$this->generationMatches($row, $expectedGeneration)) {
+            return $this->generationMismatch($row);
+        }
         return ['ok' => true, 'state' => $this->projectState($row), 'session' => $this->present($row)];
     }
 
     /** @return array<string,mixed> */
-    public function step(int $userId, string $token): array
+    public function step(int $userId, string $token, ?int $expectedGeneration = null): array
     {
         $this->assertInstalled();
         $lockName = 'manual_drain_step_' . hash('sha256', $token);
@@ -134,22 +143,68 @@ final class ManualDrainSessionService
             return ['ok' => false, 'state' => 'ACTIVE', 'claimed' => 0, 'remote_calls' => 0, 'code' => 'STEP_ALREADY_RUNNING'];
         }
         try {
-            $row = $this->prepareStep($userId, $token);
+            $row = $this->prepareStep($userId, $token, $expectedGeneration);
             if (($row['ready'] ?? false) !== true) {
                 return $row;
             }
-            $remoteBefore = $this->transportCount();
             $worker = new QueueV4CleanWorker($this->pdo, new QueueV4CleanRepository($this->pdo));
-            $result = $worker->run('manual', 1, 25);
-            $remoteAfter = $this->transportCount();
-            return $this->recordStepResult($row, $result, max(0, $remoteAfter - $remoteBefore));
+            $profile = $this->profileFromRow($row);
+            $manualNext = max(
+                $this->timestampOrZero($row['manual_interval_until'] ?? null),
+                $this->timestampOrZero($row['manual_cooldown_until'] ?? null),
+            );
+            $result = ApiExecutionMetadataContext::run(
+                [
+                    'source' => 'manual',
+                    'job_type' => 'manual_drain',
+                    'manual_physical_http_burst_limit' => max(1, min(60, (int) ($profile['remote_calls_per_burst'] ?? 1))),
+                    'manual_next_safe_at' => $manualNext > 0 ? gmdate('Y-m-d H:i:s', $manualNext) : null,
+                ],
+                static fn (): array => $worker->run('manual', 1, 25)
+            );
+            $receipt = $worker->receiptForRun((int) ($result['run_id'] ?? 0));
+            return $this->recordStepResult($row, $result + $receipt);
         } finally {
             $this->releaseAdvisoryLock($lockName);
         }
     }
 
+    /**
+     * @param array<string,mixed> $profile
+     * @return array<string,mixed>
+     */
+    public function profile(int $userId, string $token, ?int $expectedGeneration, array $profile): array
+    {
+        return $this->withSessionLock($userId, $token, function (array $row) use ($token, $expectedGeneration, $profile): array {
+            if (!$this->generationMatches($row, $expectedGeneration)) {
+                return $this->generationMismatch($row);
+            }
+            if (!in_array((string) ($row['status_ui'] ?? ''), ['ACTIVE', 'COOLING', 'RATE_LIMITED', 'PAUSED'], true)) {
+                return ['ok' => false, 'state' => $this->projectState($row), 'claimed' => 0, 'remote_calls' => 0, 'session' => $this->present($row)];
+            }
+            if (!$this->heartbeatLease($row)) {
+                return $this->markTerminal($row, 'EXPIRED', 'La autoridad global expiró antes de actualizar el perfil.');
+            }
+            $normalized = $this->normalizeProfile($profile);
+            $stmt = $this->pdo->prepare(
+                'UPDATE manual_drain_sessions
+                 SET profile_snapshot_json=?,profile_revision=profile_revision+1,
+                     heartbeat_at=UTC_TIMESTAMP(3),expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND)
+                 WHERE id=? AND session_token=?'
+            );
+            $stmt->execute([
+                json_encode($normalized, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+                self::LEASE_SECONDS,
+                (int) $row['id'],
+                $token,
+            ]);
+            $fresh = $this->sessionByToken($token, true) ?? $row;
+            return ['ok' => true, 'state' => $this->projectState($fresh), 'claimed' => 0, 'remote_calls' => 0, 'session' => $this->present($fresh)];
+        });
+    }
+
     /** @return array<string,mixed> */
-    private function prepareStep(int $userId, string $token): array
+    private function prepareStep(int $userId, string $token, ?int $expectedGeneration): array
     {
         $this->pdo->beginTransaction();
         try {
@@ -157,6 +212,10 @@ final class ManualDrainSessionService
             if ($row === null || (int) ($row['owner_user_id'] ?? 0) !== $userId) {
                 $this->pdo->rollBack();
                 return ['ok' => false, 'state' => 'OFF', 'claimed' => 0, 'remote_calls' => 0, 'code' => 'DRAIN_SESSION_NOT_FOUND'];
+            }
+            if (!$this->generationMatches($row, $expectedGeneration)) {
+                $this->pdo->commit();
+                return $this->generationMismatch($row);
             }
             $state = (string) ($row['status_ui'] ?? 'OFF');
             if ($state === 'PAUSED') {
@@ -177,12 +236,13 @@ final class ManualDrainSessionService
                 $this->timestampOrZero($row['manual_cooldown_until'] ?? null),
             );
             if ($manualNext > time()) {
-                $this->updateStatus((int) $row['id'], 'COOLING');
+                $blockedState = $state === 'RATE_LIMITED' ? 'RATE_LIMITED' : 'COOLING';
+                $this->updateStatus((int) $row['id'], $blockedState);
                 $fresh = $this->sessionByToken($token, true) ?? $row;
                 $this->pdo->commit();
                 return [
                     'ok' => true,
-                    'state' => 'COOLING',
+                    'state' => $blockedState,
                     'claimed' => 0,
                     'remote_calls' => 0,
                     'next_safe_at' => gmdate('Y-m-d H:i:s', $manualNext),
@@ -205,29 +265,59 @@ final class ManualDrainSessionService
      * @param array<string,mixed> $result
      * @return array<string,mixed>
      */
-    private function recordStepResult(array $row, array $result, int $remoteDelta): array
+    private function recordStepResult(array $row, array $result): array
     {
         $profile = $this->profileFromRow($row);
         $claimed = (int) ($result['claimed'] ?? 0);
         $completed = (int) ($result['completed'] ?? 0);
         $deferred = (int) ($result['deferred'] ?? 0);
-        $nextState = $deferred > 0 && $completed === 0 && $claimed > 0 ? 'RATE_LIMITED' : 'ACTIVE';
+        $remoteDelta = max(0, (int) ($result['physical_http_calls'] ?? $result['remote_calls'] ?? 0));
+        $classification = strtolower(trim((string) ($result['classification'] ?? '')));
+        $httpStatus = isset($result['http_status']) ? (int) $result['http_status'] : null;
+        $autoDegraded = $this->isRemoteRateLimit($classification, $httpStatus)
+            && (string) ($profile['429_action'] ?? 'pause_and_ask') === 'auto_degrade';
+        if ($autoDegraded) {
+            $profile = $this->degradedProfile($profile);
+        }
+        $nextState = $this->projectStepState($claimed, $completed, $deferred, $classification, $httpStatus, $profile);
         $delaySeconds = max(self::DEFAULT_MIN_DELAY_SECONDS, (int) ($profile['minimum_delay_between_remote_calls'] ?? self::DEFAULT_MIN_DELAY_SECONDS));
-        $cooldownSeconds = $claimed > 0 ? max(0, (int) ($profile['cooldown_after_burst'] ?? self::DEFAULT_COOLDOWN_SECONDS)) : 0;
+        $burstLimit = max(1, (int) ($profile['remote_calls_per_burst'] ?? 1));
+        $cooldownSeconds = $remoteDelta > 0 && $remoteDelta >= $burstLimit
+            ? max(0, (int) ($profile['cooldown_after_burst'] ?? self::DEFAULT_COOLDOWN_SECONDS))
+            : 0;
+        $manualIntervalUntil = $remoteDelta > 0 ? time() + $delaySeconds : 0;
+        $manualCooldownUntil = $cooldownSeconds > 0 ? time() + $cooldownSeconds : 0;
+        $canonicalNextSafe = $this->timestampOrZero($result['next_safe_at'] ?? null);
+        $effectiveNextSafe = max($canonicalNextSafe, $manualIntervalUntil, $manualCooldownUntil);
+        if ($nextState === 'ACTIVE' && $effectiveNextSafe > time()) {
+            $nextState = 'COOLING';
+        }
         $receipt = [
             'run_id' => (int) ($result['run_id'] ?? 0),
             'claimed' => $claimed,
             'completed' => $completed,
             'deferred' => $deferred,
             'remote_calls' => $remoteDelta,
+            'physical_http_calls' => $remoteDelta,
+            'classification' => $classification !== '' ? $classification : 'none',
+            'http_status' => $httpStatus,
+            'next_safe_at' => $canonicalNextSafe > 0 ? gmdate('Y-m-d H:i:s', $canonicalNextSafe) : null,
+            'effective_next_safe_at' => $effectiveNextSafe > 0 ? gmdate('Y-m-d H:i:s', $effectiveNextSafe) : null,
+            'burst_unit' => 'PHYSICAL_REMOTE_HTTP',
+            'burst_limit' => $burstLimit,
+            '429_action' => (string) ($profile['429_action'] ?? 'pause_and_ask'),
+            'auto_degraded' => $autoDegraded,
+            'bounded_5xx_preferences' => (string) ($profile['bounded_5xx_preferences'] ?? 'pause_and_ask'),
         ];
         $stmt = $this->pdo->prepare(
             'UPDATE manual_drain_sessions
              SET status_ui=?,heartbeat_at=UTC_TIMESTAMP(3),expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND),
                  jobs_processed=jobs_processed+?,remote_calls_observed=remote_calls_observed+?,
                  last_completed_job_id=?,last_result_json=?,
-                 manual_interval_until=IF(? > 0,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND),manual_interval_until),
-                 manual_cooldown_until=IF(? > 0,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND),NULL)
+                 profile_snapshot_json=?,
+                 profile_revision=profile_revision+?,
+                 manual_interval_until=?,
+                 manual_cooldown_until=?
              WHERE id=? AND session_token=?'
         );
         $lastJobId = $this->lastCompletedJobId((int) ($result['run_id'] ?? 0));
@@ -238,10 +328,10 @@ final class ManualDrainSessionService
             $remoteDelta,
             $lastJobId > 0 ? $lastJobId : null,
             json_encode($receipt, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
-            $delaySeconds,
-            $delaySeconds,
-            $cooldownSeconds,
-            $cooldownSeconds,
+            json_encode($profile, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+            $autoDegraded ? 1 : 0,
+            $effectiveNextSafe > 0 ? gmdate('Y-m-d H:i:s', $effectiveNextSafe) : null,
+            $manualCooldownUntil > 0 ? gmdate('Y-m-d H:i:s', $manualCooldownUntil) : null,
             (int) $row['id'],
             (string) $row['session_token'],
         ]);
@@ -253,14 +343,33 @@ final class ManualDrainSessionService
             'completed' => $completed,
             'deferred' => $deferred,
             'remote_calls' => $remoteDelta,
+            'receipt' => $receipt,
+            'next_safe_at' => $receipt['effective_next_safe_at'],
             'session' => $this->present($fresh),
         ];
     }
 
     private function assertInstalled(): void
     {
-        if (!(new SchemaInspectorService())->hasTable('manual_drain_sessions')) {
+        if (!$this->hasTable('manual_drain_sessions')) {
             throw new RuntimeException('manual_drain_sessions_missing');
+        }
+    }
+
+    private function hasTable(string $table): bool
+    {
+        if (!preg_match('/^[A-Za-z0-9_]+$/', $table)) {
+            return false;
+        }
+        try {
+            $stmt = $this->pdo->prepare(
+                'SELECT 1 FROM information_schema.TABLES
+                 WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? LIMIT 1'
+            );
+            $stmt->execute([$table]);
+            return $stmt->fetchColumn() !== false;
+        } catch (Throwable) {
+            return false;
         }
     }
 
@@ -318,9 +427,12 @@ final class ManualDrainSessionService
     }
 
     /** @return array<string,mixed> */
-    private function setState(int $userId, string $token, string $state): array
+    private function setState(int $userId, string $token, string $state, ?int $expectedGeneration = null): array
     {
-        return $this->withSessionLock($userId, $token, function (array $row) use ($state, $token): array {
+        return $this->withSessionLock($userId, $token, function (array $row) use ($state, $token, $expectedGeneration): array {
+            if (!$this->generationMatches($row, $expectedGeneration)) {
+                return $this->generationMismatch($row);
+            }
             if (!in_array((string) ($row['status_ui'] ?? ''), ['ACTIVE', 'COOLING', 'RATE_LIMITED', 'PAUSED'], true)) {
                 return ['ok' => false, 'state' => $this->projectState($row), 'session' => $this->present($row)];
             }
@@ -390,13 +502,33 @@ final class ManualDrainSessionService
     /** @param array<string,mixed> $profile @return array<string,int|string> */
     private function normalizeProfile(array $profile): array
     {
+        $action = (string) ($profile['429_action'] ?? 'pause_and_ask');
+        $action = match ($action) {
+            'pause' => 'pause_and_ask',
+            'cooldown' => 'auto_degrade',
+            default => $action,
+        };
+        $fiveXx = (string) ($profile['bounded_5xx_preferences'] ?? 'pause_and_ask');
+        $fiveXx = $fiveXx === 'fail_closed' ? 'pause_and_ask' : $fiveXx;
         return [
-            'remote_calls_per_burst' => max(1, min(1, (int) ($profile['remote_calls_per_burst'] ?? 1))),
+            'remote_calls_per_burst' => max(1, min(60, (int) ($profile['remote_calls_per_burst'] ?? 1))),
             'minimum_delay_between_remote_calls' => max(self::DEFAULT_MIN_DELAY_SECONDS, min(3600, (int) ($profile['minimum_delay_between_remote_calls'] ?? self::DEFAULT_MIN_DELAY_SECONDS))),
             'cooldown_after_burst' => max(0, min(3600, (int) ($profile['cooldown_after_burst'] ?? self::DEFAULT_COOLDOWN_SECONDS))),
-            '429_action' => in_array((string) ($profile['429_action'] ?? 'pause'), ['pause', 'cooldown'], true) ? (string) ($profile['429_action'] ?? 'pause') : 'pause',
-            'bounded_5xx_preferences' => in_array((string) ($profile['bounded_5xx_preferences'] ?? 'fail_closed'), ['fail_closed', 'cooldown'], true) ? (string) ($profile['bounded_5xx_preferences'] ?? 'fail_closed') : 'fail_closed',
+            '429_action' => in_array($action, ['pause_and_ask', 'auto_degrade'], true) ? $action : 'pause_and_ask',
+            'bounded_5xx_preferences' => in_array($fiveXx, ['pause_and_ask', 'cooldown'], true) ? $fiveXx : 'pause_and_ask',
         ];
+    }
+
+    /** @param array<string,mixed> $profile @return array<string,int|string> */
+    private function degradedProfile(array $profile): array
+    {
+        return $this->normalizeProfile([
+            'remote_calls_per_burst' => 1,
+            'minimum_delay_between_remote_calls' => max(60, (int) ($profile['minimum_delay_between_remote_calls'] ?? self::DEFAULT_MIN_DELAY_SECONDS)),
+            'cooldown_after_burst' => max(300, (int) ($profile['cooldown_after_burst'] ?? self::DEFAULT_COOLDOWN_SECONDS)),
+            '429_action' => $profile['429_action'] ?? 'auto_degrade',
+            'bounded_5xx_preferences' => $profile['bounded_5xx_preferences'] ?? 'pause_and_ask',
+        ]);
     }
 
     /** @return array<string,mixed> */
@@ -437,14 +569,61 @@ final class ManualDrainSessionService
             'session_token' => (string) ($row['session_token'] ?? ''),
             'state' => $this->projectState($row),
             'drain_generation' => (int) ($row['drain_generation'] ?? 0),
+            'profile_revision' => (int) ($row['profile_revision'] ?? 1),
+            'profile' => $this->profileFromRow($row),
             'jobs_processed' => (int) ($row['jobs_processed'] ?? 0),
             'remote_calls_observed' => (int) ($row['remote_calls_observed'] ?? 0),
             'last_completed_job_id' => (int) ($row['last_completed_job_id'] ?? 0),
             'last_result' => $last,
+            'manual_interval_until' => $row['manual_interval_until'] ?? null,
+            'manual_cooldown_until' => $row['manual_cooldown_until'] ?? null,
             'heartbeat_at' => $row['heartbeat_at'] ?? null,
             'expires_at' => $row['expires_at'] ?? null,
             'ui_stale_seconds' => self::UI_STALE_SECONDS,
         ];
+    }
+
+    /**
+     * @param array<string,mixed> $profile
+     */
+    private function projectStepState(
+        int $claimed,
+        int $completed,
+        int $deferred,
+        string $classification,
+        ?int $httpStatus,
+        array $profile,
+    ): string {
+        if ($claimed < 1) {
+            return 'ACTIVE';
+        }
+        if ($this->isRemoteRateLimit($classification, $httpStatus)) {
+            return (string) ($profile['429_action'] ?? 'pause_and_ask') === 'auto_degrade'
+                ? 'COOLING'
+                : 'RATE_LIMITED';
+        }
+        if ($httpStatus === 401 || $httpStatus === 403 || str_contains($classification, 'oauth_refresh_required')) {
+            return 'PAUSED';
+        }
+        if ($httpStatus !== null && $httpStatus >= 500 && $httpStatus <= 599) {
+            return (string) ($profile['bounded_5xx_preferences'] ?? 'pause_and_ask') === 'cooldown' ? 'COOLING' : 'PAUSED';
+        }
+        if (str_contains($classification, 'remote_result_uncertain')
+            || str_contains($classification, 'review')
+            || str_contains($classification, 'correction')) {
+            return 'PAUSED';
+        }
+        if ($deferred > 0 && $completed === 0) {
+            return 'COOLING';
+        }
+        return 'ACTIVE';
+    }
+
+    private function isRemoteRateLimit(string $classification, ?int $httpStatus): bool
+    {
+        return $httpStatus === 429
+            || str_contains($classification, 'http_429')
+            || str_contains($classification, 'billing_429_backoff');
     }
 
     private function timestampOrZero(mixed $value): int
@@ -457,16 +636,23 @@ final class ManualDrainSessionService
         return $time === false ? 0 : $time;
     }
 
-    private function transportCount(): int
+    private function generationMatches(array $row, ?int $expectedGeneration): bool
     {
-        try {
-            if (!(new SchemaInspectorService())->hasTable('queue_v4_clean_transport_events')) {
-                return 0;
-            }
-            return (int) $this->pdo->query('SELECT COUNT(*) FROM queue_v4_clean_transport_events')->fetchColumn();
-        } catch (Throwable) {
-            return 0;
-        }
+        return $expectedGeneration === null || $expectedGeneration === (int) ($row['drain_generation'] ?? 0);
+    }
+
+    /** @return array<string,mixed> */
+    private function generationMismatch(array $row): array
+    {
+        return [
+            'ok' => false,
+            'state' => $this->projectState($row),
+            'claimed' => 0,
+            'remote_calls' => 0,
+            'code' => 'PROFILE_GENERATION_MISMATCH',
+            'message' => 'La pestaña pertenece a una generación anterior. Recargue antes de continuar.',
+            'session' => $this->present($row),
+        ];
     }
 
     private function lastCompletedJobId(int $runId): int

@@ -14,6 +14,7 @@ use App\Services\MeliApiClient;
 use App\Services\MeliApiException;
 use App\Services\MeliReadClientInterface;
 use App\Services\MeliTransportSourcePolicy;
+use App\Services\ManualRemoteCallLimitException;
 use App\Services\OAuthRefreshRequiredException;
 use App\Services\OrderFinancialRecalcJobService;
 use App\Services\OrderSyncService;
@@ -143,6 +144,15 @@ final class QueueV4CleanWorker
                     );
                     $deferred++;
                     break;
+                } catch (ManualRemoteCallLimitException $error) {
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        'capacity_deferred:manual_burst',
+                        $error->nextSafeAt
+                    );
+                    $deferred++;
+                    break;
                 } catch (QueueV4PreTransportDeferredException $error) {
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
@@ -210,6 +220,150 @@ final class QueueV4CleanWorker
         } catch (Throwable $error) {
             $this->repository->finishRun($runId, 'failed');
             throw $error;
+        }
+    }
+
+    /**
+     * Read-only canonical receipt for UI/manual orchestration. Automatic
+     * callers may ignore it; K10 uses it to project state without inventing
+     * retry/rhythm policy outside Queue V4.
+     *
+     * @return array<string,mixed>
+     */
+    public function receiptForRun(int $runId): array
+    {
+        if ($runId < 1) {
+            return [
+                'run_id' => 0,
+                'claimed' => 0,
+                'completed' => 0,
+                'deferred' => 0,
+                'physical_http_calls' => 0,
+                'classification' => 'no_work',
+                'http_status' => null,
+                'next_safe_at' => null,
+                'dispatch_state' => 'NOT_DISPATCHED',
+            ];
+        }
+
+        try {
+            $run = $this->pdo->prepare(
+                'SELECT jobs_claimed,jobs_completed,jobs_deferred
+                 FROM queue_v4_clean_runs WHERE id=? LIMIT 1'
+            );
+            $run->execute([$runId]);
+            $runRow = $run->fetch(PDO::FETCH_ASSOC);
+            $attempt = $this->pdo->prepare(
+                'SELECT a.job_id,a.outcome,a.error_class,a.dispatch_state,a.physical_http_calls,a.http_status,
+                        j.state AS job_state,j.available_at AS job_available_at,j.last_error_class AS job_error_class
+                 FROM queue_v4_clean_attempts a
+                 INNER JOIN queue_v4_clean_jobs j
+                   ON j.id=a.job_id AND j.company_id=a.company_id AND j.meli_account_id=a.meli_account_id
+                 WHERE a.run_id=?
+                 ORDER BY a.id DESC LIMIT 1'
+            );
+            $attempt->execute([$runId]);
+            $attemptRow = $attempt->fetch(PDO::FETCH_ASSOC);
+            $classification = (string) (($attemptRow['error_class'] ?? '') ?: ($attemptRow['job_error_class'] ?? '') ?: ($attemptRow['outcome'] ?? 'no_work'));
+            $nextSafeAt = null;
+            if (($attemptRow['job_state'] ?? '') === 'waiting') {
+                $nextSafeAt = $attemptRow['job_available_at'] ?? null;
+            }
+
+            return [
+                'run_id' => $runId,
+                'claimed' => (int) ($runRow['jobs_claimed'] ?? 0),
+                'completed' => (int) ($runRow['jobs_completed'] ?? 0),
+                'deferred' => (int) ($runRow['jobs_deferred'] ?? 0),
+                'physical_http_calls' => $this->physicalHttpCallsForRun($runId),
+                'classification' => $classification !== '' ? $classification : 'no_work',
+                'http_status' => isset($attemptRow['http_status']) ? (int) $attemptRow['http_status'] : null,
+                'next_safe_at' => $nextSafeAt,
+                'dispatch_state' => (string) ($attemptRow['dispatch_state'] ?? 'NOT_DISPATCHED'),
+                'outcome' => (string) ($attemptRow['outcome'] ?? 'none'),
+                'job_state' => (string) ($attemptRow['job_state'] ?? ''),
+            ];
+        } catch (Throwable) {
+            return [
+                'run_id' => $runId,
+                'claimed' => 0,
+                'completed' => 0,
+                'deferred' => 0,
+                'physical_http_calls' => 0,
+                'classification' => 'receipt_not_available',
+                'http_status' => null,
+                'next_safe_at' => null,
+                'dispatch_state' => 'NOT_DISPATCHED',
+            ];
+        }
+    }
+
+    private function physicalHttpCallsForRun(int $runId): int
+    {
+        if ($runId < 1) {
+            return 0;
+        }
+        try {
+            if ($this->hasTable('queue_v4_clean_transport_events')
+                && $this->hasColumn('queue_v4_clean_transport_events', 'attempt_id')) {
+                $events = $this->pdo->prepare(
+                    "SELECT COUNT(DISTINCT e.request_id)
+                     FROM queue_v4_clean_transport_events e
+                     INNER JOIN queue_v4_clean_attempts a
+                       ON a.id=e.attempt_id
+                      AND a.company_id=e.company_id
+                      AND a.meli_account_id=e.meli_account_id
+                     WHERE a.run_id=?
+                       AND e.dispatch_state IN ('PHYSICAL_STARTED','RESPONSE_KNOWN')"
+                );
+                $events->execute([$runId]);
+                $count = (int) $events->fetchColumn();
+                if ($count > 0) {
+                    return $count;
+                }
+            }
+            $attempts = $this->pdo->prepare(
+                'SELECT COALESCE(SUM(physical_http_calls),0)
+                 FROM queue_v4_clean_attempts WHERE run_id=?'
+            );
+            $attempts->execute([$runId]);
+            return (int) $attempts->fetchColumn();
+        } catch (Throwable) {
+            return 0;
+        }
+    }
+
+    private function hasTable(string $table): bool
+    {
+        if (preg_match('/^[A-Za-z0-9_]+$/', $table) !== 1) {
+            return false;
+        }
+        try {
+            $stmt = $this->pdo->prepare(
+                'SELECT 1 FROM information_schema.TABLES
+                 WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? LIMIT 1'
+            );
+            $stmt->execute([$table]);
+            return $stmt->fetchColumn() !== false;
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    private function hasColumn(string $table, string $column): bool
+    {
+        if (preg_match('/^[A-Za-z0-9_]+$/', $table . $column) !== 1) {
+            return false;
+        }
+        try {
+            $stmt = $this->pdo->prepare(
+                'SELECT 1 FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=? LIMIT 1'
+            );
+            $stmt->execute([$table, $column]);
+            return $stmt->fetchColumn() !== false;
+        } catch (Throwable) {
+            return false;
         }
     }
 

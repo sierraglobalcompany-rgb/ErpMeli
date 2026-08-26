@@ -72,32 +72,81 @@ if (is_array($preview ?? null)) {
       <div class="alert info"><strong>Instalación pendiente.</strong><p>Esta opción aparecerá después de aplicar schema 300. No usa una cola nueva: sólo guarda sesión y usa Queue V4.</p></div>
     <?php else: ?>
       <?php $drainSession = is_array(($smartDrain['session'] ?? null)) ? $smartDrain['session'] : null; ?>
-      <p><span class="badge neutral">V4_AUTOMATIC_BOUNDARY</span> Reclama como máximo un trabajo Queue V4 por clic y comparte la misma autoridad global de Cron.</p>
+      <?php $drainProfile = is_array(($drainSession['profile'] ?? null)) ? $drainSession['profile'] : []; ?>
+      <p><span class="badge neutral">V4_AUTOMATIC_BOUNDARY</span> Drena desde el navegador con máximo una petición en vuelo, una sola FIFO Queue V4 y la misma autoridad global de Cron.</p>
       <div class="metric-grid manual-metric-grid">
         <article><span>Estado</span><strong data-k10-state><?= View::e((string) ($smartDrain['state'] ?? 'OFF')) ?></strong></article>
         <article><span>Trabajos completados</span><strong data-k10-processed><?= (int) ($drainSession['jobs_processed'] ?? 0) ?></strong></article>
-        <article><span>HTTP observados</span><strong data-k10-remote><?= (int) ($drainSession['remote_calls_observed'] ?? 0) ?></strong></article>
+        <article><span>HTTP físicos observados</span><strong data-k10-remote><?= (int) ($drainSession['remote_calls_observed'] ?? 0) ?></strong></article>
+        <article><span>Burst actual / máximo</span><strong><span data-k10-burst-current><?= (int) (($drainSession['last_result']['physical_http_calls'] ?? 0)) ?></span>/<span data-k10-burst-max><?= (int) ($drainProfile['remote_calls_per_burst'] ?? 1) ?></span></strong></article>
+        <article><span>Perfil rev.</span><strong data-k10-profile-revision><?= (int) ($drainSession['profile_revision'] ?? 1) ?></strong></article>
+        <article><span>Cooldown / 429</span><strong data-k10-next-safe><?= View::e((string) (($drainSession['last_result']['effective_next_safe_at'] ?? '') ?: 'N/A')) ?></strong></article>
         <article><span>Heartbeat</span><strong data-k10-heartbeat><?= View::e((string) ($drainSession['heartbeat_at'] ?? 'N/A')) ?></strong></article>
       </div>
-      <p class="manual-browser-note" data-k10-feedback aria-live="polite">Listo para iniciar. Cada paso termina la petición y no deja procesos en segundo plano.</p>
+      <div class="alert warning" data-k10-429-panel>
+        <strong>429 y errores peligrosos</strong>
+        <p data-k10-last-result><?= View::e((string) (($drainSession['last_result']['classification'] ?? '') ?: 'Sin resultado todavía.')) ?></p>
+        <p>pause_and_ask conserva la verdad canónica: no acorta Retry-After ni reintenta a ciegas. auto_degrade sólo vuelve más conservador este perfil manual.</p>
+      </div>
+      <p class="manual-browser-note" data-k10-feedback aria-live="polite">Listo. El modo normal orquesta pasos seriales desde esta pestaña; si la cierra, el heartbeat expira y Cron puede retomar.</p>
       <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/start') ?>" class="manual-confirm-form" data-k10-action="start">
         <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
-        <input type="hidden" name="remote_calls_per_burst" value="1">
-        <input type="hidden" name="minimum_delay_between_remote_calls" value="15">
-        <input type="hidden" name="cooldown_after_burst" value="30">
-        <input type="hidden" name="429_action" value="pause">
-        <input type="hidden" name="bounded_5xx_preferences" value="fail_closed">
-        <button class="btn primary" type="submit" data-k10-start>Iniciar sesión K10</button>
+        <input type="hidden" name="remote_calls_per_burst" value="<?= (int) ($drainProfile['remote_calls_per_burst'] ?? 1) ?>" data-k10-profile-field="remote_calls_per_burst">
+        <input type="hidden" name="minimum_delay_between_remote_calls" value="<?= (int) ($drainProfile['minimum_delay_between_remote_calls'] ?? 15) ?>" data-k10-profile-field="minimum_delay_between_remote_calls">
+        <input type="hidden" name="cooldown_after_burst" value="<?= (int) ($drainProfile['cooldown_after_burst'] ?? 30) ?>" data-k10-profile-field="cooldown_after_burst">
+        <input type="hidden" name="429_action" value="<?= View::e((string) ($drainProfile['429_action'] ?? 'pause_and_ask')) ?>" data-k10-profile-field="429_action">
+        <input type="hidden" name="bounded_5xx_preferences" value="<?= View::e((string) ($drainProfile['bounded_5xx_preferences'] ?? 'pause_and_ask')) ?>" data-k10-profile-field="bounded_5xx_preferences">
+        <button class="btn primary" type="submit" data-k10-start>Iniciar Manual</button>
+      </form>
+      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/profile') ?>" class="manual-confirm-form manual-profile-form" data-k10-action="profile" <?= $drainSession ? '' : 'hidden' ?>>
+        <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
+        <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
+        <input type="hidden" name="drain_generation" value="<?= (int) ($drainSession['drain_generation'] ?? 0) ?>" data-k10-generation-field>
+        <label>Burst HTTP físico <input type="number" min="1" max="60" name="remote_calls_per_burst" value="<?= (int) ($drainProfile['remote_calls_per_burst'] ?? 1) ?>" data-k10-profile-field="remote_calls_per_burst"></label>
+        <label>Intervalo mínimo (s) <input type="number" min="15" max="3600" name="minimum_delay_between_remote_calls" value="<?= (int) ($drainProfile['minimum_delay_between_remote_calls'] ?? 15) ?>" data-k10-profile-field="minimum_delay_between_remote_calls"></label>
+        <label>Cooldown (s) <input type="number" min="0" max="3600" name="cooldown_after_burst" value="<?= (int) ($drainProfile['cooldown_after_burst'] ?? 30) ?>" data-k10-profile-field="cooldown_after_burst"></label>
+        <label>HTTP 429
+          <select name="429_action" data-k10-profile-field="429_action">
+            <option value="pause_and_ask" <?= (($drainProfile['429_action'] ?? 'pause_and_ask') === 'pause_and_ask') ? 'selected' : '' ?>>Pausar y preguntar</option>
+            <option value="auto_degrade" <?= (($drainProfile['429_action'] ?? '') === 'auto_degrade') ? 'selected' : '' ?>>Auto-degradar perfil manual</option>
+          </select>
+        </label>
+        <label>HTTP 5xx
+          <select name="bounded_5xx_preferences" data-k10-profile-field="bounded_5xx_preferences">
+            <option value="pause_and_ask" <?= (($drainProfile['bounded_5xx_preferences'] ?? 'pause_and_ask') === 'pause_and_ask') ? 'selected' : '' ?>>Pausar y preguntar</option>
+            <option value="cooldown" <?= (($drainProfile['bounded_5xx_preferences'] ?? '') === 'cooldown') ? 'selected' : '' ?>>Enfriar sin reintento ciego</option>
+          </select>
+        </label>
+        <button class="btn" type="submit">Guardar perfil para el siguiente paso</button>
       </form>
       <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/step') ?>" class="manual-confirm-form" data-k10-action="step" <?= $drainSession ? '' : 'hidden' ?>>
         <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
         <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
-        <button class="btn" type="submit" data-k10-step>Ejecutar un paso V4</button>
+        <input type="hidden" name="drain_generation" value="<?= (int) ($drainSession['drain_generation'] ?? 0) ?>" data-k10-generation-field>
+        <button class="btn" type="submit" data-k10-step>Ejecutar un paso</button>
+      </form>
+      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/heartbeat') ?>" data-k10-action="heartbeat" hidden>
+        <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
+        <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
+        <input type="hidden" name="drain_generation" value="<?= (int) ($drainSession['drain_generation'] ?? 0) ?>" data-k10-generation-field>
+      </form>
+      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/pause') ?>" class="manual-confirm-form" data-k10-action="pause" <?= $drainSession ? '' : 'hidden' ?>>
+        <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
+        <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
+        <input type="hidden" name="drain_generation" value="<?= (int) ($drainSession['drain_generation'] ?? 0) ?>" data-k10-generation-field>
+        <button class="btn" type="submit">Pausar</button>
+      </form>
+      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/resume') ?>" class="manual-confirm-form" data-k10-action="resume" <?= $drainSession ? '' : 'hidden' ?>>
+        <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
+        <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
+        <input type="hidden" name="drain_generation" value="<?= (int) ($drainSession['drain_generation'] ?? 0) ?>" data-k10-generation-field>
+        <button class="btn" type="submit">Reanudar</button>
       </form>
       <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/stop') ?>" class="manual-confirm-form" data-k10-action="stop" <?= $drainSession ? '' : 'hidden' ?>>
         <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
         <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
-        <button class="btn danger" type="submit">Detener sesión K10</button>
+        <input type="hidden" name="drain_generation" value="<?= (int) ($drainSession['drain_generation'] ?? 0) ?>" data-k10-generation-field>
+        <button class="btn danger" type="submit">Finalizar / devolver a Auto</button>
       </form>
       <p class="manual-browser-note">Si Cron posee la autoridad global, el inicio responde ocupado y no reclama ni consulta Mercado Libre.</p>
     <?php endif; ?>
@@ -117,8 +166,17 @@ if (is_array($preview ?? null)) {
   const remoteEl = panel.querySelector('[data-k10-remote]');
   const heartbeatEl = panel.querySelector('[data-k10-heartbeat]');
   const feedbackEl = panel.querySelector('[data-k10-feedback]');
+  const burstCurrentEl = panel.querySelector('[data-k10-burst-current]');
+  const burstMaxEl = panel.querySelector('[data-k10-burst-max]');
+  const nextSafeEl = panel.querySelector('[data-k10-next-safe]');
+  const profileRevisionEl = panel.querySelector('[data-k10-profile-revision]');
+  const lastResultEl = panel.querySelector('[data-k10-last-result]');
   const tokenFields = () => panel.querySelectorAll('[data-k10-token-field]');
+  const generationFields = () => panel.querySelectorAll('[data-k10-generation-field]');
   const actionForms = () => panel.querySelectorAll('[data-k10-action]');
+  let inFlight = false;
+  let loopEnabled = false;
+  let loopTimer = 0;
   const setBusy = (busy) => {
     panel.setAttribute('aria-busy', busy ? 'true' : 'false');
     panel.querySelectorAll('button').forEach((button) => { button.disabled = busy; });
@@ -133,18 +191,66 @@ if (is_array($preview ?? null)) {
     if (processedEl) processedEl.textContent = String(session && session.jobs_processed ? session.jobs_processed : 0);
     if (remoteEl) remoteEl.textContent = String(session && session.remote_calls_observed ? session.remote_calls_observed : 0);
     if (heartbeatEl) heartbeatEl.textContent = session && session.heartbeat_at ? session.heartbeat_at : 'N/A';
+    const last = session && session.last_result ? session.last_result : {};
+    const profile = session && session.profile ? session.profile : {};
+    if (burstCurrentEl) burstCurrentEl.textContent = String(last.physical_http_calls || 0);
+    if (burstMaxEl) burstMaxEl.textContent = String(profile.remote_calls_per_burst || 1);
+    if (nextSafeEl) nextSafeEl.textContent = last.effective_next_safe_at || payload.next_safe_at || 'N/A';
+    if (profileRevisionEl) profileRevisionEl.textContent = String(session && session.profile_revision ? session.profile_revision : 1);
+    if (lastResultEl) lastResultEl.textContent = last.classification || payload.message || 'Sin resultado todavía.';
     if (session && session.session_token) {
       token = session.session_token;
       panel.dataset.sessionToken = token;
       tokenFields().forEach((field) => { field.value = token; });
     }
+    if (session && session.drain_generation !== undefined) {
+      generationFields().forEach((field) => { field.value = String(session.drain_generation); });
+    }
     const hasSession = !!token && !['OFF', 'EXPIRED', 'ABANDONED', 'RELEASING'].includes(state);
     actionForms().forEach((form) => {
       const action = form.dataset.k10Action || '';
-      if (action === 'step' || action === 'stop') form.hidden = !hasSession;
+      if (['step', 'stop', 'profile'].includes(action)) form.hidden = !hasSession;
+      if (action === 'pause') form.hidden = !hasSession || state === 'PAUSED';
+      if (action === 'resume') form.hidden = !hasSession || state !== 'PAUSED';
     });
+    if (['PAUSED', 'RATE_LIMITED', 'OFF', 'EXPIRED', 'ABANDONED', 'RELEASING'].includes(state)) {
+      loopEnabled = false;
+      window.clearTimeout(loopTimer);
+    }
   };
-  const post = async (form) => {
+  const nextDelay = (payload) => {
+    const raw = payload && (payload.next_safe_at || (payload.session && payload.session.last_result && payload.session.last_result.effective_next_safe_at));
+    if (!raw) return 500;
+    const at = Date.parse(String(raw).replace(' ', 'T') + 'Z');
+    return Number.isFinite(at) ? Math.max(500, at - Date.now()) : 500;
+  };
+  const runOneStepSoon = () => {
+    const form = panel.querySelector('form[data-k10-action="step"]');
+    if (form) {
+      loopTimer = window.setTimeout(() => post(form, true), 500);
+    }
+  };
+  const scheduleStep = (payload) => {
+    window.clearTimeout(loopTimer);
+    if (!loopEnabled || !token) return;
+    const state = payload && payload.state ? payload.state : '';
+    const claimed = Number(payload && payload.claimed ? payload.claimed : 0);
+    const hasSafeTime = !!(payload && (payload.next_safe_at || (payload.session && payload.session.last_result && payload.session.last_result.effective_next_safe_at)));
+    if (state === 'ACTIVE' && claimed < 1 && !hasSafeTime) {
+      loopEnabled = false;
+      show('Sin trabajo elegible para este paso. La sesión queda segura; Cron puede retomar cuando corresponda.');
+      return;
+    }
+    if (state === 'ACTIVE' || state === 'COOLING') {
+      loopTimer = window.setTimeout(() => {
+        const form = panel.querySelector('form[data-k10-action="step"]');
+        if (form) post(form, true);
+      }, nextDelay(payload));
+    }
+  };
+  const post = async (form, fromLoop = false) => {
+    if (inFlight) return;
+    inFlight = true;
     setBusy(true);
     try {
       const response = await fetch(form.action, {
@@ -156,9 +262,18 @@ if (is_array($preview ?? null)) {
       const payload = await response.json();
       update(payload);
       show(payload.message || (response.ok ? 'Acción aplicada.' : 'No se pudo tomar la autoridad global.'));
+      const action = form.dataset.k10Action || '';
+      if (action === 'start' || action === 'resume') {
+        loopEnabled = true;
+        runOneStepSoon();
+      } else {
+        if (action === 'pause' || action === 'stop') loopEnabled = false;
+        if (fromLoop || loopEnabled) scheduleStep(payload);
+      }
     } catch (error) {
       show('No se pudo contactar el endpoint K10. Recargue la página antes de intentar de nuevo.');
     } finally {
+      inFlight = false;
       setBusy(false);
     }
   };
@@ -173,17 +288,19 @@ if (is_array($preview ?? null)) {
     try {
       const url = new URL(statusUrl, window.location.href);
       url.searchParams.set('session_token', token);
+      const generationField = panel.querySelector('[data-k10-generation-field]');
+      if (generationField) url.searchParams.set('drain_generation', generationField.value || '');
       const response = await fetch(url.toString(), {credentials: 'same-origin', headers: {'Accept': 'application/json'}});
       if (response.ok) update(await response.json());
     } catch (error) {}
   };
   const heartbeat = async () => {
-    if (!token) return;
-    const form = panel.querySelector('form[data-k10-action="step"]');
-    if (!form) return;
+    if (!token || inFlight) return;
     const body = new FormData();
     body.set('_token', csrf);
     body.set('session_token', token);
+    const generationField = panel.querySelector('[data-k10-generation-field]');
+    if (generationField) body.set('drain_generation', generationField.value || '');
     try {
       const response = await fetch('<?= View::e($base . '/settings/manual-processing/drain/heartbeat') ?>', {
         method: 'POST',

@@ -464,6 +464,7 @@ $router->post('/settings/manual-processing/drain/heartbeat', [SettingsController
 $router->post('/settings/manual-processing/drain/pause', [SettingsController::class, 'manualDrainPause']);
 $router->post('/settings/manual-processing/drain/resume', [SettingsController::class, 'manualDrainResume']);
 $router->post('/settings/manual-processing/drain/stop', [SettingsController::class, 'manualDrainStop']);
+$router->post('/settings/manual-processing/drain/profile', [SettingsController::class, 'manualDrainProfile']);
 $router->get('/settings/manual-processing/drain/status.json', [SettingsController::class, 'manualDrainStatus']);
 $router->get('/settings/cron/status.json', [SettingsController::class, 'cronStatus']);
 $router->get('/settings/cron/integrity.json', [SettingsController::class, 'cronIntegrityStatus']);

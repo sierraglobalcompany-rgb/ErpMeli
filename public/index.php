@@ -458,6 +458,13 @@ $router->post('/settings/manual-processing/interactive/resume', [SettingsControl
 $router->post('/settings/manual-processing/interactive/finish', [SettingsController::class, 'manualProcessingFinish']);
 $router->post('/settings/manual-processing/interactive/heartbeat', [SettingsController::class, 'manualProcessingInteractiveHeartbeat']);
 $router->post('/settings/manual-processing/interactive/step', [SettingsController::class, 'manualProcessingInteractiveStep']);
+$router->post('/settings/manual-processing/drain/start', [SettingsController::class, 'manualDrainStart']);
+$router->post('/settings/manual-processing/drain/step', [SettingsController::class, 'manualDrainStep']);
+$router->post('/settings/manual-processing/drain/heartbeat', [SettingsController::class, 'manualDrainHeartbeat']);
+$router->post('/settings/manual-processing/drain/pause', [SettingsController::class, 'manualDrainPause']);
+$router->post('/settings/manual-processing/drain/resume', [SettingsController::class, 'manualDrainResume']);
+$router->post('/settings/manual-processing/drain/stop', [SettingsController::class, 'manualDrainStop']);
+$router->get('/settings/manual-processing/drain/status.json', [SettingsController::class, 'manualDrainStatus']);
 $router->get('/settings/cron/status.json', [SettingsController::class, 'cronStatus']);
 $router->get('/settings/cron/integrity.json', [SettingsController::class, 'cronIntegrityStatus']);
 $router->post('/settings/cron/test', [SettingsController::class, 'testCron']);

@@ -70,15 +70,15 @@ final class QueueV4CleanWorker
             : static fn (): SaleFinancialService => new SaleFinancialService();
     }
 
-    /** @return array{claimed:int,completed:int,deferred:int} */
+    /** @return array{run_id:int,claimed:int,completed:int,deferred:int} */
     public function run(string $launcher, int $maxJobs = self::DEFAULT_MAX_JOBS, int $runtimeSeconds = 45): array
     {
         if ($maxJobs < 1 || $runtimeSeconds < 5) {
-            return ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
+            return ['run_id' => 0, 'claimed' => 0, 'completed' => 0, 'deferred' => 0];
         }
         $control = $this->repository->control();
         if ((string) $control['engine_state'] !== 'ACTIVE') {
-            return ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
+            return ['run_id' => 0, 'claimed' => 0, 'completed' => 0, 'deferred' => 0];
         }
         $maxJobs = min(self::HARD_MAX_JOBS, $maxJobs);
         $deadline = microtime(true) + max(5, min(45, $runtimeSeconds));
@@ -206,7 +206,7 @@ final class QueueV4CleanWorker
                 $completed++;
             }
             $this->repository->finishRun($runId, 'completed');
-            return compact('claimed', 'completed', 'deferred');
+            return ['run_id' => $runId, 'claimed' => $claimed, 'completed' => $completed, 'deferred' => $deferred];
         } catch (Throwable $error) {
             $this->repository->finishRun($runId, 'failed');
             throw $error;

@@ -1,16 +1,16 @@
 {
     "product": "erp-meli",
-    "version": "2.39.19",
-    "build_id": "erp-meli-2.39.19-billing-throughput-kiss-rc1-20260822",
-    "built_at": "2026-08-22T12:00:00Z",
-    "minimum_migration": "299_queue_v4_domain_exact_admission_2_39_3.sql",
+    "version": "2.40.0",
+    "build_id": "erp-meli-2.40.0-k10-smart-manual-drain-rc1-20260826",
+    "built_at": "2026-08-26T08:20:00Z",
+    "minimum_migration": "300_manual_drain_sessions_2_40_0.sql",
     "publication_policy": {
-        "base_commit": "28bd74ecd0b528aaad2ffa3af11114dfbff5737c",
+        "base_commit": "b9d1644522e7b36d5729c5ba090279b3ffc50fb8",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 967,
-        "component_count": 966,
-        "paths_sha256": "ebdc7bedf55c251a40dc1fe2538131f0e6f0f659dcce61392a34902026d0eae1",
-        "dependency_registry_sha256": "696fae9f0919da1e1f31a20d012abfd48d206206669c9d0122bd843a4d2c37f2",
+        "package_file_count": 970,
+        "component_count": 969,
+        "paths_sha256": "66ba40899987e21f0f5f5a2828c41de7f73911b5508522aa85b86493558bd466",
+        "dependency_registry_sha256": "24b892534750ae37836729de9bb22d38802d77ef288d856d2a93187a6c1cd841",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -24,8 +24,8 @@
         },
         "runtime_version": {
             "path": "VERSION",
-            "sha256": "33a3d5efb26f1454626beb71c1c692e69df530aa9c2a5e67fb9e19c936a46d45",
-            "sha256_lf": "33a3d5efb26f1454626beb71c1c692e69df530aa9c2a5e67fb9e19c936a46d45",
+            "sha256": "b941f10c28d64cc4e9166eb4be18c85485a611996bc6a082d49f41d6e9d9df25",
+            "sha256_lf": "b941f10c28d64cc4e9166eb4be18c85485a611996bc6a082d49f41d6e9d9df25",
             "text": true
         },
         "runtime_actualizar_php": {
@@ -276,8 +276,8 @@
         },
         "runtime_app_controllers_settingscontroller_php": {
             "path": "app/Controllers/SettingsController.php",
-            "sha256": "238898dac0d5ad4f87411863fb7e808305e4d0d444af2aa20988d262e6dd9e5f",
-            "sha256_lf": "238898dac0d5ad4f87411863fb7e808305e4d0d444af2aa20988d262e6dd9e5f",
+            "sha256": "71ccfc42a67e83256e30b2db98f4b6806c3b7bb88acb0dad2c3d7a2697a66d97",
+            "sha256_lf": "71ccfc42a67e83256e30b2db98f4b6806c3b7bb88acb0dad2c3d7a2697a66d97",
             "text": true
         },
         "runtime_app_controllers_settingssectioncontroller_php": {
@@ -996,8 +996,8 @@
         },
         "runtime_app_queuecore_queueexecutionleaseservice_php": {
             "path": "app/QueueCore/QueueExecutionLeaseService.php",
-            "sha256": "3cbd7b6f8a5e39b8b1365100433ecf98b7ad21d964db43d6ab9f740d5fc9c7f5",
-            "sha256_lf": "3cbd7b6f8a5e39b8b1365100433ecf98b7ad21d964db43d6ab9f740d5fc9c7f5",
+            "sha256": "fff6b8d6cd6eef032940bff689052a0501398c3a2532a39a5b24f71f1b8eef23",
+            "sha256_lf": "fff6b8d6cd6eef032940bff689052a0501398c3a2532a39a5b24f71f1b8eef23",
             "text": true
         },
         "runtime_app_queuecore_queuehandler_php": {
@@ -1236,8 +1236,8 @@
         },
         "runtime_app_queuev4clean_queuev4cleanworker_php": {
             "path": "app/QueueV4Clean/QueueV4CleanWorker.php",
-            "sha256": "e0ad357a2a1c0081bbede9e3a16f70f8f8dc4b4a579e05d07465a0826b29e80e",
-            "sha256_lf": "e0ad357a2a1c0081bbede9e3a16f70f8f8dc4b4a579e05d07465a0826b29e80e",
+            "sha256": "5eabb8dddb2b7241ef18a9a2e072261fc4c52b428e20357295aaed46b51a94c9",
+            "sha256_lf": "5eabb8dddb2b7241ef18a9a2e072261fc4c52b428e20357295aaed46b51a94c9",
             "text": true
         },
         "runtime_app_recovery_databasemaintenancerecoverykernel_php": {
@@ -2454,8 +2454,8 @@
         },
         "runtime_app_services_managedruntimepublicationpolicy_php": {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "939fde9489a4d94309ee80311f5b3f980f87052c9253098d99b497c7d779b459",
-            "sha256_lf": "939fde9489a4d94309ee80311f5b3f980f87052c9253098d99b497c7d779b459",
+            "sha256": "ba216d66c593d2742df2a0affd102b323066bd4c5510681ed2fd63f19745eb9a",
+            "sha256_lf": "ba216d66c593d2742df2a0affd102b323066bd4c5510681ed2fd63f19745eb9a",
             "text": true
         },
         "runtime_app_services_manualcampaignadapter_php": {
@@ -2516,6 +2516,12 @@
             "path": "app/Services/ManualCampaignSourceInspector.php",
             "sha256": "148f78fc9a011e63fea1455f09098856c8fe85e2f2e03e296b56e809b493adb5",
             "sha256_lf": "148f78fc9a011e63fea1455f09098856c8fe85e2f2e03e296b56e809b493adb5",
+            "text": true
+        },
+        "runtime_app_services_manualdrainsessionservice_php": {
+            "path": "app/Services/ManualDrainSessionService.php",
+            "sha256": "b5f822bfb3acb30ef2dade28f96483e66fff49ff3d3c6f24b6037bde201d649e",
+            "sha256_lf": "b5f822bfb3acb30ef2dade28f96483e66fff49ff3d3c6f24b6037bde201d649e",
             "text": true
         },
         "runtime_app_services_manualprocessingengineservice_php": {
@@ -4254,8 +4260,8 @@
         },
         "runtime_app_views_settings_manual_processing_php": {
             "path": "app/Views/settings/manual_processing.php",
-            "sha256": "994a0e833697fd998a0df7d52278aa59cbe08d826195fd9bfa9eaa481cfac875",
-            "sha256_lf": "994a0e833697fd998a0df7d52278aa59cbe08d826195fd9bfa9eaa481cfac875",
+            "sha256": "3ab4d55d78f8077a93a011f1f3ca722cf703d74351ee4337dee50823f520c3d8",
+            "sha256_lf": "3ab4d55d78f8077a93a011f1f3ca722cf703d74351ee4337dee50823f520c3d8",
             "text": true
         },
         "runtime_app_views_settings_manual_processing_excluded_php": {
@@ -4586,6 +4592,12 @@
             "path": "database/migrations/299_queue_v4_domain_exact_admission_2_39_3.sql",
             "sha256": "462d491a3deffe277b52d4a309cca8d1d3f02dfd6098a890f4078143754f3539",
             "sha256_lf": "462d491a3deffe277b52d4a309cca8d1d3f02dfd6098a890f4078143754f3539",
+            "text": true
+        },
+        "runtime_database_migrations_300_manual_drain_sessions_2_40_0_sql": {
+            "path": "database/migrations/300_manual_drain_sessions_2_40_0.sql",
+            "sha256": "8051e4cd3810f7afbb094bb62dd49e3924da70fa6b25577e19321e2c504fc5b5",
+            "sha256_lf": "8051e4cd3810f7afbb094bb62dd49e3924da70fa6b25577e19321e2c504fc5b5",
             "text": true
         },
         "runtime_index_php": {
@@ -5022,8 +5034,8 @@
         },
         "runtime_public_index_php": {
             "path": "public/index.php",
-            "sha256": "e67b55a0e12a36c6773b2d2af3501011f49ff7cc74890d42437aa49897569fd2",
-            "sha256_lf": "e67b55a0e12a36c6773b2d2af3501011f49ff7cc74890d42437aa49897569fd2",
+            "sha256": "f0f4bf4234c86039738eeb72b0b1f0610317397c1a387c635e31d0a82fc5e551",
+            "sha256_lf": "f0f4bf4234c86039738eeb72b0b1f0610317397c1a387c635e31d0a82fc5e551",
             "text": true
         },
         "runtime_public_login_php": {
@@ -5432,6 +5444,12 @@
             "path": "resources/release/managed-runtime-dependencies-2.39.9.json",
             "sha256": "e355c7ce1ba90f213b83389758a6d066108f270c3f131433ab15e8bda1e76ec8",
             "sha256_lf": "e355c7ce1ba90f213b83389758a6d066108f270c3f131433ab15e8bda1e76ec8",
+            "text": true
+        },
+        "runtime_resources_release_managed_runtime_dependencies_2_40_0_json": {
+            "path": "resources/release/managed-runtime-dependencies-2.40.0.json",
+            "sha256": "24b892534750ae37836729de9bb22d38802d77ef288d856d2a93187a6c1cd841",
+            "sha256_lf": "24b892534750ae37836729de9bb22d38802d77ef288d856d2a93187a6c1cd841",
             "text": true
         },
         "runtime_resources_release_production_legacy_quarantine_2_36_1_json": {

@@ -64,6 +64,142 @@ if (is_array($preview ?? null)) {
 </div></section>
 <?php endif; ?>
 
+<?php $smartDrainSessionToken = is_array(($smartDrain['session'] ?? null)) ? (string) ($smartDrain['session']['session_token'] ?? '') : ''; ?>
+<section class="panel manual-engine-card" id="k10-manual-drain" data-k10-drain data-status-url="<?= View::e($base . '/settings/manual-processing/drain/status.json') ?>" data-csrf="<?= View::e(Csrf::token()) ?>" data-session-token="<?= View::e($smartDrainSessionToken) ?>">
+  <div class="panel-head"><div><p class="eyebrow">K10 · SMART MANUAL DRAIN</p><h2>Drenador manual canónico</h2></div></div>
+  <div class="panel-body">
+    <?php if (empty($smartDrainReady)): ?>
+      <div class="alert info"><strong>Instalación pendiente.</strong><p>Esta opción aparecerá después de aplicar schema 300. No usa una cola nueva: sólo guarda sesión y usa Queue V4.</p></div>
+    <?php else: ?>
+      <?php $drainSession = is_array(($smartDrain['session'] ?? null)) ? $smartDrain['session'] : null; ?>
+      <p><span class="badge neutral">V4_AUTOMATIC_BOUNDARY</span> Reclama como máximo un trabajo Queue V4 por clic y comparte la misma autoridad global de Cron.</p>
+      <div class="metric-grid manual-metric-grid">
+        <article><span>Estado</span><strong data-k10-state><?= View::e((string) ($smartDrain['state'] ?? 'OFF')) ?></strong></article>
+        <article><span>Trabajos completados</span><strong data-k10-processed><?= (int) ($drainSession['jobs_processed'] ?? 0) ?></strong></article>
+        <article><span>HTTP observados</span><strong data-k10-remote><?= (int) ($drainSession['remote_calls_observed'] ?? 0) ?></strong></article>
+        <article><span>Heartbeat</span><strong data-k10-heartbeat><?= View::e((string) ($drainSession['heartbeat_at'] ?? 'N/A')) ?></strong></article>
+      </div>
+      <p class="manual-browser-note" data-k10-feedback aria-live="polite">Listo para iniciar. Cada paso termina la petición y no deja procesos en segundo plano.</p>
+      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/start') ?>" class="manual-confirm-form" data-k10-action="start">
+        <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
+        <input type="hidden" name="remote_calls_per_burst" value="1">
+        <input type="hidden" name="minimum_delay_between_remote_calls" value="15">
+        <input type="hidden" name="cooldown_after_burst" value="30">
+        <input type="hidden" name="429_action" value="pause">
+        <input type="hidden" name="bounded_5xx_preferences" value="fail_closed">
+        <button class="btn primary" type="submit" data-k10-start>Iniciar sesión K10</button>
+      </form>
+      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/step') ?>" class="manual-confirm-form" data-k10-action="step" <?= $drainSession ? '' : 'hidden' ?>>
+        <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
+        <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
+        <button class="btn" type="submit" data-k10-step>Ejecutar un paso V4</button>
+      </form>
+      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/stop') ?>" class="manual-confirm-form" data-k10-action="stop" <?= $drainSession ? '' : 'hidden' ?>>
+        <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
+        <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
+        <button class="btn danger" type="submit">Detener sesión K10</button>
+      </form>
+      <p class="manual-browser-note">Si Cron posee la autoridad global, el inicio responde ocupado y no reclama ni consulta Mercado Libre.</p>
+    <?php endif; ?>
+  </div>
+</section>
+
+<?php if (!empty($smartDrainReady) && empty($emergencyStop)): ?>
+<script>
+(() => {
+  const panel = document.querySelector('[data-k10-drain]');
+  if (!panel) return;
+  const statusUrl = panel.dataset.statusUrl || '';
+  let token = panel.dataset.sessionToken || '';
+  const csrf = panel.dataset.csrf || '';
+  const stateEl = panel.querySelector('[data-k10-state]');
+  const processedEl = panel.querySelector('[data-k10-processed]');
+  const remoteEl = panel.querySelector('[data-k10-remote]');
+  const heartbeatEl = panel.querySelector('[data-k10-heartbeat]');
+  const feedbackEl = panel.querySelector('[data-k10-feedback]');
+  const tokenFields = () => panel.querySelectorAll('[data-k10-token-field]');
+  const actionForms = () => panel.querySelectorAll('[data-k10-action]');
+  const setBusy = (busy) => {
+    panel.setAttribute('aria-busy', busy ? 'true' : 'false');
+    panel.querySelectorAll('button').forEach((button) => { button.disabled = busy; });
+  };
+  const show = (message) => {
+    if (feedbackEl) feedbackEl.textContent = message;
+  };
+  const update = (payload) => {
+    const session = payload && payload.session ? payload.session : null;
+    const state = payload && payload.state ? payload.state : (session && session.state ? session.state : 'OFF');
+    if (stateEl) stateEl.textContent = state;
+    if (processedEl) processedEl.textContent = String(session && session.jobs_processed ? session.jobs_processed : 0);
+    if (remoteEl) remoteEl.textContent = String(session && session.remote_calls_observed ? session.remote_calls_observed : 0);
+    if (heartbeatEl) heartbeatEl.textContent = session && session.heartbeat_at ? session.heartbeat_at : 'N/A';
+    if (session && session.session_token) {
+      token = session.session_token;
+      panel.dataset.sessionToken = token;
+      tokenFields().forEach((field) => { field.value = token; });
+    }
+    const hasSession = !!token && !['OFF', 'EXPIRED', 'ABANDONED', 'RELEASING'].includes(state);
+    actionForms().forEach((form) => {
+      const action = form.dataset.k10Action || '';
+      if (action === 'step' || action === 'stop') form.hidden = !hasSession;
+    });
+  };
+  const post = async (form) => {
+    setBusy(true);
+    try {
+      const response = await fetch(form.action, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Accept': 'application/json'},
+        body: new FormData(form),
+      });
+      const payload = await response.json();
+      update(payload);
+      show(payload.message || (response.ok ? 'Acción aplicada.' : 'No se pudo tomar la autoridad global.'));
+    } catch (error) {
+      show('No se pudo contactar el endpoint K10. Recargue la página antes de intentar de nuevo.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  panel.querySelectorAll('form[data-k10-action]').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      post(form);
+    });
+  });
+  const refresh = async () => {
+    if (!statusUrl || !token) return;
+    try {
+      const url = new URL(statusUrl, window.location.href);
+      url.searchParams.set('session_token', token);
+      const response = await fetch(url.toString(), {credentials: 'same-origin', headers: {'Accept': 'application/json'}});
+      if (response.ok) update(await response.json());
+    } catch (error) {}
+  };
+  const heartbeat = async () => {
+    if (!token) return;
+    const form = panel.querySelector('form[data-k10-action="step"]');
+    if (!form) return;
+    const body = new FormData();
+    body.set('_token', csrf);
+    body.set('session_token', token);
+    try {
+      const response = await fetch('<?= View::e($base . '/settings/manual-processing/drain/heartbeat') ?>', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Accept': 'application/json'},
+        body,
+      });
+      if (response.ok) update(await response.json());
+    } catch (error) {}
+  };
+  window.setInterval(refresh, 15000);
+  window.setInterval(heartbeat, 15000);
+})();
+</script>
+<?php endif; ?>
+
 <?php if ($campaignReady && empty($emergencyStop) && !$activeSession): ?>
 <section class="panel manual-panel">
   <div class="panel-head"><div><p class="eyebrow"><?= $preview === null ? 'PASO 1' : 'PASO 2' ?></p><h2><?= $preview === null ? '¿Qué desea procesar?' : 'Configure el ritmo' ?></h2></div></div>

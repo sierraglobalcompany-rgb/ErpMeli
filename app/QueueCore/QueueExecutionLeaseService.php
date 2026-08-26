@@ -32,6 +32,9 @@ final class QueueExecutionLeaseService
             return new QueueExecutionLease($launcher, $ownerToken, $generation, $leaseSeconds);
         } catch (Throwable $error) {
             if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+            if ($this->isTransientAcquireRace($error)) {
+                return null;
+            }
             throw $error;
         }
     }
@@ -54,5 +57,14 @@ final class QueueExecutionLeaseService
     {
         $value = $this->pdo->query("SELECT launcher FROM queue_core_execution_leases WHERE lease_key='global' AND owner_token IS NOT NULL AND expires_at>UTC_TIMESTAMP(3)")->fetchColumn();
         return $value === false ? null : (string) $value;
+    }
+
+    private function isTransientAcquireRace(Throwable $error): bool
+    {
+        $code = (string) $error->getCode();
+        if (in_array($code, ['40001', 'HY000'], true) && str_contains(strtolower($error->getMessage()), 'deadlock')) {
+            return true;
+        }
+        return str_contains(strtolower($error->getMessage()), 'try restarting transaction');
     }
 }

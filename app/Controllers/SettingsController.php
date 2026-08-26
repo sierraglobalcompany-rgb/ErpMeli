@@ -1376,6 +1376,15 @@ final class SettingsController
         $blockPauseSeconds = max($blockPauseSeconds, $globalPauseSeconds);
         $this->releaseReadOnlySession();
         $activeSession = $campaignReady ? (new \App\Services\ManualCampaignService())->active($userId) : null;
+        $smartDrainReady = (new \App\Services\SchemaInspectorService())->hasTable('manual_drain_sessions');
+        $smartDrain = ['ok' => false, 'state' => 'OFF', 'session' => null];
+        if ($smartDrainReady && !$emergencyStop) {
+            try {
+                $smartDrain = (new \App\Services\ManualDrainSessionService())->status($userId);
+            } catch (\Throwable) {
+                $smartDrain = ['ok' => false, 'state' => 'NO_CERTIFICADO', 'session' => null];
+            }
+        }
         $engine = [
             'ready' => $campaignReady && !$emergencyStop,
             'state' => $emergencyStop ? 'maintenance' : ($campaignReady ? 'directed_cli_ready' : 'installation_incomplete'),
@@ -1402,7 +1411,9 @@ final class SettingsController
             'origin',
             'originContext',
             'emergencyStop',
-            'rhythmPreview'
+            'rhythmPreview',
+            'smartDrainReady',
+            'smartDrain'
         ));
     }
 
@@ -1728,6 +1739,54 @@ final class SettingsController
         $this->assertSameOrigin();
         Session::flash('info', 'El procesamiento manual ya no necesita comprobar un motor externo.');
         $this->redirect('/settings/manual-processing');
+    }
+
+    public function manualDrainStart(): void
+    {
+        $this->manualDrainJsonMutation('start');
+    }
+
+    public function manualDrainStep(): void
+    {
+        $this->manualDrainJsonMutation('step');
+    }
+
+    public function manualDrainHeartbeat(): void
+    {
+        $this->manualDrainJsonMutation('heartbeat');
+    }
+
+    public function manualDrainPause(): void
+    {
+        $this->manualDrainJsonMutation('pause');
+    }
+
+    public function manualDrainResume(): void
+    {
+        $this->manualDrainJsonMutation('resume');
+    }
+
+    public function manualDrainStop(): void
+    {
+        $this->manualDrainJsonMutation('stop');
+    }
+
+    public function manualDrainStatus(): void
+    {
+        $this->requireAdminPermanent();
+        try {
+            $this->json((new \App\Services\ManualDrainSessionService())->status(
+                (int) Auth::id(),
+                trim((string) ($_GET['session_token'] ?? ''))
+            ));
+        } catch (\Throwable $error) {
+            http_response_code(503);
+            $this->json([
+                'ok' => false,
+                'state' => 'NO_CERTIFICADO',
+                'message' => \App\Services\SafeErrorPresenter::message($error, 'No se pudo leer el drenador manual.'),
+            ]);
+        }
     }
 
     public function recoverKnownNotificationErrors(): void
@@ -2677,6 +2736,46 @@ final class SettingsController
         };
         Session::flash($ok ? 'success' : 'error', $ok ? 'Estado actualizado.' : 'La sesión ya no admite ese cambio.');
         $this->redirect('/settings/manual-processing/session?id=' . $id);
+    }
+
+    private function manualDrainJsonMutation(string $action): void
+    {
+        $this->requireAdminPermanent();
+        Csrf::validate($_POST['_token'] ?? null);
+        $this->assertSameOrigin();
+        try {
+            $service = new \App\Services\ManualDrainSessionService();
+            $token = trim((string) ($_POST['session_token'] ?? ''));
+            $userId = (int) Auth::id();
+            $result = match ($action) {
+                'start' => $service->start($userId, [
+                    'remote_calls_per_burst' => (int) ($_POST['remote_calls_per_burst'] ?? 1),
+                    'minimum_delay_between_remote_calls' => (int) ($_POST['minimum_delay_between_remote_calls'] ?? 15),
+                    'cooldown_after_burst' => (int) ($_POST['cooldown_after_burst'] ?? 30),
+                    '429_action' => (string) ($_POST['429_action'] ?? 'pause'),
+                    'bounded_5xx_preferences' => (string) ($_POST['bounded_5xx_preferences'] ?? 'fail_closed'),
+                ]),
+                'step' => $service->step($userId, $token),
+                'heartbeat' => $service->heartbeat($userId, $token),
+                'pause' => $service->pause($userId, $token),
+                'resume' => $service->resume($userId, $token),
+                'stop' => $service->stop($userId, $token),
+                default => ['ok' => false, 'state' => 'OFF', 'message' => 'Acción no soportada.'],
+            };
+            if (empty($result['ok']) && (string) ($result['code'] ?? '') === 'DRAIN_AUTHORITY_BUSY') {
+                http_response_code(409);
+            }
+            $this->json($result);
+        } catch (\Throwable $error) {
+            http_response_code(409);
+            $this->json([
+                'ok' => false,
+                'state' => 'NO_CERTIFICADO',
+                'claimed' => 0,
+                'remote_calls' => 0,
+                'message' => \App\Services\SafeErrorPresenter::message($error, 'No se pudo ejecutar el paso manual.'),
+            ]);
+        }
     }
 
     private function manualProcessingSessionList(string $kind): void

@@ -216,15 +216,15 @@
         },
         {
             "path": "app/Services/ApiHealthService.php",
-            "sha256": "596b9ea3f87edab77477085e6974490b1cc40eb9699206c57dbe4352c60590f7"
+            "sha256": "572dc58664eb34c40661df26a965f4cf34e4f0e15a5b9f899ddba0eeb8746a1f"
         },
         {
             "path": "app/Services/ApiIncidentMaterializerService.php",
-            "sha256": "b9fb691d7eb5ce7290ed48aa147e03fdbf2761c102633a2c9ef531c063ca3e2b"
+            "sha256": "5ae2a37c149480c84f8ecf5154b72d9c75ce0c2cb4b1afb701c2804ed8935ab0"
         },
         {
             "path": "app/Services/ApiIncidentReadModelService.php",
-            "sha256": "50f31a8716ad2bea3fb9d9a003076d65071bc29417010b9fff7dea3200182dca"
+            "sha256": "dadd726479a40dc147a312a55d8c5037e32a9d20f2bb212af3148ce15297bec1"
         },
         {
             "path": "app/Services/ApiLogRiskPresenter.php",
@@ -245,6 +245,10 @@
         {
             "path": "app/Services/AutomationRuntimeStatusService.php",
             "sha256": "3168788dbaa1053b544121bd9f443cc3f7012f9020030229e2feac08bf5fb27c"
+        },
+        {
+            "path": "app/Services/BacklogCounterPresenter.php",
+            "sha256": "cde7548ad818476135746598a48261753e598726bfc4b1e181c606ce5a135aab"
         },
         {
             "path": "app/Services/CronAdmissionService.php",
@@ -444,7 +448,7 @@
         },
         {
             "path": "app/Views/settings/cron.php",
-            "sha256": "ce37dfbd9d8689550eb2a5d2c8f4cf92cd8a83b8fd622ccd206114d312605815"
+            "sha256": "adba15183f8442a6c7aa6400a2c6fbf5caf617eebfacf3a0ff7d0542832dc580"
         },
         {
             "path": "app/Views/settings/cron_shell.php",
@@ -472,7 +476,7 @@
         },
         {
             "path": "app/Views/settings/manual_processing.php",
-            "sha256": "06929b275590acd218b67ff03d9e84a18226302e2f10c0167f7a122abe019fee"
+            "sha256": "7f177dbcafe01795a0a55a1cebaf103c8fb0464867bc78133fc815b0855bda82"
         },
         {
             "path": "app/Views/settings/manual_processing_excluded.php",
@@ -496,11 +500,11 @@
         },
         {
             "path": "app/Views/sync/index.php",
-            "sha256": "2e6ef496b76956c1895c4ff7d89a6493b5ce928ff02ecf3a98a27f219470ad75"
+            "sha256": "263b5d96ecaf54d0fa475fd52d709c10721c793838abb1ab5f1bfac1fe4e942c"
         },
         {
             "path": "app/Views/sync/panel.php",
-            "sha256": "69361d48d7a4c6738ba4678e0d7827c8dd9cc654a2bd2475325bbe3d506d08e5"
+            "sha256": "90aa3e95470c58aba4f31b0af3ff54d686f984dd2e58ed72e7bc45ca65e17dec"
         },
         {
             "path": "app/Views/sync/recurring.php",
@@ -612,7 +616,7 @@
         },
         {
             "path": "public/assets/app.css",
-            "sha256": "68ce7023240447592b5d66450f2bc48ec133a97ed896b30e4e2a3017fb8d5f07"
+            "sha256": "8e6a7d2bcad0bec58763fbe46702b78ab5a27e2ab66f9d55ce17c8ce03f42936"
         },
         {
             "path": "public/assets/app.js",
@@ -744,7 +748,7 @@
         },
         {
             "path": "resources/release/managed-runtime-dependencies-2.40.2.json",
-            "sha256": "4db73a6e3ec9e6d70eca5bf823abc699373cc50e04dd6380b15baaef785bd91e"
+            "sha256": "d416eb739a3d5b084acb6280faacd36de4f2aff0c933e9065ff398b0228c8cd1"
         },
         {
             "path": "resources/release/queue-v4-canonical-db-contract-2.38.3.json",

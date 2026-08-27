@@ -48,7 +48,7 @@
         },
         {
             "path": "app/Controllers/SettingsController.php",
-            "sha256": "f4c4635a8d71bd6cd52110fca433012547c9b9c8f311ba54c4e1e8780a4931e5"
+            "sha256": "16d7e0ebf1cfe672971fa733fd32c20f3ac7fa7a67aefa3995d2761d3086507d"
         },
         {
             "path": "app/Controllers/SyncController.php",
@@ -287,8 +287,12 @@
             "sha256": "d48786127c5a8958846964d76de5b8e7336014844deebd4ebcbe0bb5e6b750a1"
         },
         {
+            "path": "app/Services/ManualCampaignPreviewService.php",
+            "sha256": "fce3ecd294f61a3d98662ea755023be54aacdf42803ab055593a392c8efcbeff"
+        },
+        {
             "path": "app/Services/ManualDrainSessionService.php",
-            "sha256": "19f5221a7d36d65ece6f2b3b9e64dc09e8eb2471f84e269c0d378ddf799ea1de"
+            "sha256": "f80b7ff6b8430eb4bb3efddf422f208539fcd1fe8ca1ecae6f08e7bbec8018de"
         },
         {
             "path": "app/Services/ManualProcessingService.php",
@@ -301,6 +305,10 @@
         {
             "path": "app/Services/ManualRemoteCallLimitException.php",
             "sha256": "f5bab5d40d3446f5ad95ee7bbcd4f2fe5ee7231769a99e63b82d0f43611ce0ab"
+        },
+        {
+            "path": "app/Services/ManualSingleStepService.php",
+            "sha256": "ba57b8e9d041e2165ce47bf7db0e329036fc285ab2cc0d8b82930fff7ca87d91"
         },
         {
             "path": "app/Services/MeliApiClient.php",
@@ -476,7 +484,7 @@
         },
         {
             "path": "app/Views/settings/manual_processing.php",
-            "sha256": "6bbe04b2ab220846628765343610ee103de222a6383653d08de54368343d2b46"
+            "sha256": "18cb7ae624d57daa0d9bb386dc0c0eb4290c7741a232e21044c0f1453fa44f8c"
         },
         {
             "path": "app/Views/settings/manual_processing_excluded.php",

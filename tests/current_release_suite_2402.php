@@ -12,6 +12,7 @@ $tests = [
     'api_incident_materializer_visibility_23915.php',
     'cron_api_risks_2416.php',
     'operator_control_plane_2402.php',
+    'manual_selection_execution_binding_2402.php',
     'k10_smart_manual_drain_contract.php',
     'k10_p1_repair_contract.php',
 ];

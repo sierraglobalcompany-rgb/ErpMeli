@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
     "target_version": "2.40.2",
-    "contract": "The 2.40.1/schema300 to 2.40.2/schema300 release repairs the operator control plane visibility layer, preserves Queue V4, FIFO, Billing pacing, Smart Manual Drain schema, physical Cron and production data, and never performs recovery, OAuth, Billing, Cron, or Mercado Libre HTTP during update.",
+    "contract": "The 2.40.1/schema300 to 2.40.2/schema300 release repairs the operator control plane visibility layer, keeps Queue V4, FIFO, Billing pacing, Smart Manual Drain schema, physical Cron and production data unchanged, and never performs recovery, OAuth, Billing, Cron, or Mercado Libre HTTP during update.",
     "supersedes_inventory": {
         "path": "resources/release/updater-locked-file-inventory-2.36.1.json",
         "sha256": "7b90dab866e6b49d785ce8c706f3ea7ce7db6846fdd1678e6a953a6bf4e31fd5",
@@ -28,7 +28,7 @@
     "new_runtime_dependencies": [
         {
             "path": "VERSION",
-            "sha256": "41a39e6fe55d4b5017a57ada401c997fa990445a32fc5d2d59f1fc0cc8ec29a2"
+            "sha256": "6fef7d6c871f136534cb910c18f2dc8aa066089fa87e6c76c7f5a61d2b20ed38"
         },
         {
             "path": "app/Controllers/ClaimController.php",
@@ -52,7 +52,7 @@
         },
         {
             "path": "app/Controllers/SyncController.php",
-            "sha256": "e62e9d60dc2013dd27c4edf8d488076697d326ccb2ed4d4665605eca4be16784"
+            "sha256": "2a33358ebf6b7401a32a87d86101828f8878d5f3dfb4283595f8fb5386fc5f23"
         },
         {
             "path": "app/Core/Modules/ModuleEventDispatcher.php",
@@ -216,7 +216,7 @@
         },
         {
             "path": "app/Services/ApiHealthService.php",
-            "sha256": "15650e3ef6a981fbf7352ee4015e7ebc3845dffc67749a594a0b85b04dccbfe4"
+            "sha256": "596b9ea3f87edab77477085e6974490b1cc40eb9699206c57dbe4352c60590f7"
         },
         {
             "path": "app/Services/ApiIncidentMaterializerService.php",
@@ -280,7 +280,7 @@
         },
         {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "acb80f398d851730042f2d95527424fdde0eb3023e8c35042e6c9a1cb221410d"
+            "sha256": "d48786127c5a8958846964d76de5b8e7336014844deebd4ebcbe0bb5e6b750a1"
         },
         {
             "path": "app/Services/ManualDrainSessionService.php",
@@ -468,11 +468,11 @@
         },
         {
             "path": "app/Views/settings/index.php",
-            "sha256": "23c9fee8cab477c32737aaf358f00ab0570196cabcae6978a2968238c206a949"
+            "sha256": "1dc2227959d24e561e926a5b5ece0c355bc37a8c7300d627cef7e2fbaa230b78"
         },
         {
             "path": "app/Views/settings/manual_processing.php",
-            "sha256": "f8b998916e240fd7b4e9e2679b4d5da22e3ba6cb7c712dbba5f99fb9fbf31c83"
+            "sha256": "06929b275590acd218b67ff03d9e84a18226302e2f10c0167f7a122abe019fee"
         },
         {
             "path": "app/Views/settings/manual_processing_excluded.php",
@@ -493,6 +493,14 @@
         {
             "path": "app/Views/settings/section.php",
             "sha256": "2249e791d296c049e10a37d950cffa13835be12bd03e335b941f0b60e4ad1ca5"
+        },
+        {
+            "path": "app/Views/sync/index.php",
+            "sha256": "2e6ef496b76956c1895c4ff7d89a6493b5ce928ff02ecf3a98a27f219470ad75"
+        },
+        {
+            "path": "app/Views/sync/panel.php",
+            "sha256": "69361d48d7a4c6738ba4678e0d7827c8dd9cc654a2bd2475325bbe3d506d08e5"
         },
         {
             "path": "app/Views/sync/recurring.php",
@@ -609,6 +617,10 @@
         {
             "path": "public/assets/app.js",
             "sha256": "3e8e488f6f851696073cd21b1b0fb5c787d344c09002466be873891bd02f6795"
+        },
+        {
+            "path": "public/assets/performance.js",
+            "sha256": "801daf49a483b9b13db0b52cc7916f539bf13557247842cf145f02eda0fb4d35"
         },
         {
             "path": "resources/release/managed-runtime-dependencies-2.38.2.json",
@@ -729,6 +741,10 @@
         {
             "path": "resources/release/managed-runtime-dependencies-2.40.1.json",
             "sha256": "14d00691af3f20cab5a52b2d15097e4309a5e7162d91f70943cabcb4e2cb09e3"
+        },
+        {
+            "path": "resources/release/managed-runtime-dependencies-2.40.2.json",
+            "sha256": "b1a4da9b197dddd3a1dea52dc2afc3236194f7753582f46f4a38019e551fa98d"
         },
         {
             "path": "resources/release/queue-v4-canonical-db-contract-2.38.3.json",

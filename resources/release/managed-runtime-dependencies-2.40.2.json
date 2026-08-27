@@ -1,8 +1,8 @@
 {
     "schema_version": 1,
     "authority_id": "operator-control-plane-kiss-release-2.40.2-runtime-dependencies",
-    "runtime_manifest_paths_sha256": "f358d8480921a206bf29db961dc8df33e30dff67b81113cd42eecc8e43db07a7",
-    "coverage_base_commit": "8e102e2711905a3dc9c9c4e62a4afce41adbfa1f",
+    "runtime_manifest_paths_sha256": "46aeb4a52984ecafd579c2fc6731542d3cc1aedc9979e944212f3086fde5518f",
+    "coverage_base_commit": "4ee861483f26422eb70c1ded083b45178c088a2a",
     "classifications": {
         "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",
         "RUNTIME_OPTIONAL_FAIL_CLOSED": "Optional capacity that fails closed when absent.",

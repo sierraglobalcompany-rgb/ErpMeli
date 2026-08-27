@@ -573,6 +573,23 @@ try {
         ];
         $assert(($inventory['base_commit'] ?? null) === '8e102e2711905a3dc9c9c4e62a4afce41adbfa1f', 'overlay_base_not_2400_candidate_authority');
         $assert(count($overlayRows) === count($requiredOverlayPaths), 'overlay_redundant_or_missing_paths');
+    } elseif ($targetVersion === '2.40.2') {
+        $requiredOverlayPaths = [
+            'VERSION',
+            'app/Controllers/SyncController.php',
+            'app/Services/ApiHealthService.php',
+            'app/Services/ManagedRuntimePublicationPolicy.php',
+            'app/Views/settings/index.php',
+            'app/Views/settings/manual_processing.php',
+            'app/Views/sync/index.php',
+            'app/Views/sync/panel.php',
+            'public/assets/performance.js',
+            'resources/release/managed-runtime-dependencies-2.40.2.json',
+            'resources/release/updater-authority-2.40.2.json',
+            'resources/runtime-manifest.json',
+        ];
+        $assert(($inventory['base_commit'] ?? null) === '4ee861483f26422eb70c1ded083b45178c088a2a', 'overlay_base_not_2401_authority');
+        $assert(count($overlayRows) === count($requiredOverlayPaths), 'overlay_redundant_or_missing_paths');
     }
     foreach (array_values(array_unique($requiredOverlayPaths)) as $requiredOverlay) {
         $assert(isset($overlay[$requiredOverlay]), 'required_overlay_path_missing:' . $requiredOverlay);

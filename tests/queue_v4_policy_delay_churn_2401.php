@@ -3,10 +3,14 @@
 declare(strict_types=1);
 
 $dsn = (string) (getenv('QUEUE_V4_CLEAN_TEST_DSN') ?: '');
-if ($dsn === '') {
-    fwrite(STDERR, "QUEUE_V4_CLEAN_TEST_DSN is required\n");
+if ($dsn === '' || stripos($dsn, 'dbname=') !== false) {
+    fwrite(STDERR, "QUEUE_V4_CLEAN_TEST_DSN without dbname is required\n");
     exit(2);
 }
+$user = (string) (getenv('QUEUE_V4_CLEAN_TEST_USER') ?: 'root');
+$pass = (string) (getenv('QUEUE_V4_CLEAN_TEST_PASS') ?: '');
+$database = 'erp_qv4_churn_2401_' . bin2hex(random_bytes(5));
+$quoteIdentifier = static fn (string $name): string => '`' . str_replace('`', '``', $name) . '`';
 
 $temporaryRoot = sys_get_temp_dir() . '/erp-qv4-churn-2401-' . bin2hex(random_bytes(5));
 mkdir($temporaryRoot, 0700, true);
@@ -31,10 +35,28 @@ use App\Services\ManualRemoteCallLimitException;
 use App\Services\OAuthRefreshRequiredException;
 use App\Services\QueueV4PreTransportDeferredException;
 
-$pdo = new PDO(
+$server = new PDO(
     $dsn,
-    (string) (getenv('QUEUE_V4_CLEAN_TEST_USER') ?: 'root'),
-    (string) (getenv('QUEUE_V4_CLEAN_TEST_PASS') ?: ''),
+    $user,
+    $pass,
+    [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES => false,
+    ],
+);
+$server->exec('CREATE DATABASE ' . $quoteIdentifier($database) . ' CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+register_shutdown_function(static function () use ($server, $quoteIdentifier, $database): void {
+    try {
+        $server->exec('DROP DATABASE IF EXISTS ' . $quoteIdentifier($database));
+    } catch (Throwable) {
+    }
+});
+
+$pdo = new PDO(
+    rtrim($dsn, ';') . ';dbname=' . $database,
+    $user,
+    $pass,
     [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
@@ -44,6 +66,125 @@ $pdo = new PDO(
 $pdo->exec("SET time_zone='+00:00'");
 Database::setConnection($pdo);
 putenv('ML_WRITE_ENABLED=false');
+
+$pdo->exec(
+    "CREATE TABLE companies (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(160) NOT NULL,
+        status TINYINT(1) NOT NULL DEFAULT 1,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+);
+$pdo->exec(
+    "CREATE TABLE meli_accounts (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        company_id BIGINT UNSIGNED NOT NULL,
+        account_name VARCHAR(160) NOT NULL,
+        nickname VARCHAR(160) NULL,
+        meli_user_id BIGINT UNSIGNED NULL,
+        site_id VARCHAR(12) NULL,
+        status VARCHAR(40) NOT NULL DEFAULT 'connected',
+        token_expires_at DATETIME(3) NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        KEY idx_meli_accounts_company (company_id,id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+);
+$pdo->exec(
+    "CREATE TABLE queue_v4_clean_control (
+        control_key VARCHAR(32) NOT NULL PRIMARY KEY,
+        engine_state ENUM('STOPPED','CERTIFIED','ACTIVE') NOT NULL DEFAULT 'STOPPED',
+        readiness_state ENUM('NOT_READY','READY_TO_TEST','TESTING','CERTIFIED','FAILED') NOT NULL DEFAULT 'NOT_READY',
+        scheduler_enabled TINYINT(1) NOT NULL DEFAULT 0,
+        last_scheduler_at DATETIME(3) NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+);
+$pdo->exec("INSERT INTO queue_v4_clean_control (control_key,engine_state,readiness_state,scheduler_enabled) VALUES ('primary','ACTIVE','CERTIFIED',1)");
+$pdo->exec(
+    "CREATE TABLE queue_v4_clean_jobs (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        company_id BIGINT UNSIGNED NOT NULL,
+        meli_account_id BIGINT UNSIGNED NOT NULL,
+        job_type ENUM('fresh_orders_discovery','order_exact','domain_exact') NOT NULL,
+        resource_id VARCHAR(191) NULL,
+        idempotency_key VARCHAR(191) NOT NULL,
+        state ENUM('ready','running','waiting','review','dead','completed') NOT NULL DEFAULT 'ready',
+        attempt_count TINYINT UNSIGNED NOT NULL DEFAULT 0,
+        max_attempts TINYINT UNSIGNED NOT NULL DEFAULT 3,
+        available_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        lease_owner VARCHAR(96) NULL,
+        lease_generation BIGINT UNSIGNED NOT NULL DEFAULT 0,
+        lease_expires_at DATETIME(3) NULL,
+        payload_json LONGTEXT NOT NULL,
+        last_error_class VARCHAR(100) NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        completed_at DATETIME(3) NULL,
+        UNIQUE KEY uq_qv4_job_identity (company_id,meli_account_id,job_type,idempotency_key),
+        KEY idx_qv4_fifo (state,available_at,id),
+        KEY idx_qv4_tenant (company_id,meli_account_id,state,id),
+        KEY idx_qv4_lease (state,lease_expires_at,id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+);
+$pdo->exec(
+    "CREATE TABLE queue_v4_clean_runs (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        launcher ENUM('scheduler','manual','test') NOT NULL,
+        worker_ref VARCHAR(96) NOT NULL,
+        status ENUM('running','completed','failed','stopped') NOT NULL DEFAULT 'running',
+        jobs_claimed INT UNSIGNED NOT NULL DEFAULT 0,
+        jobs_completed INT UNSIGNED NOT NULL DEFAULT 0,
+        jobs_deferred INT UNSIGNED NOT NULL DEFAULT 0,
+        started_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        finished_at DATETIME(3) NULL,
+        KEY idx_qv4_runs_status (status,started_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+);
+$pdo->exec(
+    "CREATE TABLE queue_v4_clean_attempts (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        job_id BIGINT UNSIGNED NOT NULL,
+        run_id BIGINT UNSIGNED NOT NULL,
+        company_id BIGINT UNSIGNED NOT NULL,
+        meli_account_id BIGINT UNSIGNED NOT NULL,
+        lease_owner VARCHAR(96) NOT NULL,
+        lease_generation BIGINT UNSIGNED NOT NULL DEFAULT 0,
+        outcome ENUM('running','completed','waiting','review','dead','lease_expired') NOT NULL DEFAULT 'running',
+        error_class VARCHAR(100) NULL,
+        dispatch_state ENUM('NOT_DISPATCHED','PHYSICAL_STARTED','RESPONSE_KNOWN') NOT NULL DEFAULT 'NOT_DISPATCHED',
+        transport_method VARCHAR(8) NULL,
+        endpoint_key VARCHAR(100) NULL,
+        physical_http_calls TINYINT UNSIGNED NOT NULL DEFAULT 0,
+        physical_started_at DATETIME(3) NULL,
+        http_status SMALLINT UNSIGNED NULL,
+        response_known_at DATETIME(3) NULL,
+        source_closed_at DATETIME(3) NULL,
+        started_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        finished_at DATETIME(3) NULL,
+        UNIQUE KEY uq_qv4_attempt (job_id,lease_owner),
+        KEY idx_qv4_attempt_tenant (company_id,meli_account_id,started_at),
+        KEY idx_qv4_attempt_run (run_id,company_id,meli_account_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+);
+$pdo->exec(
+    "CREATE TABLE sale_financial_reconciliation_jobs (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        company_id BIGINT UNSIGNED NOT NULL,
+        meli_account_id BIGINT UNSIGNED NOT NULL,
+        order_id VARCHAR(80) NOT NULL,
+        input_version VARCHAR(191) NOT NULL,
+        status ENUM('pending','retry','complete','review','dead') NOT NULL DEFAULT 'pending',
+        attempts INT UNSIGNED NOT NULL DEFAULT 0,
+        next_run_at DATETIME(3) NULL,
+        safe_message VARCHAR(500) NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        KEY idx_sfrj_tenant_status (company_id,meli_account_id,status,next_run_at,id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+);
 
 $checks = 0;
 $assert = static function (bool $condition, string $message) use (&$checks): void {

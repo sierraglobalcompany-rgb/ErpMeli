@@ -17,6 +17,7 @@ final class SaleFinancialService
     private const ENDPOINT = '/billing/integration/group/ML/order/details';
     private const PACK_INCOMPLETE_RECHECK_MINUTES = 60;
     private const BILLING_MAX_ORDER_IDS = 60;
+    private const FINANCIAL_RECONCILIATION_STALE_RECHECK_SECONDS = 900;
 
     /** @var \Closure(int):MeliApiClient */
     private \Closure $clientFactory;
@@ -696,17 +697,27 @@ final class SaleFinancialService
             return ['state' => 'completed'];
         }
         if (in_array($status, ['pending', 'running', 'retry', 'awaiting_remote'], true)) {
-            $next = trim((string) ($row['next_run_at'] ?? ''));
             return [
                 'state' => 'waiting',
                 'classification' => 'domain_source_waiting:financial_reconciliation',
-                'next_safe_at' => $next !== '' ? $next : gmdate('Y-m-d H:i:s', time() + 60),
+                'next_safe_at' => $this->financialReconciliationNextSafeAt($row['next_run_at'] ?? null),
             ];
         }
         return [
             'state' => 'review',
             'classification' => 'domain_source_' . substr($status !== '' ? $status : 'unknown', 0, 70),
         ];
+    }
+
+    private function financialReconciliationNextSafeAt(mixed $nextRunAt): string
+    {
+        $value = trim((string) $nextRunAt);
+        $timestamp = $value !== '' ? strtotime($value . ' UTC') : false;
+        if ($timestamp !== false && $timestamp > time()) {
+            return gmdate('Y-m-d H:i:s', $timestamp);
+        }
+
+        return gmdate('Y-m-d H:i:s', time() + self::FINANCIAL_RECONCILIATION_STALE_RECHECK_SECONDS);
     }
 
     /** @param array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} $summary */

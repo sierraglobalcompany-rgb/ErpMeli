@@ -122,10 +122,10 @@
       ? labelFrom(payload, ['mercado_libre', 'label'], 'Mercado Libre se comprueba en Salud API')
       : 'No se pudo comprobar';
     const marketMessage = available
-      ? labelFrom(payload, ['mercado_libre', 'message'], 'La disponibilidad remota queda separada de la automatización Queue V4.')
+      ? labelFrom(payload, ['mercado_libre', 'message'], 'La disponibilidad remota queda separada del procesamiento automático.')
       : 'La sección rápida no respondió. No se consultó Mercado Libre desde esta página.';
     const automationLabel = available
-      ? labelFrom(payload, ['automation', 'label'], 'Automatización Queue V4 por comprobar')
+      ? labelFrom(payload, ['automation', 'label'], 'Procesamiento automático por comprobar')
       : 'No se pudo comprobar';
     const automationMessage = available
       ? labelFrom(payload, ['automation', 'message'], 'Se conserva la última lectura válida si una sección falla.')
@@ -137,7 +137,7 @@
     const measuredAt = labelFrom(payload, ['measured_at'], 'sin fecha reciente');
 
     shell.innerHTML = `
-      <section class="api-health-triad" aria-label="Salud API y automatización Queue V4">
+      <section class="api-health-triad" aria-label="Salud API y procesamiento automático">
         <article data-health-card="marketplace">
           <span>Mercado Libre</span>
           <strong data-health-label>${escapeHtml(marketLabel)}</strong>
@@ -155,7 +155,7 @@
         </article>
       </section>
       <section class="api-command-section">
-        <header><div><span class="eyebrow">ESTADO DEL DIAGNÓSTICO</span><h2>${available ? 'Lectura rápida Queue V4 disponible' : 'No se pudo comprobar esta sección'}</h2></div></header>
+        <header><div><span class="eyebrow">ESTADO DEL DIAGNÓSTICO</span><h2>${available ? 'Lectura rápida disponible' : 'No se pudo comprobar esta sección'}</h2></div></header>
         <p>${available ? 'Cargando detalle completo en segundo plano; si falla, esta lectura rápida se conserva.' : 'Puede reintentar sin tocar colas ni consultar Mercado Libre.'}</p>
         <p class="muted" data-api-health-shell-status>Snapshot operativo ${escapeHtml(measuredAt)} UTC · lectura sin mutaciones.</p>
       </section>`;

@@ -61,7 +61,7 @@ final class NavigationRepository
                 'label' => 'Administración',
                 'icon' => 'users',
                 'items' => [
-                    $this->item('/settings/manual-processing', 'refresh', 'Procesar ahora'),
+                    $this->item('/settings/manual-processing', 'refresh', 'Procesamiento manual'),
                     $this->item('/companies', 'building', 'Organización', ['/companies', '/accounts']),
                     $this->item('/users', 'users', 'Usuarios y accesos'),
                     $this->item('/settings', 'file', 'Configuración'),
@@ -152,14 +152,33 @@ final class NavigationRepository
             ],
             [
                 ['href' => '/settings', 'label' => 'Centro', 'matches' => ['=/settings']],
-                ['href' => '/settings/api-health', 'label' => 'Salud API', 'matches' => ['/settings/api-health']],
-                ['href' => '/settings/manual-processing', 'label' => 'Procesar ahora', 'matches' => ['/settings/manual-processing']],
-                ['href' => '/settings/cron', 'label' => 'Cron', 'matches' => ['/settings/cron']],
-                ['href' => '/settings/diagnostics', 'label' => 'Diagnóstico', 'matches' => ['/settings/diagnostics']],
-                ['href' => '/settings/update', 'label' => 'Actualizaciones', 'matches' => ['/settings/update']],
-                ['href' => '/settings/backups', 'label' => 'Copias', 'matches' => ['/settings/backups']],
-                ['href' => '/settings/database-maintenance', 'label' => 'Saneamiento', 'matches' => ['/settings/database-maintenance']],
-                ['href' => '/settings/modules', 'label' => 'Módulos', 'matches' => ['/settings/modules']],
+                ['href' => '/settings/general', 'label' => 'Configuración', 'matches' => [
+                    '/settings/general',
+                    '/settings/synchronization',
+                    '/settings/mercadolibre',
+                    '/settings/communications',
+                    '/settings/financial',
+                    '/settings/catalogs',
+                    '/settings/system',
+                ]],
+                ['href' => '/settings/cron', 'label' => 'Procesamiento', 'matches' => [
+                    '/settings/cron',
+                    '/settings/manual-processing',
+                ]],
+                ['href' => '/settings/api-health', 'label' => 'Salud', 'matches' => [
+                    '/settings/api-health',
+                    '/settings/diagnostics',
+                    '/settings/api-docs',
+                    '/settings/api-logs',
+                ]],
+                ['href' => '/settings/update', 'label' => 'Sistema', 'matches' => [
+                    '/settings/update',
+                    '/settings/backups',
+                    '/settings/database-maintenance',
+                    '/settings/imported-data-reset',
+                    '/settings/modules',
+                    '/settings/emergency-control',
+                ]],
             ],
         ];
     }

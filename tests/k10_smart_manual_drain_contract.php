@@ -18,7 +18,7 @@ $view = (string) file_get_contents($root . '/app/Views/settings/manual_processin
 $worker = (string) file_get_contents($root . '/app/QueueV4Clean/QueueV4CleanWorker.php');
 $leaseService = (string) file_get_contents($root . '/app/QueueCore/QueueExecutionLeaseService.php');
 
-$assert($version === '2.40.0', 'version_not_2400');
+$assert(in_array($version, ['2.40.0', '2.40.1'], true), 'version_not_2400_or_2401');
 $assert(str_contains($migration, 'CREATE TABLE IF NOT EXISTS manual_drain_sessions'), 'manual_drain_sessions_missing');
 $assert(str_contains($migration, 'session_token CHAR(64) NOT NULL'), 'session_token_missing');
 $assert(str_contains($migration, 'UNIQUE KEY uq_manual_drain_session_token'), 'session_token_unique_missing');
@@ -80,8 +80,9 @@ $assert(str_contains($worker, 'receiptForRun'), 'worker_receipt_for_run_missing'
 $assert(str_contains($worker, 'ManualRemoteCallLimitException') && str_contains($worker, 'capacity_deferred:manual_burst'), 'manual_burst_limit_must_not_be_review');
 $assert(str_contains($worker, 'queue_v4_clean_transport_events') && str_contains($worker, 'physicalHttpCallsForRun'), 'worker_physical_http_attribution_missing');
 
-$assert(str_contains($view, 'K10 · SMART MANUAL DRAIN'), 'manual_drain_card_missing');
-$assert(str_contains($view, 'V4_AUTOMATIC_BOUNDARY'), 'manual_drain_classification_missing');
+$assert(str_contains($view, 'Procesamiento manual seguro'), 'manual_drain_operator_title_missing');
+$assert(str_contains($view, 'MANUAL_EXACT'), 'manual_drain_operator_classification_missing');
+$assert(str_contains($view, 'Detalle técnico avanzado') && str_contains($view, 'K10') && str_contains($view, 'Queue V4 boundary'), 'manual_drain_technical_detail_missing');
 $assert(str_contains($view, '/settings/manual-processing/drain/start'), 'manual_drain_start_form_missing');
 $assert(str_contains($view, '/settings/manual-processing/drain/step'), 'manual_drain_step_form_missing');
 $assert(str_contains($view, '/settings/manual-processing/drain/profile'), 'manual_drain_profile_form_missing');

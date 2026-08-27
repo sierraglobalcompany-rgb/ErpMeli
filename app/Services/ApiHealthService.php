@@ -209,36 +209,33 @@ final class ApiHealthService
             $where[] = 'l.outcome_class="remote_error" AND COALESCE(l.http_status,0) NOT IN (401,403,429)';
         }
 
+        $fallbackAllowed = $this->directFallbackAllowedInCurrentRuntime();
         $materialized = (new ApiIncidentReadModelService())->page($filters, $limit, $offset);
         if (is_array($materialized)) {
             $this->lastIncidentTotal = (int) $materialized['total'];
+            if ((int) $materialized['total'] === 0
+                && $statusFilter === ''
+                && $this->isRemote429Filter($filters)
+                && $fallbackAllowed
+                && $this->directIncidentFallbackSafe($where, $params, $hours)) {
+                return $this->directIncidentFallbackRows($where, $params, $hours, $limit);
+            }
             return array_map(fn(array $row): array => $this->presentIncident($row), $materialized['rows']);
         }
 
         // A stale catalogue must not look empty. The browser may use a bounded
         // direct projection only when EXPLAIN certifies an indexed access path.
         // It is explicitly degraded and never authorizes acknowledgement work.
-        $directDegraded = PHP_SAPI !== 'cli'
+        $directDegraded = $fallbackAllowed
             && $statusFilter === ''
             && $this->directIncidentFallbackSafe($where, $params, $hours);
-        if (PHP_SAPI !== 'cli' && !$directDegraded) {
+        if ($fallbackAllowed && !$directDegraded) {
             $this->dataAvailable = false;
             $this->lastIncidentTotal = 0;
             return [];
         }
         if ($directDegraded) {
-            $this->incidentProtocol = 'degraded_direct';
-            $limit = min(50, max(1, $limit));
-            $offset = 0;
-            try {
-                $rows = $this->directIncidentRows($where, $params, $hours, $limit);
-                $this->lastIncidentTotal = count($rows);
-                return array_map(fn(array $row): array => $this->presentIncident($row), $rows);
-            } catch (Throwable) {
-                $this->dataAvailable = false;
-                $this->lastIncidentTotal = 0;
-                return [];
-            }
+            return $this->directIncidentFallbackRows($where, $params, $hours, $limit);
         }
 
         // The bounded CLI path remains available to rebuild/verify the read
@@ -864,7 +861,7 @@ final class ApiHealthService
         try {
             $statement = Database::connectionFresh()->prepare(
                 'EXPLAIN SELECT l.id
-                 FROM api_request_logs l
+                 FROM ' . $this->directIncidentLogSourceSql() . '
                  WHERE ' . implode(' AND ', $where) . '
                  ORDER BY l.created_at DESC,l.id DESC
                  LIMIT 500'
@@ -881,13 +878,56 @@ final class ApiHealthService
             foreach ($plan as $row) {
                 $type = strtolower((string) ($row['type'] ?? ''));
                 $key = trim((string) ($row['key'] ?? ''));
-                if ($key === '' || !in_array($type, ['const', 'eq_ref', 'ref', 'range'], true)) {
+                $rows = max(0, (int) ($row['rows'] ?? 0));
+                $extra = strtolower((string) ($row['Extra'] ?? ''));
+                $safeIndexedLookup = in_array($type, ['const', 'eq_ref', 'ref', 'range'], true);
+                $safeBoundedIndexScan = $type === 'index'
+                    && $rows > 0
+                    && $rows <= 250000
+                    && !str_contains($extra, 'using temporary');
+                if ($key === '' || (!$safeIndexedLookup && !$safeBoundedIndexScan)) {
                     return false;
                 }
             }
             return true;
         } catch (Throwable) {
             return false;
+        }
+    }
+
+    private function directFallbackAllowedInCurrentRuntime(): bool
+    {
+        return PHP_SAPI !== 'cli' || getenv('ERP_API_HEALTH_DIRECT_FALLBACK_FOR_TESTS') === '1';
+    }
+
+    /** @param array<string,mixed> $filters */
+    private function isRemote429Filter(array $filters): bool
+    {
+        if (max(0, (int) ($filters['http_status'] ?? 0)) !== 429) {
+            return false;
+        }
+
+        $origin = trim((string) ($filters['origin'] ?? ''));
+        return $origin === '' || $origin === 'remote';
+    }
+
+    /**
+     * @param list<string> $where
+     * @param array<string,mixed> $params
+     * @return list<array<string,mixed>>
+     */
+    private function directIncidentFallbackRows(array $where, array $params, int $hours, int $limit): array
+    {
+        $this->incidentProtocol = 'degraded_direct';
+        $limit = min(50, max(1, $limit));
+        try {
+            $rows = $this->directIncidentRows($where, $params, $hours, $limit);
+            $this->lastIncidentTotal = count($rows);
+            return array_map(fn(array $row): array => $this->presentIncident($row), $rows);
+        } catch (Throwable) {
+            $this->dataAvailable = false;
+            $this->lastIncidentTotal = 0;
+            return [];
         }
     }
 
@@ -910,7 +950,7 @@ final class ApiHealthService
                 SELECT l.id,l.incident_key,l.outcome_class,l.method,l.endpoint_path,l.http_status,l.error_type,
                        l.error_code,l.safe_message,l.diagnostic_id,l.created_at,l.reached_remote,l.actionable,
                        l.risk_signal,l.scope_kind,l.company_id,l.meli_account_id
-                FROM api_request_logs l
+                FROM ' . $this->directIncidentLogSourceSql() . '
                 WHERE ' . implode(' AND ', $where) . '
                 ORDER BY l.created_at DESC,l.id DESC
                 LIMIT 500
@@ -927,6 +967,17 @@ final class ApiHealthService
         $statement->bindValue(':limit', max(1, min(50, $limit)), PDO::PARAM_INT);
         $statement->execute();
         return $statement->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    private function directIncidentLogSourceSql(): string
+    {
+        try {
+            if ((new InformationSchemaGateway(Database::connectionFresh()))->hasIndex('api_request_logs', 'idx_api_logs_incident')) {
+                return 'api_request_logs l FORCE INDEX (idx_api_logs_incident)';
+            }
+        } catch (Throwable) {
+        }
+        return 'api_request_logs l';
     }
 
     /** @return list<array<string,mixed>> */

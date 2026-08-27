@@ -421,7 +421,8 @@ final class MeliApiClient implements MeliReadClientInterface
                         $budget->releaseReservation($budgetReservation, true);
                         $rhythm->cancelBeforeTransport($rhythmPermit, true);
                         ApiExecutionMetadataContext::markRemoteBlocked();
-                        if ($transportBlocked instanceof ApiBudgetExhaustedException
+                        if ($transportBlocked instanceof ApiRhythmDeferredException
+                            || $transportBlocked instanceof ApiBudgetExhaustedException
                             || $transportBlocked instanceof ApiManualPauseException
                             || $transportBlocked instanceof CronDeadlineDeferredException) {
                             throw $transportBlocked;

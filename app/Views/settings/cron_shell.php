@@ -9,8 +9,8 @@ $csrfToken = Csrf::token();
 <div class="page-head cron-page-head">
   <div>
     <span class="eyebrow">AUTOMATIZACIÓN</span>
-    <h1>Queue V4</h1>
-    <p>Motor FIFO nuevo. El estado operativo V2, V3 y Queue Core se conserva como legado ignorado.</p>
+    <h1>Procesamiento automático</h1>
+    <p>Un solo lanzador automático toma trabajo elegible en orden seguro. El legado se conserva fuera de la operación normal.</p>
   </div>
   <div class="page-actions">
     <a class="btn" href="<?= View::e($base) ?>/settings/diagnostics">Diagnóstico</a>
@@ -24,16 +24,16 @@ $csrfToken = Csrf::token();
     <span class="cron-status-dot" aria-hidden="true"></span>
     <div>
       <strong data-qv4-state>No preparado</strong>
-      <span data-qv4-message>Comprobando el módulo nuevo sin leer colas heredadas.</span>
+      <span data-qv4-message>Comprobando el motor activo sin leer colas heredadas.</span>
     </div>
   </section>
 
-  <section class="cron-truth-grid" aria-label="Estado Queue V4">
+  <section class="cron-truth-grid" aria-label="Estado del procesamiento automático">
     <article><span>Estado</span><strong data-qv4-engine>Detenido</strong><p>Certificar no activa el motor.</p></article>
     <article><span>Cuentas OAuth</span><strong data-qv4-oauth>0/3</strong><p>Tres cuentas exactas y vigentes.</p></article>
     <article><span>Readiness GET</span><strong data-qv4-readiness>0/3</strong><p>Un GET /users/me directo por cuenta, fuera de la cola.</p></article>
-    <article><span>Configuración scheduler ERP</span><strong data-qv4-scheduler>Inactivo</strong><p>Es configuración interna; no demuestra que exista Cron en hPanel.</p></article>
-    <article><span>Heartbeat del Cron</span><strong data-qv4-heartbeat>Sin evidencia</strong><p data-qv4-physical>Observación física: UNKNOWN</p></article>
+    <article><span>Configuración del programador</span><strong data-qv4-scheduler>Inactivo</strong><p>Es configuración interna; no demuestra que exista la tarea física en hPanel.</p></article>
+    <article><span>Heartbeat automático</span><strong data-qv4-heartbeat>Sin evidencia</strong><p data-qv4-physical>Observación física: UNKNOWN</p></article>
   </section>
 
   <section class="cron-task-section cron-api-risks" data-cron-api-risks
@@ -103,7 +103,7 @@ $csrfToken = Csrf::token();
       </div>
       <span class="status-badge is-unavailable" data-qv4-legacy>Legado no consultado</span>
     </div>
-    <section class="cron-truth-grid" aria-label="Contadores Queue V4">
+    <section class="cron-truth-grid" aria-label="Contadores de cola automática">
       <?php foreach (['ready' => 'Ready', 'running' => 'Running', 'waiting' => 'Waiting', 'review' => 'Review', 'dead' => 'Dead'] as $key => $label): ?>
         <article><span><?= View::e($label) ?></span><strong data-qv4-count="<?= View::e($key) ?>">0</strong></article>
       <?php endforeach; ?>
@@ -142,6 +142,6 @@ $csrfToken = Csrf::token();
 
   <section class="notice neutral">
     <strong>Legado fuera de autoridad</strong>
-    <p>V2, V3 y Queue Core no bloquean ni alimentan Queue V4.</p>
+    <p>Las generaciones anteriores no bloquean ni alimentan el procesamiento automático actual.</p>
   </section>
 </div>

@@ -52,7 +52,7 @@ $automationTab = 'summary';
 require __DIR__ . '/_automation_nav.php';
 ?>
 <?php if (empty($embedded)): ?>
-<div class="page-head"><div><span class="eyebrow">Automatización</span><h1>Centro de Automatización</h1><p>Compruebe cuándo trabajó, qué procesará y si necesita intervenir.</p></div><div class="page-actions"><a class="btn" href="<?= View::e($base) ?>/settings/api-workload">Capacidad y ritmo</a><a class="btn" href="<?= View::e($base) ?>/settings/cron/next">Ver próxima ejecución</a></div></div>
+<div class="page-head"><div><span class="eyebrow">Procesamiento automático</span><h1>Trabajo programado</h1><p>Compruebe cuándo trabajó, qué procesará y si necesita intervención.</p></div><div class="page-actions"><a class="btn" href="<?= View::e($base) ?>/settings/api-workload">Capacidad y ritmo</a><a class="btn" href="<?= View::e($base) ?>/settings/cron/next">Ver próxima ejecución</a></div></div>
 <?php endif; ?>
 
 <section class="human-status-hero <?= $problem ? 'is-warning' : ($healthy ? 'is-success' : '') ?>"
@@ -60,8 +60,8 @@ require __DIR__ . '/_automation_nav.php';
          data-status-url="<?= View::e($base) ?>/settings/cron/status.json">
   <div class="human-status-mark" aria-hidden="true"><?= $problem ? '!' : ($healthy ? '✓' : '…') ?></div>
   <div>
-    <span class="eyebrow">Automatización general</span>
-    <h2 data-cron-health-label><?= View::e((string) ($runtimeStatus['label'] ?? ($bootstrapStopped ? 'Automatización detenida antes de abrir las colas' : ($cron['label'] ?? 'Sin información')))) ?></h2>
+    <span class="eyebrow">Procesamiento general</span>
+    <h2 data-cron-health-label><?= View::e((string) ($runtimeStatus['label'] ?? ($bootstrapStopped ? 'Procesamiento detenido antes de abrir las colas' : ($cron['label'] ?? 'Sin información')))) ?></h2>
     <p data-cron-health-message><?= View::e(!empty($runtimeStatus['message']) ? (string) $runtimeStatus['message'] : ($bootstrapStopped
         ? 'Hostinger sí ejecutó el lanzador. El ERP se detuvo durante la comprobación de la instalación y no confirmó consultas hacia Mercado Libre.'
         : (string) ($cron['message'] ?? 'No hay información reciente del cron.'))) ?></p>

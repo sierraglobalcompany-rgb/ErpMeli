@@ -23,6 +23,11 @@ $severitySummary = [
     'remote' => count(array_filter($incidents, static fn(array $incident): bool => !empty($incident['reached_remote']) && (int) ($incident['http_status'] ?? 0) >= 500)),
     'internal' => count(array_filter($incidents, static fn(array $incident): bool => empty($incident['reached_remote']) && (string) ($incident['outcome_class'] ?? '') !== 'policy_delay')),
 ];
+$incidentLink = static function (array $overrides) use ($base, $filters): string {
+    $query = array_merge($filters, $overrides);
+    $query = array_filter($query, static fn($value): bool => $value !== '' && $value !== null && $value !== 0 && $value !== '0');
+    return $base . '/settings/api-health/incidents?' . http_build_query($query);
+};
 $apiHealthSection = 'incidents';
 $apiHealthHours = (int) ($filters['hours'] ?? 24);
 $apiHealthCheckedAt = gmdate('Y-m-d H:i:s');
@@ -37,13 +42,20 @@ require __DIR__ . '/_api_health_nav.php';
     El catálogo local de incidentes está atrasado. Esta vista muestra como máximo 50 resultados de los últimos 30 días con una ruta indexada certificada; no permite reconocer ni modificar incidentes.
   </section>
 <?php endif; ?>
+<?php if (($incidentReadMode ?? '') === 'unavailable_summary_only'): ?>
+  <section class="alert warning" aria-live="polite">
+    <strong>Catálogo no certificado.</strong>
+    <?= View::e((string) ($incidentUnavailableMessage ?? 'La tabla de incidentes no está disponible para estos filtros.')) ?>
+    Se muestra la superficie operativa sin tratar el resultado como cero y sin habilitar acciones sobre incidentes.
+  </section>
+<?php endif; ?>
 
 <section class="api-essential-metrics" aria-label="Resumen de gravedad de incidentes">
-  <a href="<?= View::e($base) ?>/settings/api-health/incidents?severity=critical"><span>Críticos</span><strong><?= (int) $severitySummary['critical'] ?></strong><p>Bloqueo, OAuth o autorización</p></a>
-  <a href="<?= View::e($base) ?>/settings/api-health/incidents?http_status=429&amp;origin=remote"><span>Rate limit 429</span><strong><?= (int) $severitySummary['rate_limit'] ?></strong><p>Reducir ritmo y respetar espera</p></a>
-  <a href="<?= View::e($base) ?>/settings/api-health/incidents?severity=high"><span>Permisos / OAuth</span><strong><?= (int) $severitySummary['permission'] ?></strong><p>401/403 por cuenta u operación</p></a>
-  <a href="<?= View::e($base) ?>/settings/api-health/incidents?origin=remote"><span>Fallos Mercado Libre</span><strong><?= (int) $severitySummary['remote'] ?></strong><p>5xx o respuesta remota</p></a>
-  <a href="<?= View::e($base) ?>/settings/api-health/incidents?origin=internal"><span>Fallos internos</span><strong><?= (int) $severitySummary['internal'] ?></strong><p>No llegaron a Mercado Libre</p></a>
+  <a href="<?= View::e($incidentLink(['severity' => 'critical', 'http_status' => 0, 'origin' => ''])) ?>"><span>Críticos</span><strong><?= (int) $severitySummary['critical'] ?></strong><p>Bloqueo, OAuth o autorización</p></a>
+  <a href="<?= View::e($incidentLink(['http_status' => 429, 'origin' => 'remote', 'severity' => ''])) ?>"><span>Rate limit 429</span><strong><?= (int) $severitySummary['rate_limit'] ?></strong><p>Reducir ritmo y respetar espera</p></a>
+  <a href="<?= View::e($incidentLink(['severity' => 'high', 'http_status' => 0, 'origin' => ''])) ?>"><span>Permisos / OAuth</span><strong><?= (int) $severitySummary['permission'] ?></strong><p>401/403 por cuenta u operación</p></a>
+  <a href="<?= View::e($incidentLink(['origin' => 'remote', 'http_status' => 0, 'severity' => ''])) ?>"><span>Fallos Mercado Libre</span><strong><?= (int) $severitySummary['remote'] ?></strong><p>5xx o respuesta remota</p></a>
+  <a href="<?= View::e($incidentLink(['origin' => 'internal', 'http_status' => 0, 'severity' => ''])) ?>"><span>Fallos internos</span><strong><?= (int) $severitySummary['internal'] ?></strong><p>No llegaron a Mercado Libre</p></a>
 </section>
 
 <section class="api-command-section api-filter-section">
@@ -59,10 +71,10 @@ require __DIR__ . '/_api_health_nav.php';
     <div class="field filter-action"><button class="btn primary" type="submit">Filtrar</button></div>
   </form>
   <div class="page-actions mt-2" aria-label="Filtros rápidos de incidentes">
-    <a class="btn small" href="<?= View::e($base) ?>/settings/api-health/incidents?http_status=429&amp;origin=remote">429</a>
-    <a class="btn small" href="<?= View::e($base) ?>/settings/api-health/incidents?status=active">Activos</a>
-    <a class="btn small" href="<?= View::e($base) ?>/settings/api-health/incidents?hours=24">Últimas 24 h</a>
-    <a class="btn small" href="<?= View::e($base) ?>/settings/api-health/incidents?origin=remote">Por cuenta remota</a>
+    <a class="btn small" href="<?= View::e($incidentLink(['http_status' => 429, 'origin' => 'remote', 'severity' => '', 'status' => ''])) ?>">429</a>
+    <a class="btn small" href="<?= View::e($incidentLink(['status' => 'active'])) ?>">Activos</a>
+    <a class="btn small" href="<?= View::e($incidentLink(['hours' => 24])) ?>">Últimas 24 h</a>
+    <a class="btn small" href="<?= View::e($incidentLink(['origin' => 'remote', 'http_status' => 0, 'severity' => ''])) ?>">Por cuenta remota</a>
   </div>
 </section>
 
@@ -70,7 +82,7 @@ require __DIR__ . '/_api_health_nav.php';
   <?php $firstShown = $total > 0 ? (($page - 1) * $perPage) + 1 : 0; $lastShown = min($total, $page * $perPage); $directDegraded = ($incidentReadMode ?? '') === 'degraded_direct'; ?>
   <header class="panel-head"><div><h2><?= $directDegraded ? number_format($total, 0, ',', '.') . ' eventos directos recientes' : number_format($total, 0, ',', '.') . ' ' . ($total === 1 ? 'incidente agrupado' : 'incidentes agrupados') ?></h2><p><?= $directDegraded ? 'Lectura directa limitada a esta página. El total agrupado se certificará cuando el catálogo local se ponga al día.' : 'Mostrando ' . number_format($firstShown, 0, ',', '.') . '–' . number_format($lastShown, 0, ',', '.') . '. Cada tarjeta puede representar varias repeticiones de la misma causa.' ?></p></div></header>
   <div class="incident-list">
-    <?php if ($incidents === []): ?><div class="empty-state"><strong>No hay incidentes para estos filtros</strong><span>Pruebe otro periodo o elimine alguno de los filtros.</span></div><?php endif; ?>
+    <?php if ($incidents === []): ?><div class="empty-state"><strong><?= ($incidentReadMode ?? '') === 'unavailable_summary_only' ? 'Catálogo no certificado para estos filtros' : 'No hay incidentes para estos filtros' ?></strong><span><?= ($incidentReadMode ?? '') === 'unavailable_summary_only' ? 'No se informa como cero; revise Diagnóstico o reintente cuando el catálogo local termine de actualizarse.' : 'Pruebe otro periodo o elimine alguno de los filtros.' ?></span></div><?php endif; ?>
     <?php foreach ($incidents as $incident): ?>
       <article class="incident-card">
         <div class="incident-card-main">

@@ -5,9 +5,10 @@ declare(strict_types=1);
 namespace App\QueueV4Clean;
 
 use App\Services\ApiExecutionMetadataContext;
+use App\Services\ApiBudgetInfrastructureException;
 use App\Services\ApiBudgetExhaustedException;
+use App\Services\ApiManualPauseException;
 use App\Services\ApiRhythmDeferredException;
-use App\Services\ApiRhythmPolicyService;
 use App\Services\CronDeadlineContext;
 use App\Services\CronDeadlineDeferredException;
 use App\Services\MeliApiClient;
@@ -30,6 +31,7 @@ final class QueueV4CleanWorker
 {
     public const DEFAULT_MAX_JOBS = 15;
     public const HARD_MAX_JOBS = 15;
+    private const FINANCIAL_RECONCILIATION_STALE_RECHECK_SECONDS = 900;
 
     /** @var \Closure(int):MeliReadClientInterface */
     private \Closure $clientFactory;
@@ -99,7 +101,7 @@ final class QueueV4CleanWorker
                 $claimed++;
                 try {
                     $outcome = $this->handle($job);
-                } catch (OAuthRefreshRequiredException) {
+                } catch (OAuthRefreshRequiredException $error) {
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
                         $runId,
@@ -110,6 +112,9 @@ final class QueueV4CleanWorker
                         ),
                     );
                     $deferred++;
+                    if ($this->deferredCycleAction($error) === 'break') {
+                        break;
+                    }
                     continue;
                 } catch (ApiRhythmDeferredException $error) {
                     $this->repository->deferWithoutAttemptPenalty(
@@ -125,6 +130,9 @@ final class QueueV4CleanWorker
                         );
                     }
                     $deferred++;
+                    if ($this->deferredCycleAction($error) === 'break') {
+                        break;
+                    }
                     continue;
                 } catch (ApiBudgetExhaustedException $error) {
                     $this->repository->deferWithoutAttemptPenalty(
@@ -134,6 +142,9 @@ final class QueueV4CleanWorker
                         $error->nextSafeAt,
                     );
                     $deferred++;
+                    if ($this->deferredCycleAction($error) === 'break') {
+                        break;
+                    }
                     continue;
                 } catch (CronDeadlineDeferredException $error) {
                     $this->repository->deferWithoutAttemptPenalty(
@@ -143,7 +154,10 @@ final class QueueV4CleanWorker
                         $error->nextSafeAt,
                     );
                     $deferred++;
-                    break;
+                    if ($this->deferredCycleAction($error) === 'break') {
+                        break;
+                    }
+                    continue;
                 } catch (ManualRemoteCallLimitException $error) {
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
@@ -152,7 +166,10 @@ final class QueueV4CleanWorker
                         $error->nextSafeAt
                     );
                     $deferred++;
-                    break;
+                    if ($this->deferredCycleAction($error) === 'break') {
+                        break;
+                    }
+                    continue;
                 } catch (QueueV4PreTransportDeferredException $error) {
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
@@ -161,8 +178,11 @@ final class QueueV4CleanWorker
                         $error->nextSafeAt,
                     );
                     $deferred++;
+                    if ($this->deferredCycleAction($error) === 'break') {
+                        break;
+                    }
                     continue;
-                } catch (RemoteResultUncertainException) {
+                } catch (RemoteResultUncertainException $error) {
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
                         $runId,
@@ -170,18 +190,35 @@ final class QueueV4CleanWorker
                         gmdate('Y-m-d H:i:s', time() + 60),
                     );
                     $deferred++;
+                    if ($this->deferredCycleAction($error) === 'break') {
+                        break;
+                    }
+                    continue;
+                } catch (ApiManualPauseException $error) {
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        'manual_pause:' . $this->safeToken($error->scope),
+                        $error->resumeAt,
+                    );
+                    $deferred++;
+                    if ($this->deferredCycleAction($error) === 'break') {
+                        break;
+                    }
+                    continue;
+                } catch (ApiBudgetInfrastructureException $error) {
+                    $this->repository->deferWithoutAttemptPenalty(
+                        $job,
+                        $runId,
+                        'capacity_deferred:budget_infrastructure',
+                        gmdate('Y-m-d H:i:s', time() + 60),
+                    );
+                    $deferred++;
+                    if ($this->deferredCycleAction($error) === 'break') {
+                        break;
+                    }
                     continue;
                 } catch (MeliApiException $error) {
-                    if ($error->httpStatus === 429) {
-                        $this->repository->deferWithoutAttemptPenalty(
-                            $job,
-                            $runId,
-                            'rate_limit_deferred:http_429_fallback',
-                            (new ApiRhythmPolicyService())->conservativeRateLimitNextSafeAt(),
-                        );
-                        $deferred++;
-                        continue;
-                    }
                     $this->functionalFailure($job, $runId, $error);
                     $deferred++;
                     continue;
@@ -610,17 +647,139 @@ final class QueueV4CleanWorker
             return ['state' => 'completed'];
         }
         if (in_array($status, ['pending', 'running', 'retry', 'awaiting_remote'], true)) {
-            $next = trim((string) ($source['next_run_at'] ?? ''));
-            return [
+            $outcome = [
                 'state' => 'waiting',
                 'classification' => 'domain_source_waiting:' . $capability,
-                'next_safe_at' => $next !== '' ? $next : gmdate('Y-m-d H:i:s', time() + 5),
             ];
+            if ($capability === 'financial_reconciliation') {
+                $outcome['next_safe_at'] = $this->financialReconciliationNextSafeAt($source['next_run_at'] ?? null);
+            } else {
+                $next = $this->validFutureUtcDateTime($source['next_run_at'] ?? null);
+                if ($next !== null) {
+                    $outcome['next_safe_at'] = $next;
+                }
+            }
+
+            return $outcome;
         }
         return [
             'state' => 'review',
             'classification' => 'domain_source_' . ($status !== '' ? $this->safeToken($status) : 'unknown'),
         ];
+    }
+
+    private function financialReconciliationNextSafeAt(mixed $nextRunAt): string
+    {
+        $future = $this->validFutureUtcDateTime($nextRunAt);
+        if ($future !== null) {
+            return $future;
+        }
+
+        return gmdate('Y-m-d H:i:s', time() + self::FINANCIAL_RECONCILIATION_STALE_RECHECK_SECONDS);
+    }
+
+    private function validFutureUtcDateTime(mixed $value): ?string
+    {
+        $raw = trim((string) $value);
+        if ($raw === '') {
+            return null;
+        }
+        $timestamp = strtotime($raw . ' UTC');
+        if ($timestamp === false || $timestamp <= time()) {
+            return null;
+        }
+
+        return gmdate('Y-m-d H:i:s', $timestamp);
+    }
+
+    private function rhythmDeferredCycleAction(ApiRhythmDeferredException $error): string
+    {
+        if (in_array($error->blockingScope, [
+            'rhythm',
+            'rhythm_permit_busy',
+            'rhythm_authority_unavailable',
+            'rhythm_fence_stale',
+            'rhythm_interval',
+            'rhythm_block_pause',
+            'rhythm_global_window',
+            'rhythm_penalty_state_unavailable',
+        ], true)) {
+            return 'break';
+        }
+
+        if (in_array($error->blockingScope, [
+            'billing_endpoint_interval',
+            'billing_429_backoff',
+            'retry_after',
+            'rhythm_shared_orders_search_window',
+            'rhythm_endpoint_shared_reduced',
+            'rhythm_account_reduced',
+            'remote_backoff',
+        ], true)) {
+            return 'continue';
+        }
+
+        return 'break';
+    }
+
+    private function deferredCycleAction(Throwable $error): string
+    {
+        if ($error instanceof OAuthRefreshRequiredException) {
+            return 'continue';
+        }
+        if ($error instanceof ApiRhythmDeferredException) {
+            return $this->rhythmDeferredCycleAction($error);
+        }
+        if ($error instanceof ApiBudgetInfrastructureException) {
+            return 'break';
+        }
+        if ($error instanceof ApiBudgetExhaustedException) {
+            return $this->budgetDeferredCycleAction($error);
+        }
+        if ($error instanceof CronDeadlineDeferredException
+            || $error instanceof ManualRemoteCallLimitException
+            || $error instanceof QueueV4PreTransportDeferredException) {
+            return 'break';
+        }
+        if ($error instanceof RemoteResultUncertainException) {
+            return 'continue';
+        }
+        if ($error instanceof ApiManualPauseException) {
+            return $this->manualPauseCycleAction($error);
+        }
+
+        return 'break';
+    }
+
+    private function budgetDeferredCycleAction(ApiBudgetExhaustedException $error): string
+    {
+        $scopes = $error->blockedScopeNames();
+        if ($scopes === []) {
+            return 'break';
+        }
+        if (array_intersect($scopes, ['app', 'global', '*']) !== []) {
+            return 'break';
+        }
+        foreach ($scopes as $scope) {
+            if (!in_array($scope, ['account', 'endpoint', 'job_type'], true)) {
+                return 'break';
+            }
+        }
+
+        return 'continue';
+    }
+
+    private function manualPauseCycleAction(ApiManualPauseException $error): string
+    {
+        $scope = strtolower(trim($error->scope));
+        if (in_array($scope, ['app', 'global', '*'], true)) {
+            return 'break';
+        }
+        if (in_array($scope, ['account', 'endpoint'], true)) {
+            return 'continue';
+        }
+
+        return 'break';
     }
 
     private function failureClass(Throwable $error): string

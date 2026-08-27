@@ -2228,14 +2228,19 @@ final class SettingsController
         $incidentPage = $service->incidentPage($filters, $perPage, ($page - 1) * $perPage);
         if (!$service->dataAvailable()) {
             $freshness = $service->incidentReadModelFreshness();
-            $message = !$freshness['current']
+            $incidentUnavailableMessage = !$freshness['current']
                 ? 'El catálogo de incidentes se está actualizando y no está al día. No se mostrará como vacío hasta completar la sincronización local.'
                 : 'No se pudo comprobar el catálogo de incidentes. Recargue la página para intentarlo nuevamente.';
-            http_response_code(503);
-            View::render('errors/500', [
-                'errorMessage' => $message,
-                'errorReference' => '',
-            ]);
+            $incidents = [];
+            $total = 0;
+            $pages = 1;
+            $incidentReadMode = 'unavailable_summary_only';
+            try {
+                $accounts = $service->accounts();
+            } catch (Throwable) {
+                $accounts = [];
+            }
+            View::render('settings/api_health_incidents', compact('incidents', 'accounts', 'filters', 'page', 'pages', 'perPage', 'total', 'incidentReadMode', 'incidentUnavailableMessage'));
             return;
         }
         $incidents = $incidentPage['rows'];
@@ -2292,16 +2297,17 @@ final class SettingsController
         $perPage = max(10, min(100, (int) ($_GET['per_page'] ?? 50)));
         $service = new ApiHealthService();
         $accountId = (int) $filters['account_id'] > 0 ? (int) $filters['account_id'] : null;
-        $summary = $service->summary((int) $filters['hours'], $accountId);
+        $incidentPage = $service->incidentPage($filters, $perPage, ($page - 1) * $perPage);
+        $incidentsAvailable = $service->dataAvailable();
+        $summary = (new ApiHealthService())->summary((int) $filters['hours'], $accountId);
         if (isset($summary['budget']['windows'])) {
             $summary['budget']['windows'] = [];
         }
-        $incidentPage = $service->incidentPage($filters, $perPage, ($page - 1) * $perPage);
-        if (!$service->dataAvailable()) {
+        if (!$incidentsAvailable) {
             http_response_code(503);
         }
         $this->json([
-            'ok' => $service->dataAvailable(),
+            'ok' => $incidentsAvailable,
             'protocol' => $incidentPage['protocol'],
             'snapshot_state' => $incidentPage['protocol'],
             'authoritative' => in_array($incidentPage['protocol'], ['complete', 'authoritative_empty'], true),

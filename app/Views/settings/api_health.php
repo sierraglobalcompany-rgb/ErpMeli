@@ -31,6 +31,14 @@ $rateLimitPriorityCount = count(array_filter($priorityIncidents, static fn(array
 $apiHealthSection = 'overview';
 $apiHealthHours = (int) ($overview['hours'] ?? 24);
 $apiHealthCheckedAt = $overview['checked_at'] ?? null;
+$incidentLink = static function (array $overrides = []) use ($base, $apiHealthHours, $overview): string {
+    $query = array_merge([
+        'hours' => $apiHealthHours,
+        'account_id' => (int) ($overview['account_id'] ?? 0),
+    ], $overrides);
+    $query = array_filter($query, static fn($value): bool => $value !== '' && $value !== null && $value !== 0 && $value !== '0');
+    return $base . '/settings/api-health/incidents?' . http_build_query($query);
+};
 if (empty($apiHealthPartial)) {
     require __DIR__ . '/_api_health_header.php';
     require __DIR__ . '/_api_health_nav.php';
@@ -54,7 +62,7 @@ if (empty($apiHealthPartial)) {
   <article data-health-card="automation">
     <span>Automatización</span>
     <strong data-health-label><?= View::e((string) ($automationEvidence['label'] ?? 'No comprobada')) ?></strong>
-    <p data-health-message><?= View::e((string) ($automationEvidence['message'] ?? 'Cron se evalúa por separado.')) ?></p>
+    <p data-health-message><?= View::e((string) ($automationEvidence['message'] ?? 'El procesamiento automático se evalúa por separado.')) ?></p>
   </article>
 </section>
 <p class="api-live-freshness" data-api-health-freshness aria-live="polite">Estado comprobado en el servidor.</p>
@@ -66,12 +74,12 @@ if (empty($apiHealthPartial)) {
       <h2 id="api-priority-title">Errores que importan ahora</h2>
       <p>Rate limit, permisos, OAuth y señales de bloqueo se muestran aunque ya se hayan recuperado.</p>
     </div>
-    <a class="btn" href="<?= View::e($base) ?>/settings/api-health/incidents?severity=high&amp;origin=remote">Ver señales altas</a>
+    <a class="btn" href="<?= View::e($incidentLink(['severity' => 'high', 'origin' => 'remote'])) ?>">Ver señales altas</a>
   </header>
   <div class="api-essential-metrics">
-    <a href="<?= View::e($base) ?>/settings/api-health/incidents?severity=critical"><span>Críticos</span><strong><?= count(array_filter($priorityIncidents, static fn(array $incident): bool => (string) ($incident['severity'] ?? '') === 'critical')) ?></strong><p>OAuth, bloqueo o autorización</p></a>
-    <a href="<?= View::e($base) ?>/settings/api-health/incidents?http_status=429&amp;origin=remote"><span>Rate limit 429</span><strong><?= (int) $rateLimitPriorityCount ?></strong><p>Requiere respetar espera y limitar ritmo</p></a>
-    <a href="<?= View::e($base) ?>/settings/api-health/incidents?severity=high"><span>Permisos / API</span><strong><?= count(array_filter($priorityIncidents, static fn(array $incident): bool => (string) ($incident['severity'] ?? '') === 'high' && empty($incident['rate_limit_signal']))) ?></strong><p>403, permisos o respuesta remota</p></a>
+    <a href="<?= View::e($incidentLink(['severity' => 'critical'])) ?>"><span>Críticos</span><strong><?= count(array_filter($priorityIncidents, static fn(array $incident): bool => (string) ($incident['severity'] ?? '') === 'critical')) ?></strong><p>OAuth, bloqueo o autorización</p></a>
+    <a href="<?= View::e($incidentLink(['http_status' => 429, 'origin' => 'remote'])) ?>"><span>Rate limit 429</span><strong><?= (int) $rateLimitPriorityCount ?></strong><p>Requiere respetar espera y limitar ritmo</p></a>
+    <a href="<?= View::e($incidentLink(['severity' => 'high'])) ?>"><span>Permisos / API</span><strong><?= count(array_filter($priorityIncidents, static fn(array $incident): bool => (string) ($incident['severity'] ?? '') === 'high' && empty($incident['rate_limit_signal']))) ?></strong><p>403, permisos o respuesta remota</p></a>
   </div>
   <?php if ($priorityIncidents === []): ?>
     <p class="api-inline-empty is-success">No hay señales críticas, 429 ni errores altos en el periodo.</p>
@@ -100,7 +108,7 @@ if (empty($apiHealthPartial)) {
     <?php if ($apiStopped): ?>
       <a class="btn primary" href="<?= View::e($base) ?>/stop/">Abrir freno de mano</a>
     <?php else: ?>
-      <?php if (($incidents['remote_active_count'] ?? 0) > 0): ?><a class="btn primary" href="<?= View::e($base) ?>/settings/api-health/incidents?status=active&amp;origin=remote">Revisar incidente</a><?php endif; ?>
+      <?php if (($incidents['remote_active_count'] ?? 0) > 0): ?><a class="btn primary" href="<?= View::e($incidentLink(['status' => 'active', 'origin' => 'remote'])) ?>">Revisar incidente</a><?php endif; ?>
       <?php if (($protection['pause_count'] ?? 0) > 0): ?><a class="btn primary" href="<?= View::e($base) ?>/settings/api-health/protection">Ver protección</a><?php endif; ?>
       <?php if (($status['status'] ?? '') === 'unknown'): ?><a class="btn primary" href="<?= View::e($base) ?>/settings/diagnostics">Ejecutar diagnóstico</a><?php endif; ?>
       <button class="btn" type="button" data-dialog-open="apiPauseDialog">Pausar consultas</button>
@@ -113,13 +121,13 @@ if (empty($apiHealthPartial)) {
     <div>
       <span class="eyebrow">Automatización del ERP</span>
       <h2 id="api-automation-title"><?= View::e((string) ($automationEvidence['label'] ?? 'Automatización no comprobada')) ?></h2>
-      <p><?= View::e((string) ($automationEvidence['message'] ?? 'Este bloque describe Cron. La conexión con Mercado Libre se evalúa por separado.')) ?></p>
+      <p><?= View::e((string) ($automationEvidence['message'] ?? 'Este bloque describe el procesamiento automático. La conexión con Mercado Libre se evalúa por separado.')) ?></p>
     </div>
-    <a class="btn" href="<?= View::e($base) ?>/settings/cron">Abrir Cron</a>
+    <a class="btn" href="<?= View::e($base) ?>/settings/cron">Abrir procesamiento automático</a>
   </header>
   <div class="alert <?= View::e((string) (($automationEvidence['tone'] ?? 'neutral') === 'danger' ? 'danger' : (($automationEvidence['tone'] ?? 'neutral') === 'warning' ? 'warning' : 'info'))) ?>">
     <strong>Son dos comprobaciones distintas.</strong>
-    Salud API indica si Mercado Libre responde; este bloque indica si Cron está avanzando el trabajo del ERP.
+    Salud API indica si Mercado Libre responde; este bloque indica si el procesamiento automático está avanzando el trabajo del ERP.
   </div>
   <?php if (!empty($automationEvidence['available'])): ?>
     <div class="api-essential-metrics">
@@ -137,7 +145,7 @@ if (empty($apiHealthPartial)) {
   <section class="alert warning">
     <strong>Mercado Libre está disponible.</strong>
     <?= View::e((string) ($erpProcessing['label'] ?? 'Un proceso interno necesita revisión.')) ?>
-    <a href="<?= View::e($base) ?>/settings/api-health/incidents?status=active&amp;origin=local">Ver procesos del ERP</a>
+    <a href="<?= View::e($incidentLink(['status' => 'active', 'origin' => 'local'])) ?>">Ver procesos del ERP</a>
   </section>
 <?php endif; ?>
 
@@ -189,7 +197,7 @@ if (empty($apiHealthPartial)) {
     <strong><?= (int) ($accountSummary['available'] ?? 0) ?> <small>/ <?= (int) ($accountSummary['total'] ?? 0) ?></small></strong>
     <p><?= (int) ($accountSummary['disconnected'] ?? 0) ?> desconectadas</p>
   </article>
-  <a href="<?= View::e($base) ?>/settings/api-health/incidents?status=active">
+  <a href="<?= View::e($incidentLink(['status' => 'active'])) ?>">
     <span>Incidentes activos</span>
     <strong><?= (int) ($incidents['remote_active_count'] ?? 0) ?></strong>
     <p><?= (int) ($incidents['remote_active_count'] ?? 0) > 0 ? 'Respuestas de Mercado Libre por revisar' : 'Sin alertas de Mercado Libre' ?></p>
@@ -225,7 +233,7 @@ if (empty($apiHealthPartial)) {
         <details class="api-row-menu">
           <summary aria-label="Acciones para <?= View::e((string) $row['name']) ?>">⋯</summary>
           <div>
-            <a href="<?= View::e($base) ?>/settings/api-health/incidents?account_id=<?= (int) $row['id'] ?>">Ver incidentes</a>
+            <a href="<?= View::e($incidentLink(['account_id' => (int) $row['id']])) ?>">Ver incidentes</a>
             <a href="<?= View::e($base) ?>/logs?type=api&amp;account_id=<?= (int) $row['id'] ?>">Ver operaciones</a>
             <?php if (!$apiStopped && !$row['paused'] && $row['connected']): ?><button type="button" data-dialog-open="apiPauseDialog" data-account-id="<?= (int) $row['id'] ?>">Pausar cuenta</button><?php endif; ?>
           </div>

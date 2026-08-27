@@ -44,7 +44,9 @@ final class ApiBudgetService
             if (array_sum(self::$webRequestCounters) + 1 > $webLimit) {
                 $message = 'Presupuesto API ML agotado para esta petición web. El trabajo debe continuar por cola/cron para evitar bloqueo.';
                 $this->recordEstimate($accountId, $jobType, 'web_request', 1, 0, 'blocked', $message);
-                throw new ApiBudgetExhaustedException($message);
+                throw new ApiBudgetExhaustedException($message, null, [
+                    ['scope' => 'app', 'scope_key' => 'web_request'],
+                ]);
             }
             self::$webRequestCounters[$jobType] = (self::$webRequestCounters[$jobType] ?? 0) + 1;
             $webCounterReserved = true;
@@ -113,7 +115,7 @@ final class ApiBudgetService
                 $nextSafeAt = $this->nextSafeAt($blocked, $windowStart, $windowSeconds);
                 $message = 'Presupuesto API ML agotado. Próxima hora segura aproximada: ' . ($nextSafeAt ?: 'pendiente de cooldown') . '.';
                 $this->recordEstimate($accountId, $jobType, $endpointPath, 1, 0, 'blocked', $message);
-                throw new ApiBudgetExhaustedException($message, $nextSafeAt);
+                throw new ApiBudgetExhaustedException($message, $nextSafeAt, $blocked);
             }
 
             foreach ($scopes as $scope) {

@@ -38,7 +38,8 @@ final class QueueV4CleanCycleBudget
         if (self::$used >= self::$limit) {
             throw new ApiBudgetExhaustedException(
                 'Queue V4 agotó el presupuesto físico de este ciclo.',
-                gmdate('Y-m-d H:i:s', time() + 60)
+                gmdate('Y-m-d H:i:s', time() + 60),
+                [['scope' => 'app', 'scope_key' => 'queue_v4_cycle_http_safety_fuse']]
             );
         }
         self::$used++;

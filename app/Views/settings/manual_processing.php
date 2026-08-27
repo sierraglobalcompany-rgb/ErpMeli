@@ -32,7 +32,7 @@ if (is_array($preview ?? null)) {
 }
 ?>
 <div class="page-head manual-page-head">
-  <div><p class="eyebrow">ADMINISTRACIÓN</p><h1>Procesar ahora</h1>
+  <div><p class="eyebrow">ADMINISTRACIÓN</p><h1>Procesamiento manual</h1>
     <p>Elija trabajos concretos para adelantarlos. Las ventas nuevas conservan prioridad y cada resultado queda guardado.</p>
     <p><span class="badge neutral">MANUAL_EXACT</span> Un paso idempotente por confirmación; no inicia ni continúa Cron en segundo plano.</p></div>
   <div class="page-actions"><a class="btn" href="<?= View::e($base . '/settings/cron') ?>">Ver automatización</a></div>
@@ -66,29 +66,35 @@ if (is_array($preview ?? null)) {
 
 <?php $smartDrainSessionToken = is_array(($smartDrain['session'] ?? null)) ? (string) ($smartDrain['session']['session_token'] ?? '') : ''; ?>
 <section class="panel manual-engine-card" id="k10-manual-drain" data-k10-drain data-status-url="<?= View::e($base . '/settings/manual-processing/drain/status.json') ?>" data-csrf="<?= View::e(Csrf::token()) ?>" data-session-token="<?= View::e($smartDrainSessionToken) ?>">
-  <div class="panel-head"><div><p class="eyebrow">K10 · SMART MANUAL DRAIN</p><h2>Drenador manual canónico</h2></div></div>
+  <div class="panel-head">
+    <div>
+      <p class="eyebrow">Procesamiento manual seguro</p>
+      <h2>Drenar un paso a la vez</h2>
+      <p>Use esta tarjeta cuando necesite avanzar trabajo elegible desde el navegador sin iniciar procesos en segundo plano.</p>
+    </div>
+  </div>
   <div class="panel-body">
     <?php if (empty($smartDrainReady)): ?>
-      <div class="alert info"><strong>Instalación pendiente.</strong><p>Esta opción aparecerá después de aplicar schema 300. No usa una cola nueva: sólo guarda sesión y usa Queue V4.</p></div>
+      <div class="alert info"><strong>Instalación pendiente.</strong><p>Esta opción aparecerá después de aplicar la actualización requerida. No crea otra cola ni otro motor.</p></div>
     <?php else: ?>
       <?php $drainSession = is_array(($smartDrain['session'] ?? null)) ? $smartDrain['session'] : null; ?>
       <?php $drainProfile = is_array(($drainSession['profile'] ?? null)) ? $drainSession['profile'] : []; ?>
-      <p><span class="badge neutral">V4_AUTOMATIC_BOUNDARY</span> Drena desde el navegador con máximo una petición en vuelo, una sola FIFO Queue V4 y la misma autoridad global de Cron.</p>
+      <p><span class="badge neutral">MANUAL_EXACT</span> Un solo trabajo por paso, máximo una petición remota en vuelo y la misma autoridad de ejecución del procesamiento automático.</p>
       <div class="metric-grid manual-metric-grid">
         <article><span>Estado</span><strong data-k10-state><?= View::e((string) ($smartDrain['state'] ?? 'OFF')) ?></strong></article>
         <article><span>Trabajos completados</span><strong data-k10-processed><?= (int) ($drainSession['jobs_processed'] ?? 0) ?></strong></article>
         <article><span>HTTP físicos observados</span><strong data-k10-remote><?= (int) ($drainSession['remote_calls_observed'] ?? 0) ?></strong></article>
-        <article><span>Burst actual / máximo</span><strong><span data-k10-burst-current><?= (int) ($drainSession['burst_remote_calls_current'] ?? 0) ?></span>/<span data-k10-burst-max><?= (int) ($drainProfile['remote_calls_per_burst'] ?? 1) ?></span></strong></article>
-        <article><span>Perfil rev.</span><strong data-k10-profile-revision><?= (int) ($drainSession['profile_revision'] ?? 1) ?></strong></article>
-        <article><span>Cooldown / 429</span><strong data-k10-next-safe><?= View::e((string) (($drainSession['last_result']['effective_next_safe_at'] ?? '') ?: 'N/A')) ?></strong></article>
+        <article><span>Lote remoto actual / máximo</span><strong><span data-k10-burst-current><?= (int) ($drainSession['burst_remote_calls_current'] ?? 0) ?></span>/<span data-k10-burst-max><?= (int) ($drainProfile['remote_calls_per_burst'] ?? 1) ?></span></strong></article>
+        <article><span>Versión del perfil</span><strong data-k10-profile-revision><?= (int) ($drainSession['profile_revision'] ?? 1) ?></strong></article>
+        <article><span>Próxima ventana segura</span><strong data-k10-next-safe><?= View::e((string) (($drainSession['last_result']['effective_next_safe_at'] ?? '') ?: 'N/A')) ?></strong></article>
         <article><span>Heartbeat</span><strong data-k10-heartbeat><?= View::e((string) ($drainSession['heartbeat_at'] ?? 'N/A')) ?></strong></article>
       </div>
       <div class="alert warning" data-k10-429-panel>
         <strong>429 y errores peligrosos</strong>
         <p data-k10-last-result><?= View::e((string) (($drainSession['last_result']['classification'] ?? '') ?: 'Sin resultado todavía.')) ?></p>
-        <p>pause_and_ask conserva la verdad canónica: no acorta Retry-After ni reintenta a ciegas. auto_degrade sólo vuelve más conservador este perfil manual.</p>
+        <p>Ante un HTTP 429 real se pausa y se respeta la espera segura. La opción conservadora nunca acorta Retry-After ni reintenta a ciegas.</p>
       </div>
-      <p class="manual-browser-note" data-k10-feedback aria-live="polite">Listo. El modo normal orquesta pasos seriales desde esta pestaña; si la cierra, el heartbeat expira y Cron puede retomar.</p>
+      <p class="manual-browser-note" data-k10-feedback aria-live="polite">Listo. Esta pestaña ejecuta pasos seriales; si la cierra, la sesión expira y el procesamiento automático puede retomar.</p>
       <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/start') ?>" class="manual-confirm-form" data-k10-action="start">
         <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
         <input type="hidden" name="remote_calls_per_burst" value="<?= (int) ($drainProfile['remote_calls_per_burst'] ?? 1) ?>" data-k10-profile-field="remote_calls_per_burst">
@@ -96,24 +102,24 @@ if (is_array($preview ?? null)) {
         <input type="hidden" name="cooldown_after_burst" value="<?= (int) ($drainProfile['cooldown_after_burst'] ?? 30) ?>" data-k10-profile-field="cooldown_after_burst">
         <input type="hidden" name="429_action" value="<?= View::e((string) ($drainProfile['429_action'] ?? 'pause_and_ask')) ?>" data-k10-profile-field="429_action">
         <input type="hidden" name="bounded_5xx_preferences" value="<?= View::e((string) ($drainProfile['bounded_5xx_preferences'] ?? 'pause_and_ask')) ?>" data-k10-profile-field="bounded_5xx_preferences">
-        <button class="btn primary" type="submit" data-k10-start>Iniciar Manual</button>
+        <button class="btn primary" type="submit" data-k10-start>Iniciar procesamiento manual</button>
       </form>
       <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/profile') ?>" class="manual-confirm-form manual-profile-form" data-k10-action="profile" <?= $drainSession ? '' : 'hidden' ?>>
         <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
         <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
         <input type="hidden" name="drain_generation" value="<?= (int) ($drainSession['drain_generation'] ?? 0) ?>" data-k10-generation-field>
-        <label>Burst HTTP físico <input type="number" min="1" max="60" name="remote_calls_per_burst" value="<?= (int) ($drainProfile['remote_calls_per_burst'] ?? 1) ?>" data-k10-profile-field="remote_calls_per_burst"></label>
+        <label>Máximo de HTTP físicos por tanda <input type="number" min="1" max="60" name="remote_calls_per_burst" value="<?= (int) ($drainProfile['remote_calls_per_burst'] ?? 1) ?>" data-k10-profile-field="remote_calls_per_burst"></label>
         <label>Intervalo mínimo (s) <input type="number" min="15" max="3600" name="minimum_delay_between_remote_calls" value="<?= (int) ($drainProfile['minimum_delay_between_remote_calls'] ?? 15) ?>" data-k10-profile-field="minimum_delay_between_remote_calls"></label>
-        <label>Cooldown (s) <input type="number" min="0" max="3600" name="cooldown_after_burst" value="<?= (int) ($drainProfile['cooldown_after_burst'] ?? 30) ?>" data-k10-profile-field="cooldown_after_burst"></label>
+        <label>Enfriamiento después de tanda (s) <input type="number" min="0" max="3600" name="cooldown_after_burst" value="<?= (int) ($drainProfile['cooldown_after_burst'] ?? 30) ?>" data-k10-profile-field="cooldown_after_burst"></label>
         <label>HTTP 429
           <select name="429_action" data-k10-profile-field="429_action">
-            <option value="pause_and_ask" <?= (($drainProfile['429_action'] ?? 'pause_and_ask') === 'pause_and_ask') ? 'selected' : '' ?>>Pausar y preguntar</option>
-            <option value="auto_degrade" <?= (($drainProfile['429_action'] ?? '') === 'auto_degrade') ? 'selected' : '' ?>>Auto-degradar perfil manual</option>
+            <option value="pause_and_ask" <?= (($drainProfile['429_action'] ?? 'pause_and_ask') === 'pause_and_ask') ? 'selected' : '' ?>>Pausar y revisar</option>
+            <option value="auto_degrade" <?= (($drainProfile['429_action'] ?? '') === 'auto_degrade') ? 'selected' : '' ?>>Bajar ritmo manual automáticamente</option>
           </select>
         </label>
         <label>HTTP 5xx
           <select name="bounded_5xx_preferences" data-k10-profile-field="bounded_5xx_preferences">
-            <option value="pause_and_ask" <?= (($drainProfile['bounded_5xx_preferences'] ?? 'pause_and_ask') === 'pause_and_ask') ? 'selected' : '' ?>>Pausar y preguntar</option>
+            <option value="pause_and_ask" <?= (($drainProfile['bounded_5xx_preferences'] ?? 'pause_and_ask') === 'pause_and_ask') ? 'selected' : '' ?>>Pausar y revisar</option>
             <option value="cooldown" <?= (($drainProfile['bounded_5xx_preferences'] ?? '') === 'cooldown') ? 'selected' : '' ?>>Enfriar sin reintento ciego</option>
           </select>
         </label>
@@ -146,9 +152,14 @@ if (is_array($preview ?? null)) {
         <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
         <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
         <input type="hidden" name="drain_generation" value="<?= (int) ($drainSession['drain_generation'] ?? 0) ?>" data-k10-generation-field>
-        <button class="btn danger" type="submit">Finalizar / devolver a Auto</button>
+        <button class="btn danger" type="submit">Finalizar / devolver al automático</button>
       </form>
-      <p class="manual-browser-note">Si Cron posee la autoridad global, el inicio responde ocupado y no reclama ni consulta Mercado Libre.</p>
+      <details class="cron-technical">
+        <summary>Detalle técnico avanzado</summary>
+        <div class="details-content">
+          <p><span class="badge neutral">K10</span> <span class="badge neutral">Queue V4 boundary</span> Si el procesamiento automático posee la autoridad global, el inicio responde ocupado y no reclama ni consulta Mercado Libre.</p>
+        </div>
+      </details>
     <?php endif; ?>
   </div>
 </section>

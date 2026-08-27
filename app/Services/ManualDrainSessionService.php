@@ -527,7 +527,7 @@ final class ManualDrainSessionService
                     'completed' => 0,
                     'deferred' => 0,
                     'physical_http_calls' => 0,
-                    'classification' => 'no_eligible_selected_work',
+                    'classification' => strtolower((string) $error->getMessage()),
                     'message' => 'La selección ya no contiene trabajo elegible. No se sustituyó por trabajo global.',
                     'manual_next_preview_position' => $position,
                 ];

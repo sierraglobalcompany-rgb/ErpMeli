@@ -96,7 +96,7 @@ if ($preview !== null) {
   <div class="panel-head">
     <div>
       <p class="eyebrow">Acción primaria</p>
-      <h2>Procesamiento manual seguro: procesar el siguiente trabajo</h2>
+      <h2>Procesamiento manual seguro: Procesar un trabajo</h2>
       <p>Use esta tarjeta para avanzar sólo un recurso elegible desde el navegador. Las opciones avanzadas quedan debajo y no compiten como segundo flujo principal.</p>
     </div>
   </div>

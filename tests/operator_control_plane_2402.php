@@ -67,10 +67,13 @@ $assert(!str_contains($manual, 'Endpoint K10') && !str_contains($manual, 'Queue 
 $assert(!str_contains($manual, 'data-manual-legacy-campaign') && !str_contains($manual, 'Opciones avanzadas de selección exacta'), 'manual_legacy_campaign_must_be_replaced');
 $assert(substr_count($manual, '<section class="panel manual-panel manual-selection-panel"') === 1, 'manual_selection_panel_must_not_be_nested_or_duplicated');
 $assert(str_contains($manualPreviewService, "'execution_mode'") && str_contains($manualPreviewService, "'max_items'") && str_contains($manualPreviewService, "'remote_calls_per_burst'"), 'preview_configuration_must_persist_execution_profile');
-$assert(str_contains($settingsController, "\$action === 'start'")
-    && str_contains($settingsController, "\$profile['preview_token']")
-    && str_contains($settingsController, "\$profile['selected_scope']")
-    && str_contains($settingsController, "\$profile['selected_account_id']"), 'manual_controller_must_pass_selection_binding_to_drain');
+$drainMutationStart = strpos($settingsController, "private function manualDrainJsonMutation");
+$drainMutationBody = $drainMutationStart === false ? '' : substr($settingsController, $drainMutationStart, 3600);
+$assert(str_contains($drainMutationBody, "\$action === 'start'")
+    && str_contains($drainMutationBody, "\$profile['preview_token']")
+    && str_contains($drainMutationBody, "\$profile['selected_scope']")
+    && str_contains($drainMutationBody, "\$profile['selected_account_id']")
+    && str_contains($drainMutationBody, "'start' => \$service->start(\$userId, \$profile)"), 'manual_controller_must_pass_selection_binding_to_drain');
 $assert(str_contains($manualDrainService, 'runSelectedExactStep(') && str_contains($manualDrainService, 'ManualSingleStepService())->executeSelected'), 'manual_drain_must_use_exact_preview_processor');
 $assert(str_contains($manualDrainService, 'PREVIEW_TO_EXECUTION_BINDING_REQUIRED') && str_contains($manualDrainService, 'No se procesó trabajo global'), 'manual_drain_without_preview_must_fail_closed');
 $assert(!str_contains($manualDrainService, "->run('manual', 1, 25)"), 'manual_drain_must_not_call_global_queue_v4_worker');
@@ -81,7 +84,9 @@ $assert(str_contains($manualDrainService, 'array_merge($profile, [') && str_cont
 $assert(str_contains($manualDrainService, "NO_ELIGIBLE_SELECTED_WORK") && str_contains($manualDrainService, 'No se sustituyó por trabajo global'), 'stale_preview_must_not_fallback_to_unrelated_work');
 $assert(str_contains($manualSingleStepService, 'executeSelected(') && str_contains($manualSingleStepService, '$preview[\'rows\'][$positionNo]'), 'manual_single_step_must_support_bound_preview_positions');
 $assert(str_contains($manualSingleStepService, '$expectedScope') && str_contains($manualSingleStepService, '$expectedAccountId') && str_contains($manualSingleStepService, 'SELECTION_BINDING_MISMATCH'), 'manual_single_step_must_revalidate_scope_and_account_before_execution');
-$assert(!str_contains($settingsController, "'preview_token' => trim((string) (\$_POST['preview_token'] ?? \$_POST['selected_preview_token'] ?? '')),\n                'selected_scope'"), 'manual_profile_action_must_not_default_blank_preview_binding');
+$assert(str_contains($drainMutationBody, "\$profile = [];")
+    && str_contains($drainMutationBody, "if (\$action === 'start') {")
+    && !str_contains($drainMutationBody, "if (\$action !== 'start') {\n                \$profile['preview_token']"), 'manual_profile_action_must_bind_preview_only_on_start');
 
 $assert(str_contains($cronView, 'Autoridad de automatización') && str_contains($cronView, 'Lanzador físico esperado'), 'cron_must_separate_logical_state_from_physical_launcher');
 $assert(str_contains($cronView, 'NO_CERTIFICADO') && str_contains($cronView, 'heartbeat reciente no equivale'), 'cron_must_not_treat_heartbeat_as_physical_cron_proof');

@@ -89,11 +89,11 @@ $assert(str_contains($inventory, "'process_sync_queue.php', 'cron_v3_local.php',
 $assert(str_contains($inventory, "'retired_blocked'"), 'runtime_inventory_missing_retired_blocked_status');
 $assert(!str_contains($inventory, "process_sync_queue.php') {\n                \$status = 'active_launcher'"), 'runtime_inventory_marks_process_sync_active');
 
-$assert(str_contains($view, 'MANUAL_EXACT'), 'manual_view_missing_manual_exact_badge');
-$assert(str_contains($view, 'Un paso idempotente por confirmación'), 'manual_view_missing_one_step_copy');
-$assert(str_contains($view, 'no inicia ni continúa Cron en segundo plano'), 'manual_view_missing_no_background_copy');
+$assert(str_contains($view, 'Una entrada humana, un estado y una acción primaria'), 'manual_view_missing_single_control_plane_copy');
+$assert(str_contains($view, 'Procesar un trabajo'), 'manual_view_missing_one_step_copy');
+$assert(str_contains($view, 'sin iniciar Cron en segundo plano'), 'manual_view_missing_no_background_copy');
 $assert(str_contains($view, 'Esta confirmacion procesara solamente el primero'), 'manual_confirm_must_be_single_work');
-$assert(str_contains($view, 'no deja una campana en segundo plano'), 'manual_browser_note_missing_no_background');
+$assert(str_contains($view, 'si la cierra, la sesión expira y el procesamiento automático puede retomar'), 'manual_browser_note_missing_no_background');
 $assert(str_contains($setupView, 'sin dejar un proceso en segundo plano'), 'manual_setup_missing_no_background_contract');
 $assert(str_contains($sessionView, 'Sin ejecución manual en segundo plano'), 'manual_session_missing_no_background_contract');
 $assert(!str_contains($view, 'La campaña guarda avance cada'), 'manual_view_still_promises_campaign_progress');

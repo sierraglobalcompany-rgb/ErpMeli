@@ -101,9 +101,18 @@ try {
     $assert(!isset($manifest['signature']), 'unexpected_update_signature');
     $assert($manifestService->verifySignature($manifest) === 'local_unsigned', 'local_admin_signature_status_invalid');
     unset($update['update-manifest.json']);
-    $assert(array_keys($update) === array_keys($expected), 'update_paths_invalid');
+    $expectedUpdate = $expected;
+    if ((string) getenv('ERP_RELEASE_ARTIFACT_UPDATE_EXCLUDES_UNSAFE_DOTFILES') === '1') {
+        $expectedUpdate = array_filter(
+            $expectedUpdate,
+            static fn (string $path): bool => !str_starts_with($path, '.'),
+            ARRAY_FILTER_USE_KEY,
+        );
+    }
+    $assert(array_keys($update) === array_keys($expectedUpdate), 'update_paths_invalid');
     foreach ((array) ($manifest['files'] ?? []) as $row) {
         $path = is_array($row) ? (string) ($row['path'] ?? '') : '';
+        $assert($path === ltrim($path, '/\\') && !str_contains($path, '..') && !str_starts_with($path, '.'), 'update_unsafe_path:' . $path);
         $assert(isset($update[$path]), 'update_file_missing:' . $path);
         $assert(hash_equals((string) $row['sha256'], hash('sha256', $update[$path])), 'update_file_hash_invalid:' . $path);
     }

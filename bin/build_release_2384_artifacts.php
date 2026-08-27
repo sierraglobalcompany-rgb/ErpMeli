@@ -235,9 +235,16 @@ try {
     release2380Zip($fullPath, $entries, $files, $timestamp);
     release2380Zip($overlayPath, $overlayEntries, $files, $timestamp);
 
+    $updateEntries = $entries;
+    if ((string) getenv('ERP_RELEASE_UPDATE_PACKAGE_EXCLUDE_UNSAFE_DOTFILES') === '1') {
+        $updateEntries = array_values(array_filter(
+            $entries,
+            static fn (array $entry): bool => !str_starts_with((string) $entry['path'], '.'),
+        ));
+    }
     $fileManifest = array_map(static fn (array $entry): array => [
         'path' => $entry['path'], 'sha256' => $entry['sha256'], 'size' => $entry['size'],
-    ], $entries);
+    ], $updateEntries);
     $updateManifest = [
         'manifest_version' => 1,
         'product_id' => 'erp-meli',
@@ -264,7 +271,7 @@ try {
         'rollback' => ['code_compatible' => true, 'database_restore_required' => false],
     ];
     $updateManifestBytes = release2380Json($updateManifest);
-    release2380Zip($updatePath, $entries, $files, $timestamp, $updateManifestBytes);
+    release2380Zip($updatePath, $updateEntries, $files, $timestamp, $updateManifestBytes);
 
     $overlayInventory = [
         'schema' => 'erp-meli-' . str_replace('.', '', $version) . '-ftp-overlay-v1',

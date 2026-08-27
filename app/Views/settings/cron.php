@@ -29,6 +29,29 @@ $notificationOrdersToday = (int) ($notificationProcessing['orders_created_today'
     + (int) ($notificationProcessing['orders_updated_today'] ?? 0);
 $automationSummary = $automationSummary ?? [];
 $runtimeStatus = is_array($runtimeStatus ?? null) ? $runtimeStatus : [];
+$runtimeStatusRuntime = is_array($runtimeStatus['runtime'] ?? null) ? $runtimeStatus['runtime'] : [];
+$runtimePhysicalState = strtoupper((string) (
+    (is_array($cronRuntime) ? ($cronRuntime['physical_cron_observed'] ?? null) : null)
+    ?? ($runtimeStatusRuntime['physical_cron_observed'] ?? 'UNKNOWN')
+));
+$runtimePhysicalLabel = match ($runtimePhysicalState) {
+    'RECENT', 'PROVEN' => 'VERIFICADO',
+    'STALE' => 'ATRASADO',
+    'UNKNOWN', 'NOT_CAPTURED', '' => 'NO_CERTIFICADO',
+    default => 'NO_CERTIFICADO',
+};
+$runtimePhysicalTone = match ($runtimePhysicalLabel) {
+    'VERIFICADO' => 'green',
+    'ATRASADO' => 'amber',
+    default => 'red',
+};
+$runtimePhysicalDetail = match ($runtimePhysicalLabel) {
+    'VERIFICADO' => is_array($cronRuntime) && !empty($cronRuntime['command'])
+        ? (string) $cronRuntime['command']
+        : 'queue_v4_clean.php --runtime=45 --max-jobs=3',
+    'ATRASADO' => 'La evidencia física existe, pero está vencida.',
+    default => 'Sin captura física reciente del lanzador.',
+};
 $cronNarrative = is_array($cronNarrative ?? null) ? $cronNarrative : null;
 $bootstrapAttempt = is_array($bootstrapAttempt ?? null) ? $bootstrapAttempt : null;
 $bootstrapStopped = $bootstrapAttempt
@@ -98,7 +121,7 @@ require __DIR__ . '/_automation_nav.php';
   <div class="settings-summary-grid">
     <div><small>Estado lógico</small><strong><?= View::e((string) ($runtimeStatus['label'] ?? ($cron['label'] ?? 'NO_CERTIFICADO'))) ?></strong></div>
     <div><small>Lanzador físico esperado</small><strong><code>queue_v4_clean.php --runtime=45 --max-jobs=3</code></strong></div>
-    <div><small>Evidencia física</small><strong><?= is_array($cronRuntime) && !empty($cronRuntime) ? View::e((string) ($cronRuntime['command'] ?? 'Verificada')) : 'NO_CERTIFICADO' ?></strong></div>
+    <div><small>Evidencia física</small><strong><span class="badge <?= View::e($runtimePhysicalTone) ?>"><?= View::e($runtimePhysicalLabel) ?></span></strong><p class="muted"><?= View::e($runtimePhysicalDetail) ?></p></div>
     <div><small>Heartbeat</small><strong><?= View::e((string) ($cron['last_seen_label'] ?? $cron['last_run_label'] ?? 'Sin lectura reciente')) ?></strong></div>
   </div>
 </section>

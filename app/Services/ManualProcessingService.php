@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Core\Auth;
 use App\Core\Database;
 use PDO;
 use RuntimeException;
@@ -175,6 +176,111 @@ final class ManualProcessingService
                 $rows,
                 static fn (array $row): bool => (string) ($row['queue_key'] ?? '') === 'catalog_descriptions'
             )) > 0,
+        ];
+    }
+
+    /** @return array{ready:?int,waiting:?int,review:?int,attention:?int,measured_at:?string,source:string} */
+    public function initialSnapshot(string $scopeKey, ?int $accountId = null): array
+    {
+        if (!(new WorkQueueProjectionService())->available()) {
+            return [
+                'ready' => null,
+                'waiting' => null,
+                'review' => null,
+                'attention' => null,
+                'measured_at' => null,
+                'source' => 'NO_CERTIFICADO',
+            ];
+        }
+
+        $scopeKey = isset($this->scopes()[$scopeKey]) ? $scopeKey : 'all';
+        $queueKeys = $this->scopes()[$scopeKey];
+        if ($queueKeys === []) {
+            return [
+                'ready' => 0,
+                'waiting' => 0,
+                'review' => 0,
+                'attention' => 0,
+                'measured_at' => gmdate('Y-m-d H:i:s'),
+                'source' => 'projection_snapshot',
+            ];
+        }
+
+        $pdo = Database::connectionFresh();
+        $userId = (int) (Auth::id() ?? 0);
+        $companies = (new BusinessScopeContext())->companyIds($userId);
+        if ($companies === []) {
+            return [
+                'ready' => 0,
+                'waiting' => 0,
+                'review' => 0,
+                'attention' => 0,
+                'measured_at' => gmdate('Y-m-d H:i:s'),
+                'source' => 'projection_snapshot',
+            ];
+        }
+        $accounts = (new BusinessScopeContext())->accountIds($userId);
+
+        $conditions = [
+            'p.company_id IN (' . implode(',', array_fill(0, count($companies), '?')) . ')',
+            'p.queue_key IN (' . implode(',', array_fill(0, count($queueKeys), '?')) . ')',
+            'p.display_status<>"completed"',
+        ];
+        $params = array_merge($companies, $queueKeys);
+        if ($accountId !== null && $accountId > 0) {
+            (new BusinessScopeContext())->account($accountId);
+            $conditions[] = 'p.meli_account_id=?';
+            $params[] = $accountId;
+        } elseif ($accounts !== []) {
+            $conditions[] = '(p.meli_account_id IS NULL OR p.meli_account_id IN (' . implode(',', array_fill(0, count($accounts), '?')) . '))';
+            array_push($params, ...$accounts);
+        } else {
+            $conditions[] = 'p.meli_account_id IS NULL';
+        }
+
+        $waitCodes = [
+            'cron_deadline_deferred',
+            'deadline_reached',
+            'not_started_deadline',
+            'waiting_budget',
+            'waiting_rhythm',
+            'waiting_api',
+            'api_budget_exhausted',
+            'api_manual_pause',
+            'account_paused',
+            'account_stopped',
+            'lock_busy',
+            'lease_busy',
+        ];
+        $waitPlaceholders = implode(',', array_fill(0, count($waitCodes), '?'));
+        $sql = 'SELECT
+                SUM(p.display_status IN ("pending","retry")
+                    AND (p.next_eligible_at IS NULL OR p.next_eligible_at<=UTC_TIMESTAMP())
+                    AND COALESCE(p.eligibility_state,"") NOT IN ("blocked","error")) AS ready_jobs,
+                SUM(p.display_status IN ("scheduled","waiting_budget","paused")
+                    OR (p.display_status IN ("pending","retry") AND p.next_eligible_at>UTC_TIMESTAMP())
+                    OR (p.display_status="error" AND (
+                        COALESCE(p.normalized_error_code,"") IN (' . $waitPlaceholders . ')
+                        OR COALESCE(p.remediation_key,"") LIKE "waiting\\_%"
+                    ))) AS waiting_jobs,
+                SUM(p.display_status="review") AS review_jobs,
+                SUM(p.display_status="error"
+                    AND COALESCE(p.normalized_error_code,"") NOT IN (' . $waitPlaceholders . ')
+                    AND COALESCE(p.remediation_key,"") NOT LIKE "waiting\\_%") AS attention_jobs,
+                MAX(p.projected_at) AS measured_at
+             FROM system_work_queue_projection p
+             WHERE ' . implode(' AND ', $conditions);
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute(array_merge($waitCodes, $waitCodes, $params));
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        return [
+            'ready' => max(0, (int) ($row['ready_jobs'] ?? 0)),
+            'waiting' => max(0, (int) ($row['waiting_jobs'] ?? 0)),
+            'review' => max(0, (int) ($row['review_jobs'] ?? 0)),
+            'attention' => max(0, (int) ($row['attention_jobs'] ?? 0)),
+            'measured_at' => is_string($row['measured_at'] ?? null) ? $row['measured_at'] : gmdate('Y-m-d H:i:s'),
+            'source' => 'projection_snapshot',
         ];
     }
 

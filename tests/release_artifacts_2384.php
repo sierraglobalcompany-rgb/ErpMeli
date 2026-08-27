@@ -576,12 +576,14 @@ try {
     } elseif ($targetVersion === '2.40.2') {
         $requiredOverlayPaths = [
             'VERSION',
+            'app/Controllers/SettingsController.php',
             'app/Controllers/SyncController.php',
             'app/Services/ApiHealthService.php',
             'app/Services/ApiIncidentMaterializerService.php',
             'app/Services/ApiIncidentReadModelService.php',
             'app/Services/BacklogCounterPresenter.php',
             'app/Services/ManagedRuntimePublicationPolicy.php',
+            'app/Services/ManualProcessingService.php',
             'app/Views/settings/cron.php',
             'app/Views/settings/index.php',
             'app/Views/settings/manual_processing.php',

@@ -22,6 +22,15 @@ $duration = static function (int $seconds): string {
 $exclusionPresenter = new \App\Services\ManualCampaignExclusionPresenter();
 $preview = is_array($preview ?? null) ? $preview : null;
 $rhythmPreview = is_array($rhythmPreview ?? null) ? $rhythmPreview : [];
+$manualQueueSnapshot = is_array($manualQueueSnapshot ?? null) ? $manualQueueSnapshot : [];
+$counterValue = static function (string $key) use ($manualQueueSnapshot, $preview): string {
+  if (isset($preview[$key . '_jobs'])) return (string) (int) $preview[$key . '_jobs'];
+  if ($key === 'ready' && isset($preview['eligible_jobs'])) return (string) (int) $preview['eligible_jobs'];
+  return array_key_exists($key, $manualQueueSnapshot) && $manualQueueSnapshot[$key] !== null
+    ? (string) (int) $manualQueueSnapshot[$key]
+    : '—';
+};
+$hasPreparedPreview = $preview !== null && !empty($preview['can_start_campaign']);
 $exclusionGroups = [];
 if ($preview !== null) {
   foreach ((array) ($preview['excluded_summary'] ?? []) as $excludedGroup) {
@@ -85,12 +94,12 @@ if ($preview !== null) {
       <?php $drainStateUpper = strtoupper((string) ($smartDrain['state'] ?? ($drainSession['state'] ?? 'OFF'))); ?>
       <?php $hasDrainSession = $drainSession !== null && !in_array($drainStateUpper, ['OFF', 'EXPIRED', 'ABANDONED', 'RELEASING'], true); ?>
       <?php $pausedDrainSession = $hasDrainSession && $drainStateUpper === 'PAUSED'; ?>
-      <p>Ejecuta un solo trabajo seguro por paso. Si debe consultar a Mercado Libre, respeta el mismo límite global que usa la automatización.</p>
+      <p>Ejecuta un solo trabajo seguro por paso. Primero elija y calcule el grupo; después queda una sola acción primaria para avanzar.</p>
       <div class="metric-grid manual-metric-grid">
-        <article><span>Listos ahora</span><strong><?= isset($preview['eligible_jobs']) ? (int) $preview['eligible_jobs'] : '—' ?></strong></article>
-        <article><span>Esperando</span><strong><?= isset($preview['waiting_jobs']) ? (int) $preview['waiting_jobs'] : '—' ?></strong></article>
-        <article><span>Revisión</span><strong><?= isset($preview['review_jobs']) ? (int) $preview['review_jobs'] : '—' ?></strong></article>
-        <article><span>Requiere atención</span><strong><?= isset($preview['attention_jobs']) ? (int) $preview['attention_jobs'] : '—' ?></strong></article>
+        <article><span>Listos ahora</span><strong><?= View::e($counterValue('ready')) ?></strong></article>
+        <article><span>Esperando</span><strong><?= View::e($counterValue('waiting')) ?></strong></article>
+        <article><span>Revisión</span><strong><?= View::e($counterValue('review')) ?></strong></article>
+        <article><span>Requiere atención</span><strong><?= View::e($counterValue('attention')) ?></strong></article>
         <article><span>Procesados en esta sesión</span><strong data-k10-processed><?= (int) ($drainSession['jobs_processed'] ?? 0) ?></strong></article>
         <article><span>HTTP de esta sesión</span><strong data-k10-remote><?= (int) ($drainSession['remote_calls_observed'] ?? 0) ?></strong></article>
         <article><span>Próxima oportunidad segura</span><strong data-k10-next-safe><?= View::e((string) (($drainSession['last_result']['effective_next_safe_at'] ?? '') ?: '—')) ?></strong></article>
@@ -102,7 +111,10 @@ if ($preview !== null) {
         <p>Ante un HTTP 429 real se pausa y se respeta la espera segura. La opción conservadora nunca acorta Retry-After ni reintenta a ciegas.</p>
       </div>
       <p class="manual-browser-note" data-k10-feedback aria-live="polite">Listo. Esta pestaña ejecuta pasos seriales; si la cierra, la sesión expira y el procesamiento automático puede retomar.</p>
-      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/start') ?>" class="manual-confirm-form" data-k10-action="start" <?= $hasDrainSession ? 'hidden' : '' ?>>
+      <?php if (!$hasPreparedPreview && !$hasDrainSession): ?>
+        <div class="manual-safety-note"><strong>Paso actual: elegir qué procesar.</strong><p>Use el cálculo de abajo para confirmar que hay trabajo seguro. Después aparecerá la acción primaria de ejecución.</p></div>
+      <?php endif; ?>
+      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/start') ?>" class="manual-confirm-form" data-k10-action="start" <?= (!$hasDrainSession && $hasPreparedPreview) ? '' : 'hidden' ?>>
         <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
         <input type="hidden" name="remote_calls_per_burst" value="<?= (int) ($drainProfile['remote_calls_per_burst'] ?? 1) ?>" data-k10-profile-field="remote_calls_per_burst">
         <input type="hidden" name="minimum_delay_between_remote_calls" value="<?= (int) ($drainProfile['minimum_delay_between_remote_calls'] ?? 15) ?>" data-k10-profile-field="minimum_delay_between_remote_calls">
@@ -434,22 +446,12 @@ if ($preview !== null) {
       <?php endif; ?>
       <?php if (!empty($preview['selection_limited'])): ?><div class="alert info"><strong>La selección tiene un límite.</strong><p>Los trabajos restantes seguirán disponibles para otra confirmación o para la automatización.</p></div><?php endif; ?>
       <?php if (!empty($preview['contains_descriptions'])): ?><div class="alert warning"><strong>Incluye descripciones.</strong><p>Aunque solicite un intervalo menor, se aplicarán al menos 20 segundos y una descripción por bloque.</p></div><?php endif; ?>
-      <form method="post" action="<?= View::e($base . '/settings/manual-processing/start') ?>" class="manual-confirm-form">
-        <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>"><input type="hidden" name="scope" value="<?= View::e($scope) ?>">
-        <input type="hidden" name="preview_token" value="<?= View::e((string) ($preview['preview_token'] ?? '')) ?>">
-        <input type="hidden" name="origin" value="<?= View::e((string) $origin) ?>">
-        <?php foreach ((array) $originContext as $contextKey => $contextValue): ?>
-          <?php if ((string) $contextValue !== '' && (int) $contextValue !== 0): ?>
-            <input type="hidden" name="<?= View::e((string) $contextKey) ?>" value="<?= View::e((string) $contextValue) ?>">
-          <?php endif; ?>
-        <?php endforeach; ?>
-        <input type="hidden" name="preset" value="custom"><input type="hidden" name="block_size" value="<?= (int) $blockSize ?>">
-        <input type="hidden" name="interval_seconds" value="<?= View::e((string) $intervalSeconds) ?>"><input type="hidden" name="block_pause_seconds" value="<?= View::e((string) $blockPauseSeconds) ?>">
-        <input type="hidden" name="max_blocks" value="<?= (int) $maxBlocks ?>"><input type="hidden" name="max_duration_minutes" value="<?= (int) $maxDurationMinutes ?>">
-        <?php if (!empty($preview['contains_descriptions'])): ?><label class="manual-confirm-delicate"><input type="checkbox" name="confirm_delicate" value="1" required><span>Entiendo que las descripciones avanzan con un límite especial.</span></label><?php endif; ?>
-        <p class="manual-browser-note"><strong>Mantenga abierta esta página.</strong> La petición termina después de un único resultado y no deja trabajo en segundo plano.</p>
-        <button class="btn primary" type="submit">Procesar un trabajo</button>
-      </form>
+      <?php if (!empty($smartDrainReady)): ?>
+        <div class="manual-safety-note"><strong>Selección preparada.</strong><p>Use la tarjeta “Acción primaria” para preparar la sesión y procesar el siguiente trabajo. No hay un segundo botón de ejecución compitiendo con el drenador.</p>
+          <p><a class="btn primary" href="#k10-manual-drain">Ir a Acción primaria</a></p></div>
+      <?php else: ?>
+        <div class="manual-safety-note"><strong>Selección calculada, ejecución no disponible.</strong><p>La UI no muestra un segundo ejecutor. Complete la instalación del drenador seguro para procesar desde la acción primaria.</p></div>
+      <?php endif; ?>
     <?php endif; ?>
   </div>
 </section>

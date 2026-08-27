@@ -36,7 +36,11 @@ final class SyncController
         $accountId = (int) ($_GET['account_id'] ?? 0);
         $year = (int) ($_GET['year'] ?? date('Y'));
         if ((string) ($_GET['full'] ?? '') !== '1') {
+            $service = new SyncCenterService();
+            $accounts = $service->accounts();
+            $accountId = $accountId > 0 ? $accountId : (int) ($accounts[0]['id'] ?? 0);
             View::render('sync/index', [
+                'accounts' => $accounts,
                 'accountId' => $accountId,
                 'year' => $year,
                 'progressive' => true,

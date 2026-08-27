@@ -1385,6 +1385,20 @@ final class SettingsController
                 $smartDrain = ['ok' => false, 'state' => 'NO_CERTIFICADO', 'session' => null];
             }
         }
+        $manualQueueSnapshot = [
+            'ready' => null,
+            'waiting' => null,
+            'review' => null,
+            'attention' => null,
+        ];
+        if (!$emergencyStop) {
+            try {
+                $manualQueueSnapshot = (new \App\Services\ManualProcessingService())->initialSnapshot($scope, $accountId ?: null);
+            } catch (\Throwable) {
+                // La pantalla debe seguir abriendo; un contador no certificado
+                // se muestra como "—" y no autoriza trabajo.
+            }
+        }
         $engine = [
             'ready' => $campaignReady && !$emergencyStop,
             'state' => $emergencyStop ? 'maintenance' : ($campaignReady ? 'directed_cli_ready' : 'installation_incomplete'),
@@ -1413,7 +1427,8 @@ final class SettingsController
             'emergencyStop',
             'rhythmPreview',
             'smartDrainReady',
-            'smartDrain'
+            'smartDrain',
+            'manualQueueSnapshot'
         ));
     }
 

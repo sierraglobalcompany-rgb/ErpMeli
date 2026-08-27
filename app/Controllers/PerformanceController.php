@@ -21,7 +21,10 @@ final class PerformanceController
             // telemetría o generar un diagnóstico en MariaDB.
             Auth::requireLogin();
             $raw = (string) file_get_contents('php://input');
-            $payload = json_decode($raw, true, 32, JSON_THROW_ON_ERROR);
+            $payload = $_POST;
+            if ($payload === [] && trim($raw) !== '') {
+                $payload = json_decode($raw, true, 32, JSON_THROW_ON_ERROR);
+            }
             if (!is_array($payload)) {
                 throw new \RuntimeException('Payload inválido.');
             }

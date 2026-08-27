@@ -349,7 +349,7 @@ $router->get('/notifications/events', [NotificationController::class, 'events'])
 $router->post('/notifications/events/retry', [NotificationController::class, 'retryEvent']);
 $router->get('/notifications/missed', [NotificationController::class, 'missed']);
 $router->post('/notifications/missed/run', [NotificationController::class, 'runMissed']);
-$router->post('/performance/metrics', [PerformanceController::class, 'collect']);
+$router->post('/performance/metrics', [PerformanceController::class, 'collect'], ['csrf' => false]);
 $router->get('/webhooks', [WebhookController::class, 'index']);
 $router->get('/logs', [LogController::class, 'index']);
 $router->get('/logs/api/summary.json', [LogController::class, 'apiSummary']);

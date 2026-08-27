@@ -251,16 +251,25 @@
     const now = Date.now();
     if (now - (metricLastSentAt.get(metricKey) || 0) < 30000) return;
     metricLastSentAt.set(metricKey, now);
-    const payload = JSON.stringify({
-      _token: csrf,
-      name,
-      value: Math.round(value * 1000) / 1000,
-      route: window.location.pathname,
-      ...extra
+    const body = new URLSearchParams();
+    body.set('_token', csrf);
+    body.set('name', name);
+    body.set('value', String(Math.round(value * 1000) / 1000));
+    body.set('route', window.location.pathname);
+    Object.entries(extra).forEach(([key, entry]) => {
+      body.set(key, String(entry));
     });
-    if (navigator.sendBeacon) {
-      navigator.sendBeacon(`${baseUrl}/performance/metrics`, new Blob([payload], { type: 'application/json' }));
-    }
+    const payload = body.toString();
+    fetch(`${baseUrl}/performance/metrics`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'Accept': 'application/json'
+      },
+      body: payload,
+      keepalive: payload.length < 60000
+    }).catch(() => {});
   }
 
   const navigation = performance.getEntriesByType('navigation')[0];

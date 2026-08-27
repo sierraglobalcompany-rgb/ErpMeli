@@ -11,6 +11,7 @@ $csrfToken = Csrf::token();
     <span class="eyebrow">AUTOMATIZACIÓN</span>
     <h1>Procesamiento automático</h1>
     <p>Un solo lanzador automático toma trabajo elegible en orden seguro. El legado se conserva fuera de la operación normal.</p>
+    <p class="muted">Autoridad de automatización: Queue V4 lógico y Lanzador físico esperado se muestran por separado; si falta evidencia física, queda NO_CERTIFICADO.</p>
   </div>
   <div class="page-actions">
     <a class="btn" href="<?= View::e($base) ?>/settings/diagnostics">Diagnóstico</a>
@@ -33,7 +34,8 @@ $csrfToken = Csrf::token();
     <article><span>Cuentas OAuth</span><strong data-qv4-oauth>0/3</strong><p>Tres cuentas exactas y vigentes.</p></article>
     <article><span>Readiness GET</span><strong data-qv4-readiness>0/3</strong><p>Un GET /users/me directo por cuenta, fuera de la cola.</p></article>
     <article><span>Configuración del programador</span><strong data-qv4-scheduler>Inactivo</strong><p>Es configuración interna; no demuestra que exista la tarea física en hPanel.</p></article>
-    <article><span>Heartbeat automático</span><strong data-qv4-heartbeat>Sin evidencia</strong><p data-qv4-physical>Observación física: UNKNOWN</p></article>
+    <article><span>Lanzador físico esperado</span><strong>queue_v4_clean.php</strong><p>Hostinger debe ejecutar runtime=45 y max-jobs=3.</p></article>
+    <article><span>Heartbeat automático</span><strong data-qv4-heartbeat>Sin evidencia</strong><p data-qv4-physical>Observación física: NO_CERTIFICADO</p></article>
   </section>
 
   <section class="cron-task-section cron-api-risks" data-cron-api-risks

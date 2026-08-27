@@ -110,6 +110,7 @@ if ($preview !== null) {
       <?php $hasDrainSession = $drainSession !== null && !in_array($drainStateUpper, ['OFF', 'EXPIRED', 'ABANDONED', 'RELEASING'], true); ?>
       <?php $pausedDrainSession = $hasDrainSession && $drainStateUpper === 'PAUSED'; ?>
       <p>Ejecuta un solo trabajo seguro por paso. Primero elija y calcule el grupo; después queda una sola acción primaria para avanzar.</p>
+      <p class="muted">No hay un segundo botón de ejecución compitiendo: la vista previa seleccionada es el contrato que se ejecuta.</p>
       <div class="metric-grid manual-metric-grid">
         <article><span>Listos ahora</span><strong><?= View::e($counterValue('ready')) ?></strong></article>
         <article><span>Esperando</span><strong><?= View::e($counterValue('waiting')) ?></strong></article>

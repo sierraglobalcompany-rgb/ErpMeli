@@ -576,6 +576,7 @@ try {
     } elseif ($targetVersion === '2.40.2') {
         $requiredOverlayPaths = [
             'VERSION',
+            'app/Controllers/PerformanceController.php',
             'app/Controllers/SettingsController.php',
             'app/Controllers/SyncController.php',
             'app/Services/ApiHealthService.php',
@@ -588,12 +589,14 @@ try {
             'app/Services/ManualProcessingService.php',
             'app/Services/ManualSingleStepService.php',
             'app/Views/settings/cron.php',
+            'app/Views/settings/cron_shell.php',
             'app/Views/settings/index.php',
             'app/Views/settings/manual_processing.php',
             'app/Views/sync/index.php',
             'app/Views/sync/panel.php',
             'public/assets/app.css',
             'public/assets/performance.js',
+            'public/index.php',
             'resources/release/managed-runtime-dependencies-2.40.2.json',
             'resources/release/updater-authority-2.40.2.json',
             'resources/runtime-manifest.json',

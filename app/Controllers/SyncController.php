@@ -51,13 +51,15 @@ final class SyncController
         Auth::requireLogin();
         $accountId = (int) ($_GET['account_id'] ?? 0);
         $year = (int) ($_GET['year'] ?? date('Y'));
+        $panel = preg_replace('/[^a-z_]/', '', (string) ($_GET['panel'] ?? 'summary')) ?: 'summary';
         $async = new AsyncSectionService();
         $async->releaseSession();
         $startedAt = microtime(true);
+        $section = 'sync-' . str_replace('_', '-', $panel);
         try {
-            $async->render('sync-overview', 'sync/index', $this->indexData($accountId, $year), [], $startedAt);
+            $async->render($section, 'sync/panel', $this->sectionData($accountId, $year, $panel), [], $startedAt);
         } catch (\Throwable $error) {
-            $async->failure('sync-overview', $error);
+            $async->failure($section, $error);
         }
     }
 
@@ -84,6 +86,50 @@ final class SyncController
         $financialQueue = $financialQueueService->summary($accountId);
         $financialJobs = $financialQueueService->recent($accountId, 5);
         return compact('accounts', 'accountId', 'year', 'months', 'settings', 'runs', 'globalStatus', 'overdue', 'cron', 'financialQueue', 'financialJobs');
+    }
+
+    /** @return array<string,mixed> */
+    private function sectionData(int $requestedAccountId, int $year, string $panel): array
+    {
+        $service = new SyncCenterService();
+        $accounts = $service->accounts();
+        $accountId = $requestedAccountId > 0 ? $requestedAccountId : (int) ($accounts[0]['id'] ?? 0);
+        $settings = new SyncSettingsService();
+        $panel = in_array($panel, ['summary', 'queue', 'finance', 'months', 'recent'], true) ? $panel : 'summary';
+        $data = compact('accounts', 'accountId', 'year', 'settings', 'panel');
+
+        if ($panel === 'summary' || $panel === 'queue') {
+            $safety = (new SystemSafetyStatusService())->status();
+            $cron = ($safety['api'] === 'stopped' || $safety['automation'] === 'stopped')
+                ? [
+                    'state' => 'maintenance',
+                    'label' => 'Mantenimiento preventivo',
+                    'message' => 'Las consultas a Mercado Libre permanecen bloqueadas y las colas conservan su progreso.',
+                ]
+                : (new CronHealthService())->status();
+            $globalStatus = $service->globalStatus($accountId);
+            $overdue = $service->overdueSchedule($accountId, $panel === 'queue' ? 10 : 3);
+            $data += compact('cron', 'globalStatus', 'overdue');
+        }
+
+        if ($panel === 'finance') {
+            $financialQueueService = new OrderFinancialRecalcJobService();
+            $financialQueue = $financialQueueService->summary($accountId);
+            $financialJobs = $financialQueueService->recent($accountId, 5);
+            $data += compact('financialQueue', 'financialJobs');
+        }
+
+        if ($panel === 'months') {
+            $months = $accountId > 0 ? $service->yearOverview($accountId, $year) : [];
+            $data += compact('months');
+        }
+
+        if ($panel === 'recent') {
+            $runs = $service->recentRuns($accountId);
+            $data += compact('runs');
+        }
+
+        return $data;
     }
 
     public function account(): void

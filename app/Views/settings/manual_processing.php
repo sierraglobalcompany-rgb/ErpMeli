@@ -33,8 +33,8 @@ if (is_array($preview ?? null)) {
 ?>
 <div class="page-head manual-page-head">
   <div><p class="eyebrow">ADMINISTRACIÓN</p><h1>Procesamiento manual</h1>
-    <p>Elija trabajos concretos para adelantarlos. Las ventas nuevas conservan prioridad y cada resultado queda guardado.</p>
-    <p><span class="badge neutral">MANUAL_EXACT</span> Un paso idempotente por confirmación; no inicia ni continúa Cron en segundo plano.</p></div>
+    <p>Una entrada humana, un estado y una acción primaria: procesar el siguiente trabajo seguro sin iniciar Cron en segundo plano.</p>
+    <p><span class="badge neutral">MANUAL_EXACT</span> Un paso idempotente por confirmación; no inicia ni continúa Cron en segundo plano y comparte la autoridad del trabajador V4.</p></div>
   <div class="page-actions"><a class="btn" href="<?= View::e($base . '/settings/cron') ?>">Ver automatización</a></div>
 </div>
 
@@ -68,9 +68,9 @@ if (is_array($preview ?? null)) {
 <section class="panel manual-engine-card" id="k10-manual-drain" data-k10-drain data-status-url="<?= View::e($base . '/settings/manual-processing/drain/status.json') ?>" data-csrf="<?= View::e(Csrf::token()) ?>" data-session-token="<?= View::e($smartDrainSessionToken) ?>">
   <div class="panel-head">
     <div>
-      <p class="eyebrow">Procesamiento manual seguro</p>
-      <h2>Drenar un paso a la vez</h2>
-      <p>Use esta tarjeta cuando necesite avanzar trabajo elegible desde el navegador sin iniciar procesos en segundo plano.</p>
+      <p class="eyebrow">Acción primaria</p>
+      <h2>Procesamiento manual seguro: procesar el siguiente trabajo</h2>
+      <p>Use esta tarjeta para avanzar sólo un recurso elegible desde el navegador. Las opciones avanzadas quedan debajo y no compiten como segundo flujo principal.</p>
     </div>
   </div>
   <div class="panel-body">
@@ -102,7 +102,7 @@ if (is_array($preview ?? null)) {
         <input type="hidden" name="cooldown_after_burst" value="<?= (int) ($drainProfile['cooldown_after_burst'] ?? 30) ?>" data-k10-profile-field="cooldown_after_burst">
         <input type="hidden" name="429_action" value="<?= View::e((string) ($drainProfile['429_action'] ?? 'pause_and_ask')) ?>" data-k10-profile-field="429_action">
         <input type="hidden" name="bounded_5xx_preferences" value="<?= View::e((string) ($drainProfile['bounded_5xx_preferences'] ?? 'pause_and_ask')) ?>" data-k10-profile-field="bounded_5xx_preferences">
-        <button class="btn primary" type="submit" data-k10-start>Iniciar procesamiento manual</button>
+        <button class="btn primary" type="submit" data-k10-start>Preparar siguiente paso</button>
       </form>
       <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/profile') ?>" class="manual-confirm-form manual-profile-form" data-k10-action="profile" <?= $drainSession ? '' : 'hidden' ?>>
         <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
@@ -129,7 +129,7 @@ if (is_array($preview ?? null)) {
         <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
         <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
         <input type="hidden" name="drain_generation" value="<?= (int) ($drainSession['drain_generation'] ?? 0) ?>" data-k10-generation-field>
-        <button class="btn" type="submit" data-k10-step>Ejecutar un paso</button>
+        <button class="btn primary" type="submit" data-k10-step>Procesar siguiente trabajo</button>
       </form>
       <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/heartbeat') ?>" data-k10-action="heartbeat" hidden>
         <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
@@ -329,8 +329,11 @@ if (is_array($preview ?? null)) {
 <?php endif; ?>
 
 <?php if ($campaignReady && empty($emergencyStop) && !$activeSession): ?>
+<details class="technical-details mt-2" data-manual-legacy-campaign <?= $preview !== null ? 'open' : '' ?>>
+  <summary><span>Opciones avanzadas de selección exacta</span><span aria-hidden="true">⌄</span></summary>
+  <div class="technical-details-body">
 <section class="panel manual-panel">
-  <div class="panel-head"><div><p class="eyebrow"><?= $preview === null ? 'PASO 1' : 'PASO 2' ?></p><h2><?= $preview === null ? '¿Qué desea procesar?' : 'Configure el ritmo' ?></h2></div></div>
+  <div class="panel-head"><div><p class="eyebrow"><?= $preview === null ? 'Selección avanzada' : 'Ritmo avanzado' ?></p><h2><?= $preview === null ? 'Filtrar trabajos antes del siguiente paso' : 'Ajustar límites de esta selección' ?></h2><p>Compatibilidad del flujo anterior: calcula candidatos exactos, pero la acción principal sigue siendo un trabajo por confirmación.</p></div></div>
   <div class="panel-body">
   <form method="post" action="<?= View::e($base . '/settings/manual-processing/preview') ?>" class="manual-campaign-form" data-manual-preview-form>
     <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
@@ -439,4 +442,6 @@ if (is_array($preview ?? null)) {
   </div>
 </section>
 <?php endif; ?>
+  </div>
+</details>
 <?php endif; ?>

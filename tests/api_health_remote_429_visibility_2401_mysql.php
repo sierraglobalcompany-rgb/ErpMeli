@@ -227,6 +227,16 @@ try {
     $unsafe = new ReflectionMethod(App\Services\ApiHealthService::class, 'directIncidentFallbackSafe');
     $assert($unsafe->invoke(new App\Services\ApiHealthService(), ['1=1'], [], 720) === false, 'UNINDEXED_DIRECT_FALLBACK_WAS_ALLOWED');
 
+    $pdo->prepare('UPDATE api_incident_materializer_state SET last_log_id=? WHERE singleton_id=1')->execute([$latest]);
+    $currentEmptyGroupPage = (new App\Services\ApiHealthService())->incidentPage(
+        ['hours' => 720, 'http_status' => 429, 'origin' => 'remote'],
+        50,
+        0
+    );
+    $assert($currentEmptyGroupPage['protocol'] === 'degraded_direct', 'CURRENT_EMPTY_GROUP_REMOTE_429_MUST_NOT_LOOK_AUTHORITATIVE_EMPTY');
+    $assert($currentEmptyGroupPage['total'] === 1, 'CURRENT_EMPTY_GROUP_REMOTE_429_DID_NOT_SHOW_DIRECT_LOG_TRUTH');
+    $assert(($currentEmptyGroupPage['rows'][0]['transport_class'] ?? '') === 'REMOTE_HTTP_429', 'CURRENT_EMPTY_GROUP_REMOTE_429_CLASS_MISSING');
+
     $pdo->prepare('INSERT INTO api_incident_groups
         (incident_key,scope_key,scope_kind,company_id,meli_account_id,outcome_class,method,endpoint_path,http_status,error_type,
          error_code,safe_message,diagnostic_id,reached_remote,actionable,risk_signal,first_seen_at,last_seen_at,repetitions,last_log_id)

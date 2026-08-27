@@ -18,7 +18,7 @@ $view = (string) file_get_contents($root . '/app/Views/settings/manual_processin
 $worker = (string) file_get_contents($root . '/app/QueueV4Clean/QueueV4CleanWorker.php');
 $leaseService = (string) file_get_contents($root . '/app/QueueCore/QueueExecutionLeaseService.php');
 
-$assert(in_array($version, ['2.40.0', '2.40.1'], true), 'version_not_2400_or_2401');
+$assert(in_array($version, ['2.40.0', '2.40.1', '2.40.2'], true), 'version_not_2400_or_2401_or_2402');
 $assert(str_contains($migration, 'CREATE TABLE IF NOT EXISTS manual_drain_sessions'), 'manual_drain_sessions_missing');
 $assert(str_contains($migration, 'session_token CHAR(64) NOT NULL'), 'session_token_missing');
 $assert(str_contains($migration, 'UNIQUE KEY uq_manual_drain_session_token'), 'session_token_unique_missing');

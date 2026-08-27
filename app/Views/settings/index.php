@@ -21,6 +21,12 @@ $cronHealthy = (string) ($cron['state'] ?? '') === 'ok';
     <span class="eyebrow">Administración</span>
     <h1>Centro de configuración</h1>
     <p>Encuentre una opción por tema y cambie únicamente la sección que necesita.</p>
+    <p class="muted">
+      <span class="badge neutral">MANUAL_EXACT</span>
+      Procesar ahora ejecuta un solo paso idempotente.
+      <span class="badge neutral">LOCAL_ONLY</span>
+      Actualizaciones, copias, saneamiento y reset no son Cron.
+    </p>
   </div>
 </div>
 

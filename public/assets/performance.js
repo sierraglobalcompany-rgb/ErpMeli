@@ -19,7 +19,11 @@
     'profitability-list': 'el reporte de rentabilidad',
     'financial-recalc': 'la cola financiera',
     'sales-control-overview': 'la evidencia de Control de ventas',
-    'sync-overview': 'el estado de sincronización',
+    'sync-summary': 'el resumen de sincronización',
+    'sync-queue': 'la cola de sincronización',
+    'sync-finance': 'la cola financiera',
+    'sync-months': 'el calendario de meses',
+    'sync-recent': 'las ejecuciones recientes',
     'notifications-center': 'el Centro de notificaciones',
     'sales-control-detail': 'la evidencia mensual de Control de ventas',
     'technical-events': 'los eventos técnicos'
@@ -44,7 +48,10 @@
 
   const sectionUrlWithSearch = (section, search) => {
     const url = new URL(section.dataset.url, window.location.origin);
-    url.search = search;
+    const panel = url.searchParams.get('panel');
+    const params = new URLSearchParams(String(search || '').replace(/^\?/, ''));
+    url.search = params.toString();
+    if (panel && !url.searchParams.has('panel')) url.searchParams.set('panel', panel);
     return url.toString();
   };
 
@@ -71,7 +78,8 @@
     const skeletonTimer = window.setTimeout(() => skeleton?.classList.add('is-visible'), 150);
     const progressTimer = window.setTimeout(() => showStatus(section, `Cargando ${sectionLabel(section)}…`), 2000);
     const slowTimer = window.setTimeout(() => showStatus(section, `${sectionLabel(section)} está tardando. Puede usar las demás áreas mientras termina.`), 5000);
-    const timeoutTimer = window.setTimeout(() => controller.abort('timeout'), 8000);
+    const timeoutMs = Math.max(3000, Math.min(20000, Number(section.dataset.timeoutMs || 8000)));
+    const timeoutTimer = window.setTimeout(() => controller.abort('timeout'), timeoutMs);
 
     try {
       const response = await fetch(requestedUrl, {
@@ -101,7 +109,7 @@
       if (requestIds.get(section) !== requestId) return;
       const timedOut = controller.signal.aborted && controller.signal.reason === 'timeout';
       const message = timedOut
-        ? `La carga de ${sectionLabel(section)} superó 8 segundos y se detuvo. Puede reintentar sin bloquear el ERP.`
+        ? `La carga de ${sectionLabel(section)} superó ${Math.round(timeoutMs / 1000)} segundos y se detuvo. Puede reintentar sin bloquear el ERP.`
         : (controller.signal.aborted ? '' : safeError(error.message, section));
       if (message) {
         showStatus(section, message, true);

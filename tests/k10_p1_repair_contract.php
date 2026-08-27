@@ -56,7 +56,7 @@ $assert(str_contains($service, 'degradedProfile') && str_contains($service, "'au
 $assert(str_contains($service, "? 'COOLING'") && str_contains($service, "? 'RATE_LIMITED'"), 'auto_degrade_must_project_cooling_not_rate_limited');
 $assert(str_contains($service, 'profile_revision=profile_revision+?'), 'auto_degrade_must_increment_profile_revision_only_when_used');
 
-$assert(str_contains($view, 'Iniciar procesamiento manual'), 'start_ui_missing');
+$assert(str_contains($view, 'Preparar siguiente paso'), 'start_ui_missing');
 $assert(str_contains($view, 'Pausar') && str_contains($view, 'Reanudar'), 'pause_resume_ui_missing');
 $assert(str_contains($view, 'Finalizar / devolver al automático'), 'stop_return_to_auto_missing');
 $assert(str_contains($view, 'data-k10-burst-current') && str_contains($view, 'burst_remote_calls_current') && str_contains($view, 'data-k10-next-safe'), 'burst_or_429_panel_missing');

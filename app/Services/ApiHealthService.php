@@ -153,6 +153,8 @@ final class ApiHealthService
      */
     public function incidents(array $filters = [], int $limit = 100, int $offset = 0): array
     {
+        $this->incidentProtocol = 'complete';
+        $this->dataAvailable = true;
         if (!$this->supportsOutcomeClassification()) {
             return [];
         }
@@ -216,9 +218,14 @@ final class ApiHealthService
             if ((int) $materialized['total'] === 0
                 && $statusFilter === ''
                 && $this->isRemote429Filter($filters)
-                && $fallbackAllowed
-                && $this->directIncidentFallbackSafe($where, $params, $hours)) {
-                return $this->directIncidentFallbackRows($where, $params, $hours, $limit);
+                && $fallbackAllowed) {
+                if ($this->directIncidentFallbackSafe($where, $params, $hours)) {
+                    return $this->directIncidentFallbackRows($where, $params, $hours, $limit, $offset);
+                }
+                $this->dataAvailable = false;
+                $this->incidentProtocol = 'unavailable_summary_only';
+                $this->lastIncidentTotal = 0;
+                return [];
             }
             return array_map(fn(array $row): array => $this->presentIncident($row), $materialized['rows']);
         }
@@ -235,7 +242,7 @@ final class ApiHealthService
             return [];
         }
         if ($directDegraded) {
-            return $this->directIncidentFallbackRows($where, $params, $hours, $limit);
+            return $this->directIncidentFallbackRows($where, $params, $hours, $limit, $offset);
         }
 
         // The bounded CLI path remains available to rebuild/verify the read
@@ -916,13 +923,14 @@ final class ApiHealthService
      * @param array<string,mixed> $params
      * @return list<array<string,mixed>>
      */
-    private function directIncidentFallbackRows(array $where, array $params, int $hours, int $limit): array
+    private function directIncidentFallbackRows(array $where, array $params, int $hours, int $limit, int $offset = 0): array
     {
         $this->incidentProtocol = 'degraded_direct';
         $limit = min(50, max(1, $limit));
+        $offset = max(0, $offset);
         try {
-            $rows = $this->directIncidentRows($where, $params, $hours, $limit);
-            $this->lastIncidentTotal = count($rows);
+            $this->lastIncidentTotal = $this->directIncidentCount($where, $params, $hours);
+            $rows = $this->directIncidentRows($where, $params, $hours, $limit, $offset);
             return array_map(fn(array $row): array => $this->presentIncident($row), $rows);
         } catch (Throwable) {
             $this->dataAvailable = false;
@@ -934,9 +942,33 @@ final class ApiHealthService
     /**
      * @param list<string> $where
      * @param array<string,mixed> $params
+     */
+    private function directIncidentCount(array $where, array $params, int $hours): int
+    {
+        $statement = Database::connectionFresh()->prepare(
+            'SELECT COUNT(*)
+             FROM (
+                SELECT l.id
+                FROM ' . $this->directIncidentLogSourceSql() . '
+                WHERE ' . implode(' AND ', $where) . '
+                ORDER BY l.created_at DESC,l.id DESC
+                LIMIT 500
+             ) direct_incident_rows'
+        );
+        $statement->bindValue(':hours', max(1, min(720, $hours)), PDO::PARAM_INT);
+        foreach ($params as $key => $value) {
+            $statement->bindValue(':' . $key, $value, is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR);
+        }
+        $statement->execute();
+        return (int) $statement->fetchColumn();
+    }
+
+    /**
+     * @param list<string> $where
+     * @param array<string,mixed> $params
      * @return list<array<string,mixed>>
      */
-    private function directIncidentRows(array $where, array $params, int $hours, int $limit): array
+    private function directIncidentRows(array $where, array $params, int $hours, int $limit, int $offset = 0): array
     {
         $statement = Database::connectionFresh()->prepare(
             'SELECT l.incident_key,l.outcome_class,l.method,l.endpoint_path,l.http_status,l.error_type,l.error_code,
@@ -958,12 +990,13 @@ final class ApiHealthService
              LEFT JOIN meli_accounts a ON a.company_id=l.company_id AND a.id=l.meli_account_id
              LEFT JOIN companies c ON c.id=l.company_id
              ORDER BY l.created_at DESC,l.id DESC
-             LIMIT :limit'
+             LIMIT :offset,:limit'
         );
         $statement->bindValue(':hours', max(1, min(720, $hours)), PDO::PARAM_INT);
         foreach ($params as $key => $value) {
             $statement->bindValue(':' . $key, $value, is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR);
         }
+        $statement->bindValue(':offset', max(0, $offset), PDO::PARAM_INT);
         $statement->bindValue(':limit', max(1, min(50, $limit)), PDO::PARAM_INT);
         $statement->execute();
         return $statement->fetchAll(PDO::FETCH_ASSOC);

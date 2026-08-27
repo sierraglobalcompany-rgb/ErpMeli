@@ -5925,6 +5925,29 @@ $test('Salud API usa parámetros PDO únicos y separa evidencia de Cron', static
     );
 });
 
+$test('2.40.2 mantiene Sync progresivo por paneles independientes', static function () use ($assert): void {
+    $root = dirname(__DIR__);
+    $version = trim((string) file_get_contents($root . '/VERSION'));
+    $syncController = (string) file_get_contents($root . '/app/Controllers/SyncController.php');
+    $syncView = (string) file_get_contents($root . '/app/Views/sync/index.php');
+    $syncPanel = (string) file_get_contents($root . '/app/Views/sync/panel.php');
+    $performance = (string) file_get_contents($root . '/public/assets/performance.js');
+    $health = (string) file_get_contents($root . '/app/Services/ApiHealthService.php');
+
+    $assert($version === '2.40.2', 'La release de control operativo debe declarar VERSION 2.40.2.');
+    $assert(str_contains($syncController, "sync/panel"), 'SyncController debe renderizar el panel parcial real.');
+    foreach (['summary', 'queue', 'finance', 'months', 'recent'] as $panel) {
+        $assert(str_contains($syncController, "'{$panel}'"), 'Falta whitelist de panel sync: ' . $panel);
+    }
+    foreach (['sync-summary', 'sync-queue', 'sync-finance', 'sync-months', 'sync-recent'] as $section) {
+        $assert(str_contains($syncView, $section), 'La vista progresiva no carga la tarjeta independiente: ' . $section);
+    }
+    $assert(str_contains($syncPanel, 'Resumen operativo') && str_contains($syncPanel, 'Cola financiera'), 'El parcial de Sync no cubre los paneles principales.');
+    $assert(str_contains($syncView, 'data-timeout-ms') && str_contains($performance, 'section.dataset.timeoutMs'), 'El timeout progresivo debe ser configurable por panel.');
+    $assert(str_contains($health, 'REMOTE_429_FILTER_MUST_USE_DIRECT_TRANSPORT_TRUTH') === false, 'No deben filtrarse textos de prueba al runtime.');
+    $assert(str_contains($health, 'directIncidentCount') && str_contains($health, 'LIMIT :offset,:limit'), 'Incidentes directos deben tener conteo y paginación acotada.');
+});
+
 $failed = 0;
 foreach ($tests as [$status, $name]) {
     echo strtoupper($status) . " {$name}\n";
@@ -5934,4 +5957,3 @@ foreach ($tests as [$status, $name]) {
 }
 echo sprintf("%d tests, %d failures\n", count($tests), $failed);
 exit($failed ? 1 : 0);
-

@@ -12,16 +12,42 @@ if ($progressive) {
     'account_id' => (int) ($accountId ?? 0) ?: null,
     'year' => (int) ($year ?? date('Y')),
   ], static fn (mixed $value): bool => $value !== null));
-  $sectionUrl = $base . '/sync/section.json?' . $query;
+  $panels = [
+    ['summary', 'sync-summary', 'Resumen operativo', 'Cuenta, estado general y acciones seguras.', 8000],
+    ['queue', 'sync-queue', 'Cola de sincronización', 'Agenda, vencidos y próxima oportunidad.', 10000],
+    ['finance', 'sync-finance', 'Cola financiera', 'Conciliación y recalculo financiero sin mezclar con ventas.', 10000],
+    ['months', 'sync-months', 'Calendario mensual', 'Estado anual por mes y acceso al detalle exacto.', 12000],
+    ['recent', 'sync-recent', 'Ejecuciones recientes', 'Últimos resultados y errores seguros.', 10000],
+  ];
   ?>
-  <section class="async-section" data-async-section="sync-overview" data-url="<?= View::e($sectionUrl) ?>" aria-live="polite" aria-busy="true">
+  <div class="page-head">
+    <div><h1>Sincronizaciones</h1><p>La pantalla ya abrió. Cada tarjeta carga por separado para que un panel lento no congele todo el centro.</p></div>
+    <div class="page-actions">
+      <a class="btn primary" href="<?= View::e($base) ?>/settings/manual-processing?scope=sales&amp;origin=sync_monitor&amp;account_id=<?= (int) ($accountId ?? 0) ?>&amp;year=<?= (int) ($year ?? date('Y')) ?>">Procesar ahora</a>
+      <a class="btn" href="<?= View::e($base) ?>/settings/cron">Ver automatización</a>
+    </div>
+  </div>
+  <section class="operation-explainer" aria-label="Carga progresiva de sincronización">
+    <div><span>Entrada humana</span><strong>Sincronizaciones</strong></div>
+    <div><span>Modelo de estado</span><strong>Tarjetas independientes con frescura propia</strong></div>
+    <div><span>Acción primaria</span><strong>Procesar ahora abre un paso exacto; no inicia Cron en segundo plano</strong></div>
+  </section>
+  <?php foreach ($panels as [$panelKey, $sectionName, $title, $description, $timeoutMs]):
+    $sectionUrl = $base . '/sync/section.json?' . http_build_query(array_filter([
+      'account_id' => (int) ($accountId ?? 0) ?: null,
+      'year' => (int) ($year ?? date('Y')),
+      'panel' => $panelKey,
+    ], static fn (mixed $value): bool => $value !== null));
+  ?>
+  <section class="async-section mt-2" data-async-section="<?= View::e($sectionName) ?>" data-url="<?= View::e($sectionUrl) ?>" data-timeout-ms="<?= (int) $timeoutMs ?>" aria-live="polite" aria-busy="true">
     <div data-async-skeleton class="panel async-skeleton is-visible">
-      <div class="page-head"><div><h1>Sincronizaciones</h1><p>La pantalla ya abrió. Estamos comprobando agenda, bloques y finanzas sin consultar Mercado Libre.</p></div></div>
+      <header class="panel-head"><div><h2><?= View::e($title) ?></h2><p><?= View::e($description) ?> Cargando sin consultar Mercado Libre.</p></div><span class="badge neutral">NO_CERTIFICADO</span></header>
       <div class="skeleton-table"><span></span><span></span><span></span><span></span></div>
     </div>
     <div data-async-status class="async-section-status" hidden></div>
     <div data-async-content></div>
   </section>
+  <?php endforeach; ?>
   <noscript><a class="btn primary" href="<?= View::e($base) ?>/sync?<?= View::e($query) ?>&amp;full=1">Cargar sincronizaciones</a></noscript>
   <?php return;
 }

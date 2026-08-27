@@ -228,8 +228,8 @@
         },
         "runtime_app_controllers_performancecontroller_php": {
             "path": "app/Controllers/PerformanceController.php",
-            "sha256": "36f175aa4f776c844ef0fb172e3032ae9770c7e5dd10a652bcefcc0217fec376",
-            "sha256_lf": "36f175aa4f776c844ef0fb172e3032ae9770c7e5dd10a652bcefcc0217fec376",
+            "sha256": "5080c2d79954db6d093b9599f9464d3f92d8873996ae6d320ee8aeeabb4b2332",
+            "sha256_lf": "5080c2d79954db6d093b9599f9464d3f92d8873996ae6d320ee8aeeabb4b2332",
             "text": true
         },
         "runtime_app_controllers_productimportcontroller_php": {
@@ -4218,8 +4218,8 @@
         },
         "runtime_app_views_settings_cron_shell_php": {
             "path": "app/Views/settings/cron_shell.php",
-            "sha256": "edbca1a9d60bb79e815d4a6d0218336ece1cb2b32562236b9e7dbac417195366",
-            "sha256_lf": "edbca1a9d60bb79e815d4a6d0218336ece1cb2b32562236b9e7dbac417195366",
+            "sha256": "b76ce7af4c79d5d1accf9aaafc8277151f04ed968d5ff65150a4a4cec59e447f",
+            "sha256_lf": "b76ce7af4c79d5d1accf9aaafc8277151f04ed968d5ff65150a4a4cec59e447f",
             "text": true
         },
         "runtime_app_views_settings_cron_v3_parked_php": {
@@ -4266,8 +4266,8 @@
         },
         "runtime_app_views_settings_manual_processing_php": {
             "path": "app/Views/settings/manual_processing.php",
-            "sha256": "18cb7ae624d57daa0d9bb386dc0c0eb4290c7741a232e21044c0f1453fa44f8c",
-            "sha256_lf": "18cb7ae624d57daa0d9bb386dc0c0eb4290c7741a232e21044c0f1453fa44f8c",
+            "sha256": "9d915218fa44ed01a2bb4162a13119702390f29c3929472d9ba9a622fb5a5d94",
+            "sha256_lf": "9d915218fa44ed01a2bb4162a13119702390f29c3929472d9ba9a622fb5a5d94",
             "text": true
         },
         "runtime_app_views_settings_manual_processing_excluded_php": {
@@ -5016,8 +5016,8 @@
         },
         "runtime_public_assets_performance_js": {
             "path": "public/assets/performance.js",
-            "sha256": "801daf49a483b9b13db0b52cc7916f539bf13557247842cf145f02eda0fb4d35",
-            "sha256_lf": "801daf49a483b9b13db0b52cc7916f539bf13557247842cf145f02eda0fb4d35",
+            "sha256": "161bbadb894f7b6200c8ec8bf37591158e65ec7101af5ddb34b00ed8681ae965",
+            "sha256_lf": "161bbadb894f7b6200c8ec8bf37591158e65ec7101af5ddb34b00ed8681ae965",
             "text": true
         },
         "runtime_public_assets_update_css": {
@@ -5046,8 +5046,8 @@
         },
         "runtime_public_index_php": {
             "path": "public/index.php",
-            "sha256": "34402f356f332dc0e695f40296890cc2a28b3809c3f1faffb0a3e0fdcd93a30e",
-            "sha256_lf": "34402f356f332dc0e695f40296890cc2a28b3809c3f1faffb0a3e0fdcd93a30e",
+            "sha256": "00bbb64ffa3b7b6b3ffea9c3cd3b0bfcd849d0c3d39b7b2e8410b4e4aae24b5e",
+            "sha256_lf": "00bbb64ffa3b7b6b3ffea9c3cd3b0bfcd849d0c3d39b7b2e8410b4e4aae24b5e",
             "text": true
         },
         "runtime_public_login_php": {

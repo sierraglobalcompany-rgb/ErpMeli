@@ -67,13 +67,21 @@ $assert(!str_contains($manual, 'Endpoint K10') && !str_contains($manual, 'Queue 
 $assert(!str_contains($manual, 'data-manual-legacy-campaign') && !str_contains($manual, 'Opciones avanzadas de selección exacta'), 'manual_legacy_campaign_must_be_replaced');
 $assert(substr_count($manual, '<section class="panel manual-panel manual-selection-panel"') === 1, 'manual_selection_panel_must_not_be_nested_or_duplicated');
 $assert(str_contains($manualPreviewService, "'execution_mode'") && str_contains($manualPreviewService, "'max_items'") && str_contains($manualPreviewService, "'remote_calls_per_burst'"), 'preview_configuration_must_persist_execution_profile');
-$assert(str_contains($settingsController, "'preview_token' => trim") && str_contains($settingsController, "'selected_scope'") && str_contains($settingsController, "'selected_account_id'"), 'manual_controller_must_pass_selection_binding_to_drain');
+$assert(str_contains($settingsController, "\$action === 'start'")
+    && str_contains($settingsController, "\$profile['preview_token']")
+    && str_contains($settingsController, "\$profile['selected_scope']")
+    && str_contains($settingsController, "\$profile['selected_account_id']"), 'manual_controller_must_pass_selection_binding_to_drain');
 $assert(str_contains($manualDrainService, 'runSelectedExactStep(') && str_contains($manualDrainService, 'ManualSingleStepService())->executeSelected'), 'manual_drain_must_use_exact_preview_processor');
 $assert(str_contains($manualDrainService, 'PREVIEW_TO_EXECUTION_BINDING_REQUIRED') && str_contains($manualDrainService, 'No se procesó trabajo global'), 'manual_drain_without_preview_must_fail_closed');
 $assert(!str_contains($manualDrainService, "->run('manual', 1, 25)"), 'manual_drain_must_not_call_global_queue_v4_worker');
 $assert(str_contains($manualDrainService, "'selected_scope'") && str_contains($manualDrainService, "'selected_account_id'") && str_contains($manualDrainService, "'next_preview_position'"), 'manual_drain_profile_must_store_selected_scope_account_and_position');
+$assert(str_contains($manualDrainService, 'boundPreview(') && str_contains($manualDrainService, 'SELECTION_BINDING_MISMATCH'), 'manual_start_must_validate_preview_scope_account_binding');
+$assert(str_contains($manualDrainService, 'array_merge($this->profileFromRow($row), $incoming)'), 'manual_profile_update_must_preserve_existing_selection_binding');
+$assert(str_contains($manualDrainService, 'array_merge($profile, [') && str_contains($manualDrainService, 'degradedProfile'), 'manual_auto_degrade_must_preserve_selection_binding');
 $assert(str_contains($manualDrainService, "NO_ELIGIBLE_SELECTED_WORK") && str_contains($manualDrainService, 'No se sustituyó por trabajo global'), 'stale_preview_must_not_fallback_to_unrelated_work');
 $assert(str_contains($manualSingleStepService, 'executeSelected(') && str_contains($manualSingleStepService, '$preview[\'rows\'][$positionNo]'), 'manual_single_step_must_support_bound_preview_positions');
+$assert(str_contains($manualSingleStepService, '$expectedScope') && str_contains($manualSingleStepService, '$expectedAccountId') && str_contains($manualSingleStepService, 'SELECTION_BINDING_MISMATCH'), 'manual_single_step_must_revalidate_scope_and_account_before_execution');
+$assert(!str_contains($settingsController, "'preview_token' => trim((string) (\$_POST['preview_token'] ?? \$_POST['selected_preview_token'] ?? '')),\n                'selected_scope'"), 'manual_profile_action_must_not_default_blank_preview_binding');
 
 $assert(str_contains($cronView, 'Autoridad de automatización') && str_contains($cronView, 'Lanzador físico esperado'), 'cron_must_separate_logical_state_from_physical_launcher');
 $assert(str_contains($cronView, 'NO_CERTIFICADO') && str_contains($cronView, 'heartbeat reciente no equivale'), 'cron_must_not_treat_heartbeat_as_physical_cron_proof');

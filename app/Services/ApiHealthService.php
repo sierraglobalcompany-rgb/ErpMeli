@@ -215,18 +215,21 @@ final class ApiHealthService
         $materialized = (new ApiIncidentReadModelService())->page($filters, $limit, $offset);
         if (is_array($materialized)) {
             $this->lastIncidentTotal = (int) $materialized['total'];
-            if ((int) $materialized['total'] === 0
+            if ($this->lastIncidentTotal === 0
+                && $fallbackAllowed
                 && $statusFilter === ''
                 && $this->isRemote429Filter($filters)
-                && $fallbackAllowed) {
-                if ($this->directIncidentFallbackSafe($where, $params, $hours)) {
-                    return $this->directIncidentFallbackRows($where, $params, $hours, $limit, $offset);
+                && $this->directIncidentFallbackSafe($where, $params, $hours)) {
+                $directRows = $this->directIncidentFallbackRows($where, $params, $hours, $limit, $offset);
+                if ($this->lastIncidentTotal > 0 || $this->incidentProtocol === 'degraded_direct') {
+                    return $directRows;
                 }
-                $this->dataAvailable = false;
-                $this->incidentProtocol = 'unavailable_summary_only';
-                $this->lastIncidentTotal = 0;
-                return [];
             }
+            // When the read model is current and non-empty, it remains the
+            // normal authority.  A direct telemetry projection is only a
+            // degraded safety path for stale/unavailable catalogues or for the
+            // specific current-but-empty remote-429 contradiction; it must not
+            // hide broader semantic bugs in the grouping contract.
             return array_map(fn(array $row): array => $this->presentIncident($row), $materialized['rows']);
         }
 

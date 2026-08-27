@@ -17,7 +17,7 @@ $tests = [
 ];
 
 foreach ($tests as $test) {
-    $command = [PHP_BINARY, '-d', 'error_reporting=-1', '-d', 'display_errors=1', $root . '/tests/' . $test];
+    $command = [PHP_BINARY, '-d', 'opcache.enable_cli=0', '-d', 'error_reporting=-1', '-d', 'display_errors=1', $root . '/tests/' . $test];
     $pipes = [];
     $process = proc_open($command, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $root, null, ['bypass_shell' => true]);
     if (!is_resource($process)) {

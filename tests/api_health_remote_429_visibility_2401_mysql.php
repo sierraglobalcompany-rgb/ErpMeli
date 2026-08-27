@@ -170,6 +170,7 @@ try {
     ]);
 
     $remote429Key = hash('sha256', 'remote-429');
+    $remote429NullCompanyKey = hash('sha256', 'remote-429-null-company');
     $localPauseKey = hash('sha256', 'local-pause');
     $remote5xxKey = hash('sha256', 'remote-5xx');
     $insertLog = $pdo->prepare('INSERT INTO api_request_logs
@@ -178,6 +179,8 @@ try {
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(3))');
     $insertLog->execute([$accountId, $companyId, 'account', 'remote-429', 'GET', '/billing/integration/group/ML/order/details',
         429, 'Mercado Libre respondió HTTP 429', 'http_429', 'remote_error', 1, 1, 1, $remote429Key]);
+    $insertLog->execute([$accountId, null, 'account', 'remote-429-null-company', 'GET', '/billing/integration/group/ML/order/details',
+        429, 'Mercado Libre respondió HTTP 429', 'http_429', 'remote_error', 1, 1, 1, $remote429NullCompanyKey]);
     $insertLog->execute([$accountId, $companyId, 'account', 'local-pause', 'GET', '/billing/integration/group/ML/order/details',
         429, 'Pausa preventiva local', 'api_rhythm_deferred', 'policy_delay', 0, 1, 1, $localPauseKey]);
     $insertLog->execute([$accountId, $companyId, 'account', 'remote-5xx', 'GET', '/orders/search',
@@ -204,7 +207,7 @@ try {
         0
     );
     $assert($stalePage['protocol'] === 'degraded_direct', 'STALE_REMOTE_429_ROUTE_DID_NOT_USE_DIRECT_FALLBACK:' . json_encode(['page' => $stalePage, 'plan' => $plan], JSON_UNESCAPED_SLASHES));
-    $assert($stalePage['total'] === 1, 'STALE_REMOTE_429_ROUTE_DID_NOT_SHOW_DIRECT_REMOTE_429');
+    $assert($stalePage['total'] === 2, 'STALE_REMOTE_429_ROUTE_DID_NOT_SHOW_DIRECT_REMOTE_429');
     $assert(($stalePage['rows'][0]['transport_class'] ?? '') === 'REMOTE_HTTP_429', 'REMOTE_429_CLASS_MISSING');
 
     $staleHttpOnlyPage = (new App\Services\ApiHealthService())->incidentPage(
@@ -213,7 +216,7 @@ try {
         0
     );
     $assert($staleHttpOnlyPage['protocol'] === 'degraded_direct', 'STALE_HTTP_429_ROUTE_DID_NOT_USE_DIRECT_FALLBACK');
-    $assert($staleHttpOnlyPage['total'] === 1, 'STALE_HTTP_429_ROUTE_DID_NOT_SHOW_DIRECT_REMOTE_429');
+    $assert($staleHttpOnlyPage['total'] === 2, 'STALE_HTTP_429_ROUTE_DID_NOT_SHOW_DIRECT_REMOTE_429');
     $assert(($staleHttpOnlyPage['rows'][0]['transport_class'] ?? '') === 'REMOTE_HTTP_429', 'HTTP_429_ROUTE_NOT_REMOTE_429');
 
     $localPage = (new App\Services\ApiHealthService())->incidentPage(
@@ -227,32 +230,59 @@ try {
     $unsafe = new ReflectionMethod(App\Services\ApiHealthService::class, 'directIncidentFallbackSafe');
     $assert($unsafe->invoke(new App\Services\ApiHealthService(), ['1=1'], [], 720) === false, 'UNINDEXED_DIRECT_FALLBACK_WAS_ALLOWED');
 
+    $materializerResult = (new App\Services\ApiIncidentMaterializerService())->refreshStep(50);
+    $assert((int) ($materializerResult['processed'] ?? 0) === 4, 'MATERIALIZER_DID_NOT_PROCESS_ALL_FIXTURE_ROWS:' . json_encode($materializerResult, JSON_UNESCAPED_SLASHES));
+    $assert((int) ($materializerResult['rejected'] ?? 0) === 0, 'MATERIALIZER_REJECTED_VALID_ACCOUNT_SCOPED_ROWS:' . json_encode($materializerResult, JSON_UNESCAPED_SLASHES));
+    $assert((int) ($materializerResult['last_log_id'] ?? 0) === $latest, 'MATERIALIZER_CURSOR_DID_NOT_REACH_LATEST_FIXTURE_LOG');
+    $nullCompanyGroup = $pdo->prepare('SELECT company_id,meli_account_id,scope_kind,scope_key,reached_remote,http_status
+        FROM api_incident_groups WHERE incident_key=? LIMIT 1');
+    $nullCompanyGroup->execute([$remote429NullCompanyKey]);
+    $nullCompanyRow = $nullCompanyGroup->fetch(PDO::FETCH_ASSOC);
+    $assert(is_array($nullCompanyRow), 'REMOTE_429_WITH_NULL_LOG_COMPANY_WAS_NOT_MATERIALIZED');
+    $assert((int) $nullCompanyRow['company_id'] === $companyId, 'REMOTE_429_NULL_LOG_COMPANY_DID_NOT_INFER_ACCOUNT_COMPANY');
+    $assert((int) $nullCompanyRow['meli_account_id'] === $accountId, 'REMOTE_429_NULL_LOG_COMPANY_LOST_ACCOUNT_SCOPE');
+    $assert((string) $nullCompanyRow['scope_kind'] === 'account', 'REMOTE_429_NULL_LOG_COMPANY_SCOPE_NOT_ACCOUNT');
+    $assert((string) $nullCompanyRow['scope_key'] === 'account:' . $accountId, 'REMOTE_429_NULL_LOG_COMPANY_SCOPE_KEY_WRONG');
+    $readModelRemote429Page = (new App\Services\ApiHealthService())->incidentPage(
+        ['hours' => 720, 'http_status' => 429, 'origin' => 'remote'],
+        50,
+        0
+    );
+    $assert($readModelRemote429Page['protocol'] === 'complete', 'READ_MODEL_REMOTE_429_PAGE_DID_NOT_USE_NORMAL_CATALOGUE');
+    $assert($readModelRemote429Page['total'] === 2, 'READ_MODEL_REMOTE_429_PAGE_MISSING_MATERIALIZED_REMOTE_429_ROWS');
+    $assert(array_reduce($readModelRemote429Page['rows'], static fn(bool $carry, array $row): bool => $carry && ($row['transport_class'] ?? '') === 'REMOTE_HTTP_429', true), 'READ_MODEL_REMOTE_429_TRANSPORT_CLASS_NOT_EXCLUSIVE');
+
+    $pdo->exec('TRUNCATE TABLE api_incident_groups');
     $pdo->prepare('UPDATE api_incident_materializer_state SET last_log_id=? WHERE singleton_id=1')->execute([$latest]);
     $currentEmptyGroupPage = (new App\Services\ApiHealthService())->incidentPage(
         ['hours' => 720, 'http_status' => 429, 'origin' => 'remote'],
         50,
         0
     );
-    $assert($currentEmptyGroupPage['protocol'] === 'degraded_direct', 'CURRENT_EMPTY_GROUP_REMOTE_429_MUST_NOT_LOOK_AUTHORITATIVE_EMPTY');
-    $assert($currentEmptyGroupPage['total'] === 1, 'CURRENT_EMPTY_GROUP_REMOTE_429_DID_NOT_SHOW_DIRECT_LOG_TRUTH');
+    $directSafeAfterTruncate = $unsafe->invoke(new App\Services\ApiHealthService(), [
+        'l.created_at>=DATE_SUB(UTC_TIMESTAMP(), INTERVAL :hours HOUR)',
+        'l.incident_key IS NOT NULL',
+        'l.outcome_class NOT IN ("success","expected_absence")',
+        '(l.meli_account_id IN (:debug_account) OR (l.scope_kind="company" AND l.company_id IN (:debug_company)) OR l.scope_kind="application")',
+        'l.outcome_class<>"policy_delay"',
+        'l.reached_remote=1',
+        'l.http_status=:debug_http_status',
+        'l.reached_remote=1',
+    ], ['debug_account' => $accountId, 'debug_company' => $companyId, 'debug_http_status' => 429], 720);
+    $assert($currentEmptyGroupPage['protocol'] === 'degraded_direct', 'CURRENT_EMPTY_GROUP_REMOTE_429_MUST_NOT_LOOK_AUTHORITATIVE_EMPTY:' . json_encode(['page' => $currentEmptyGroupPage, 'safe' => $directSafeAfterTruncate], JSON_UNESCAPED_SLASHES));
+    $assert($currentEmptyGroupPage['total'] === 2, 'CURRENT_EMPTY_GROUP_REMOTE_429_DID_NOT_SHOW_DIRECT_LOG_TRUTH');
     $assert(($currentEmptyGroupPage['rows'][0]['transport_class'] ?? '') === 'REMOTE_HTTP_429', 'CURRENT_EMPTY_GROUP_REMOTE_429_CLASS_MISSING');
 
-    $pdo->prepare('INSERT INTO api_incident_groups
-        (incident_key,scope_key,scope_kind,company_id,meli_account_id,outcome_class,method,endpoint_path,http_status,error_type,
-         error_code,safe_message,diagnostic_id,reached_remote,actionable,risk_signal,first_seen_at,last_seen_at,repetitions,last_log_id)
-        SELECT incident_key,CONCAT("account:",meli_account_id),"account",company_id,meli_account_id,outcome_class,method,
-               endpoint_path,http_status,error_type,error_code,safe_message,diagnostic_id,reached_remote,actionable,risk_signal,
-               created_at,created_at,1,id
-        FROM api_request_logs WHERE request_id="remote-429"')
-        ->execute();
-    $pdo->prepare('UPDATE api_incident_materializer_state SET last_log_id=? WHERE singleton_id=1')->execute([$latest]);
+    $reconciliationResult = (new App\Services\ApiIncidentMaterializerService())->refreshStep(50);
+    $assert((int) ($reconciliationResult['processed'] ?? 0) === 2, 'CURRENT_CURSOR_REMOTE_429_GAP_WAS_NOT_RECONCILED:' . json_encode($reconciliationResult, JSON_UNESCAPED_SLASHES));
+    $assert((int) ($reconciliationResult['last_log_id'] ?? 0) === $latest, 'REMOTE_429_GAP_RECONCILIATION_MUST_NOT_REWIND_OR_ADVANCE_CURSOR');
     $currentPage = (new App\Services\ApiHealthService())->incidentPage(
         ['hours' => 720, 'http_status' => 429, 'origin' => 'remote'],
         50,
         0
     );
     $assert($currentPage['protocol'] === 'complete', 'CURRENT_READ_MODEL_NOT_USED');
-    $assert($currentPage['total'] === 1, 'CURRENT_READ_MODEL_REMOTE_429_MISSING');
+    $assert($currentPage['total'] === 2, 'CURRENT_READ_MODEL_REMOTE_429_MISSING');
     $assert(($currentPage['rows'][0]['transport_class'] ?? '') === 'REMOTE_HTTP_429', 'CURRENT_REMOTE_429_CLASS_MISSING');
 
     $view = (string) file_get_contents($root . '/app/Views/settings/api_health_incidents.php');

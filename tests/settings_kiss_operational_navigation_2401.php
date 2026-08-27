@@ -33,12 +33,11 @@ $assert(str_contains($settings, 'Procesamiento automático, diagnóstico y actua
 $assert(str_contains($settings, "'system' => ['Sistema'"), 'system_configuration_link_missing');
 
 $assert(str_contains($manual, 'Procesamiento manual seguro'), 'manual_operator_title_missing');
-$assert(str_contains($manual, 'MANUAL_EXACT'), 'manual_exact_classification_missing');
-$assert(str_contains($manual, 'Máximo de HTTP físicos por tanda'), 'manual_profile_physical_http_label_missing');
-$assert(str_contains($manual, 'Próxima ventana segura'), 'manual_next_safe_label_missing');
-$assert(str_contains($manual, 'Detalle técnico avanzado'), 'advanced_technical_disclosure_missing');
-$assert(strpos($manual, 'K10') > strpos($manual, 'Detalle técnico avanzado'), 'k10_must_be_advanced_not_primary');
-$assert(strpos($manual, 'Queue V4 boundary') > strpos($manual, 'Detalle técnico avanzado'), 'queue_v4_boundary_must_be_advanced_not_primary');
+$assert(str_contains($manual, 'manual-journey') && str_contains($manual, 'Qué procesar'), 'manual_operator_journey_missing');
+$assert(str_contains($manual, 'Máximo de consultas por tanda'), 'manual_profile_physical_http_label_missing');
+$assert(str_contains($manual, 'Próxima oportunidad segura'), 'manual_next_safe_label_missing');
+$assert(str_contains($manual, 'Detalle de seguridad'), 'advanced_safety_disclosure_missing');
+$assert(!str_contains($manual, 'MANUAL_EXACT') && !str_contains($manual, 'Queue V4 boundary'), 'manual_must_not_show_internal_queue_jargon');
 
 $assert(str_contains($incidents, '$incidentLink'), 'incident_filter_link_builder_missing');
 $assert(str_contains($incidents, "'hours' => 24"), 'incident_quick_link_hours_override_missing');

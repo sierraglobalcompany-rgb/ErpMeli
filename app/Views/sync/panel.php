@@ -18,12 +18,12 @@ if ($panel === 'summary'):
 <section class="panel sync-monitor">
   <header class="panel-head">
     <div><h2>Resumen operativo</h2><p>Estado ligero de sincronización. No consulta Mercado Libre mientras carga esta pantalla.</p></div>
-    <span class="badge neutral">V4_AUTOMATIC</span>
+    <span class="badge neutral">Automático</span>
   </header>
   <div class="panel-body">
     <section class="operation-explainer" aria-label="Estado de sincronización">
       <div><span>Qué está pasando</span><strong><?= View::e((string) ($cron['label'] ?? 'Comprobando el lanzador único')) ?></strong></div>
-      <div><span>Autoridad</span><strong>Queue V4; Procesar ahora sólo ejecuta un paso exacto de navegador</strong></div>
+      <div><span>Autoridad</span><strong>Procesamiento automático certificado; la acción manual sólo ejecuta un paso de navegador</strong></div>
       <div><span>Hora local ERP</span><strong><?= View::e($nowLocal) ?></strong></div>
     </section>
     <?php if ($accountId <= 0): ?>
@@ -42,7 +42,6 @@ if ($panel === 'summary'):
       <?php endif; ?>
     <?php endif; ?>
     <div class="page-actions mt-2">
-      <a class="btn primary" href="<?= View::e($base) ?>/settings/manual-processing?scope=sales&amp;origin=sync_monitor&amp;account_id=<?= $accountId ?>&amp;year=<?= $year ?>">Procesar ahora</a>
       <a class="btn" href="<?= View::e($base) ?>/settings/cron">Ver automatización</a>
     </div>
   </div>
@@ -75,7 +74,7 @@ if ($panel === 'summary'):
       <div class="mini-card"><span>Órdenes recalculadas</span><strong><?= (int)($financialQueue['complete_items'] ?? 0) ?> / <?= (int)($financialQueue['total_items'] ?? 0) ?></strong></div>
       <div class="mini-card"><span>Con error</span><strong><?= (int)($financialQueue['failed_items'] ?? 0) ?></strong></div>
     </div>
-    <div class="page-actions mt-2"><a class="btn primary" href="<?= View::e($base) ?>/settings/manual-processing?scope=finance">Procesar finanzas ahora</a><a class="btn" href="<?= View::e($base) ?>/financial-recalc/errors?account_id=<?= $accountId ?>">Ver errores</a></div>
+    <div class="page-actions mt-2"><a class="btn" href="<?= View::e($base) ?>/settings/manual-processing?scope=finance">Revisar finanzas en procesamiento manual</a><a class="btn" href="<?= View::e($base) ?>/financial-recalc/errors?account_id=<?= $accountId ?>">Ver errores</a></div>
     <?php if (!empty($financialJobs)): ?>
       <h3 class="mt-2">Últimos jobs financieros</h3>
       <div class="table-scroll"><table class="data-table"><tbody>

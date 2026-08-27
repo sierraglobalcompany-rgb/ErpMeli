@@ -32,6 +32,13 @@ if ($progressive) {
     <div><span>Modelo de estado</span><strong>Tarjetas independientes con frescura propia</strong></div>
     <div><span>Acción primaria</span><strong>Procesar ahora abre un paso exacto; no inicia Cron en segundo plano</strong></div>
   </section>
+  <section class="panel filter-bar mt-2">
+    <form class="inline-form" method="get" action="<?= View::e($base) ?>/sync">
+      <div class="field"><label>Cuenta Mercado Libre</label><select class="input" name="account_id"><?php foreach ((array) ($accounts ?? []) as $account): ?><option value="<?= (int) $account['id'] ?>" <?= (int) ($accountId ?? 0)===(int)$account['id']?'selected':'' ?>><?= View::e((!empty($account['company_name']) ? $account['company_name'] . ' · ' : '') . $account['account_name']) ?></option><?php endforeach; ?></select></div>
+      <div class="field"><label>Año</label><input class="input" type="number" min="2020" max="<?= date('Y') + 1 ?>" name="year" value="<?= (int) ($year ?? date('Y')) ?>"></div>
+      <button class="btn" type="submit">Actualizar vista</button>
+    </form>
+  </section>
   <?php foreach ($panels as [$panelKey, $sectionName, $title, $description, $timeoutMs]):
     $sectionUrl = $base . '/sync/section.json?' . http_build_query(array_filter([
       'account_id' => (int) ($accountId ?? 0) ?: null,
@@ -152,7 +159,7 @@ $nowLocal = (new DateTimeImmutable('now', new DateTimeZone(DateTimePresenter::ti
     </div>
     <div class="alert info mt-2">Esta cola es distinta a la sincronización de órdenes. Aquí se recalculan datos financieros locales de órdenes ya descargadas.</div>
     <div class="page-actions mt-2">
-      <a class="btn primary" href="<?= View::e($base) ?>/settings/manual-processing?scope=finance">Procesar finanzas ahora</a>
+      <a class="btn" href="<?= View::e($base) ?>/settings/manual-processing?scope=finance">Revisar finanzas en procesamiento manual</a>
       <a class="btn" href="<?= View::e($base) ?>/financial-recalc/errors?account_id=<?= (int)$accountId ?>">Ver errores</a>
     </div>
     <?php if (!empty($financialJobs)): ?>

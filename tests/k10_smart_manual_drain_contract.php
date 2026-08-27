@@ -81,8 +81,9 @@ $assert(str_contains($worker, 'ManualRemoteCallLimitException') && str_contains(
 $assert(str_contains($worker, 'queue_v4_clean_transport_events') && str_contains($worker, 'physicalHttpCallsForRun'), 'worker_physical_http_attribution_missing');
 
 $assert(str_contains($view, 'Procesamiento manual seguro'), 'manual_drain_operator_title_missing');
-$assert(str_contains($view, 'MANUAL_EXACT'), 'manual_drain_operator_classification_missing');
-$assert(str_contains($view, 'Detalle técnico avanzado') && str_contains($view, 'K10') && str_contains($view, 'Queue V4 boundary'), 'manual_drain_technical_detail_missing');
+$assert(str_contains($view, 'manual-journey') && str_contains($view, 'Qué procesar'), 'manual_drain_operator_journey_missing');
+$assert(!str_contains($view, 'MANUAL_EXACT') && !str_contains($view, 'Queue V4 boundary'), 'manual_drain_internal_jargon_must_not_be_visible');
+$assert(str_contains($view, 'Detalle de seguridad') && str_contains($view, 'Si la automatización está procesando'), 'manual_drain_safety_detail_missing');
 $assert(str_contains($view, '/settings/manual-processing/drain/start'), 'manual_drain_start_form_missing');
 $assert(str_contains($view, '/settings/manual-processing/drain/step'), 'manual_drain_step_form_missing');
 $assert(str_contains($view, '/settings/manual-processing/drain/profile'), 'manual_drain_profile_form_missing');

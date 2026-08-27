@@ -88,6 +88,21 @@ require __DIR__ . '/_automation_nav.php';
   </form>
 </section>
 
+<section class="panel mt-2" aria-labelledby="cron-authority-title">
+  <header class="panel-head compact-panel-head">
+    <div>
+      <h2 id="cron-authority-title">Autoridad de automatización</h2>
+      <p>Se muestran por separado el estado lógico del ERP y el lanzador físico observado. Un heartbeat reciente no equivale por sí solo a Cron físico certificado.</p>
+    </div>
+  </header>
+  <div class="settings-summary-grid">
+    <div><small>Estado lógico</small><strong><?= View::e((string) ($runtimeStatus['label'] ?? ($cron['label'] ?? 'NO_CERTIFICADO'))) ?></strong></div>
+    <div><small>Lanzador físico esperado</small><strong><code>queue_v4_clean.php --runtime=45 --max-jobs=3</code></strong></div>
+    <div><small>Evidencia física</small><strong><?= is_array($cronRuntime) && !empty($cronRuntime) ? View::e((string) ($cronRuntime['command'] ?? 'Verificada')) : 'NO_CERTIFICADO' ?></strong></div>
+    <div><small>Heartbeat</small><strong><?= View::e((string) ($cron['last_seen_label'] ?? $cron['last_run_label'] ?? 'Sin lectura reciente')) ?></strong></div>
+  </div>
+</section>
+
 <?php if ($cronNarrative): ?>
 <section class="panel mt-2" aria-labelledby="cron-narrative-title">
   <header class="panel-head compact-panel-head">

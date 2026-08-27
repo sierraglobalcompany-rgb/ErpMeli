@@ -119,7 +119,10 @@ final class ApiIncidentReadModelService
             $stmt->bindValue(':limit', max(1, min(100, $limit)), PDO::PARAM_INT);
             $stmt->execute();
             return ['rows' => $stmt->fetchAll(PDO::FETCH_ASSOC), 'total' => $total];
-        } catch (Throwable) {
+        } catch (Throwable $error) {
+            if ((string) getenv('ERP_API_HEALTH_READ_MODEL_DEBUG') === '1') {
+                throw $error;
+            }
             return null;
         }
     }

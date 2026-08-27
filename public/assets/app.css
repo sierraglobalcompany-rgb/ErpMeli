@@ -239,6 +239,21 @@ body{overflow-x:hidden}.chart-area{stroke:none}.sales-chart{stroke:none}.chart-g
 @media(max-width:700px){.cron-api-risks-lists{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.api-global-alert.is-critical small{animation:none}}
 
+/* ERP Meli 2.40.2: plano de control manual KISS, una sola experiencia visible. */
+.manual-control-plane{display:grid;gap:18px;margin-bottom:22px}
+.manual-control-hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,320px);gap:22px;align-items:center;padding:24px;border:1px solid var(--border);border-radius:18px;background:linear-gradient(135deg,#fff 0%,#f7fbff 100%);box-shadow:var(--shadow)}
+.manual-control-hero h2{margin:2px 0 8px;font-size:clamp(28px,4vw,44px);letter-spacing:-.04em}.manual-control-hero p{max-width:72ch;margin:0;color:var(--muted);line-height:1.55}
+.manual-primary-action{display:grid;gap:8px;justify-items:stretch;padding:16px;border:1px solid #d7e4f7;border-radius:14px;background:#fff}.manual-primary-action .btn{min-height:52px;font-size:16px}.manual-primary-action small{color:var(--muted);line-height:1.4}
+.manual-metric-strip{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));border:1px solid var(--border);border-radius:16px;background:#fff;overflow:hidden;box-shadow:0 1px 4px rgba(19,33,58,.035)}
+.manual-metric-strip article{min-width:0;padding:16px;border-right:1px solid var(--border)}.manual-metric-strip article:last-child{border-right:0}.manual-metric-strip span,.manual-metric-strip small{display:block;color:var(--muted);font-size:12px}.manual-metric-strip strong{display:block;margin:6px 0 3px;overflow-wrap:anywhere;font-size:24px;letter-spacing:-.03em;color:var(--text)}
+.manual-flow-section{display:grid;gap:16px;padding:22px;border:1px solid var(--border);border-radius:16px;background:#fff;box-shadow:var(--shadow)}.manual-flow-heading h3{margin:2px 0 5px;font-size:20px;letter-spacing:-.02em}.manual-flow-heading p{max-width:74ch;margin:0;color:var(--muted);line-height:1.5}
+.manual-choice-grid.compact{grid-template-columns:repeat(4,minmax(0,1fr))}.manual-choice-grid.compact .manual-choice-card{min-height:92px}
+.manual-config-summary,.manual-result-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.manual-config-summary article,.manual-result-grid article{padding:14px;border:1px solid #e3ebf6;border-radius:12px;background:#fbfdff}.manual-config-summary span,.manual-config-summary small,.manual-result-grid span{display:block;color:var(--muted);font-size:12px}.manual-config-summary strong,.manual-result-grid strong{display:block;margin-top:5px;font-size:18px;color:var(--text)}
+.manual-advanced-config{border-top:1px solid var(--border);padding-top:4px}.manual-advanced-config>summary,.manual-technical-detail>summary{min-height:48px;display:flex;align-items:center;font-weight:800;cursor:pointer}.manual-advanced-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;padding-top:10px}.manual-advanced-grid label{display:grid;gap:6px;color:var(--muted);font-weight:700}.manual-advanced-grid input{min-height:44px}.manual-advanced-note{margin:12px 0 0;color:var(--muted)}
+.manual-secondary-actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end}.manual-secondary-actions form{margin:0}.manual-flow-alert{padding:18px 22px}.manual-flow-alert p{margin:5px 0 0;color:var(--muted)}.manual-technical-detail{padding:0 18px;border:1px dashed var(--border);border-radius:14px;background:#fbfcfe}.manual-technical-detail>div{padding:0 0 16px}.manual-technical-detail dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0}.manual-technical-detail dl>div{padding:12px;border:1px solid var(--border);border-radius:10px;background:#fff}.manual-technical-detail dt{color:var(--muted);font-size:12px}.manual-technical-detail dd{margin:4px 0 0;font-weight:800}.btn.is-loading{position:relative;color:transparent!important}.btn.is-loading:after{content:"";position:absolute;left:50%;top:50%;width:18px;height:18px;margin:-9px 0 0 -9px;border:2px solid rgba(255,255,255,.55);border-top-color:#fff;border-radius:50%;animation:button-spin .8s linear infinite}@keyframes button-spin{to{transform:rotate(360deg)}}
+@media(max-width:1100px){.manual-metric-strip{grid-template-columns:repeat(3,minmax(0,1fr))}.manual-choice-grid.compact{grid-template-columns:repeat(2,minmax(0,1fr))}.manual-config-summary,.manual-result-grid,.manual-advanced-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:720px){.manual-control-hero{grid-template-columns:1fr;padding:18px}.manual-metric-strip{grid-template-columns:1fr}.manual-metric-strip article{border-right:0;border-bottom:1px solid var(--border)}.manual-metric-strip article:last-child{border-bottom:0}.manual-choice-grid.compact,.manual-config-summary,.manual-result-grid,.manual-advanced-grid,.manual-technical-detail dl{grid-template-columns:1fr}.manual-flow-section{padding:18px}}
+
 /* 2.17.1: actividad API orientada a personas. */
 .log-view-tabs{display:flex;gap:4px;max-width:100%;margin:0 0 16px;padding:4px;border:1px solid var(--border);border-radius:12px;background:#fff;overflow-x:auto}.log-view-tabs a{display:inline-flex;align-items:center;min-height:44px;padding:0 15px;border-radius:9px;color:#53627a;font-weight:750;white-space:nowrap;text-decoration:none}.log-view-tabs a:hover{background:#f4f7fb}.log-view-tabs a[aria-current=page]{background:#e8f0ff;color:#075ed1}
 .log-status-hero{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:16px;margin-bottom:16px;padding:20px;border:1px solid var(--border);border-left:4px solid #26925c;border-radius:14px;background:#fff;box-shadow:var(--shadow)}.log-status-hero.is-attention{border-left-color:#d88700}.log-status-hero.is-critical{border-left-color:#d93535}.log-status-hero.is-unknown{border-left-color:#73839a}.log-status-hero.is-recovered{border-left-color:#26925c;background:#f8fcfa}.log-status-mark{display:grid;place-items:center;width:44px;height:44px;border-radius:12px;background:#e7f7ee;color:#147644;font-size:22px;font-weight:900}.log-status-hero.is-attention .log-status-mark{background:#fff1cd;color:#986000}.log-status-hero.is-critical .log-status-mark{background:#ffe1e1;color:#b42323}.log-status-hero.is-unknown .log-status-mark{background:#edf1f6;color:#53627a}.log-status-hero h2{margin:2px 0 4px;font-size:1.3rem}.log-status-hero p{margin:0;color:var(--muted)}
@@ -287,13 +302,13 @@ body{overflow-x:hidden}.chart-area{stroke:none}.sales-chart{stroke:none}.chart-g
 @media(prefers-reduced-motion:reduce){.progress span{transition:none}}
 
 /* ERP Meli 2.19.5: procesamiento manual claro, contenido y sin clases genéricas. */
-.manual-stepper{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 16px;padding:0;list-style:none}
-.manual-stepper li{display:flex;align-items:center;justify-content:center;gap:8px;min-width:0;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--muted);font-size:12px;font-weight:700;text-align:center}
-.manual-stepper li span{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#eef2f7;color:#52627a}
-.manual-stepper li.active{border-color:#b7cced;background:#f5f9ff;color:#135fc5}
-.manual-stepper li.active span{background:var(--blue);color:#fff}
-.manual-stepper li.complete{color:#18733d}
-.manual-stepper li.complete span{background:#dff4e7;color:#18733d}
+.manual-stepper,.manual-journey{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 16px;padding:0;list-style:none}
+.manual-stepper li,.manual-journey li,.manual-journey>span{display:flex;align-items:center;justify-content:center;gap:8px;min-width:0;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--muted);font-size:12px;font-weight:700;text-align:center}
+.manual-stepper li span,.manual-journey li span{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#eef2f7;color:#52627a}
+.manual-stepper li.active,.manual-journey li.active{border-color:#b7cced;background:#f5f9ff;color:#135fc5}
+.manual-stepper li.active span,.manual-journey li.active span{background:var(--blue);color:#fff}
+.manual-stepper li.complete,.manual-journey li.complete{color:#18733d}
+.manual-stepper li.complete span,.manual-journey li.complete span{background:#dff4e7;color:#18733d}
 .manual-panel{margin-bottom:16px;overflow:hidden}
 .manual-panel .panel-head{height:auto;min-height:58px;padding:12px 17px;gap:16px}
 .manual-panel .panel-head p{margin:4px 0 0;color:var(--muted)}
@@ -337,7 +352,7 @@ body{overflow-x:hidden}.chart-area{stroke:none}.sales-chart{stroke:none}.chart-g
 .manual-panel .button-row form{margin:0}
 .table-footnote{margin:10px 2px 18px;color:var(--muted);font-size:13px}
 @media(max-width:700px){
-  .manual-stepper{grid-template-columns:1fr 1fr}
+  .manual-stepper,.manual-journey{grid-template-columns:1fr 1fr}
   .manual-alert-action{align-items:stretch;flex-direction:column}
   .manual-scope-form{grid-template-columns:1fr}
   .manual-scope-form .btn{width:100%}
@@ -352,7 +367,8 @@ body{overflow-x:hidden}.chart-area{stroke:none}.sales-chart{stroke:none}.chart-g
 @media(prefers-reduced-motion:reduce){.manual-choice-card{transition:none}}
 
 /* ERP Meli 2.20.0: campañas manuales y cabina visual basada en actividad real. */
-.manual-page-head{margin-bottom:18px}.manual-stepper{grid-template-columns:repeat(5,minmax(0,1fr))}
+.manual-page-head{margin-bottom:18px}.manual-stepper,.manual-journey{grid-template-columns:repeat(5,minmax(0,1fr))}
+.manual-selection-panel{margin-top:18px;background:#fbfdff;border-color:#dbe7f4}
 .manual-engine-card{margin-bottom:18px;border-color:#d9e2ee}.manual-engine-card.is-ready{background:#fbfefc}.manual-engine-card.is-warning{background:#fffdf8}
 .manual-engine-summary{display:flex;align-items:center;justify-content:space-between;gap:20px}.manual-engine-summary>div{min-width:0}.manual-engine-summary p{margin:5px 0 0;color:var(--muted)}
 .status-dot{display:inline-block;width:9px;height:9px;margin-right:8px;border-radius:50%;background:#d49400}.is-ready .status-dot{background:#1c8b4b}
@@ -368,7 +384,7 @@ body{overflow-x:hidden}.chart-area{stroke:none}.sales-chart{stroke:none}.chart-g
 .manual-review-card{margin-top:18px}.manual-conclusion{max-width:760px;margin:0 0 18px;font-size:18px;line-height:1.5}
 .manual-metric-grid{grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:18px}.manual-metric-grid article{padding:16px;border:1px solid var(--border);background:#fbfcfe}
 .manual-metric-grid span{display:block;color:var(--muted);font-size:12px}.manual-metric-grid strong{display:block;margin-top:6px;font-size:22px}
-.manual-confirm-form{margin-top:18px}.manual-confirm-form>.btn{margin-top:8px}
+.manual-confirm-form{margin-top:18px}.manual-confirm-form>.btn{margin-top:8px}.manual-secondary-actions{margin-top:18px}.manual-secondary-actions summary{cursor:pointer;font-weight:800}.manual-secondary-actions-body{display:grid;gap:12px;margin-top:12px;padding:14px;border:1px solid var(--border);border-radius:12px;background:#fbfcfe}
 .manual-cockpit{--manual-clock-progress:0;position:relative;overflow:hidden;margin-bottom:18px;padding:24px;border:1px solid #cbd9ec;border-radius:16px;background:linear-gradient(145deg,#fff 0%,#f7faff 100%);box-shadow:0 14px 32px rgba(33,71,125,.08)}
 .manual-cockpit-head{display:grid;grid-template-columns:minmax(0,1fr) 116px;gap:24px;align-items:center}.manual-cockpit-head h2{margin:8px 0 5px;font-size:24px}.manual-cockpit-head p{max-width:760px;margin:0;color:var(--muted)}
 .manual-live-state{display:inline-flex;align-items:center;gap:8px;color:#52647b;font-size:13px}.manual-live-state i{width:9px;height:9px;border-radius:50%;background:#94a3b8;box-shadow:0 0 0 5px rgba(148,163,184,.14)}.manual-cockpit.is-engine-live .manual-live-state{color:#0c65d8}.manual-cockpit.is-engine-live .manual-live-state i{background:#1d74e8;box-shadow:0 0 0 5px rgba(29,116,232,.12);animation:manual-heartbeat 1.8s ease-in-out infinite}
@@ -381,7 +397,7 @@ body{overflow-x:hidden}.chart-area{stroke:none}.sales-chart{stroke:none}.chart-g
 .manual-activity-panel{overflow:hidden}.manual-activity-list{margin:0;padding:0;list-style:none}.manual-activity-list li{display:grid;grid-template-columns:76px minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);transition:opacity .18s ease,transform .18s ease}.manual-activity-list li:last-child{border-bottom:0}.manual-activity-list li.is-new{opacity:0;transform:translateY(-6px)}
 .manual-activity-list time{color:var(--muted);font-variant-numeric:tabular-nums}.manual-activity-list b{font-size:12px}.manual-activity-list .is-success b{color:#18733d}.manual-activity-list .is-warning b{color:#936100}.manual-activity-list .is-error b{color:#b6232b}.manual-activity-list .is-info b{color:#075ed1}
 @keyframes manual-heartbeat{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.72);opacity:.6}}
-@media(max-width:800px){.manual-stepper{grid-template-columns:1fr 1fr}.manual-engine-summary{align-items:stretch;flex-direction:column}.manual-rhythm-grid,.manual-metric-grid,.manual-cockpit-metrics{grid-template-columns:1fr 1fr!important}.manual-cockpit-head{grid-template-columns:1fr}.manual-countdown{width:88px;height:88px}.manual-progress-copy{align-items:flex-start;flex-direction:column}.manual-activity-list li{grid-template-columns:62px minmax(0,1fr)}.manual-activity-list li b{grid-column:2}}
+@media(max-width:800px){.manual-stepper,.manual-journey{grid-template-columns:1fr 1fr}.manual-engine-summary{align-items:stretch;flex-direction:column}.manual-rhythm-grid,.manual-metric-grid,.manual-cockpit-metrics{grid-template-columns:1fr 1fr!important}.manual-cockpit-head{grid-template-columns:1fr}.manual-countdown{width:88px;height:88px}.manual-progress-copy{align-items:flex-start;flex-direction:column}.manual-activity-list li{grid-template-columns:62px minmax(0,1fr)}.manual-activity-list li b{grid-column:2}}
 @media(max-width:480px){.manual-rhythm-grid,.manual-metric-grid,.manual-cockpit-metrics{grid-template-columns:1fr!important}.manual-cockpit{padding:18px}.manual-cockpit-actions,.manual-cockpit-actions form,.manual-cockpit-actions .btn{width:100%}}
 @media(prefers-reduced-motion:reduce){.manual-live-state i{animation:none}.manual-progress-track i,.manual-activity-list li{transition:none}}
 

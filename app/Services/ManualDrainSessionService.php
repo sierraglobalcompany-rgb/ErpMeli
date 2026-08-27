@@ -20,6 +20,7 @@ final class ManualDrainSessionService
     private const UI_STALE_SECONDS = 90;
     private const DEFAULT_MIN_DELAY_SECONDS = 15;
     private const DEFAULT_COOLDOWN_SECONDS = 30;
+    private const DEFAULT_MAX_ITEMS = 1;
 
     /** @var null|\Closure(PDO,QueueV4CleanRepository):QueueV4CleanWorker */
     private ?\Closure $workerFactory;
@@ -38,6 +39,30 @@ final class ManualDrainSessionService
     {
         $this->assertInstalled();
         $this->expireStaleSessions();
+        $profile = $this->normalizeProfile($profile);
+        if ((string) ($profile['selected_preview_token'] ?? '') === '') {
+            return [
+                'ok' => false,
+                'code' => 'PREVIEW_TO_EXECUTION_BINDING_REQUIRED',
+                'state' => 'OFF',
+                'claimed' => 0,
+                'remote_calls' => 0,
+                'message' => 'Calcule una selección vigente antes de ejecutar. No se procesó trabajo global.',
+            ];
+        }
+        try {
+            $preview = $this->boundPreview($userId, $profile);
+            $profile['selected_count'] = count((array) ($preview['rows'] ?? []));
+        } catch (RuntimeException $error) {
+            return [
+                'ok' => false,
+                'code' => (string) $error->getMessage(),
+                'state' => 'OFF',
+                'claimed' => 0,
+                'remote_calls' => 0,
+                'message' => 'La selección ya no coincide con la configuración visible. No se procesó trabajo global.',
+            ];
+        }
         $existing = $this->activeSessionForUser($userId);
         if ($existing !== null) {
             return ['ok' => true, 'state' => $this->projectState($existing), 'session' => $this->present($existing)];
@@ -57,7 +82,6 @@ final class ManualDrainSessionService
         }
 
         try {
-            $profile = $this->normalizeProfile($profile);
             $stmt = $this->pdo->prepare(
                 'INSERT INTO manual_drain_sessions
                  (session_token,owner_user_id,status_ui,drain_generation,lease_owner_hash,profile_snapshot_json,heartbeat_at,expires_at)
@@ -151,23 +175,10 @@ final class ManualDrainSessionService
             if (($row['ready'] ?? false) !== true) {
                 return $row;
             }
-            $repository = new QueueV4CleanRepository($this->pdo);
-            $worker = $this->workerFactory !== null
-                ? ($this->workerFactory)($this->pdo, $repository)
-                : new QueueV4CleanWorker($this->pdo, $repository);
             $profile = $this->profileFromRow($row);
             $remaining = max(0, (int) ($row['manual_burst_remaining'] ?? $this->burstRemaining($row, $profile)));
-            $result = ApiExecutionMetadataContext::run(
-                [
-                    'source' => 'manual',
-                    'job_type' => 'manual_drain',
-                    'manual_physical_http_burst_limit' => $remaining,
-                    'manual_next_safe_at' => null,
-                ],
-                static fn (): array => $worker->run('manual', 1, 25)
-            );
-            $receipt = $worker->receiptForRun((int) ($result['run_id'] ?? 0));
-            return $this->recordStepResult($row, $result + $receipt);
+            $result = $this->runSelectedExactStep($userId, $row, $profile, $remaining);
+            return $this->recordStepResult($row, $result);
         } finally {
             $this->releaseAdvisoryLock($lockName);
         }
@@ -189,7 +200,26 @@ final class ManualDrainSessionService
             if (!$this->heartbeatLease($row)) {
                 return $this->markTerminal($row, 'EXPIRED', 'La autoridad global expiró antes de actualizar el perfil.');
             }
-            $normalized = $this->normalizeProfile($profile);
+            $incoming = $profile;
+            foreach (['preview_token', 'selected_preview_token', 'selected_scope', 'selected_account_id'] as $stickyField) {
+                if (!array_key_exists($stickyField, $incoming)
+                    || trim((string) ($incoming[$stickyField] ?? '')) === ''
+                    || ($stickyField === 'selected_account_id' && (int) ($incoming[$stickyField] ?? 0) < 1)) {
+                    unset($incoming[$stickyField]);
+                }
+            }
+            $normalized = $this->normalizeProfile(array_merge($this->profileFromRow($row), $incoming));
+            if ((string) ($normalized['selected_preview_token'] ?? '') === '') {
+                return [
+                    'ok' => false,
+                    'state' => $this->projectState($row),
+                    'claimed' => 0,
+                    'remote_calls' => 0,
+                    'code' => 'PREVIEW_TO_EXECUTION_BINDING_REQUIRED',
+                    'message' => 'La sesión perdió su selección. Recalcule antes de continuar.',
+                    'session' => $this->present($row),
+                ];
+            }
             $stmt = $this->pdo->prepare(
                 'UPDATE manual_drain_sessions
                  SET profile_snapshot_json=?,profile_revision=profile_revision+1,
@@ -237,6 +267,49 @@ final class ManualDrainSessionService
             }
             $now = time();
             $profile = $this->profileFromRow($row);
+            if (($profile['selected_preview_token'] ?? '') === '') {
+                $this->pdo->commit();
+                return [
+                    'ok' => false,
+                    'state' => $this->projectState($row),
+                    'claimed' => 0,
+                    'remote_calls' => 0,
+                    'code' => 'PREVIEW_TO_EXECUTION_BINDING_REQUIRED',
+                    'message' => 'Calcule una selección vigente antes de ejecutar. No se procesó trabajo global.',
+                    'session' => $this->present($row),
+                ];
+            }
+            $elapsedLimit = max(0, (int) ($profile['max_duration_seconds'] ?? 0));
+            $startedAt = $this->timestampOrZero($row['started_at'] ?? null);
+            if ($elapsedLimit > 0 && $startedAt > 0 && $startedAt + $elapsedLimit <= $now) {
+                $this->updateStatus((int) $row['id'], 'PAUSED');
+                $fresh = $this->sessionByToken($token, true) ?? $row;
+                $this->pdo->commit();
+                return [
+                    'ok' => true,
+                    'state' => 'PAUSED',
+                    'claimed' => 0,
+                    'remote_calls' => 0,
+                    'code' => 'MANUAL_DURATION_LIMIT_REACHED',
+                    'message' => 'Se alcanzó la duración máxima configurada.',
+                    'session' => $this->present($fresh),
+                ];
+            }
+            $maxItems = max(1, (int) ($profile['max_items'] ?? self::DEFAULT_MAX_ITEMS));
+            if ((int) ($row['jobs_processed'] ?? 0) >= $maxItems) {
+                $this->updateStatus((int) $row['id'], 'PAUSED');
+                $fresh = $this->sessionByToken($token, true) ?? $row;
+                $this->pdo->commit();
+                return [
+                    'ok' => true,
+                    'state' => 'PAUSED',
+                    'claimed' => 0,
+                    'remote_calls' => 0,
+                    'code' => 'MANUAL_ITEM_LIMIT_REACHED',
+                    'message' => 'Se alcanzó el límite de trabajos configurado.',
+                    'session' => $this->present($fresh),
+                ];
+            }
             $cooldownTs = $this->timestampOrZero($row['manual_cooldown_until'] ?? null);
             $intervalTs = $this->timestampOrZero($row['manual_interval_until'] ?? null);
             if (($cooldownTs > 0 && $cooldownTs <= $now) || ($intervalTs > 0 && $intervalTs <= $now)) {
@@ -346,6 +419,25 @@ final class ManualDrainSessionService
             'auto_degraded' => $autoDegraded,
             'bounded_5xx_preferences' => (string) ($profile['bounded_5xx_preferences'] ?? 'pause_and_ask'),
         ];
+        if (isset($result['manual_next_preview_position'])) {
+            $profile['next_preview_position'] = max(0, (int) $result['manual_next_preview_position']);
+        }
+        if (!empty($result['selected_count'])) {
+            $profile['selected_count'] = max(0, (int) $result['selected_count']);
+        }
+        $mode = (string) ($profile['execution_mode'] ?? 'ONE_STEP');
+        $maxItems = max(1, (int) ($profile['max_items'] ?? self::DEFAULT_MAX_ITEMS));
+        $nextPosition = max(0, (int) ($profile['next_preview_position'] ?? 0));
+        $selectedCount = max(0, (int) ($profile['selected_count'] ?? 0));
+        if ($claimed > 0 && $mode === 'ONE_STEP') {
+            $nextState = 'PAUSED';
+        }
+        if ($claimed > 0 && $mode === 'CONTINUE_AUTOMATICALLY') {
+            $processedAfter = (int) ($row['jobs_processed'] ?? 0) + max(1, $claimed);
+            if ($processedAfter >= $maxItems || ($selectedCount > 0 && $nextPosition >= $selectedCount)) {
+                $nextState = 'PAUSED';
+            }
+        }
         $stmt = $this->pdo->prepare(
             'UPDATE manual_drain_sessions
              SET status_ui=?,heartbeat_at=UTC_TIMESTAMP(3),expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND),
@@ -362,7 +454,7 @@ final class ManualDrainSessionService
         $stmt->execute([
             $nextState,
             self::LEASE_SECONDS,
-            $completed,
+            $claimed > 0 ? max(1, $completed) : 0,
             $remoteDelta,
             $burstAfter,
             $lastJobId > 0 ? $lastJobId : null,
@@ -385,6 +477,82 @@ final class ManualDrainSessionService
             'receipt' => $receipt,
             'next_safe_at' => $receipt['effective_next_safe_at'],
             'session' => $this->present($fresh),
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     * @param array<string,mixed> $profile
+     * @return array<string,mixed>
+     */
+    private function runSelectedExactStep(int $userId, array $row, array $profile, int $remainingHttp): array
+    {
+        $previewToken = trim((string) ($profile['selected_preview_token'] ?? ''));
+        if ($previewToken === '') {
+            return [
+                'claimed' => 0,
+                'completed' => 0,
+                'deferred' => 0,
+                'physical_http_calls' => 0,
+                'classification' => 'preview_to_execution_binding_required',
+                'message' => 'Calcule una selección vigente antes de ejecutar.',
+            ];
+        }
+        $position = max(0, (int) ($profile['next_preview_position'] ?? 0));
+        try {
+            $result = ApiExecutionMetadataContext::run(
+                [
+                    'source' => 'manual',
+                    'job_type' => 'manual_exact',
+                    'manual_physical_http_burst_limit' => max(1, $remainingHttp),
+                    'manual_next_safe_at' => null,
+                    'manual_preview_token_hash' => hash('sha256', $previewToken),
+                    'manual_preview_position' => $position,
+                    'manual_selected_scope' => (string) ($profile['selected_scope'] ?? ''),
+                    'manual_selected_account_id' => (int) ($profile['selected_account_id'] ?? 0),
+                ],
+                static fn (): array => (new ManualSingleStepService())->executeSelected(
+                    $previewToken,
+                    $userId,
+                    $position,
+                    false,
+                    (string) ($profile['selected_scope'] ?? ''),
+                    (int) ($profile['selected_account_id'] ?? 0)
+                )
+            );
+        } catch (RuntimeException $error) {
+            if (in_array((string) $error->getMessage(), ['NO_ELIGIBLE_SELECTED_WORK', 'SELECTION_BINDING_MISMATCH'], true)) {
+                return [
+                    'claimed' => 0,
+                    'completed' => 0,
+                    'deferred' => 0,
+                    'physical_http_calls' => 0,
+                    'classification' => 'no_eligible_selected_work',
+                    'message' => 'La selección ya no contiene trabajo elegible. No se sustituyó por trabajo global.',
+                    'manual_next_preview_position' => $position,
+                ];
+            }
+            throw $error;
+        }
+
+        $status = strtolower((string) ($result['status'] ?? 'completed'));
+        $remoteCalls = max(0, (int) ($result['remote_dispatches'] ?? $result['physical_http_calls'] ?? 0));
+        return [
+            'run_id' => (int) ($result['queue_core_job_id'] ?? 0),
+            'claimed' => 1,
+            'completed' => $status === 'completed' ? 1 : 0,
+            'deferred' => in_array($status, ['retry', 'retry_wait', 'waiting', 'deferred'], true) ? 1 : 0,
+            'physical_http_calls' => $remoteCalls,
+            'remote_calls' => $remoteCalls,
+            'classification' => 'manual_exact:' . ($status !== '' ? $status : 'unknown'),
+            'http_status' => $result['http_status'] ?? null,
+            'message' => (string) ($result['message'] ?? 'Paso exacto procesado.'),
+            'queue_key' => (string) ($result['queue_key'] ?? ''),
+            'source_id' => (string) ($result['source_id'] ?? ''),
+            'account_id' => (int) ($result['account_id'] ?? 0),
+            'selected_count' => (int) ($result['selected_count'] ?? 0),
+            'manual_selected_position' => $position,
+            'manual_next_preview_position' => $position + 1,
         ];
     }
 
@@ -580,6 +748,18 @@ final class ManualDrainSessionService
         $fiveXx = (string) ($profile['bounded_5xx_preferences'] ?? 'pause_and_ask');
         $fiveXx = $fiveXx === 'fail_closed' ? 'pause_and_ask' : $fiveXx;
         return [
+            'selected_preview_token' => preg_match('/^[a-f0-9]{40}$/', (string) ($profile['preview_token'] ?? $profile['selected_preview_token'] ?? '')) === 1
+                ? (string) ($profile['preview_token'] ?? $profile['selected_preview_token'])
+                : '',
+            'selected_scope' => preg_replace('/[^a-z_]/', '', (string) ($profile['selected_scope'] ?? 'recommended')) ?: 'recommended',
+            'selected_account_id' => max(0, (int) ($profile['selected_account_id'] ?? 0)),
+            'execution_mode' => in_array((string) ($profile['execution_mode'] ?? 'ONE_STEP'), ['ONE_STEP', 'CONTINUE_AUTOMATICALLY'], true)
+                ? (string) ($profile['execution_mode'] ?? 'ONE_STEP')
+                : 'ONE_STEP',
+            'max_items' => max(1, min(10000, (int) ($profile['max_items'] ?? self::DEFAULT_MAX_ITEMS))),
+            'max_duration_seconds' => max(0, min(604800, (int) ($profile['max_duration_seconds'] ?? 0))),
+            'next_preview_position' => max(0, (int) ($profile['next_preview_position'] ?? 0)),
+            'selected_count' => max(0, (int) ($profile['selected_count'] ?? 0)),
             'remote_calls_per_burst' => max(1, min(60, (int) ($profile['remote_calls_per_burst'] ?? 1))),
             'minimum_delay_between_remote_calls' => max(self::DEFAULT_MIN_DELAY_SECONDS, min(3600, (int) ($profile['minimum_delay_between_remote_calls'] ?? self::DEFAULT_MIN_DELAY_SECONDS))),
             'cooldown_after_burst' => max(0, min(3600, (int) ($profile['cooldown_after_burst'] ?? self::DEFAULT_COOLDOWN_SECONDS))),
@@ -591,13 +771,32 @@ final class ManualDrainSessionService
     /** @param array<string,mixed> $profile @return array<string,int|string> */
     private function degradedProfile(array $profile): array
     {
-        return $this->normalizeProfile([
+        return $this->normalizeProfile(array_merge($profile, [
             'remote_calls_per_burst' => 1,
             'minimum_delay_between_remote_calls' => max(60, (int) ($profile['minimum_delay_between_remote_calls'] ?? self::DEFAULT_MIN_DELAY_SECONDS)),
             'cooldown_after_burst' => max(300, (int) ($profile['cooldown_after_burst'] ?? self::DEFAULT_COOLDOWN_SECONDS)),
             '429_action' => $profile['429_action'] ?? 'auto_degrade',
             'bounded_5xx_preferences' => $profile['bounded_5xx_preferences'] ?? 'pause_and_ask',
-        ]);
+        ]));
+    }
+
+    /** @param array<string,mixed> $profile @return array<string,mixed> */
+    private function boundPreview(int $userId, array $profile): array
+    {
+        $previewToken = (string) ($profile['selected_preview_token'] ?? '');
+        $preview = (new ManualCampaignPreviewService())->load($previewToken, $userId);
+        $configuration = is_array($preview['configuration'] ?? null) ? $preview['configuration'] : [];
+        $scope = (string) ($profile['selected_scope'] ?? '');
+        $configuredScope = (string) ($configuration['scope'] ?? '');
+        $accountId = (int) ($profile['selected_account_id'] ?? 0);
+        $configuredAccountId = (int) ($configuration['account_id'] ?? 0);
+        if ($scope === '' || $scope !== $configuredScope || $accountId !== $configuredAccountId) {
+            throw new RuntimeException('SELECTION_BINDING_MISMATCH');
+        }
+        if (count((array) ($preview['rows'] ?? [])) < 1) {
+            throw new RuntimeException('NO_ELIGIBLE_SELECTED_WORK');
+        }
+        return $preview;
     }
 
     /** @return array<string,mixed> */

@@ -31,6 +31,21 @@ $counterValue = static function (string $key) use ($manualQueueSnapshot, $previe
     : '—';
 };
 $hasPreparedPreview = $preview !== null && !empty($preview['can_start_campaign']);
+$previewConfiguration = is_array($preview['configuration'] ?? null) ? $preview['configuration'] : [];
+$executionMode = in_array((string) ($_GET['execution_mode'] ?? $previewConfiguration['execution_mode'] ?? 'ONE_STEP'), ['ONE_STEP', 'CONTINUE_AUTOMATICALLY'], true)
+  ? (string) ($_GET['execution_mode'] ?? $previewConfiguration['execution_mode'] ?? 'ONE_STEP')
+  : 'ONE_STEP';
+$maxItems = max(1, min(10000, (int) ($_GET['max_items'] ?? $previewConfiguration['max_items'] ?? $blockSize ?? 1)));
+$maxDurationSeconds = max(0, min(604800, (int) ($_GET['max_duration_seconds'] ?? (($previewConfiguration['max_duration_minutes'] ?? $maxDurationMinutes ?? 0) * 60))));
+$remoteCallsPerBurst = max(1, min(60, (int) ($_GET['remote_calls_per_burst'] ?? $previewConfiguration['remote_calls_per_burst'] ?? 1)));
+$minimumDelayBetweenRemoteCalls = max(15, min(3600, (int) ($_GET['minimum_delay_between_remote_calls'] ?? $previewConfiguration['minimum_delay_between_remote_calls'] ?? max(15, (int) ceil(($intervalSeconds ?? 15))))));
+$cooldownAfterBurst = max(0, min(3600, (int) ($_GET['cooldown_after_burst'] ?? $previewConfiguration['cooldown_after_burst'] ?? max(0, (int) ceil(($blockPauseSeconds ?? 30))))));
+$rateLimitAction = in_array((string) ($_GET['429_action'] ?? $previewConfiguration['429_action'] ?? 'pause_and_ask'), ['pause_and_ask', 'auto_degrade'], true)
+  ? (string) ($_GET['429_action'] ?? $previewConfiguration['429_action'] ?? 'pause_and_ask')
+  : 'pause_and_ask';
+$fiveXxAction = in_array((string) ($_GET['bounded_5xx_preferences'] ?? $previewConfiguration['bounded_5xx_preferences'] ?? 'pause_and_ask'), ['pause_and_ask', 'cooldown'], true)
+  ? (string) ($_GET['bounded_5xx_preferences'] ?? $previewConfiguration['bounded_5xx_preferences'] ?? 'pause_and_ask')
+  : 'pause_and_ask';
 $exclusionGroups = [];
 if ($preview !== null) {
   foreach ((array) ($preview['excluded_summary'] ?? []) as $excludedGroup) {
@@ -116,11 +131,17 @@ if ($preview !== null) {
       <?php endif; ?>
       <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/start') ?>" class="manual-confirm-form" data-k10-action="start" <?= (!$hasDrainSession && $hasPreparedPreview) ? '' : 'hidden' ?>>
         <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
-        <input type="hidden" name="remote_calls_per_burst" value="<?= (int) ($drainProfile['remote_calls_per_burst'] ?? 1) ?>" data-k10-profile-field="remote_calls_per_burst">
-        <input type="hidden" name="minimum_delay_between_remote_calls" value="<?= (int) ($drainProfile['minimum_delay_between_remote_calls'] ?? 15) ?>" data-k10-profile-field="minimum_delay_between_remote_calls">
-        <input type="hidden" name="cooldown_after_burst" value="<?= (int) ($drainProfile['cooldown_after_burst'] ?? 30) ?>" data-k10-profile-field="cooldown_after_burst">
-        <input type="hidden" name="429_action" value="<?= View::e((string) ($drainProfile['429_action'] ?? 'pause_and_ask')) ?>" data-k10-profile-field="429_action">
-        <input type="hidden" name="bounded_5xx_preferences" value="<?= View::e((string) ($drainProfile['bounded_5xx_preferences'] ?? 'pause_and_ask')) ?>" data-k10-profile-field="bounded_5xx_preferences">
+        <input type="hidden" name="preview_token" value="<?= View::e((string) ($preview['preview_token'] ?? '')) ?>" data-k10-profile-field="preview_token">
+        <input type="hidden" name="selected_scope" value="<?= View::e($scope) ?>" data-k10-profile-field="selected_scope">
+        <input type="hidden" name="selected_account_id" value="<?= (int) $accountId ?>" data-k10-profile-field="selected_account_id">
+        <input type="hidden" name="execution_mode" value="<?= View::e($executionMode) ?>" data-k10-profile-field="execution_mode">
+        <input type="hidden" name="max_items" value="<?= (int) $maxItems ?>" data-k10-profile-field="max_items">
+        <input type="hidden" name="max_duration_seconds" value="<?= (int) $maxDurationSeconds ?>" data-k10-profile-field="max_duration_seconds">
+        <input type="hidden" name="remote_calls_per_burst" value="<?= (int) ($drainProfile['remote_calls_per_burst'] ?? $remoteCallsPerBurst) ?>" data-k10-profile-field="remote_calls_per_burst">
+        <input type="hidden" name="minimum_delay_between_remote_calls" value="<?= (int) ($drainProfile['minimum_delay_between_remote_calls'] ?? $minimumDelayBetweenRemoteCalls) ?>" data-k10-profile-field="minimum_delay_between_remote_calls">
+        <input type="hidden" name="cooldown_after_burst" value="<?= (int) ($drainProfile['cooldown_after_burst'] ?? $cooldownAfterBurst) ?>" data-k10-profile-field="cooldown_after_burst">
+        <input type="hidden" name="429_action" value="<?= View::e((string) ($drainProfile['429_action'] ?? $rateLimitAction)) ?>" data-k10-profile-field="429_action">
+        <input type="hidden" name="bounded_5xx_preferences" value="<?= View::e((string) ($drainProfile['bounded_5xx_preferences'] ?? $fiveXxAction)) ?>" data-k10-profile-field="bounded_5xx_preferences">
         <button class="btn primary" type="submit" data-k10-start>Preparar siguiente paso</button>
       </form>
       <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/step') ?>" class="manual-confirm-form" data-k10-action="step" <?= $hasDrainSession && !$pausedDrainSession ? '' : 'hidden' ?>>
@@ -219,6 +240,12 @@ if ($preview !== null) {
   const show = (message) => {
     if (feedbackEl) feedbackEl.textContent = message;
   };
+  const isAutoMode = (payload) => {
+    const session = payload && payload.session ? payload.session : null;
+    const profile = session && session.profile ? session.profile : {};
+    const mode = String(profile.execution_mode || '').toUpperCase();
+    return mode === 'CONTINUE_AUTOMATICALLY';
+  };
   const update = (payload) => {
     const session = payload && payload.session ? payload.session : null;
     const state = payload && payload.state ? payload.state : (session && session.state ? session.state : 'OFF');
@@ -302,8 +329,12 @@ if ($preview !== null) {
       show(payload.message || (response.ok ? 'Acción aplicada.' : 'No se pudo tomar la autoridad global.'));
       const action = form.dataset.k10Action || '';
       if (action === 'start' || action === 'resume') {
-        loopEnabled = true;
-        runOneStepSoon();
+        loopEnabled = isAutoMode(payload);
+        if (loopEnabled) {
+          runOneStepSoon();
+        } else {
+          show('Sesión preparada. Pulse “Procesar siguiente trabajo” para ejecutar un solo paso.');
+        }
       } else {
         if (action === 'pause' || action === 'stop') loopEnabled = false;
         if (fromLoop || loopEnabled) scheduleStep(payload);
@@ -373,13 +404,26 @@ if ($preview !== null) {
         <span><strong><?= View::e($label) ?></strong><small><?= View::e($description) ?></small></span></label>
       <?php endforeach; ?>
     </div></fieldset>
-    <fieldset class="manual-rhythm-grid"><legend>Configuración avanzada</legend>
+    <fieldset class="manual-rhythm-grid"><legend>Configuración</legend>
+      <label><span>Modo</span><select name="execution_mode" data-manual-profile-control="execution_mode">
+        <option value="ONE_STEP" <?= $executionMode === 'ONE_STEP' ? 'selected' : '' ?>>Un paso por confirmación</option>
+        <option value="CONTINUE_AUTOMATICALLY" <?= $executionMode === 'CONTINUE_AUTOMATICALLY' ? 'selected' : '' ?>>Continuar automáticamente en esta pestaña</option>
+      </select><small>El modo automático sólo corre si usted lo elige aquí.</small></label>
       <label><span>Trabajos por revisión</span><input type="number" name="block_size" min="1" max="60" value="<?= (int) $blockSize ?>"><small>No equivale a consultas remotas.</small></label>
+      <label><span>Máximo a procesar</span><input type="number" name="max_items" min="1" max="10000" value="<?= (int) $maxItems ?>"><small>El procesador se pausa al alcanzar este límite.</small></label>
       <label><span>Espera después de cada consulta</span><span class="input-with-unit"><input type="number" name="interval_seconds" min="0" max="300" step="0.1" value="<?= View::e((string) $intervalSeconds) ?>"><em>segundos</em></span></label>
+      <label><span>Máximo por tanda HTTP</span><input type="number" name="remote_calls_per_burst" min="1" max="60" value="<?= (int) $remoteCallsPerBurst ?>"><small>Cuenta sólo salidas remotas físicas.</small></label>
       <label><span>Descanso entre tandas</span><span class="input-with-unit"><input type="number" name="block_pause_seconds" min="0" max="3600" step="1" value="<?= View::e((string) $blockPauseSeconds) ?>"><em>segundos</em></span></label>
-      <label><span>Límite de avance</span><input type="number" name="max_blocks" min="0" max="10000" value="<?= (int) $maxBlocks ?>" aria-describedby="max-blocks-help"><small id="max-blocks-help">0 significa hasta terminar.</small></label>
+      <label><span>Límite de avance</span><input type="number" name="max_blocks" min="0" max="10000" value="<?= (int) $maxBlocks ?>" aria-describedby="max-blocks-help"><small id="max-blocks-help">0 significa sólo límite por trabajos.</small></label>
       <label><span>Duración máxima</span><span class="input-with-unit"><input type="number" name="max_duration_minutes" min="0" max="10080" value="<?= (int) $maxDurationMinutes ?>"><em>minutos</em></span><small>0 significa sin límite.</small></label>
-      <div class="manual-readonly-setting"><span>Ejecución</span><strong>Un solo trabajo por confirmación</strong></div>
+      <label><span>HTTP 429</span><select name="429_action">
+        <option value="pause_and_ask" <?= $rateLimitAction === 'pause_and_ask' ? 'selected' : '' ?>>Pausar y revisar</option>
+        <option value="auto_degrade" <?= $rateLimitAction === 'auto_degrade' ? 'selected' : '' ?>>Bajar ritmo manual automáticamente</option>
+      </select></label>
+      <label><span>HTTP 5xx</span><select name="bounded_5xx_preferences">
+        <option value="pause_and_ask" <?= $fiveXxAction === 'pause_and_ask' ? 'selected' : '' ?>>Pausar y revisar</option>
+        <option value="cooldown" <?= $fiveXxAction === 'cooldown' ? 'selected' : '' ?>>Enfriar sin reintento ciego</option>
+      </select></label>
     </fieldset>
     <div class="alert info"><strong>Respeta el límite global de consultas.</strong><p>El cálculo manual revisa disponibilidad; cada confirmación procesa un único trabajo y respeta la protección activa. Permitido ahora: <?= View::e(number_format((float) ($rhythmPreview['effective_rpm'] ?? 0), 1, ',', '.')) ?> consulta(s)/min, limitado por <?= View::e((string) ($rhythmPreview['limiting_scope'] ?? 'protección disponible')) ?>. Puede ir más lento, nunca más rápido.</p></div>
     <div class="manual-quick-delays" aria-label="Intervalos rápidos">

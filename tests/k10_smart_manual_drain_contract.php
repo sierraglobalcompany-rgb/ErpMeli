@@ -28,8 +28,9 @@ $assert(!str_contains($migration, 'queue_core_jobs'), 'k10_migration_must_not_cr
 
 $assert(str_contains($service, 'QueueExecutionLeaseService'), 'global_execution_lease_not_used');
 $assert(str_contains($service, "private const LAUNCHER = 'manual'"), 'launcher_must_use_existing_enum_manual');
-$assert(str_contains($service, 'QueueV4CleanWorker'), 'canonical_worker_not_used');
-$assert(str_contains($service, "->run('manual', 1, 25)"), 'manual_step_must_claim_one_v4_job');
+$assert(str_contains($service, 'runSelectedExactStep'), 'manual_drain_must_execute_selected_preview_work');
+$assert(str_contains($service, 'ManualSingleStepService())->executeSelected'), 'manual_drain_must_reuse_exact_manual_step_service');
+$assert(!str_contains($service, "->run('manual', 1, 25)"), 'manual_drain_must_not_fall_back_to_global_v4_work');
 $assert(!str_contains($service, 'QueueCoreRepository'), 'queue_core_fifo_must_not_be_used');
 $assert(!str_contains($service, 'new MeliApiClient'), 'manual_drain_must_not_call_meli_directly');
 $assert(str_contains($service, 'GET_LOCK'), 'concurrent_step_lock_missing');
@@ -66,6 +67,9 @@ $assert(str_contains($mutationBody, "'profile' => \$service->profile"), 'manual_
 $assert(str_contains($service, 'profile_revision=profile_revision+1'), 'manual_profile_live_revision_missing');
 $assert(str_contains($service, "'remote_calls_per_burst' => max(1, min(60"), 'manual_burst_must_not_be_forced_to_one');
 $assert(str_contains($service, 'manual_physical_http_burst_limit'), 'manual_burst_limit_not_bound_to_api_context');
+$assert(str_contains($service, 'manual_preview_token_hash') && str_contains($service, 'manual_preview_position'), 'manual_execution_must_carry_preview_authority');
+$assert(str_contains($service, 'selected_preview_token') && str_contains($service, 'selected_account_id') && str_contains($service, 'selected_scope'), 'manual_profile_must_bind_selection_scope_and_account');
+$assert(str_contains($service, 'NO_ELIGIBLE_SELECTED_WORK') && str_contains($service, 'No se sustituyó por trabajo global'), 'stale_preview_must_not_run_unrelated_work');
 $assert(str_contains($service, 'burst_remote_calls_current') && str_contains($service, 'manual_burst_remaining'), 'manual_burst_accumulator_missing');
 $assert(str_contains($service, 'physical_http_calls'), 'manual_remote_counter_must_use_physical_http');
 $assert(!str_contains($service, '$remoteBefore = $this->transportCount()'), 'manual_remote_counter_must_not_use_global_before_after');

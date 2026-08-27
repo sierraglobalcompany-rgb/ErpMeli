@@ -187,11 +187,24 @@ final class ManualCampaignPreviewService
             'preview_format' => 2,
             'scope' => preg_replace('/[^a-z_]/', '', (string) ($configuration['scope'] ?? 'recommended')) ?: 'recommended',
             'account_id' => max(0, (int) ($configuration['account_id'] ?? 0)),
+            'execution_mode' => in_array((string) ($configuration['execution_mode'] ?? 'ONE_STEP'), ['ONE_STEP', 'CONTINUE_AUTOMATICALLY'], true)
+                ? (string) ($configuration['execution_mode'] ?? 'ONE_STEP')
+                : 'ONE_STEP',
             'block_size' => max(1, min(60, (int) ($configuration['block_size'] ?? 30))),
             'interval_ms' => max(0, min(300000, (int) ($configuration['interval_ms'] ?? 2000))),
             'block_pause_ms' => max(0, min(3600000, (int) ($configuration['block_pause_ms'] ?? 30000))),
             'max_blocks' => max(0, min(10000, (int) ($configuration['max_blocks'] ?? 0))),
             'max_duration_minutes' => max(0, min(10080, (int) ($configuration['max_duration_minutes'] ?? 0))),
+            'max_items' => max(1, min(10000, (int) ($configuration['max_items'] ?? $configuration['block_size'] ?? 1))),
+            'remote_calls_per_burst' => max(1, min(60, (int) ($configuration['remote_calls_per_burst'] ?? 1))),
+            'minimum_delay_between_remote_calls' => max(15, min(3600, (int) ($configuration['minimum_delay_between_remote_calls'] ?? 15))),
+            'cooldown_after_burst' => max(0, min(3600, (int) ($configuration['cooldown_after_burst'] ?? 30))),
+            '429_action' => in_array((string) ($configuration['429_action'] ?? 'pause_and_ask'), ['pause_and_ask', 'auto_degrade'], true)
+                ? (string) ($configuration['429_action'] ?? 'pause_and_ask')
+                : 'pause_and_ask',
+            'bounded_5xx_preferences' => in_array((string) ($configuration['bounded_5xx_preferences'] ?? 'pause_and_ask'), ['pause_and_ask', 'cooldown'], true)
+                ? (string) ($configuration['bounded_5xx_preferences'] ?? 'pause_and_ask')
+                : 'pause_and_ask',
         ];
     }
 

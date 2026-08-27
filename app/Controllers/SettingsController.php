@@ -1458,6 +1458,15 @@ final class SettingsController
                     'block_pause_ms' => max($requestedPause, max(0, (int) ($rhythm['block_pause_ms'] ?? 20000))),
                     'max_blocks' => (int) ($_POST['max_blocks'] ?? 0),
                     'max_duration_minutes' => (int) ($_POST['max_duration_minutes'] ?? 0),
+                    'execution_mode' => in_array((string) ($_POST['execution_mode'] ?? 'ONE_STEP'), ['ONE_STEP', 'CONTINUE_AUTOMATICALLY'], true)
+                        ? (string) ($_POST['execution_mode'] ?? 'ONE_STEP')
+                        : 'ONE_STEP',
+                    'max_items' => max(1, min(10000, (int) ($_POST['max_items'] ?? $requestedBlock))),
+                    'remote_calls_per_burst' => max(1, min(60, (int) ($_POST['remote_calls_per_burst'] ?? 1))),
+                    'minimum_delay_between_remote_calls' => max(15, min(3600, (int) ($_POST['minimum_delay_between_remote_calls'] ?? max(15, (int) ceil($requestedInterval / 1000))))),
+                    'cooldown_after_burst' => max(0, min(3600, (int) ($_POST['cooldown_after_burst'] ?? max(0, (int) ceil($requestedPause / 1000))))),
+                    '429_action' => (string) ($_POST['429_action'] ?? 'pause_and_ask'),
+                    'bounded_5xx_preferences' => (string) ($_POST['bounded_5xx_preferences'] ?? 'pause_and_ask'),
                 ]
             );
             Session::flash(
@@ -2792,13 +2801,28 @@ final class SettingsController
                 ]);
                 return;
             }
-            $profile = [
-                'remote_calls_per_burst' => (int) ($_POST['remote_calls_per_burst'] ?? 1),
-                'minimum_delay_between_remote_calls' => (int) ($_POST['minimum_delay_between_remote_calls'] ?? 15),
-                'cooldown_after_burst' => (int) ($_POST['cooldown_after_burst'] ?? 30),
-                '429_action' => (string) ($_POST['429_action'] ?? 'pause_and_ask'),
-                'bounded_5xx_preferences' => (string) ($_POST['bounded_5xx_preferences'] ?? 'pause_and_ask'),
-            ];
+            $profile = [];
+            if ($action === 'start') {
+                $profile['preview_token'] = trim((string) ($_POST['preview_token'] ?? $_POST['selected_preview_token'] ?? ''));
+                $profile['selected_scope'] = preg_replace('/[^a-z_]/', '', (string) ($_POST['selected_scope'] ?? $_POST['scope'] ?? 'recommended')) ?: 'recommended';
+                $profile['selected_account_id'] = max(0, (int) ($_POST['selected_account_id'] ?? $_POST['account_id'] ?? 0));
+                $profile['execution_mode'] = in_array((string) ($_POST['execution_mode'] ?? 'ONE_STEP'), ['ONE_STEP', 'CONTINUE_AUTOMATICALLY'], true)
+                    ? (string) ($_POST['execution_mode'] ?? 'ONE_STEP')
+                    : 'ONE_STEP';
+                $profile['max_items'] = max(1, min(10000, (int) ($_POST['max_items'] ?? $_POST['block_size'] ?? 1)));
+                $profile['max_duration_seconds'] = max(0, min(604800, (int) ($_POST['max_duration_seconds'] ?? (max(0, (int) ($_POST['max_duration_minutes'] ?? 0)) * 60))));
+            } else {
+                foreach (['execution_mode', 'max_items', 'max_duration_seconds'] as $optionalProfileField) {
+                    if (array_key_exists($optionalProfileField, $_POST)) {
+                        $profile[$optionalProfileField] = $_POST[$optionalProfileField];
+                    }
+                }
+            }
+            foreach (['remote_calls_per_burst', 'minimum_delay_between_remote_calls', 'cooldown_after_burst', '429_action', 'bounded_5xx_preferences'] as $runtimeProfileField) {
+                if ($action === 'start' || array_key_exists($runtimeProfileField, $_POST)) {
+                    $profile[$runtimeProfileField] = $_POST[$runtimeProfileField] ?? null;
+                }
+            }
             $result = match ($action) {
                 'start' => $service->start($userId, $profile),
                 'step' => $service->step($userId, $token, $generation),

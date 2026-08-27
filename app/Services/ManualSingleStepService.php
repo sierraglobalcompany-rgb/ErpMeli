@@ -16,12 +16,26 @@ final class ManualSingleStepService
     /** @return array<string,mixed> */
     public function execute(string $previewToken, int $userId): array
     {
+        return $this->executeSelected($previewToken, $userId, 0, true);
+    }
+
+    /** @return array<string,mixed> */
+    public function executeSelected(
+        string $previewToken,
+        int $userId,
+        int $positionNo = 0,
+        bool $consumePreview = true,
+        ?string $expectedScope = null,
+        ?int $expectedAccountId = null
+    ): array
+    {
         if ($previewToken === '') {
             throw new RuntimeException('Calcule y revise un trabajo antes de procesarlo.');
         }
+        $positionNo = max(0, $positionNo);
 
         $pdo = Database::connectionFresh();
-        $lockName = 'erp_manual_step_' . substr(hash('sha256', $previewToken), 0, 32);
+        $lockName = 'erp_manual_step_' . substr(hash('sha256', $previewToken . ':' . $positionNo), 0, 32);
         $lock = $pdo->prepare('SELECT GET_LOCK(?,3)');
         $lock->execute([$lockName]);
         if ((int) $lock->fetchColumn() !== 1) {
@@ -31,9 +45,19 @@ final class ManualSingleStepService
         try {
             $previews = new ManualCampaignPreviewService();
             $preview = $previews->load($previewToken, $userId);
-            $row = $preview['rows'][0] ?? null;
+            $configuration = is_array($preview['configuration'] ?? null) ? $preview['configuration'] : [];
+            if ($expectedScope !== null
+                && $expectedScope !== ''
+                && (string) ($configuration['scope'] ?? '') !== $expectedScope) {
+                throw new RuntimeException('SELECTION_BINDING_MISMATCH');
+            }
+            if ($expectedAccountId !== null
+                && (int) ($configuration['account_id'] ?? 0) !== max(0, $expectedAccountId)) {
+                throw new RuntimeException('SELECTION_BINDING_MISMATCH');
+            }
+            $row = $preview['rows'][$positionNo] ?? null;
             if (!is_array($row)) {
-                throw new RuntimeException('El calculo no contiene un trabajo exacto disponible.');
+                throw new RuntimeException('NO_ELIGIBLE_SELECTED_WORK');
             }
 
             $queueKey = (string) ($row['queue_key'] ?? '');
@@ -41,6 +65,9 @@ final class ManualSingleStepService
             $accountId = max(0, (int) ($row['meli_account_id'] ?? 0));
             if ($accountId < 1) {
                 throw new RuntimeException('El trabajo exacto no tiene una cuenta autorizada.');
+            }
+            if ($expectedAccountId !== null && $expectedAccountId > 0 && $accountId !== $expectedAccountId) {
+                throw new RuntimeException('SELECTION_BINDING_MISMATCH');
             }
             $adapter = (new ManualCampaignAdapterRegistry())->forQueue($queueKey);
             if ($adapter === null || !$adapter->supportsExact()) {
@@ -82,7 +109,7 @@ final class ManualSingleStepService
             // el mismo POST conserva dedupe; un preview nuevo puede ejecutar
             // otro paso sobre la misma versión durable ya revisada.
             $explicitAttemptKey = hash('sha256', implode('|', [
-                'manual-explicit', $previewToken, (string) $userId,
+                'manual-explicit', $previewToken, (string) $positionNo, (string) $userId,
                 $queueKey, $sourceId, $inputVersion,
             ]));
             // Manual and Cron V4 are launchers only. Both enter the same
@@ -101,8 +128,15 @@ final class ManualSingleStepService
             );
             // Solo se consume después de que Queue Core adquirió exclusión,
             // persistió y ejecutó el único paso sin continuación automática.
-            $previews->consume($previewToken, $userId);
-            return $result;
+            if ($consumePreview) {
+                $previews->consume($previewToken, $userId);
+            }
+            return $result + [
+                'preview_token' => $previewToken,
+                'preview_position' => $positionNo,
+                'selected_count' => count((array) ($preview['rows'] ?? [])),
+                'account_id' => $accountId,
+            ];
         } finally {
             try {
                 $release = $pdo->prepare('SELECT RELEASE_LOCK(?)');

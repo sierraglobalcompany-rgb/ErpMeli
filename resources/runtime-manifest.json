@@ -7,9 +7,9 @@
     "publication_policy": {
         "base_commit": "b9d1644522e7b36d5729c5ba090279b3ffc50fb8",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 976,
-        "component_count": 975,
-        "paths_sha256": "46aeb4a52984ecafd579c2fc6731542d3cc1aedc9979e944212f3086fde5518f",
+        "package_file_count": 977,
+        "component_count": 976,
+        "paths_sha256": "cd9bc40bdcb4d55bcb59a7d0fa22a956b51a04ce90c859135db3df40d24fb0f2",
         "dependency_registry_sha256": "4db73a6e3ec9e6d70eca5bf823abc699373cc50e04dd6380b15baaef785bd91e",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
@@ -1368,8 +1368,8 @@
         },
         "runtime_app_services_apihealthservice_php": {
             "path": "app/Services/ApiHealthService.php",
-            "sha256": "596b9ea3f87edab77477085e6974490b1cc40eb9699206c57dbe4352c60590f7",
-            "sha256_lf": "596b9ea3f87edab77477085e6974490b1cc40eb9699206c57dbe4352c60590f7",
+            "sha256": "572dc58664eb34c40661df26a965f4cf34e4f0e15a5b9f899ddba0eeb8746a1f",
+            "sha256_lf": "572dc58664eb34c40661df26a965f4cf34e4f0e15a5b9f899ddba0eeb8746a1f",
             "text": true
         },
         "runtime_app_services_apihealthstatuspresenter_php": {
@@ -1392,14 +1392,14 @@
         },
         "runtime_app_services_apiincidentmaterializerservice_php": {
             "path": "app/Services/ApiIncidentMaterializerService.php",
-            "sha256": "b9fb691d7eb5ce7290ed48aa147e03fdbf2761c102633a2c9ef531c063ca3e2b",
-            "sha256_lf": "b9fb691d7eb5ce7290ed48aa147e03fdbf2761c102633a2c9ef531c063ca3e2b",
+            "sha256": "5ae2a37c149480c84f8ecf5154b72d9c75ce0c2cb4b1afb701c2804ed8935ab0",
+            "sha256_lf": "5ae2a37c149480c84f8ecf5154b72d9c75ce0c2cb4b1afb701c2804ed8935ab0",
             "text": true
         },
         "runtime_app_services_apiincidentreadmodelservice_php": {
             "path": "app/Services/ApiIncidentReadModelService.php",
-            "sha256": "50f31a8716ad2bea3fb9d9a003076d65071bc29417010b9fff7dea3200182dca",
-            "sha256_lf": "50f31a8716ad2bea3fb9d9a003076d65071bc29417010b9fff7dea3200182dca",
+            "sha256": "dadd726479a40dc147a312a55d8c5037e32a9d20f2bb212af3148ce15297bec1",
+            "sha256_lf": "dadd726479a40dc147a312a55d8c5037e32a9d20f2bb212af3148ce15297bec1",
             "text": true
         },
         "runtime_app_services_apilogriskpresenter_php": {
@@ -1496,6 +1496,12 @@
             "path": "app/Services/AutomationRuntimeStatusService.php",
             "sha256": "3168788dbaa1053b544121bd9f443cc3f7012f9020030229e2feac08bf5fb27c",
             "sha256_lf": "3168788dbaa1053b544121bd9f443cc3f7012f9020030229e2feac08bf5fb27c",
+            "text": true
+        },
+        "runtime_app_services_backlogcounterpresenter_php": {
+            "path": "app/Services/BacklogCounterPresenter.php",
+            "sha256": "cde7548ad818476135746598a48261753e598726bfc4b1e181c606ce5a135aab",
+            "sha256_lf": "cde7548ad818476135746598a48261753e598726bfc4b1e181c606ce5a135aab",
             "text": true
         },
         "runtime_app_services_backuparchiveservice_php": {
@@ -4206,8 +4212,8 @@
         },
         "runtime_app_views_settings_cron_php": {
             "path": "app/Views/settings/cron.php",
-            "sha256": "ce37dfbd9d8689550eb2a5d2c8f4cf92cd8a83b8fd622ccd206114d312605815",
-            "sha256_lf": "ce37dfbd9d8689550eb2a5d2c8f4cf92cd8a83b8fd622ccd206114d312605815",
+            "sha256": "adba15183f8442a6c7aa6400a2c6fbf5caf617eebfacf3a0ff7d0542832dc580",
+            "sha256_lf": "adba15183f8442a6c7aa6400a2c6fbf5caf617eebfacf3a0ff7d0542832dc580",
             "text": true
         },
         "runtime_app_views_settings_cron_shell_php": {
@@ -4260,8 +4266,8 @@
         },
         "runtime_app_views_settings_manual_processing_php": {
             "path": "app/Views/settings/manual_processing.php",
-            "sha256": "06929b275590acd218b67ff03d9e84a18226302e2f10c0167f7a122abe019fee",
-            "sha256_lf": "06929b275590acd218b67ff03d9e84a18226302e2f10c0167f7a122abe019fee",
+            "sha256": "7f177dbcafe01795a0a55a1cebaf103c8fb0464867bc78133fc815b0855bda82",
+            "sha256_lf": "7f177dbcafe01795a0a55a1cebaf103c8fb0464867bc78133fc815b0855bda82",
             "text": true
         },
         "runtime_app_views_settings_manual_processing_excluded_php": {
@@ -4362,14 +4368,14 @@
         },
         "runtime_app_views_sync_index_php": {
             "path": "app/Views/sync/index.php",
-            "sha256": "2e6ef496b76956c1895c4ff7d89a6493b5ce928ff02ecf3a98a27f219470ad75",
-            "sha256_lf": "2e6ef496b76956c1895c4ff7d89a6493b5ce928ff02ecf3a98a27f219470ad75",
+            "sha256": "263b5d96ecaf54d0fa475fd52d709c10721c793838abb1ab5f1bfac1fe4e942c",
+            "sha256_lf": "263b5d96ecaf54d0fa475fd52d709c10721c793838abb1ab5f1bfac1fe4e942c",
             "text": true
         },
         "runtime_app_views_sync_panel_php": {
             "path": "app/Views/sync/panel.php",
-            "sha256": "69361d48d7a4c6738ba4678e0d7827c8dd9cc654a2bd2475325bbe3d506d08e5",
-            "sha256_lf": "69361d48d7a4c6738ba4678e0d7827c8dd9cc654a2bd2475325bbe3d506d08e5",
+            "sha256": "90aa3e95470c58aba4f31b0af3ff54d686f984dd2e58ed72e7bc45ca65e17dec",
+            "sha256_lf": "90aa3e95470c58aba4f31b0af3ff54d686f984dd2e58ed72e7bc45ca65e17dec",
             "text": true
         },
         "runtime_app_views_sync_recurring_php": {
@@ -4938,8 +4944,8 @@
         },
         "runtime_public_assets_app_css": {
             "path": "public/assets/app.css",
-            "sha256": "68ce7023240447592b5d66450f2bc48ec133a97ed896b30e4e2a3017fb8d5f07",
-            "sha256_lf": "68ce7023240447592b5d66450f2bc48ec133a97ed896b30e4e2a3017fb8d5f07",
+            "sha256": "8e6a7d2bcad0bec58763fbe46702b78ab5a27e2ab66f9d55ce17c8ce03f42936",
+            "sha256_lf": "8e6a7d2bcad0bec58763fbe46702b78ab5a27e2ab66f9d55ce17c8ce03f42936",
             "text": true
         },
         "runtime_public_assets_app_js": {

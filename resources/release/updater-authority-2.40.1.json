@@ -1,0 +1,9 @@
+{
+    "schema_version": 1,
+    "target_version": "2.40.1",
+    "contract": "placeholder generated before final updater authority refresh",
+    "supersedes_inventory": [],
+    "unchanged_locked": [],
+    "intentional_locked_changes": [],
+    "new_runtime_dependencies": []
+}

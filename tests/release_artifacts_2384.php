@@ -534,6 +534,36 @@ try {
         ];
         $assert(($inventory['base_commit'] ?? null) === '30a3a3f8705d40eb0e31e94ac4a4755ff19c6aa4', 'overlay_base_not_23919_authority');
         $assert(count($overlayRows) === count($requiredOverlayPaths), 'overlay_redundant_or_missing_paths');
+    } elseif ($targetVersion === '2.40.1') {
+        $requiredOverlayPaths = [
+            'VERSION',
+            'app/Controllers/SettingsController.php',
+            'app/QueueV4Clean/QueueV4CleanCycleBudget.php',
+            'app/QueueV4Clean/QueueV4CleanWorker.php',
+            'app/Repositories/NavigationRepository.php',
+            'app/Services/ApiBudgetExhaustedException.php',
+            'app/Services/ApiBudgetService.php',
+            'app/Services/ApiHealthService.php',
+            'app/Services/ApiPacingService.php',
+            'app/Services/ManagedRuntimePublicationPolicy.php',
+            'app/Services/MeliApiClient.php',
+            'app/Services/SaleFinancialService.php',
+            'app/Views/settings/_automation_nav.php',
+            'app/Views/settings/api_health.php',
+            'app/Views/settings/api_health_incidents.php',
+            'app/Views/settings/cron.php',
+            'app/Views/settings/cron_shell.php',
+            'app/Views/settings/index.php',
+            'app/Views/settings/manual_processing.php',
+            'app/Views/settings/manual_processing_excluded.php',
+            'app/Views/settings/manual_processing_setup.php',
+            'public/assets/api-health.js',
+            'resources/release/managed-runtime-dependencies-2.40.1.json',
+            'resources/release/updater-authority-2.40.1.json',
+            'resources/runtime-manifest.json',
+        ];
+        $assert(($inventory['base_commit'] ?? null) === '8e102e2711905a3dc9c9c4e62a4afce41adbfa1f', 'overlay_base_not_2400_candidate_authority');
+        $assert(count($overlayRows) === count($requiredOverlayPaths), 'overlay_redundant_or_missing_paths');
     }
     foreach (array_values(array_unique($requiredOverlayPaths)) as $requiredOverlay) {
         $assert(isset($overlay[$requiredOverlay]), 'required_overlay_path_missing:' . $requiredOverlay);

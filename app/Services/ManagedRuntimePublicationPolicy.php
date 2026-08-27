@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.40.0.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.40.1.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -41,9 +41,9 @@ final class ManagedRuntimePublicationPolicy
     ];
     public const BASE_COMMIT = 'b9d1644522e7b36d5729c5ba090279b3ffc50fb8';
     public const INSTALLED_BASE_COMMIT = 'b9d1644522e7b36d5729c5ba090279b3ffc50fb8';
-    public const VERSION = '2.40.0';
-    public const BUILD_ID = 'erp-meli-2.40.0-k10-smart-manual-drain-rc1-20260826';
-    public const BUILT_AT = '2026-08-26T08:20:00Z';
+    public const VERSION = '2.40.1';
+    public const BUILD_ID = 'erp-meli-2.40.1-worker-cycle-control-single-truth-rc1-20260827';
+    public const BUILT_AT = '2026-08-27T00:00:00Z';
     public const MINIMUM_MIGRATION = '300_manual_drain_sessions_2_40_0.sql';
     private const INVENTORY_MINIMUM_MIGRATION = '295_inventory_warehouse_v1_2_38_0.sql';
     private const QUEUE_V4_MINIMUM_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';
@@ -259,6 +259,11 @@ final class ManagedRuntimePublicationPolicy
             'build_id' => 'erp-meli-2.39.18-versioned-23917-hotfix-rc1-20260822',
             'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.18.json',
+        ],
+        '2.40.0' => [
+            'build_id' => 'erp-meli-2.40.0-k10-smart-manual-drain-rc1-20260826',
+            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.40.0.json',
         ],
         self::VERSION => [
             'build_id' => self::BUILD_ID,

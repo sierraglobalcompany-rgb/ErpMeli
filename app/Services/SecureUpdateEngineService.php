@@ -336,6 +336,20 @@ final class SecureUpdateEngineService
         } finally {
             $releaseService->stopMaintenance();
         }
+        $versionFrom = (string) $run['version_from'];
+        if ($versionFrom === '' || !hash_equals($versionFrom, (string) ($pointer['version'] ?? ''))) {
+            throw new RuntimeException('El puntero de rollback no coincide con la versión origen esperada.');
+        }
+        $versionService = new AppVersionService();
+        $versionService->registerVersion($versionFrom, 'Rollback atómico completado; autoridad instalada restaurada.');
+        $marker = (new InstalledVersionMarkerService())->read();
+        if (
+            !hash_equals($versionFrom, $versionService->installedVersion())
+            || !($marker['valid'] ?? false)
+            || !hash_equals($versionFrom, (string) ($marker['version'] ?? ''))
+        ) {
+            throw new RuntimeException('El rollback restauró el código, pero la autoridad de versión no quedó coherente.');
+        }
         $this->transition($runId, 'rolled_back', 100, 'Rollback completado', null);
         $this->event($runId, 'warning', 'rollback_completed', 'Se activó la release anterior.', ['pointer' => $pointer]);
         return $pointer;

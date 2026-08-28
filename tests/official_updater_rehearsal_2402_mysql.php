@@ -51,6 +51,121 @@ $rrmdir = static function (string $path) use (&$rrmdir): void {
     }
     @rmdir($path);
 };
+$componentKey = static function (string $path): string {
+    return match ($path) {
+        'jobs/cron_probe.php' => 'cron_probe',
+        'jobs/process_sync_queue.php' => 'process_sync_queue',
+        default => 'runtime_' . trim((string) preg_replace('/[^a-z0-9]+/', '_', strtolower($path)), '_'),
+    };
+};
+$textSha = static function (string $path): string {
+    $contents = (string) file_get_contents($path);
+    return hash('sha256', str_replace(["\r\n", "\r"], "\n", $contents));
+};
+$writeSyntheticRuntimeManifest = static function (string $releaseDirectory, string $version) use ($componentKey, $textSha): void {
+    $profiles = [
+        '2.40.1' => [
+            'build_id' => 'erp-meli-2.40.1-worker-cycle-control-single-truth-rc1-20260827',
+            'minimum_migration' => '300_manual_drain_sessions_2_40_0.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.40.1.json',
+        ],
+        '2.40.2' => [
+            'build_id' => 'erp-meli-2.40.2-operator-control-plane-kiss-rc1-20260827',
+            'minimum_migration' => '300_manual_drain_sessions_2_40_0.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.40.2.json',
+        ],
+    ];
+    $profile = $profiles[$version] ?? throw new RuntimeException('unsupported_synthetic_baseline:' . $version);
+    $manifestPath = rtrim($releaseDirectory, '/\\') . '/resources/runtime-manifest.json';
+    $manifest = json_decode((string) file_get_contents($manifestPath), true, 512, JSON_THROW_ON_ERROR);
+    if (!is_array($manifest) || !is_array($manifest['components'] ?? null) || !is_array($manifest['publication_policy'] ?? null)) {
+        throw new RuntimeException('synthetic_runtime_manifest_malformed');
+    }
+    $manifest['version'] = $version;
+    $manifest['build_id'] = $profile['build_id'];
+    $manifest['minimum_migration'] = $profile['minimum_migration'];
+
+    $registryPath = rtrim($releaseDirectory, '/\\') . '/' . $profile['dependency_registry'];
+    if ($version === '2.40.1') {
+        $currentRegistry = rtrim($releaseDirectory, '/\\') . '/resources/release/managed-runtime-dependencies-2.40.2.json';
+        if (!is_file($currentRegistry) || !copy($currentRegistry, $registryPath)) {
+            throw new RuntimeException('synthetic_2401_runtime_registry_failed');
+        }
+    }
+    $registry = json_decode((string) file_get_contents($registryPath), true, 512, JSON_THROW_ON_ERROR);
+    if (!is_array($registry)) {
+        throw new RuntimeException('synthetic_registry_malformed');
+    }
+    $paths = [];
+    foreach ($manifest['components'] as $definition) {
+        if (is_array($definition) && isset($definition['path'])) {
+            $paths[] = (string) $definition['path'];
+        }
+    }
+    sort($paths, SORT_STRING);
+    $pathsSha = hash('sha256', implode("\n", $paths) . "\n");
+    $registry['runtime_manifest_paths_sha256'] = $pathsSha;
+    file_put_contents($registryPath, json_encode($registry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) . "\n");
+    foreach (['VERSION', $profile['dependency_registry']] as $path) {
+        $key = $componentKey($path);
+        if (isset($manifest['components'][$key]) && is_array($manifest['components'][$key])) {
+            $absolute = rtrim($releaseDirectory, '/\\') . '/' . $path;
+            $manifest['components'][$key]['sha256'] = hash_file('sha256', $absolute);
+            $manifest['components'][$key]['sha256_lf'] = $textSha($absolute);
+            $manifest['components'][$key]['text'] = true;
+        }
+    }
+    $manifest['publication_policy']['package_file_count'] = count($paths) + 1;
+    $manifest['publication_policy']['component_count'] = count($paths);
+    $manifest['publication_policy']['paths_sha256'] = $pathsSha;
+    $manifest['publication_policy']['dependency_registry_sha256'] = hash_file('sha256', $registryPath);
+    file_put_contents(
+        $manifestPath,
+        json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) . "\n"
+    );
+};
+$extractPackageAsRelease = static function (string $packagePath, string $releaseDirectory, string $version, bool $rewriteManifest) use ($rrmdir, $writeSyntheticRuntimeManifest): void {
+    $rrmdir($releaseDirectory);
+    if (!mkdir($releaseDirectory, 0770, true) && !is_dir($releaseDirectory)) {
+        throw new RuntimeException('baseline_release_directory_failed');
+    }
+    $zip = new ZipArchive();
+    if ($zip->open($packagePath) !== true) {
+        throw new RuntimeException('baseline_package_open_failed');
+    }
+    try {
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $entry = (string) $zip->getNameIndex($i);
+            $normalized = str_replace('\\', '/', $entry);
+            if ($normalized === '' || str_ends_with($normalized, '/')) {
+                continue;
+            }
+            if (
+                str_starts_with($normalized, '/')
+                || preg_match('#^[A-Za-z]:/#', $normalized) === 1
+                || in_array('..', explode('/', $normalized), true)
+            ) {
+                throw new RuntimeException('baseline_package_path_unsafe:' . $normalized);
+            }
+            $target = rtrim($releaseDirectory, '/\\') . '/' . $normalized;
+            $parent = dirname($target);
+            if (!is_dir($parent) && !mkdir($parent, 0770, true) && !is_dir($parent)) {
+                throw new RuntimeException('baseline_package_directory_failed:' . $normalized);
+            }
+            $bytes = $zip->getFromIndex($i);
+            if (!is_string($bytes) || file_put_contents($target, $bytes) === false) {
+                throw new RuntimeException('baseline_package_entry_failed:' . $normalized);
+            }
+        }
+    } finally {
+        $zip->close();
+    }
+    @unlink(rtrim($releaseDirectory, '/\\') . '/update-manifest.json');
+    if ($rewriteManifest) {
+        file_put_contents(rtrim($releaseDirectory, '/\\') . '/VERSION', $version . "\n");
+        $writeSyntheticRuntimeManifest($releaseDirectory, $version);
+    }
+};
 
 $server = new PDO($dsn, $user, $pass, [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -314,13 +429,65 @@ try {
         'path' => 'releases/erp-meli-2.40.1-baseline',
         'activated_at' => gmdate('c'),
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+    $baselineReleaseDirectory = $installRoot . '/releases/erp-meli-2.40.1-baseline';
+    $extractPackageAsRelease($package, $baselineReleaseDirectory, '2.40.1', true);
+    (new \App\Services\InstalledVersionMarkerService())->write('2.40.1', '300_manual_drain_sessions_2_40_0.sql');
 
     $packageCopy = $sharedRoot . '/update-inbox/ERP_MELI_2.40.2_UPDATE_PACKAGE.erpupd';
     copy($package, $packageCopy);
     $sourceKey = hash('sha256', realpath($packageCopy) ?: $packageCopy);
-
+    $readPointerVersion = static function () use ($sharedRoot): string {
+        $pointer = json_decode((string) file_get_contents($sharedRoot . '/current-release.json'), true, 16, JSON_THROW_ON_ERROR);
+        return is_array($pointer) ? (string) ($pointer['version'] ?? '') : '';
+    };
+    $readMarkerVersion = static function (): string {
+        $marker = (new \App\Services\InstalledVersionMarkerService())->read();
+        return ($marker['valid'] ?? false) ? (string) $marker['version'] : '';
+    };
+    $resetToBaseline = static function () use ($pdo, $sharedRoot): void {
+        $pdo->exec("INSERT INTO app_settings(setting_key,setting_value,is_encrypted)
+            VALUES ('app.version','2.40.1',0)
+            ON DUPLICATE KEY UPDATE setting_value='2.40.1',is_encrypted=0");
+        $pdo->exec("INSERT INTO app_versions(version,notes,installed_at)
+            VALUES ('2.40.1','baseline reset',UTC_TIMESTAMP())
+            ON DUPLICATE KEY UPDATE notes=VALUES(notes),installed_at=UTC_TIMESTAMP()");
+        file_put_contents($sharedRoot . '/current-release.json', json_encode([
+            'release_id' => 'erp-meli-2.40.1-baseline',
+            'version' => '2.40.1',
+            'path' => 'releases/erp-meli-2.40.1-baseline',
+            'activated_at' => gmdate('c'),
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+        (new \App\Services\InstalledVersionMarkerService())->write('2.40.1', '300_manual_drain_sessions_2_40_0.sql');
+    };
     $engine = new \App\Services\SecureUpdateEngineService();
     $assert($engine->engineReady(), 'official_engine_not_ready');
+    $runOfficialToHealthCheck = static function () use ($engine, $sourceKey, $assert): array {
+        $run = $engine->createRun($sourceKey, 'atomic', false, 'ACTUALIZAR SIN RESPALDO', 1);
+        $assert((string) $run['version_from'] === '2.40.1', 'health_run_version_from_not_2401');
+        $assert((string) $run['version_to'] === '2.40.2', 'health_run_version_to_not_2402');
+        $runId = (int) $run['id'];
+        for ($i = 0; $i < 16; $i++) {
+            $run = $engine->process($runId);
+            if ((string) $run['state'] === 'health_check') {
+                return $run;
+            }
+            if (in_array((string) $run['state'], ['completed', 'failed', 'manual_intervention', 'rolled_back'], true)) {
+                break;
+            }
+        }
+        throw new RuntimeException('official_run_did_not_reach_health_check:' . (string) ($run['state'] ?? 'unknown'));
+    };
+    $forcePostActivationHealthFailure = static function (int $runId) use ($pdo, $engine, $assert): array {
+        $pdo->exec('ALTER TABLE cron_health_checks DROP COLUMN current_step');
+        try {
+            $run = $engine->process($runId);
+        } finally {
+            $pdo->exec('ALTER TABLE cron_health_checks ADD COLUMN current_step VARCHAR(160) NULL AFTER id');
+        }
+        $assert((string) $run['state'] === 'rollback_pending', 'forced_health_failure_not_rollback_pending:' . (string) $run['state']);
+        return $run;
+    };
+
     $run = $engine->createRun($sourceKey, 'atomic', false, 'ACTUALIZAR SIN RESPALDO', 1);
     $assert((string) $run['version_from'] === '2.40.1', 'version_from_not_2401');
     $assert((string) $run['version_to'] === '2.40.2', 'version_to_not_2402');
@@ -376,8 +543,76 @@ try {
     $forbiddenPromotion = 'DirectUpdateMetadata' . 'PromotionService';
     $assert(!str_contains((string) file_get_contents(__FILE__), $forbiddenPromotion), 'direct_metadata_promotion_referenced_by_rehearsal');
 
+    $resetToBaseline();
+    $migration300BeforeRollback = (int) $pdo->query("SELECT COUNT(*) FROM schema_migrations WHERE version='300_manual_drain_sessions_2_40_0.sql'")->fetchColumn();
+    $rollbackCandidate = $runOfficialToHealthCheck();
+    $assert($readPointerVersion() === '2.40.2', 'rollback_case_pointer_not_activated_to_2402');
+    $assert((string) $pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === '2.40.2', 'rollback_case_app_version_not_activated_to_2402');
+    $assert($readMarkerVersion() === '2.40.2', 'rollback_case_marker_not_activated_to_2402');
+    $forcePostActivationHealthFailure((int) $rollbackCandidate['id']);
+    $rollbackPointer = $engine->rollback((int) $rollbackCandidate['id']);
+    $rollbackRun = $engine->run((int) $rollbackCandidate['id']);
+    $pointerAfterRollback = $readPointerVersion();
+    $appVersionAfterRollback = (string) $pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn();
+    $markerAfterRollback = $readMarkerVersion();
+    $migration300AfterRollback = (int) $pdo->query("SELECT COUNT(*) FROM schema_migrations WHERE version='300_manual_drain_sessions_2_40_0.sql'")->fetchColumn();
+    $migration301AfterRollback = (int) $pdo->query("SELECT COUNT(*) FROM schema_migrations WHERE version LIKE '301\\_%'")->fetchColumn();
+    $bugReproduced = $pointerAfterRollback === '2.40.1'
+        && ($appVersionAfterRollback !== '2.40.1' || $markerAfterRollback !== '2.40.1');
+    if ($bugReproduced) {
+        fwrite(STDOUT, 'ROLLBACK_VERSION_AUTHORITY_BUG=REPRODUCED'
+            . ' POINTER_AFTER_ROLLBACK=' . $pointerAfterRollback
+            . ' APP_VERSION_AFTER_ROLLBACK=' . $appVersionAfterRollback
+            . ' MARKER_AFTER_ROLLBACK=' . $markerAfterRollback
+            . ' SCHEMA_AFTER_ROLLBACK=300' . PHP_EOL);
+    }
+    $assert(!$bugReproduced, 'rollback_version_authority_bug_reproduced');
+    $assert(is_array($rollbackPointer) && (string) ($rollbackPointer['version'] ?? '') === '2.40.1', 'rollback_pointer_service_not_2401');
+    $assert($pointerAfterRollback === '2.40.1', 'rollback_pointer_not_restored');
+    $assert($appVersionAfterRollback === '2.40.1', 'rollback_app_version_not_restored');
+    $assert($markerAfterRollback === '2.40.1', 'rollback_marker_not_restored');
+    $assert($migration300AfterRollback === $migration300BeforeRollback, 'rollback_schema_300_count_changed');
+    $assert($migration301AfterRollback === 0, 'rollback_schema_301_unexpected');
+    $assert(is_array($rollbackRun) && (string) $rollbackRun['state'] === 'rolled_back', 'rollback_run_not_rolled_back');
+
+    $retryRun = $engine->createRun($sourceKey, 'atomic', false, 'ACTUALIZAR SIN RESPALDO', 1);
+    $assert((string) $retryRun['version_from'] === '2.40.1', 'retry_after_rollback_upgrade_from_not_2401');
+    $retryRunId = (int) $retryRun['id'];
+    for ($i = 0; $i < 16; $i++) {
+        $retryRun = $engine->process($retryRunId);
+        if (in_array((string) $retryRun['state'], ['completed', 'failed', 'manual_intervention', 'rolled_back'], true)) {
+            break;
+        }
+    }
+    $assert((string) $retryRun['state'] === 'completed', 'retry_after_rollback_not_completed:' . (string) $retryRun['state']);
+    $assert($readPointerVersion() === '2.40.2', 'retry_after_rollback_pointer_not_2402');
+    $assert((string) $pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === '2.40.2', 'retry_after_rollback_app_version_not_2402');
+    $assert($readMarkerVersion() === '2.40.2', 'retry_after_rollback_marker_not_2402');
+
+    $resetToBaseline();
+    $rollbackFailureCandidate = $runOfficialToHealthCheck();
+    $forcePostActivationHealthFailure((int) $rollbackFailureCandidate['id']);
+    $corruptPointer = json_decode((string) file_get_contents($sharedRoot . '/current-release.json'), true, 16, JSON_THROW_ON_ERROR);
+    $corruptPointer['previous_release_id'] = 'missing-previous-release-for-failure-simulation';
+    file_put_contents($sharedRoot . '/current-release.json', json_encode($corruptPointer, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+    $rollbackFailureThrown = false;
+    try {
+        $engine->rollback((int) $rollbackFailureCandidate['id']);
+    } catch (RuntimeException) {
+        $rollbackFailureThrown = true;
+    }
+    $assert($rollbackFailureThrown, 'rollback_failure_simulation_not_thrown');
+    $assert($readPointerVersion() === '2.40.2', 'rollback_failure_pointer_changed_before_physical_success');
+    $assert((string) $pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version'")->fetchColumn() === '2.40.2', 'rollback_failure_app_version_changed_before_physical_success');
+    $assert($readMarkerVersion() === '2.40.2', 'rollback_failure_marker_changed_before_physical_success');
+
     fwrite(STDOUT, 'OFFICIAL_UPDATER_REHEARSAL_2402=PASS checks=' . $checks
         . ' SOURCE_VERSION=2.40.1 TARGET_VERSION=2.40.2 SCHEMA=300 MIGRATIONS_NEW=0'
+        . ' FORCED_HEALTH_FAILURE_TESTED=YES ROLLBACK_AUTHORITY_RESTORED=YES'
+        . ' ROLLBACK_POINTER_RESTORED=YES ROLLBACK_APP_VERSION_RESTORED=YES'
+        . ' ROLLBACK_MARKER_RESTORED=YES ROLLBACK_SCHEMA_PRESERVED=YES'
+        . ' RETRY_AFTER_ROLLBACK=PASS DOWNGRADE_GUARD_NOT_FALSE_POSITIVE=PASS'
+        . ' UPGRADE_FROM_2401_ACCEPTED=PASS ROLLBACK_FAILURE_PATH=PASS'
         . ' DIRECT_METADATA_PROMOTION_USED=NO REAL_MELI_HTTP=0 PRODUCTION_TOUCHED=NO' . PHP_EOL);
 } finally {
     $server->exec('DROP DATABASE IF EXISTS ' . $quote($dbName));

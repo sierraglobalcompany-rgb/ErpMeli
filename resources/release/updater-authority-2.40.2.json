@@ -392,7 +392,7 @@
         },
         {
             "path": "app/Services/SecureUpdateEngineService.php",
-            "sha256": "1e018e4179f9a438980cf291f56ec08adceacfdde64f74e12f0e871f4e07bc26"
+            "sha256": "853f7f893d9af075bb701c5139863ca6710f60cd9bbed48a4697aac6be698e26"
         },
         {
             "path": "app/Services/SettingsSectionService.php",

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Core\Database;
+use App\QueueCore\QueueExecutionLease;
 use App\QueueCore\ManualQueueLauncher;
 use App\QueueCore\ManualInputVersion;
 use App\QueueCore\ManualSourceAuthorityService;
@@ -26,7 +27,8 @@ final class ManualSingleStepService
         int $positionNo = 0,
         bool $consumePreview = true,
         ?string $expectedScope = null,
-        ?int $expectedAccountId = null
+        ?int $expectedAccountId = null,
+        ?QueueExecutionLease $existingGlobalLease = null
     ): array
     {
         if ($previewToken === '') {
@@ -124,7 +126,8 @@ final class ManualSingleStepService
                 $inputVersion,
                 $authority->durableInputVersion,
                 $explicitAttemptKey,
-                $authority->remoteContract
+                $authority->remoteContract,
+                $existingGlobalLease
             );
             // Solo se consume después de que Queue Core adquirió exclusión,
             // persistió y ejecutó el único paso sin continuación automática.

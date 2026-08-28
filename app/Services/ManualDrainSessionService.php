@@ -499,6 +499,7 @@ final class ManualDrainSessionService
             ];
         }
         $position = max(0, (int) ($profile['next_preview_position'] ?? 0));
+        $globalLease = $this->leaseFromRow($row);
         try {
             $result = ApiExecutionMetadataContext::run(
                 [
@@ -517,7 +518,8 @@ final class ManualDrainSessionService
                     $position,
                     false,
                     (string) ($profile['selected_scope'] ?? ''),
-                    (int) ($profile['selected_account_id'] ?? 0)
+                    (int) ($profile['selected_account_id'] ?? 0),
+                    $globalLease
                 )
             );
         } catch (RuntimeException $error) {

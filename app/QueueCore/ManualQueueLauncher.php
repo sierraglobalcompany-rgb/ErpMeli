@@ -21,11 +21,16 @@ final class ManualQueueLauncher
         string $inputVersion,
         string $sourceAuthorityVersion,
         string $explicitAttemptKey,
-        ?array $contract=null
+        ?array $contract=null,
+        ?QueueExecutionLease $existingLease=null
     ): array {
         $core=QueueCoreFactory::build();
-        $worker='manual-'.bin2hex(random_bytes(8));
-        $lease=$core['execution_leases']->acquire('manual',$worker,60);
+        if($existingLease!==null && $existingLease->launcher!=='manual'){
+            throw new RuntimeException('La autoridad manual existente no pertenece al drenador manual.');
+        }
+        $ownsLease=$existingLease===null;
+        $worker=$existingLease?->ownerToken ?? 'manual-'.bin2hex(random_bytes(8));
+        $lease=$existingLease ?? $core['execution_leases']->acquire('manual',$worker,60);
         if($lease===null)throw new RuntimeException('Ya hay un paso manual en curso. Espere su resultado.');
         try {
             if($usesApi&&$contract===null)throw new RuntimeException('El trabajo manual no tiene un contrato remoto certificado.');
@@ -67,7 +72,7 @@ final class ManualQueueLauncher
             }
         } finally {
             CronDeadlineContext::clear();
-            $core['execution_leases']->release($lease);
+            if($ownsLease)$core['execution_leases']->release($lease);
         }
 
         $row=$core['repository']->job($jobId)??[];

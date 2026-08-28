@@ -13,6 +13,7 @@ $tests = [
     'cron_api_risks_2416.php',
     'operator_control_plane_2402.php',
     'manual_selection_execution_binding_2402.php',
+    'manual_single_global_lease_2402_mysql.php',
     'k10_smart_manual_drain_contract.php',
     'k10_p1_repair_contract.php',
 ];

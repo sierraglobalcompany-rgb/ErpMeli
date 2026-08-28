@@ -587,6 +587,7 @@ try {
             'app/Services/ManualCampaignPreviewService.php',
             'app/Services/ManualDrainSessionService.php',
             'app/Services/ManualProcessingService.php',
+            'app/QueueCore/ManualQueueLauncher.php',
             'app/Services/ManualSingleStepService.php',
             'app/Views/settings/cron.php',
             'app/Views/settings/cron_shell.php',

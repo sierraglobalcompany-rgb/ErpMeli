@@ -10,6 +10,8 @@ use Throwable;
 
 final class QueueV4CleanRepository
 {
+    private ?bool $financialSourceTableExists = null;
+
     public function __construct(private readonly PDO $pdo)
     {
     }
@@ -141,8 +143,10 @@ final class QueueV4CleanRepository
         $this->pdo->beginTransaction();
         try {
             $row = $this->pdo->query(
-                "SELECT * FROM queue_v4_clean_jobs
-                 WHERE state='ready' AND available_at<=UTC_TIMESTAMP(3)
+                "SELECT q.* FROM queue_v4_clean_jobs q
+                 WHERE q.state='ready'
+                   AND q.available_at<=UTC_TIMESTAMP(3)
+                   AND NOT (" . $this->financialSourceFuturePredicate('q') . ")
                  ORDER BY available_at ASC,id ASC LIMIT 1 FOR UPDATE SKIP LOCKED"
             )->fetch(PDO::FETCH_ASSOC);
             if (!is_array($row)) {
@@ -588,8 +592,11 @@ final class QueueV4CleanRepository
     public function releaseDueWaiting(): int
     {
         return $this->pdo->exec(
-            "UPDATE queue_v4_clean_jobs SET state='ready',last_error_class=NULL
-             WHERE state='waiting' AND available_at<=UTC_TIMESTAMP(3)"
+            "UPDATE queue_v4_clean_jobs q
+             SET q.state='ready',q.last_error_class=NULL
+             WHERE q.state='waiting'
+               AND q.available_at<=UTC_TIMESTAMP(3)
+               AND NOT (" . $this->financialSourceFuturePredicate('q') . ")"
         );
     }
 
@@ -746,5 +753,54 @@ final class QueueV4CleanRepository
             : strtotime(trim($value) . ' UTC');
         $minimum = time() + 1;
         return gmdate('Y-m-d H:i:s', max($minimum, $timestamp === false ? $minimum : $timestamp));
+    }
+
+    private function financialSourceFuturePredicate(string $queueAlias): string
+    {
+        if (preg_match('/^[A-Za-z][A-Za-z0-9_]*$/', $queueAlias) !== 1) {
+            throw new RuntimeException('queue_v4_clean_alias_invalid');
+        }
+        if (!$this->financialSourceTableExists()) {
+            return '0=1';
+        }
+
+        return "{$queueAlias}.job_type='domain_exact'
+            AND {$queueAlias}.resource_id REGEXP '^[0-9]+$'
+            AND JSON_UNQUOTE(JSON_EXTRACT({$queueAlias}.payload_json,'$.capability'))='financial_reconciliation'
+            AND EXISTS (
+                SELECT 1
+                  FROM sale_financial_reconciliation_jobs s
+                 WHERE s.id=CAST({$queueAlias}.resource_id AS UNSIGNED)
+                   AND s.company_id={$queueAlias}.company_id
+                   AND s.meli_account_id={$queueAlias}.meli_account_id
+                   AND s.next_run_at IS NOT NULL
+                   AND s.next_run_at>UTC_TIMESTAMP(3)
+            )";
+    }
+
+    private function financialSourceTableExists(): bool
+    {
+        if ($this->financialSourceTableExists === null) {
+            $this->financialSourceTableExists = $this->hasTable('sale_financial_reconciliation_jobs');
+        }
+
+        return $this->financialSourceTableExists;
+    }
+
+    private function hasTable(string $table): bool
+    {
+        if (preg_match('/^[A-Za-z0-9_]+$/', $table) !== 1) {
+            return false;
+        }
+        try {
+            $statement = $this->pdo->prepare(
+                'SELECT 1 FROM information_schema.TABLES
+                 WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? LIMIT 1'
+            );
+            $statement->execute([$table]);
+            return $statement->fetchColumn() !== false;
+        } catch (Throwable) {
+            return false;
+        }
     }
 }

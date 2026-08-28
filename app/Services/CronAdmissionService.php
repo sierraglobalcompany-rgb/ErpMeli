@@ -56,13 +56,18 @@ final class CronAdmissionService
         }
 
         $source = $this->pdo->prepare(
-            'SELECT 1 FROM ' . self::SOURCES[$capability] . '
+            'SELECT id,status,' . ($capability === 'financial_reconciliation' ? 'next_run_at' : 'NULL AS next_run_at') . '
+             FROM ' . self::SOURCES[$capability] . '
              WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1 FOR UPDATE'
         );
         $source->execute([$sourceId, $companyId, $accountId]);
-        if ($source->fetchColumn() === false) {
+        $sourceRow = $source->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($sourceRow)) {
             return $this->receipt(false, null, false, 'INVALID_SOURCE');
         }
+        $sourceFutureAt = $this->sourceFutureAvailabilityAt($capability, $sourceRow);
+        $initialState = $sourceFutureAt !== null ? 'waiting' : 'ready';
+        $initialAvailableAt = $sourceFutureAt ?? gmdate('Y-m-d H:i:s');
         $storedKey = 'domain:' . $capability . ':' . trim($idempotencyKey);
         if (strlen($storedKey) > 190) {
             throw new RuntimeException('cron_admission_idempotency_key_too_long');
@@ -81,15 +86,24 @@ final class CronAdmissionService
 
         $insert = $this->pdo->prepare(
             'INSERT INTO queue_v4_clean_jobs
-             (company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,max_attempts)
-             VALUES (?,?,?,?,?,?,3)
+             (company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,max_attempts,state,available_at)
+             VALUES (?,?,?,?,?,?,3,?,?)
              ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)'
         );
-        $insert->execute([$companyId, $accountId, 'domain_exact', (string) $sourceId, $storedKey, $json]);
+        $insert->execute([
+            $companyId,
+            $accountId,
+            'domain_exact',
+            (string) $sourceId,
+            $storedKey,
+            $json,
+            $initialState,
+            $initialAvailableAt,
+        ]);
         $inserted = $insert->rowCount() === 1;
 
         $job = $this->pdo->prepare(
-            'SELECT id,state,resource_id FROM queue_v4_clean_jobs
+            'SELECT id,state,resource_id,available_at FROM queue_v4_clean_jobs
              WHERE company_id=? AND meli_account_id=? AND job_type="domain_exact" AND idempotency_key=?
              LIMIT 1'
         );
@@ -102,6 +116,14 @@ final class CronAdmissionService
             throw new RuntimeException('cron_admission_idempotency_conflict');
         }
         $jobId = (int) $row['id'];
+        if (!$inserted && $sourceFutureAt !== null) {
+            $this->alignFinancialPointerAvailability($jobId, $companyId, $accountId, $sourceId, $sourceFutureAt);
+            $job->execute([$companyId, $accountId, $storedKey]);
+            $row = $job->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($row)) {
+                throw new RuntimeException('cron_admission_receipt_missing');
+            }
+        }
         if ($inserted) {
             return $this->receipt(true, $jobId, false, 'ACCEPTED');
         }
@@ -112,6 +134,63 @@ final class CronAdmissionService
             'review' => $this->receipt(false, $jobId, true, 'REVIEW_HELD'),
             default => $this->receipt(false, $jobId, true, 'DEAD_HELD'),
         };
+    }
+
+    /**
+     * For financial reconciliation, the source domain already owns the next
+     * legitimate retry clock. Queue V4 must not make that pointer claimable
+     * before this timestamp. Other exact domains keep the default immediate
+     * admission semantics.
+     *
+     * @param array<string,mixed> $sourceRow
+     */
+    private function sourceFutureAvailabilityAt(string $capability, array $sourceRow): ?string
+    {
+        if ($capability !== 'financial_reconciliation') {
+            return null;
+        }
+        $raw = trim((string) ($sourceRow['next_run_at'] ?? ''));
+        if ($raw === '') {
+            return null;
+        }
+        $timestamp = strtotime($raw . ' UTC');
+        if ($timestamp === false || $timestamp <= time()) {
+            return null;
+        }
+
+        return gmdate('Y-m-d H:i:s', $timestamp);
+    }
+
+    private function alignFinancialPointerAvailability(
+        int $jobId,
+        int $companyId,
+        int $accountId,
+        int $sourceId,
+        string $sourceFutureAt,
+    ): void {
+        $statement = $this->pdo->prepare(
+            'UPDATE queue_v4_clean_jobs
+             SET state="waiting",
+                 available_at=IF(available_at < ?, ?, available_at),
+                 last_error_class="domain_source_waiting:financial_reconciliation"
+             WHERE id=?
+               AND company_id=?
+               AND meli_account_id=?
+               AND job_type="domain_exact"
+               AND resource_id=?
+               AND state IN ("ready","waiting")
+               AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="financial_reconciliation"
+               AND (state="ready" OR available_at < ?)'
+        );
+        $statement->execute([
+            $sourceFutureAt,
+            $sourceFutureAt,
+            $jobId,
+            $companyId,
+            $accountId,
+            (string) $sourceId,
+            $sourceFutureAt,
+        ]);
     }
 
     /** @return array{accepted:bool,job_id:?int,deduplicated:bool,reason:string} */

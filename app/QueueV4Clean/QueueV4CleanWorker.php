@@ -31,7 +31,6 @@ final class QueueV4CleanWorker
 {
     public const DEFAULT_MAX_JOBS = 15;
     public const HARD_MAX_JOBS = 15;
-    private const FINANCIAL_RECONCILIATION_STALE_RECHECK_SECONDS = 900;
 
     /** @var \Closure(int):MeliReadClientInterface */
     private \Closure $clientFactory;
@@ -668,14 +667,9 @@ final class QueueV4CleanWorker
         ];
     }
 
-    private function financialReconciliationNextSafeAt(mixed $nextRunAt): string
+    private function financialReconciliationNextSafeAt(mixed $nextRunAt): ?string
     {
-        $future = $this->validFutureUtcDateTime($nextRunAt);
-        if ($future !== null) {
-            return $future;
-        }
-
-        return gmdate('Y-m-d H:i:s', time() + self::FINANCIAL_RECONCILIATION_STALE_RECHECK_SECONDS);
+        return $this->validFutureUtcDateTime($nextRunAt);
     }
 
     private function validFutureUtcDateTime(mixed $value): ?string

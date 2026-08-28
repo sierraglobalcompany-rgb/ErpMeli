@@ -16,6 +16,7 @@ final class SaleFinancialService
 {
     private const ENDPOINT = '/billing/integration/group/ML/order/details';
     private const PACK_INCOMPLETE_RECHECK_MINUTES = 60;
+    private const FINANCIAL_RECONCILIATION_STALE_RECHECK_SECONDS = 900;
     private const BILLING_MAX_ORDER_IDS = 60;
 
     /** @var \Closure(int):MeliApiClient */
@@ -708,7 +709,7 @@ final class SaleFinancialService
         ];
     }
 
-    private function financialReconciliationNextSafeAt(mixed $nextRunAt): ?string
+    private function financialReconciliationNextSafeAt(mixed $nextRunAt): string
     {
         $value = trim((string) $nextRunAt);
         $timestamp = $value !== '' ? strtotime($value . ' UTC') : false;
@@ -716,7 +717,7 @@ final class SaleFinancialService
             return gmdate('Y-m-d H:i:s', $timestamp);
         }
 
-        return null;
+        return gmdate('Y-m-d H:i:s', time() + self::FINANCIAL_RECONCILIATION_STALE_RECHECK_SECONDS);
     }
 
     /** @param array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} $summary */

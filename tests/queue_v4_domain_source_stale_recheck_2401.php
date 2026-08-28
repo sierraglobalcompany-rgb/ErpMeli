@@ -42,9 +42,15 @@ $workerFuture600 = (string) $workerHelper->invoke($worker, $future600);
 $workerFuture1800 = (string) $workerHelper->invoke($worker, $future1800);
 $after = time();
 
-$assert($workerStale === null, 'worker_stale_source_invented_900s');
-$assert($workerEmpty === null, 'worker_empty_source_invented_900s');
-$assert($serviceStale === null, 'sale_financial_stale_source_invented_900s');
+$assert(is_string($workerStale), 'worker_stale_source_missing_recheck_floor');
+$assert($timestamp($workerStale) >= $before + 890, 'worker_stale_source_recheck_too_short');
+$assert($timestamp($workerStale) <= $after + 910, 'worker_stale_source_recheck_too_long');
+$assert(is_string($workerEmpty), 'worker_empty_source_missing_recheck_floor');
+$assert($timestamp($workerEmpty) >= $before + 890, 'worker_empty_source_recheck_too_short');
+$assert($timestamp($workerEmpty) <= $after + 910, 'worker_empty_source_recheck_too_long');
+$assert(is_string($serviceStale), 'sale_financial_stale_source_missing_recheck_floor');
+$assert($timestamp($serviceStale) >= $before + 890, 'sale_financial_stale_source_recheck_too_short');
+$assert($timestamp($serviceStale) <= $after + 910, 'sale_financial_stale_source_recheck_too_long');
 $assert(abs($timestamp($workerFuture120) - $timestamp($future120)) <= 1, 'future_120_source_next_run_not_preserved');
 $assert(abs($timestamp($workerFuture600) - $timestamp($future600)) <= 1, 'future_600_source_next_run_not_preserved');
 $assert(abs($timestamp($workerFuture1800) - $timestamp($future1800)) <= 1, 'future_1800_source_next_run_not_preserved');
@@ -56,7 +62,9 @@ $outcome = $workerOutcome->invoke($worker, 'financial_reconciliation', [
 $assert(is_array($outcome), 'domain_outcome_not_array');
 $assert(($outcome['state'] ?? '') === 'waiting', 'domain_outcome_state_not_waiting');
 $assert(($outcome['classification'] ?? '') === 'domain_source_waiting:financial_reconciliation', 'domain_outcome_classification_changed');
-$assert(array_key_exists('next_safe_at', $outcome) && $outcome['next_safe_at'] === null, 'domain_outcome_stale_invented_900s');
+$assert(isset($outcome['next_safe_at']), 'domain_outcome_stale_missing_recheck_floor');
+$assert($timestamp((string) $outcome['next_safe_at']) >= $before + 890, 'domain_outcome_stale_recheck_too_short');
+$assert($timestamp((string) $outcome['next_safe_at']) <= $after + 910, 'domain_outcome_stale_recheck_too_long');
 
 $recalcOutcome = $workerOutcome->invoke($worker, 'financial_recalc', [
     'status' => 'retry',

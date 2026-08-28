@@ -792,8 +792,8 @@
         },
         "runtime_app_queuecore_manualqueuelauncher_php": {
             "path": "app/QueueCore/ManualQueueLauncher.php",
-            "sha256": "13a2e31bc8c60231125eb1817116074366608ce857e95312024f655eba285f15",
-            "sha256_lf": "13a2e31bc8c60231125eb1817116074366608ce857e95312024f655eba285f15",
+            "sha256": "6a1be4097a7a4d36e49bdb0f04e80f4a679512429e223828334d62cedc2ac31e",
+            "sha256_lf": "6a1be4097a7a4d36e49bdb0f04e80f4a679512429e223828334d62cedc2ac31e",
             "text": true
         },
         "runtime_app_queuecore_manualremotecapabilityregistry_php": {
@@ -2526,8 +2526,8 @@
         },
         "runtime_app_services_manualdrainsessionservice_php": {
             "path": "app/Services/ManualDrainSessionService.php",
-            "sha256": "f80b7ff6b8430eb4bb3efddf422f208539fcd1fe8ca1ecae6f08e7bbec8018de",
-            "sha256_lf": "f80b7ff6b8430eb4bb3efddf422f208539fcd1fe8ca1ecae6f08e7bbec8018de",
+            "sha256": "7af4b5733fe1627aa7b587e7addf83c6da604f99c2f0755fb866105eb411171a",
+            "sha256_lf": "7af4b5733fe1627aa7b587e7addf83c6da604f99c2f0755fb866105eb411171a",
             "text": true
         },
         "runtime_app_services_manualprocessingengineservice_php": {
@@ -2556,8 +2556,8 @@
         },
         "runtime_app_services_manualsinglestepservice_php": {
             "path": "app/Services/ManualSingleStepService.php",
-            "sha256": "ba57b8e9d041e2165ce47bf7db0e329036fc285ab2cc0d8b82930fff7ca87d91",
-            "sha256_lf": "ba57b8e9d041e2165ce47bf7db0e329036fc285ab2cc0d8b82930fff7ca87d91",
+            "sha256": "5cd0a8c08ebb3f859f81e11d92429dc8acff18f9b1f7e3d7108db8d9cd4b6358",
+            "sha256_lf": "5cd0a8c08ebb3f859f81e11d92429dc8acff18f9b1f7e3d7108db8d9cd4b6358",
             "text": true
         },
         "runtime_app_services_manualstalesourceexception_php": {
@@ -5850,8 +5850,8 @@
         },
         "runtime_resources_release_updater_authority_2_40_2_json": {
             "path": "resources/release/updater-authority-2.40.2.json",
-            "sha256": "98dd345e7b89ad5164053003c98dac1e101c60ab148afa521105408a286de081",
-            "sha256_lf": "98dd345e7b89ad5164053003c98dac1e101c60ab148afa521105408a286de081",
+            "sha256": "4ffb30b71662f58651c88b1798a16ec2ff951e45c53fa371b91ac10bcbbbb405",
+            "sha256_lf": "4ffb30b71662f58651c88b1798a16ec2ff951e45c53fa371b91ac10bcbbbb405",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

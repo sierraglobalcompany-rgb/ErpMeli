@@ -68,6 +68,7 @@ $assert($has(ManagedRuntimePublicationPolicy::candidateManifestIssues($root, $ru
 $firstKey = array_key_first($manifest['components']);
 [$runtime, $update] = $candidate(static function (array &$runtime) use ($firstKey): void {
     $runtime['components'][$firstKey]['sha256'] = str_repeat('0', 64);
+    $runtime['components'][$firstKey]['sha256_lf'] = str_repeat('0', 64);
 });
 $assert($has(ManagedRuntimePublicationPolicy::candidateManifestIssues($root, $runtime, $update), 'candidate_component_hash_mismatch:'), 'modified component byte passed');
 
@@ -94,7 +95,12 @@ $assert($has(ManagedRuntimePublicationPolicy::candidateManifestIssues($root, $ru
 $assert($has(ManagedRuntimePublicationPolicy::candidateManifestIssues($root, $runtime, $update), 'candidate_paths_sha256_mismatch'), 'paths inventory mismatch passed');
 
 [$runtime, $update] = $candidate(static function (array &$runtime): void {
-    unset($runtime['components']['runtime_VERSION']);
+    foreach ($runtime['components'] as $key => $component) {
+        if (is_array($component) && ($component['path'] ?? null) === 'VERSION') {
+            unset($runtime['components'][$key]);
+            return;
+        }
+    }
 });
 $assert($has(ManagedRuntimePublicationPolicy::candidateManifestIssues($root, $runtime, $update), 'candidate_required_dependency_missing:VERSION'), 'required dependency missing passed');
 

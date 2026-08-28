@@ -26,6 +26,16 @@ $manifest = json_decode((string) file_get_contents($manifestPath), true, 512, JS
 if (!is_array($manifest)) {
     throw new RuntimeException('runtime manifest malformed');
 }
+$registryPath = $root . '/resources/release/managed-runtime-dependencies-' . (string) $manifest['version'] . '.json';
+$registry = json_decode((string) file_get_contents($registryPath), true, 512, JSON_THROW_ON_ERROR);
+$requiredPath = null;
+foreach ((array) ($registry['runtime_dependencies'] ?? []) as $dependency) {
+    if (is_array($dependency) && ($dependency['required_in_runtime_manifest'] ?? null) === true) {
+        $requiredPath = (string) ($dependency['path'] ?? '');
+        break;
+    }
+}
+$assert($requiredPath !== null && $requiredPath !== '', 'no required runtime dependency found');
 $updateManifest = [
     'manifest_version' => 1,
     'product_id' => 'erp-meli',
@@ -94,15 +104,15 @@ $assert($has(ManagedRuntimePublicationPolicy::candidateManifestIssues($root, $ru
 });
 $assert($has(ManagedRuntimePublicationPolicy::candidateManifestIssues($root, $runtime, $update), 'candidate_paths_sha256_mismatch'), 'paths inventory mismatch passed');
 
-[$runtime, $update] = $candidate(static function (array &$runtime): void {
+[$runtime, $update] = $candidate(static function (array &$runtime) use ($requiredPath): void {
     foreach ($runtime['components'] as $key => $component) {
-        if (is_array($component) && ($component['path'] ?? null) === 'VERSION') {
+        if (is_array($component) && ($component['path'] ?? null) === $requiredPath) {
             unset($runtime['components'][$key]);
             return;
         }
     }
 });
-$assert($has(ManagedRuntimePublicationPolicy::candidateManifestIssues($root, $runtime, $update), 'candidate_required_dependency_missing:VERSION'), 'required dependency missing passed');
+$assert($has(ManagedRuntimePublicationPolicy::candidateManifestIssues($root, $runtime, $update), 'candidate_required_dependency_missing:' . $requiredPath), 'required dependency missing passed');
 
 [$runtime, $update] = $candidate(static function (array &$runtime): void {
     $runtime['publication_policy']['base_commit'] = str_repeat('a', 40);

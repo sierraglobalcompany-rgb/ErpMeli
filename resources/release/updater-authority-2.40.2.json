@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
     "target_version": "2.40.2",
-    "contract": "The 2.40.1/schema300 to 2.40.2/schema300 release repairs the operator control plane visibility layer, binds Smart Manual Drain execution to the prepared preview selection and execution profile, keeps Queue V4, FIFO, Billing pacing, physical Cron and production data unchanged, and never performs recovery, OAuth, Billing, Cron, or Mercado Libre HTTP during update.",
+    "contract": "The 2.40.1/schema300 to 2.40.2/schema300 release repairs the operator control plane visibility layer, binds Smart Manual Drain exact execution to the existing session global lease, keeps one global drainer authority, Queue V4, FIFO, Billing pacing, Smart Manual Drain schema, physical Cron and production data unchanged, and never performs recovery, OAuth, Billing, Cron, or Mercado Libre HTTP during update.",
     "supersedes_inventory": {
         "path": "resources/release/updater-locked-file-inventory-2.36.1.json",
         "sha256": "7b90dab866e6b49d785ce8c706f3ea7ce7db6846fdd1678e6a953a6bf4e31fd5",
@@ -93,6 +93,10 @@
         {
             "path": "app/Modules/Shared/Views/dashboard.php",
             "sha256": "69d937d331c739e79ab1d45ae0aea771166295ff2d07d64128bed1182a05101f"
+        },
+        {
+            "path": "app/QueueCore/ManualQueueLauncher.php",
+            "sha256": "6a1be4097a7a4d36e49bdb0f04e80f4a679512429e223828334d62cedc2ac31e"
         },
         {
             "path": "app/QueueCore/QueueCoreOwnershipGuard.php",
@@ -296,7 +300,7 @@
         },
         {
             "path": "app/Services/ManualDrainSessionService.php",
-            "sha256": "f80b7ff6b8430eb4bb3efddf422f208539fcd1fe8ca1ecae6f08e7bbec8018de"
+            "sha256": "7af4b5733fe1627aa7b587e7addf83c6da604f99c2f0755fb866105eb411171a"
         },
         {
             "path": "app/Services/ManualProcessingService.php",
@@ -312,7 +316,7 @@
         },
         {
             "path": "app/Services/ManualSingleStepService.php",
-            "sha256": "ba57b8e9d041e2165ce47bf7db0e329036fc285ab2cc0d8b82930fff7ca87d91"
+            "sha256": "5cd0a8c08ebb3f859f81e11d92429dc8acff18f9b1f7e3d7108db8d9cd4b6358"
         },
         {
             "path": "app/Services/MeliApiClient.php",

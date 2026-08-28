@@ -12,7 +12,7 @@ use Throwable;
 
 final class SecureUpdateEngineService
 {
-    private const TERMINAL = ['completed', 'failed', 'rolled_back', 'manual_intervention'];
+    private const TERMINAL = ['completed', 'failed', 'rolled_back', 'manual_intervention', 'rollback_pending'];
 
     /** @return array<string,mixed> */
     public function dashboard(bool $refreshRemote = false): array

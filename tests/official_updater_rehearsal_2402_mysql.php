@@ -269,6 +269,31 @@ try {
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         KEY idx_system_update_locks_expiry (expires_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE cron_task_state (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE cron_health_checks (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        current_step VARCHAR(160) NULL,
+        deadline_at DATETIME NULL,
+        end_reason VARCHAR(120) NULL,
+        lock_name VARCHAR(120) NULL,
+        release_version VARCHAR(40) NULL,
+        release_build_id VARCHAR(160) NULL,
+        component_checksum CHAR(64) NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE meli_notification_work_items (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        consecutive_failures INT UNSIGNED NOT NULL DEFAULT 0,
+        last_success_at DATETIME NULL,
+        processing_event_id BIGINT UNSIGNED NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $pdo->exec('CREATE TABLE meli_oauth_states (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        processing_token_hash CHAR(64) NULL,
+        processing_at DATETIME NULL,
+        last_error_message VARCHAR(700) NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
 
     (new \App\Services\Migrator($pdo, $root . '/database/migrations'))->pendingCount();
 
@@ -320,6 +345,21 @@ try {
 
     $final = $engine->run($runId);
     $assert(is_array($final), 'official_run_not_found');
+    if ((string) $final['state'] !== 'completed') {
+        $health = (new \App\Services\UpdateReleaseService())->healthCheck((string) $final['staging_path'], true);
+        $integrity = (new \App\Services\ReleaseIntegrityService())->inspectDirectory((string) $final['staging_path'], true, false);
+        $events = $pdo->prepare('SELECT level,event_code,message,context_json FROM system_update_events WHERE run_id=? ORDER BY id DESC LIMIT 5');
+        $events->execute([$runId]);
+        $assert(false, 'official_run_not_completed:' . (string) $final['state'] . ':' . json_encode([
+            'current_step' => $final['current_step'] ?? null,
+            'next_action' => $final['next_action'] ?? null,
+            'safe_error' => $final['safe_error_message'] ?? null,
+            'health' => $health,
+            'integrity_errors' => $integrity['errors'] ?? [],
+            'integrity_schema' => $integrity['schema'] ?? [],
+            'events' => $events->fetchAll(PDO::FETCH_ASSOC),
+        ], JSON_UNESCAPED_SLASHES));
+    }
     $assert((string) $final['state'] === 'completed', 'official_run_not_completed:' . (string) $final['state'] . ':' . (string) ($final['safe_error_message'] ?? ''));
     $assert(!in_array('manual_intervention', $visited, true), 'official_run_manual_intervention');
     $assert(!in_array('failed', $visited, true), 'official_run_failed');
@@ -333,7 +373,8 @@ try {
     $assert(is_file($sharedRoot . '/storage/installed-release.json'), 'installed_marker_missing');
     $marker = (new \App\Services\InstalledVersionMarkerService())->read();
     $assert($marker['valid'] && $marker['version'] === '2.40.2', 'installed_marker_invalid');
-    $assert(!str_contains((string) file_get_contents(__FILE__), 'DirectUpdateMetadataPromotionService'), 'direct_metadata_promotion_referenced_by_rehearsal');
+    $forbiddenPromotion = 'DirectUpdateMetadata' . 'PromotionService';
+    $assert(!str_contains((string) file_get_contents(__FILE__), $forbiddenPromotion), 'direct_metadata_promotion_referenced_by_rehearsal');
 
     fwrite(STDOUT, 'OFFICIAL_UPDATER_REHEARSAL_2402=PASS checks=' . $checks
         . ' SOURCE_VERSION=2.40.1 TARGET_VERSION=2.40.2 SCHEMA=300 MIGRATIONS_NEW=0'

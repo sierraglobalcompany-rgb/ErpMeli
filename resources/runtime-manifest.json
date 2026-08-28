@@ -7,21 +7,15 @@
     "publication_policy": {
         "base_commit": "b9d1644522e7b36d5729c5ba090279b3ffc50fb8",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 977,
-        "component_count": 976,
-        "paths_sha256": "cd9bc40bdcb4d55bcb59a7d0fa22a956b51a04ce90c859135db3df40d24fb0f2",
-        "dependency_registry_sha256": "d416eb739a3d5b084acb6280faacd36de4f2aff0c933e9065ff398b0228c8cd1",
+        "package_file_count": 976,
+        "component_count": 975,
+        "paths_sha256": "f898751984f7e854d895781ce361c2080574f4e8222563bb2141ed20db2d8993",
+        "dependency_registry_sha256": "e96fa40da466fc0c373c80a09a577058e682a6d8495a79dfe1c955babd38501d",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
     },
     "components": {
-        "runtime_htaccess": {
-            "path": ".htaccess",
-            "sha256": "3a6208ec504c40b8ccae5c9fa00ca2cb07c5f9f9353d01e2e993c17df6fb943d",
-            "sha256_lf": "3a6208ec504c40b8ccae5c9fa00ca2cb07c5f9f9353d01e2e993c17df6fb943d",
-            "text": true
-        },
         "runtime_version": {
             "path": "VERSION",
             "sha256": "6fef7d6c871f136534cb910c18f2dc8aa066089fa87e6c76c7f5a61d2b20ed38",
@@ -1452,8 +1446,8 @@
         },
         "runtime_app_services_appversionservice_php": {
             "path": "app/Services/AppVersionService.php",
-            "sha256": "621a61e2b00224a608b6108f9b976582069bb648a1f14b40169581c8e91c96d0",
-            "sha256_lf": "621a61e2b00224a608b6108f9b976582069bb648a1f14b40169581c8e91c96d0",
+            "sha256": "d49c5214370279d82940ab49c0a45853386109dc5c7662bd25268f9730716d3c",
+            "sha256_lf": "d49c5214370279d82940ab49c0a45853386109dc5c7662bd25268f9730716d3c",
             "text": true
         },
         "runtime_app_services_assetversionservice_php": {
@@ -2460,8 +2454,8 @@
         },
         "runtime_app_services_managedruntimepublicationpolicy_php": {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "d48786127c5a8958846964d76de5b8e7336014844deebd4ebcbe0bb5e6b750a1",
-            "sha256_lf": "d48786127c5a8958846964d76de5b8e7336014844deebd4ebcbe0bb5e6b750a1",
+            "sha256": "5963a5709454fe44b315ebb2c4cf12d29bd15fd859014f089df9e925c441fd29",
+            "sha256_lf": "5963a5709454fe44b315ebb2c4cf12d29bd15fd859014f089df9e925c441fd29",
             "text": true
         },
         "runtime_app_services_manualcampaignadapter_php": {
@@ -3228,8 +3222,8 @@
         },
         "runtime_app_services_secureupdateengineservice_php": {
             "path": "app/Services/SecureUpdateEngineService.php",
-            "sha256": "facb5d6e8807fd446f43bedfcb0c939497eb5224c9c28390541c0ebd795baac2",
-            "sha256_lf": "facb5d6e8807fd446f43bedfcb0c939497eb5224c9c28390541c0ebd795baac2",
+            "sha256": "9f59f5c5ba46b378e70cb8f2c8ce52c09d2b6b3bfb5e57fa7126bbfd80438f37",
+            "sha256_lf": "9f59f5c5ba46b378e70cb8f2c8ce52c09d2b6b3bfb5e57fa7126bbfd80438f37",
             "text": true
         },
         "runtime_app_services_sessiongenerationservice_php": {
@@ -3396,8 +3390,8 @@
         },
         "runtime_app_services_updatereleaseservice_php": {
             "path": "app/Services/UpdateReleaseService.php",
-            "sha256": "dfc866efc65381986a150b397edd698944dcb6a6c1d9e38f970bfa74041358c5",
-            "sha256_lf": "dfc866efc65381986a150b397edd698944dcb6a6c1d9e38f970bfa74041358c5",
+            "sha256": "572d583f4adbd5ce232e90b53777b866189698674ee965eceacd369af57d6beb",
+            "sha256_lf": "572d583f4adbd5ce232e90b53777b866189698674ee965eceacd369af57d6beb",
             "text": true
         },
         "runtime_app_services_updateremoteservice_php": {
@@ -5472,8 +5466,8 @@
         },
         "runtime_resources_release_managed_runtime_dependencies_2_40_2_json": {
             "path": "resources/release/managed-runtime-dependencies-2.40.2.json",
-            "sha256": "d416eb739a3d5b084acb6280faacd36de4f2aff0c933e9065ff398b0228c8cd1",
-            "sha256_lf": "d416eb739a3d5b084acb6280faacd36de4f2aff0c933e9065ff398b0228c8cd1",
+            "sha256": "e96fa40da466fc0c373c80a09a577058e682a6d8495a79dfe1c955babd38501d",
+            "sha256_lf": "e96fa40da466fc0c373c80a09a577058e682a6d8495a79dfe1c955babd38501d",
             "text": true
         },
         "runtime_resources_release_production_legacy_quarantine_2_36_1_json": {
@@ -5850,8 +5844,8 @@
         },
         "runtime_resources_release_updater_authority_2_40_2_json": {
             "path": "resources/release/updater-authority-2.40.2.json",
-            "sha256": "4ffb30b71662f58651c88b1798a16ec2ff951e45c53fa371b91ac10bcbbbb405",
-            "sha256_lf": "4ffb30b71662f58651c88b1798a16ec2ff951e45c53fa371b91ac10bcbbbb405",
+            "sha256": "67af4de42e0d4e83daa83b15a8e758b1cf7c0da6aaf5b9128ef2b547e296ed79",
+            "sha256_lf": "67af4de42e0d4e83daa83b15a8e758b1cf7c0da6aaf5b9128ef2b547e296ed79",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

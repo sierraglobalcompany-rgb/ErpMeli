@@ -33,7 +33,7 @@ final class ManualCampaignReservationTtlService
             $stmt = Database::connectionFresh()->query(
                 'SELECT started_at
                  FROM cron_health_checks
-                 WHERE job_name="process_sync_queue"
+                 WHERE job_name="queue_v4_clean"
                    AND execution_source="scheduled_cli"
                  ORDER BY started_at DESC,id DESC LIMIT 8'
             );

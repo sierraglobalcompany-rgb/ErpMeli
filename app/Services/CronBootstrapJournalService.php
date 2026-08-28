@@ -110,7 +110,7 @@ final class CronBootstrapJournalService
     }
 
     /** @return array<string,mixed>|null */
-    public function latest(string $component = 'process_sync_queue'): ?array
+    public function latest(string $component = 'queue_v4_clean'): ?array
     {
         try {
             if (!(new SchemaInspectorService())->hasTable('system_cron_boot_attempts')) {

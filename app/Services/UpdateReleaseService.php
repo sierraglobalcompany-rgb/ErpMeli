@@ -12,20 +12,24 @@ use Throwable;
 final class UpdateReleaseService
 {
     /** @param array<string,mixed> $manifest */
-    public function stage(string $sourceDirectory, array $manifest): string
+    public function stage(
+        string $sourceDirectory,
+        array $manifest,
+        string $validationContext = ReleaseIntegrityService::INSPECTION_CONTEXT_INSTALLED
+    ): string
     {
         $filesystem = new UpdateFilesystemService();
         $filesystem->ensureDirectories();
         $releaseId = $filesystem->safeReleaseId((string) $manifest['release_id']);
         $final = AppPaths::releases() . '/' . $releaseId;
         if (is_dir($final)) {
-            $this->verifyReleaseAgainstManifest($final, $manifest);
+            $this->verifyReleaseAgainstManifest($final, $manifest, $validationContext);
             return $final;
         }
         $temporary = $final . '.staging-' . bin2hex(random_bytes(5));
         $filesystem->copyTree($sourceDirectory, $temporary, true);
         try {
-            $this->verifyReleaseAgainstManifest($temporary, $manifest);
+            $this->verifyReleaseAgainstManifest($temporary, $manifest, $validationContext);
         } catch (Throwable $error) {
             $filesystem->removeTree($temporary, AppPaths::releases());
             throw $error;
@@ -38,9 +42,13 @@ final class UpdateReleaseService
     }
 
     /** @return array<string,mixed> */
-    public function activate(string $releaseDirectory, array $manifest): array
+    public function activate(
+        string $releaseDirectory,
+        array $manifest,
+        string $validationContext = ReleaseIntegrityService::INSPECTION_CONTEXT_INSTALLED
+    ): array
     {
-        $this->verifyReleaseAgainstManifest($releaseDirectory, $manifest);
+        $this->verifyReleaseAgainstManifest($releaseDirectory, $manifest, $validationContext);
         $root = AppPaths::installationRoot();
         $shared = $root . '/shared';
         $releaseId = (new UpdateFilesystemService())->safeReleaseId((string) $manifest['release_id']);
@@ -90,7 +98,12 @@ final class UpdateReleaseService
     }
 
     /** @return array<string,mixed> */
-    public function healthCheck(string $releaseDirectory, bool $checkDatabase = true): array
+    public function healthCheck(
+        string $releaseDirectory,
+        bool $checkDatabase = true,
+        string $validationContext = ReleaseIntegrityService::INSPECTION_CONTEXT_INSTALLED,
+        ?array $updateManifest = null
+    ): array
     {
         $checks = [
             'bootstrap' => is_file($releaseDirectory . '/bootstrap.php'),
@@ -108,7 +121,9 @@ final class UpdateReleaseService
             $runtimeIntegrity = (new ReleaseIntegrityService())->inspectDirectory(
                 $releaseDirectory,
                 $checkDatabase,
-                false
+                false,
+                $validationContext,
+                $updateManifest
             );
             $checks['runtime_integrity'] = (bool) $runtimeIntegrity['ok'];
         }
@@ -224,7 +239,11 @@ final class UpdateReleaseService
     }
 
     /** @param array<string,mixed> $manifest */
-    private function verifyReleaseAgainstManifest(string $directory, array $manifest): void
+    private function verifyReleaseAgainstManifest(
+        string $directory,
+        array $manifest,
+        string $validationContext = ReleaseIntegrityService::INSPECTION_CONTEXT_INSTALLED
+    ): void
     {
         $this->assertReleaseShape($directory);
         foreach ([
@@ -253,7 +272,13 @@ final class UpdateReleaseService
         if (!$this->requiresRuntimeManifest($directory)) {
             return;
         }
-        $runtimeIntegrity = (new ReleaseIntegrityService())->inspectDirectory($directory, false, false);
+        $runtimeIntegrity = (new ReleaseIntegrityService())->inspectDirectory(
+            $directory,
+            false,
+            false,
+            $validationContext,
+            $manifest
+        );
         if (!$runtimeIntegrity['ok']) {
             throw new RuntimeException(
                 'La release contiene componentes de runtime ausentes o con checksums diferentes.'

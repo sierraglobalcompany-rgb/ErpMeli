@@ -421,7 +421,12 @@ final class SecureUpdateEngineService
         $manifest = $this->manifestForRun($run);
         $source = (string) $run['staging_path'];
         (new UpdateManifestService())->verifyFiles($manifest, $source);
-        $health = (new UpdateReleaseService())->healthCheck($source, false);
+        $health = (new UpdateReleaseService())->healthCheck(
+            $source,
+            false,
+            ReleaseIntegrityService::INSPECTION_CONTEXT_CANDIDATE,
+            $manifest
+        );
         if (!$health['ok']) {
             throw new RuntimeException('La release no supera la verificación estructural.');
         }
@@ -491,7 +496,11 @@ final class SecureUpdateEngineService
         if ((string) $run['mode'] !== 'atomic') {
             throw new RuntimeException('La ejecución heredada no puede sobrescribir el runtime activo.');
         }
-        $releasePath = (new UpdateReleaseService())->stage((string) $run['staging_path'], $manifest);
+        $releasePath = (new UpdateReleaseService())->stage(
+            (string) $run['staging_path'],
+            $manifest,
+            ReleaseIntegrityService::INSPECTION_CONTEXT_CANDIDATE
+        );
         $stmt = Database::connectionFresh()->prepare("UPDATE system_update_runs SET staging_path=:path WHERE id=:id");
         $stmt->execute(['path' => $releasePath, 'id' => (int) $run['id']]);
         $manifest = $this->manifestForRun($run);
@@ -547,7 +556,11 @@ final class SecureUpdateEngineService
         if ((string) $run['mode'] !== 'atomic') {
             throw new RuntimeException('La ejecución heredada requiere iniciar una actualización atómica nueva.');
         }
-        $pointer = (new UpdateReleaseService())->activate((string) $run['staging_path'], $manifest);
+        $pointer = (new UpdateReleaseService())->activate(
+            (string) $run['staging_path'],
+            $manifest,
+            ReleaseIntegrityService::INSPECTION_CONTEXT_CANDIDATE
+        );
         $previous = $pointer['previous_release_id'] ?? null;
         (new AppVersionService())->registerVersion((string) $run['version_to'], 'Release atómica activada; health check pendiente.');
         $stmt = Database::connectionFresh()->prepare(
@@ -562,7 +575,13 @@ final class SecureUpdateEngineService
     private function stepHealth(array $run): void
     {
         $releaseService = new UpdateReleaseService();
-        $health = $releaseService->healthCheck((string) $run['staging_path']);
+        $manifest = $this->manifestForRun($run);
+        $health = $releaseService->healthCheck(
+            (string) $run['staging_path'],
+            true,
+            ReleaseIntegrityService::INSPECTION_CONTEXT_CANDIDATE,
+            $manifest
+        );
         if (!$health['ok']) {
             $this->transition((int) $run['id'], 'rollback_pending', 92, 'Health check fallido', 'Ejecutar rollback');
             $this->event((int) $run['id'], 'error', 'health_check_failed', 'La release activa no superó los health checks.', ['checks' => $health['checks']]);

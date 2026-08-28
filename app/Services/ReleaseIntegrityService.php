@@ -12,6 +12,8 @@ use Throwable;
 final class ReleaseIntegrityService
 {
     private const MANIFEST = 'resources/runtime-manifest.json';
+    public const INSPECTION_CONTEXT_INSTALLED = 'INSTALLED';
+    public const INSPECTION_CONTEXT_CANDIDATE = 'CANDIDATE';
 
     /** @return array<string,mixed> */
     public function inspect(bool $checkDatabase = true): array
@@ -27,9 +29,17 @@ final class ReleaseIntegrityService
     public function inspectDirectory(
         string $root,
         bool $checkDatabase = false,
-        bool $checkNestedRelease = false
+        bool $checkNestedRelease = false,
+        string $inspectionContext = self::INSPECTION_CONTEXT_INSTALLED,
+        ?array $updateManifest = null
     ): array {
         $root = rtrim($root, '/\\');
+        if (!in_array($inspectionContext, [
+            self::INSPECTION_CONTEXT_INSTALLED,
+            self::INSPECTION_CONTEXT_CANDIDATE,
+        ], true)) {
+            throw new RuntimeException('Contexto de inspección de runtime no válido.');
+        }
         $manifestPath = $root . '/' . self::MANIFEST;
         $versionPath = $root . '/VERSION';
         $fileVersion = is_file($versionPath)
@@ -112,9 +122,17 @@ final class ReleaseIntegrityService
         }
 
         if (is_array($manifest)) {
-            $publicationIssues = ManagedRuntimePublicationPolicy::recognizesInstalledManifest($manifest)
-                ? ManagedRuntimePublicationPolicy::installedManifestIssues($root, $manifest)
-                : RuntimePublicationPolicy::installedManifestIssues($root, $manifest);
+            if ($inspectionContext === self::INSPECTION_CONTEXT_CANDIDATE) {
+                $publicationIssues = ManagedRuntimePublicationPolicy::candidateManifestIssues(
+                    $root,
+                    $manifest,
+                    $updateManifest
+                );
+            } elseif (ManagedRuntimePublicationPolicy::isManagedRuntimeManifest($manifest)) {
+                $publicationIssues = ManagedRuntimePublicationPolicy::installedManifestIssues($root, $manifest);
+            } else {
+                $publicationIssues = RuntimePublicationPolicy::installedManifestIssues($root, $manifest);
+            }
             foreach ($publicationIssues as $issue) {
                 $errors[] = [
                     'code' => 'runtime_publication_policy_invalid',
@@ -243,6 +261,7 @@ final class ReleaseIntegrityService
             'file_version' => $fileVersion,
             'build_id' => $buildId,
             'minimum_migration' => $requiredMigration,
+            'inspection_context' => $inspectionContext,
             'manifest_path' => self::MANIFEST,
             'components' => $components,
             'module_issues' => $moduleIssues,

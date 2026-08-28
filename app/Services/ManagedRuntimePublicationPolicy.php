@@ -42,7 +42,7 @@ final class ManagedRuntimePublicationPolicy
     public const BASE_COMMIT = 'b9d1644522e7b36d5729c5ba090279b3ffc50fb8';
     public const INSTALLED_BASE_COMMIT = 'b9d1644522e7b36d5729c5ba090279b3ffc50fb8';
     public const VERSION = '2.40.2';
-    public const BUILD_ID = 'erp-meli-2.40.2-operator-control-plane-kiss-rc1-20260827';
+    public const BUILD_ID = 'erp-meli-2.40.2-updater-authority-forward-compat-rc1-20260828';
     public const BUILT_AT = '2026-08-27T00:00:00Z';
     public const MINIMUM_MIGRATION = '300_manual_drain_sessions_2_40_0.sql';
     private const INVENTORY_MINIMUM_MIGRATION = '295_inventory_warehouse_v1_2_38_0.sql';
@@ -283,6 +283,14 @@ final class ManagedRuntimePublicationPolicy
         return self::installedProfile($manifest) !== null;
     }
 
+    /** @param array<string,mixed> $manifest */
+    public static function isManagedRuntimeManifest(array $manifest): bool
+    {
+        $policy = $manifest['publication_policy'] ?? null;
+        return is_array($policy)
+            && hash_equals('FULL_MANAGED_RUNTIME', (string) ($policy['authority_model'] ?? ''));
+    }
+
     /** @return list<string> */
     public static function manifestPaths(string $root, string $head = 'HEAD', string $base = self::BASE_COMMIT): array
     {
@@ -504,6 +512,174 @@ final class ManagedRuntimePublicationPolicy
         if ($profile === null) {
             $issues[] = 'manifest_release_identity_mismatch';
         }
+        return array_values(array_unique($issues));
+    }
+
+    /**
+     * Validate a staged update candidate using only the candidate bytes and the
+     * update manifest. This intentionally does not require the installed source
+     * release to know the candidate build id.
+     *
+     * @param array<string,mixed> $manifest
+     * @param array<string,mixed>|null $updateManifest
+     * @return list<string>
+     */
+    public static function candidateManifestIssues(string $root, array $manifest, ?array $updateManifest): array
+    {
+        $root = rtrim($root, '/\\');
+        $issues = [];
+        $version = trim((string) ($manifest['version'] ?? ''));
+        $buildId = trim((string) ($manifest['build_id'] ?? ''));
+        $minimumMigration = trim((string) ($manifest['minimum_migration'] ?? ''));
+
+        if (!is_array($updateManifest)) {
+            $issues[] = 'candidate_update_manifest_missing';
+        } else {
+            if (!hash_equals('erp-meli', (string) ($updateManifest['product_id'] ?? ''))) {
+                $issues[] = 'candidate_product_mismatch';
+            }
+            if (!hash_equals($version, trim((string) ($updateManifest['version'] ?? '')))) {
+                $issues[] = 'candidate_update_version_mismatch';
+            }
+        }
+
+        if ($version === '' || preg_match('/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?$/', $version) !== 1) {
+            $issues[] = 'candidate_version_invalid';
+        }
+
+        $versionForPath = preg_match('/^\d+\.\d+\.\d+$/', $version) === 1 ? $version : '';
+        $dependencyRegistry = $versionForPath !== ''
+            ? 'resources/release/managed-runtime-dependencies-' . $versionForPath . '.json'
+            : '';
+        if ($dependencyRegistry === '' || !self::safePath($dependencyRegistry)) {
+            $issues[] = 'candidate_dependency_registry_path_invalid';
+            $registryBytes = false;
+            $registry = null;
+        } else {
+            $registryPath = $root . '/' . $dependencyRegistry;
+            $registryBytes = is_file($registryPath) ? file_get_contents($registryPath) : false;
+            if (!is_string($registryBytes)) {
+                $issues[] = 'candidate_dependency_registry_missing';
+                $registry = null;
+            } else {
+                try {
+                    $registry = self::parseDependencyRegistry($registryBytes);
+                } catch (Throwable) {
+                    $issues[] = 'candidate_dependency_registry_malformed';
+                    $registry = null;
+                }
+            }
+        }
+
+        $components = $manifest['components'] ?? null;
+        if (!is_array($components) || $components === []) {
+            $issues[] = 'candidate_components_malformed';
+            $paths = [];
+        } else {
+            $paths = [];
+            $seenPaths = [];
+            $seenKeys = [];
+            foreach ($components as $key => $definition) {
+                if (!is_string($key) || isset($seenKeys[$key]) || !is_array($definition)) {
+                    $issues[] = 'candidate_component_malformed';
+                    continue;
+                }
+                $seenKeys[$key] = true;
+                $path = str_replace('\\', '/', ltrim((string) ($definition['path'] ?? ''), '/\\'));
+                if (!self::safePath($path)) {
+                    $issues[] = 'candidate_component_path_unsafe:' . $key;
+                    continue;
+                }
+                $folded = strtolower($path);
+                if (isset($seenPaths[$folded])) {
+                    $issues[] = 'candidate_component_path_duplicate:' . $path;
+                    continue;
+                }
+                $seenPaths[$folded] = true;
+                $paths[] = $path;
+                $absolute = $root . '/' . $path;
+                $bytes = is_file($absolute) ? file_get_contents($absolute) : false;
+                if (!is_string($bytes)) {
+                    $issues[] = 'candidate_component_missing:' . $path;
+                    continue;
+                }
+                $raw = strtolower(trim((string) ($definition['sha256'] ?? '')));
+                $lf = strtolower(trim((string) ($definition['sha256_lf'] ?? '')));
+                $text = (bool) ($definition['text'] ?? false);
+                $rawMatches = preg_match('/^[a-f0-9]{64}$/', $raw) === 1
+                    && hash_equals($raw, hash('sha256', $bytes));
+                $lfMatches = $text
+                    && preg_match('/^[a-f0-9]{64}$/', $lf) === 1
+                    && hash_equals($lf, hash('sha256', str_replace(["\r\n", "\r"], "\n", $bytes)));
+                if (!$rawMatches && !$lfMatches) {
+                    $issues[] = 'candidate_component_hash_mismatch:' . $path;
+                }
+            }
+            sort($paths, SORT_STRING);
+        }
+
+        if (is_array($registry)) {
+            if (!hash_equals($registry['runtime_manifest_paths_sha256'], self::pathInventoryHash($paths))) {
+                $issues[] = 'candidate_registry_paths_mismatch';
+            }
+            foreach ($registry['runtime_dependencies'] as $dependency) {
+                if (($dependency['required_in_runtime_manifest'] ?? null) === true
+                    && !in_array((string) $dependency['path'], $paths, true)
+                ) {
+                    $issues[] = 'candidate_required_dependency_missing:' . (string) $dependency['path'];
+                }
+            }
+        }
+
+        $policy = $manifest['publication_policy'] ?? null;
+        if (!is_array($policy)) {
+            $issues[] = 'candidate_publication_policy_missing';
+        } else {
+            if (!hash_equals('FULL_MANAGED_RUNTIME', (string) ($policy['authority_model'] ?? ''))) {
+                $issues[] = 'candidate_authority_model_mismatch';
+            }
+            if ((int) ($policy['package_file_count'] ?? -1) !== count($paths) + 1) {
+                $issues[] = 'candidate_package_file_count_mismatch';
+            }
+            if ((int) ($policy['component_count'] ?? -1) !== count($paths)) {
+                $issues[] = 'candidate_component_count_mismatch';
+            }
+            if (!hash_equals(self::pathInventoryHash($paths), (string) ($policy['paths_sha256'] ?? ''))) {
+                $issues[] = 'candidate_paths_sha256_mismatch';
+            }
+            if (is_string($registryBytes)
+                && !hash_equals(hash('sha256', $registryBytes), (string) ($policy['dependency_registry_sha256'] ?? ''))
+            ) {
+                $issues[] = 'candidate_dependency_registry_sha256_mismatch';
+            }
+            if (is_array($registry)
+                && !hash_equals((string) ($registry['coverage_base_commit'] ?? ''), (string) ($policy['base_commit'] ?? ''))
+            ) {
+                $issues[] = 'candidate_coverage_base_commit_mismatch';
+            }
+            if (($policy['raw_git_blobs'] ?? null) !== true
+                || ($policy['protected_external_state_excluded'] ?? null) !== true
+                || ($policy['build_only_excluded'] ?? null) !== true
+            ) {
+                $issues[] = 'candidate_publication_policy_flags_mismatch';
+            }
+        }
+
+        if ($buildId === ''
+            || preg_match('/^[A-Za-z0-9._-]+$/', $buildId) !== 1
+            || !str_contains(strtolower($buildId), 'erp-meli')
+            || ($version !== '' && !str_contains($buildId, $version))
+        ) {
+            $issues[] = 'candidate_build_id_mismatch';
+        }
+
+        $migrationPathIsSafe = $minimumMigration !== ''
+            && basename($minimumMigration) === $minimumMigration
+            && preg_match('/^[0-9]{3}_[a-zA-Z0-9_]+\.sql$/', $minimumMigration) === 1;
+        if (!$migrationPathIsSafe || !is_file($root . '/database/migrations/' . $minimumMigration)) {
+            $issues[] = 'candidate_minimum_migration_invalid';
+        }
+
         return array_values(array_unique($issues));
     }
 
@@ -850,7 +1026,7 @@ final class ManagedRuntimePublicationPolicy
         };
     }
 
-    /** @return array{classification_rules:list<array<string,mixed>>,runtime_dependencies:list<array<string,mixed>>,runtime_manifest_paths_sha256:string} */
+    /** @return array{classification_rules:list<array<string,mixed>>,runtime_dependencies:list<array<string,mixed>>,runtime_manifest_paths_sha256:string,coverage_base_commit:string} */
     private static function parseDependencyRegistry(string $bytes): array
     {
         $decoded = json_decode($bytes, true);
@@ -858,6 +1034,7 @@ final class ManagedRuntimePublicationPolicy
             || !is_array($decoded['classification_rules'] ?? null)
             || !is_array($decoded['runtime_dependencies'] ?? null)
             || preg_match('/^[a-f0-9]{64}$/', (string) ($decoded['runtime_manifest_paths_sha256'] ?? '')) !== 1
+            || preg_match('/^[a-f0-9]{40}$/', (string) ($decoded['coverage_base_commit'] ?? '')) !== 1
         ) {
             throw new RuntimeException('Runtime dependency registry is malformed.');
         }
@@ -901,6 +1078,7 @@ final class ManagedRuntimePublicationPolicy
             'classification_rules' => $rules,
             'runtime_dependencies' => $dependencies,
             'runtime_manifest_paths_sha256' => (string) $decoded['runtime_manifest_paths_sha256'],
+            'coverage_base_commit' => (string) $decoded['coverage_base_commit'],
         ];
     }
 

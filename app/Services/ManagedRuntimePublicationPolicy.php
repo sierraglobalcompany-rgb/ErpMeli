@@ -786,13 +786,13 @@ final class ManagedRuntimePublicationPolicy
 
         if (count($segments) === 1) {
             if (in_array($path, [
-                '.htaccess', 'VERSION', 'actualizar.php', 'asset.php', 'bootstrap.php',
+                'VERSION', 'actualizar.php', 'asset.php', 'bootstrap.php',
                 'composer.json', 'composer.lock', 'cron-status.php', 'index.php', 'login.php',
                 'mantenimiento.php', 'recuperar.php', 'stop.php',
             ], true)) {
                 return 'MANAGED_RUNTIME';
             }
-            if (in_array($path, ['.gitattributes', '.gitignore', 'config.env.example', 'phpstan.neon'], true)) {
+            if (in_array($path, ['.gitattributes', '.gitignore', '.htaccess', 'config.env.example', 'phpstan.neon'], true)) {
                 return 'BUILD_ONLY';
             }
             if ($path === 'H3_BACKLOG_RECOVERY_DESIGN.txt') {

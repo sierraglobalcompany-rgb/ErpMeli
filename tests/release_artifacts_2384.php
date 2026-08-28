@@ -101,7 +101,16 @@ try {
     $assert(!isset($manifest['signature']), 'unexpected_update_signature');
     $assert($manifestService->verifySignature($manifest) === 'local_unsigned', 'local_admin_signature_status_invalid');
     unset($update['update-manifest.json']);
-    $expectedUpdate = $expected;
+    $expectedUpdate = array_filter(
+        $expected,
+        static function (string $path): bool {
+            $normalized = strtolower(str_replace('\\', '/', $path));
+            $first = explode('/', $normalized, 2)[0] ?? '';
+            return !in_array($first, ['docs', 'shared', 'storage', 'tests', 'vendor'], true)
+                && !in_array($normalized, ['config.env', '.env', 'phpstan.neon'], true);
+        },
+        ARRAY_FILTER_USE_KEY
+    );
     if ((string) getenv('ERP_RELEASE_ARTIFACT_UPDATE_EXCLUDES_UNSAFE_DOTFILES') === '1') {
         $expectedUpdate = array_filter(
             $expectedUpdate,
@@ -121,6 +130,12 @@ try {
         $normalized = strtolower((string) $path);
         $assert(!in_array($normalized, ['.env', 'config.env', 'shared/config.env', 'pause_meli_api', 'pause_erp_automation', 'shared/current-release.json'], true), 'protected_file_packaged:' . $path);
         $assert(!preg_match('#^(?:storage|shared/storage|logs|sessions|backups)/#', $normalized), 'protected_tree_packaged:' . $path);
+    }
+    foreach (array_keys($update) as $path) {
+        $normalized = strtolower(str_replace('\\', '/', (string) $path));
+        $first = explode('/', $normalized, 2)[0] ?? '';
+        $assert(!in_array($first, ['docs', 'shared', 'storage', 'tests', 'vendor'], true), 'update_atomic_forbidden_tree_packaged:' . $path);
+        $assert(!in_array($normalized, ['config.env', '.env', 'phpstan.neon'], true), 'update_atomic_forbidden_file_packaged:' . $path);
     }
     $requiredOverlayPaths = ['VERSION',
         'app/QueueV4Clean/QueueV4CleanDatabaseContract.php',

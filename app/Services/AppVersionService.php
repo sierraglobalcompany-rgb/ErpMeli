@@ -53,7 +53,15 @@ final class AppVersionService
     public function registerVersion(string $version, ?string $notes = null): void
     {
         try {
-            $stmt = Database::connection()->prepare(
+            $pdo = Database::connection();
+            $setting = $pdo->prepare(
+                "INSERT INTO app_settings (setting_key,setting_value,is_encrypted)
+                 VALUES ('app.version',:version,0)
+                 ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),is_encrypted=0"
+            );
+            $setting->execute(['version' => $version]);
+
+            $stmt = $pdo->prepare(
                 'INSERT INTO app_versions (version,notes,installed_at)
                  VALUES (:version,:notes,CURRENT_TIMESTAMP)
                  ON DUPLICATE KEY UPDATE
@@ -61,6 +69,11 @@ final class AppVersionService
                     installed_at=CURRENT_TIMESTAMP'
             );
             $stmt->execute(['version' => $version, 'notes' => $notes]);
+            try {
+                $lastMigration = $pdo->query('SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1')->fetchColumn();
+                (new InstalledVersionMarkerService())->write($version, is_string($lastMigration) ? $lastMigration : '');
+            } catch (Throwable) {
+            }
         } catch (Throwable $e) {
             Logger::write('warning', 'No se pudo registrar la versión instalada.', ['error' => $e->getMessage()]);
         }

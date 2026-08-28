@@ -407,7 +407,7 @@ final class SecureUpdateEngineService
         $manifest = $this->manifestForRun($run);
         $source = (string) $run['staging_path'];
         (new UpdateManifestService())->verifyFiles($manifest, $source);
-        $health = (new UpdateReleaseService())->healthCheck($source);
+        $health = (new UpdateReleaseService())->healthCheck($source, false);
         if (!$health['ok']) {
             throw new RuntimeException('La release no supera la verificación estructural.');
         }
@@ -535,6 +535,7 @@ final class SecureUpdateEngineService
         }
         $pointer = (new UpdateReleaseService())->activate((string) $run['staging_path'], $manifest);
         $previous = $pointer['previous_release_id'] ?? null;
+        (new AppVersionService())->registerVersion((string) $run['version_to'], 'Release atómica activada; health check pendiente.');
         $stmt = Database::connectionFresh()->prepare(
             "UPDATE system_update_runs SET state='health_check',progress_percent=90,current_step='Comprobar sistema',
              next_action='Ejecutar health checks',previous_release_id=:previous WHERE id=:id"

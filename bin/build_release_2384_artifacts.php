@@ -235,10 +235,30 @@ try {
     release2380Zip($fullPath, $entries, $files, $timestamp);
     release2380Zip($overlayPath, $overlayEntries, $files, $timestamp);
 
-    $updateEntries = $entries;
+    $updateForbiddenRoots = array_fill_keys([
+        'docs',
+        'shared',
+        'storage',
+        'tests',
+        'vendor',
+    ], true);
+    $updateForbiddenFiles = array_fill_keys([
+        'config.env',
+        '.env',
+        'phpstan.neon',
+    ], true);
+    $updateEntries = array_values(array_filter(
+        $entries,
+        static function (array $entry) use ($updateForbiddenRoots, $updateForbiddenFiles): bool {
+            $path = str_replace('\\', '/', (string) $entry['path']);
+            $first = strtolower(explode('/', $path, 2)[0] ?? '');
+            $normalized = strtolower($path);
+            return !isset($updateForbiddenRoots[$first]) && !isset($updateForbiddenFiles[$normalized]);
+        }
+    ));
     if ((string) getenv('ERP_RELEASE_UPDATE_PACKAGE_EXCLUDE_UNSAFE_DOTFILES') === '1') {
         $updateEntries = array_values(array_filter(
-            $entries,
+            $updateEntries,
             static fn (array $entry): bool => !str_starts_with((string) $entry['path'], '.'),
         ));
     }

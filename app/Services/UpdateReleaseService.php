@@ -90,7 +90,7 @@ final class UpdateReleaseService
     }
 
     /** @return array<string,mixed> */
-    public function healthCheck(string $releaseDirectory): array
+    public function healthCheck(string $releaseDirectory, bool $checkDatabase = true): array
     {
         $checks = [
             'bootstrap' => is_file($releaseDirectory . '/bootstrap.php'),
@@ -100,14 +100,14 @@ final class UpdateReleaseService
             'storage' => is_dir(AppPaths::storage()) && is_writable(AppPaths::storage()),
         ];
         try {
-            $checks['database'] = Database::connectionFresh()->query('SELECT 1')->fetchColumn() === 1;
+            $checks['database'] = !$checkDatabase || Database::connectionFresh()->query('SELECT 1')->fetchColumn() === 1;
         } catch (Throwable) {
             $checks['database'] = false;
         }
         if ($this->requiresRuntimeManifest($releaseDirectory)) {
             $runtimeIntegrity = (new ReleaseIntegrityService())->inspectDirectory(
                 $releaseDirectory,
-                true,
+                $checkDatabase,
                 false
             );
             $checks['runtime_integrity'] = (bool) $runtimeIntegrity['ok'];
@@ -234,7 +234,6 @@ final class UpdateReleaseService
             '.env',
             'graphify-out',
             'app/graphify-out',
-            'bin',
             'tests',
             'docs',
             'shared',

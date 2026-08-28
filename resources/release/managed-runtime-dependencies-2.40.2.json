@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
     "authority_id": "operator-control-plane-kiss-release-2.40.2-runtime-dependencies",
-    "runtime_manifest_paths_sha256": "cd9bc40bdcb4d55bcb59a7d0fa22a956b51a04ce90c859135db3df40d24fb0f2",
+    "runtime_manifest_paths_sha256": "f898751984f7e854d895781ce361c2080574f4e8222563bb2141ed20db2d8993",
     "coverage_base_commit": "b9d1644522e7b36d5729c5ba090279b3ffc50fb8",
     "classifications": {
         "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

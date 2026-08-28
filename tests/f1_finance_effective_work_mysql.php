@@ -61,6 +61,13 @@ try {
         account_name VARCHAR(160) NULL,
         KEY idx_account_company(company_id,id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    $pdo->exec("CREATE TABLE meli_packs(
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        meli_account_id BIGINT UNSIGNED NOT NULL,
+        external_pack_id VARCHAR(191) NOT NULL,
+        integrity_status VARCHAR(32) NOT NULL DEFAULT 'provisional',
+        UNIQUE KEY uq_pack_account_external(meli_account_id,external_pack_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
     $pdo->exec("CREATE TABLE sale_financial_reconciliation_jobs(
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
         company_id BIGINT UNSIGNED NOT NULL,
@@ -134,6 +141,8 @@ try {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 
     $pdo->exec("INSERT INTO meli_accounts(id,company_id,account_name) VALUES (101,10,'Cuenta F1'),(202,20,'Otra cuenta')");
+    $pdo->exec("INSERT INTO meli_packs(meli_account_id,external_pack_id,integrity_status)
+        VALUES (101,'PACK-PARTIAL','partial'),(101,'PACK-COMPLETE','complete')");
 
     $repo = new QueueV4CleanRepository($pdo);
     $admission = new CronAdmissionService($pdo);
@@ -169,6 +178,43 @@ try {
 
     $runId = $repo->beginRun('test', 'f1-owner-no-finance');
     $assert($repo->claim($runId, 'f1-owner-no-finance') === null, 'finance_future_claimed_before_t');
+    $repo->finishRun($runId, 'completed');
+
+    $packSourceStmt = $pdo->prepare(
+        "INSERT INTO sale_financial_reconciliation_jobs
+         (company_id,meli_account_id,sale_key,external_sale_id,input_version,status,next_run_at,safe_message)
+         VALUES (10,101,?,?,?, 'retry', DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND), ?)"
+    );
+    $packSourceStmt->execute(['P:PACK-PARTIAL', 'PACK-PARTIAL', hash('sha256', 'pack-partial'), 'PACK_INCOMPLETE']);
+    $partialPackSourceId = (int) $pdo->lastInsertId();
+    $partialPackPayload = json_encode(['capability' => 'financial_reconciliation', 'source_id' => $partialPackSourceId], JSON_THROW_ON_ERROR);
+    $pdo->prepare(
+        "INSERT INTO queue_v4_clean_jobs
+         (company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,state,available_at,last_error_class)
+         VALUES (10,101,'domain_exact',?,'domain:financial_reconciliation:pack-partial',?,'ready',DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 40 SECOND),NULL)"
+    )->execute([(string) $partialPackSourceId, $partialPackPayload]);
+    $partialPackPointerId = (int) $pdo->lastInsertId();
+    $runId = $repo->beginRun('test', 'f1b-owner-pack-incomplete');
+    $assert($repo->claim($runId, 'f1b-owner-pack-incomplete') === null, 'incomplete_pack_finance_claimed_as_effective_work');
+    $repo->finishRun($runId, 'completed');
+    $pdo->exec("UPDATE queue_v4_clean_jobs SET state='waiting',available_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 40 SECOND),last_error_class='domain_source_waiting:financial_reconciliation:pack_incomplete' WHERE id={$partialPackPointerId}");
+    $released = $repo->releaseDueWaiting();
+    $assert($released === 0, 'incomplete_pack_released_from_waiting_to_ready');
+    $assert((string) $pdo->query("SELECT state FROM queue_v4_clean_jobs WHERE id={$partialPackPointerId}")->fetchColumn() === 'waiting', 'incomplete_pack_pointer_not_kept_waiting');
+
+    $packSourceStmt->execute(['P:PACK-COMPLETE', 'PACK-COMPLETE', hash('sha256', 'pack-complete'), 'READY']);
+    $completePackSourceId = (int) $pdo->lastInsertId();
+    $completePackPayload = json_encode(['capability' => 'financial_reconciliation', 'source_id' => $completePackSourceId], JSON_THROW_ON_ERROR);
+    $pdo->prepare(
+        "INSERT INTO queue_v4_clean_jobs
+         (company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,state,available_at)
+         VALUES (10,101,'domain_exact',?,'domain:financial_reconciliation:pack-complete',?,'ready',DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 35 SECOND))"
+    )->execute([(string) $completePackSourceId, $completePackPayload]);
+    $runId = $repo->beginRun('test', 'f1b-owner-pack-complete');
+    $completePackJob = $repo->claim($runId, 'f1b-owner-pack-complete');
+    $assert(is_array($completePackJob), 'complete_pack_finance_not_claimable');
+    $assert((int) $completePackJob['resource_id'] === $completePackSourceId, 'complete_pack_claimed_wrong_source');
+    $repo->complete($completePackJob, $runId);
     $repo->finishRun($runId, 'completed');
 
     $pdo->prepare(

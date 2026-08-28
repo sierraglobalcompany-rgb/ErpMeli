@@ -618,7 +618,7 @@ final class QueueV4CleanWorker
             ? 'SELECT id,company_id,meli_account_id,status,NULL next_run_at
                FROM order_financial_recalc_jobs
                WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1'
-            : 'SELECT id,company_id,meli_account_id,status,next_run_at
+            : 'SELECT id,company_id,meli_account_id,status,next_run_at,sale_key,external_sale_id
                FROM sale_financial_reconciliation_jobs
                WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1';
         $statement = $this->pdo->prepare($sql);
@@ -647,9 +647,15 @@ final class QueueV4CleanWorker
             return ['state' => 'completed'];
         }
         if (in_array($status, ['pending', 'running', 'retry', 'awaiting_remote'], true)) {
+            $classification = 'domain_source_waiting:' . $capability;
+            if ($capability === 'financial_reconciliation'
+                && str_starts_with((string) ($source['sale_key'] ?? ''), 'P:')
+                && !$this->financialPackIntegrityComplete($source)) {
+                $classification .= ':pack_incomplete';
+            }
             $outcome = [
                 'state' => 'waiting',
-                'classification' => 'domain_source_waiting:' . $capability,
+                'classification' => $classification,
             ];
             if ($capability === 'financial_reconciliation') {
                 $outcome['next_safe_at'] = $this->financialReconciliationNextSafeAt($source['next_run_at'] ?? null);
@@ -666,6 +672,23 @@ final class QueueV4CleanWorker
             'state' => 'review',
             'classification' => 'domain_source_' . ($status !== '' ? $this->safeToken($status) : 'unknown'),
         ];
+    }
+
+    /**
+     * @param array<string,mixed> $source
+     */
+    private function financialPackIntegrityComplete(array $source): bool
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT integrity_status FROM meli_packs
+             WHERE meli_account_id=? AND external_pack_id=? LIMIT 1'
+        );
+        $statement->execute([
+            (int) ($source['meli_account_id'] ?? 0),
+            (string) ($source['external_sale_id'] ?? substr((string) ($source['sale_key'] ?? ''), 2)),
+        ]);
+
+        return (string) ($statement->fetchColumn() ?: '') === 'complete';
     }
 
     private function financialReconciliationNextSafeAt(mixed $nextRunAt): string

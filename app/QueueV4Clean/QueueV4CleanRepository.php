@@ -773,8 +773,19 @@ final class QueueV4CleanRepository
                  WHERE s.id=CAST({$queueAlias}.resource_id AS UNSIGNED)
                    AND s.company_id={$queueAlias}.company_id
                    AND s.meli_account_id={$queueAlias}.meli_account_id
-                   AND s.next_run_at IS NOT NULL
-                   AND s.next_run_at>UTC_TIMESTAMP(3)
+                   AND (
+                       (s.next_run_at IS NOT NULL AND s.next_run_at>UTC_TIMESTAMP(3))
+                       OR (
+                           s.sale_key LIKE 'P:%'
+                           AND COALESCE((
+                               SELECT p.integrity_status
+                                 FROM meli_packs p
+                                WHERE p.meli_account_id=s.meli_account_id
+                                  AND p.external_pack_id=SUBSTRING(s.sale_key,3)
+                                LIMIT 1
+                           ), '')<>'complete'
+                       )
+                   )
             )";
     }
 

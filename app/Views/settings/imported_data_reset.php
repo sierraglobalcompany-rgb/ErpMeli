@@ -79,13 +79,13 @@ if ($status === 'completed') {
           <?= number_format((int) ($campaign['total_items'] ?? 0), 0, ',', '.') ?> trabajos ·
           <?= number_format((int) ($campaign['total_units'] ?? 0), 0, ',', '.') ?> unidades
         </span>
-        <a class="btn" href="<?= View::e($base . '/settings/manual-processing/session?id=' . (int) ($campaign['id'] ?? 0)) ?>">
-          Decidir: conservar o devolver pendientes
+        <a class="btn" href="<?= View::e($base . '/settings/manual-processing') ?>">
+          Abrir procesamiento manual exacto
         </a>
       </li>
     <?php endforeach; ?>
   </ul>
-  <p><strong>Conservar:</strong> no autorice este restablecimiento. <strong>Devolver o abandonar:</strong> abra la campaña, finalícela y devuelva sus pendientes de forma explícita.</p>
+  <p><strong>Conservar:</strong> no autorice este restablecimiento. <strong>Resolver:</strong> use el flujo manual exacto; las sesiones/campañas antiguas ya no son el camino operativo.</p>
 </section>
 <?php endif; ?>
 

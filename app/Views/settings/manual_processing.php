@@ -2,16 +2,17 @@
 use App\Core\Csrf;
 use App\Core\Env;
 use App\Core\View;
+
 $base = rtrim(Env::get('APP_URL', ''), '/');
 $scopeLabels = [
-  'recommended' => ['Recomendado ahora', 'Ventas, tareas urgentes y reparaciones seguras.'],
+  'recommended' => ['Recomendado ahora', 'Trabajo elegible y seguro para adelantar desde esta pestaña.'],
   'sales' => ['Ventas', 'Órdenes, notificaciones y datos relacionados.'],
   'finance' => ['Finanzas', 'Cálculos y conciliaciones pendientes.'],
   'audits' => ['Auditorías', 'Comprobaciones y reparaciones de ventas.'],
   'products' => ['Productos', 'Actualización de publicaciones.'],
   'descriptions' => ['Descripciones', 'Carga delicada: una consulta por descripción.'],
   'modules' => ['Módulos', 'Snapshots de capacidades aisladas.'],
-  'all' => ['Todo lo que puede procesarse ahora', 'Solo recursos comprobados, disponibles y seguros para esta pestaña.'],
+  'all' => ['Todo lo que puede procesarse ahora', 'Sólo recursos comprobados, disponibles y seguros para esta pestaña.'],
 ];
 $duration = static function (int $seconds): string {
   if ($seconds < 60) return $seconds . ' s';
@@ -20,7 +21,6 @@ $duration = static function (int $seconds): string {
   return number_format($hours, $hours < 10 ? 1 : 0, ',', '.') . ' h';
 };
 $exclusionPresenter = new \App\Services\ManualCampaignExclusionPresenter();
-$rhythmPreview = is_array($rhythmPreview ?? null) ? $rhythmPreview : [];
 $exclusionGroups = [];
 if (is_array($preview ?? null)) {
   foreach ((array) ($preview['excluded_summary'] ?? []) as $excludedGroup) {
@@ -30,413 +30,183 @@ if (is_array($preview ?? null)) {
     );
   }
 }
+$configuredLimit = max(1, min(60, (int) ($blockSize ?? 1)));
+$previewRows = is_array($preview ?? null) ? array_values((array) ($preview['rows'] ?? [])) : [];
+$previewLimit = is_array($preview ?? null)
+  ? max(1, min($configuredLimit, max(1, count($previewRows))))
+  : $configuredLimit;
 ?>
 <div class="page-head manual-page-head">
-  <div><p class="eyebrow">ADMINISTRACIÓN</p><h1>Procesamiento manual</h1>
-    <p>Elija trabajos concretos para adelantarlos. Las ventas nuevas conservan prioridad y cada resultado queda guardado.</p>
-    <p><span class="badge neutral">MANUAL_EXACT</span> Un paso idempotente por confirmación; no inicia ni continúa Cron en segundo plano.</p></div>
-  <div class="page-actions"><a class="btn" href="<?= View::e($base . '/settings/cron') ?>">Ver automatización</a></div>
+  <div>
+    <p class="eyebrow">ADMINISTRACIÓN</p>
+    <h1>Procesamiento manual</h1>
+    <p>Elija qué procesar, confirme cuántos trabajos exactos y espere el resultado. Al terminar, la petición se detiene.</p>
+    <p><span class="badge neutral">MANUAL_EXACT</span> Sin campaña, sin drenador continuo, sin trabajo en segundo plano.</p>
+  </div>
+  <div class="page-actions">
+    <a class="btn" href="<?= View::e($base . '/settings/cron') ?>">Ver automatización</a>
+  </div>
 </div>
 
 <ol class="manual-stepper" aria-label="Etapas del procesamiento">
-  <li class="<?= $preview === null ? 'active' : 'complete' ?>"><span>1</span> Elegir</li>
-  <li class="<?= $preview !== null ? 'active' : '' ?>"><span>2</span> Configurar</li>
-  <li><span>3</span> Confirmar</li><li><span>4</span> Procesar</li><li><span>5</span> Resultado</li>
+  <li class="<?= $preview === null ? 'active' : 'complete' ?>"><span>1</span> Qué procesar</li>
+  <li class="<?= $preview === null ? 'active' : 'complete' ?>"><span>2</span> Cuántos</li>
+  <li class="<?= $preview !== null ? 'active' : '' ?>"><span>3</span> Preview exacto</li>
+  <li><span>4</span> Procesar</li>
+  <li><span>5</span> Resultado</li>
 </ol>
 
 <?php if (!empty($emergencyStop)): ?>
-<section class="panel manual-engine-card is-warning"><div class="panel-body manual-engine-summary">
-  <div><strong>Procesamiento en mantenimiento</strong>
-    <p>No se iniciaran consultas nuevas. Los resultados anteriores permanecen guardados.</p></div>
-  <?php if ($activeSession): ?><a class="btn" href="<?= View::e($base . '/settings/manual-processing/session?id=' . (int) $activeSession['id']) ?>">Ver campaña guardada</a><?php endif; ?>
-</div></section>
+<section class="panel manual-engine-card is-warning">
+  <div class="panel-body manual-engine-summary">
+    <div>
+      <strong>Procesamiento en mantenimiento</strong>
+      <p>No se iniciarán consultas nuevas. Los resultados anteriores permanecen guardados.</p>
+    </div>
+  </div>
+</section>
 <?php elseif (!$campaignReady): ?>
-<section class="panel manual-engine-card is-warning"><div class="panel-body">
-  <strong>Actualización pendiente</strong>
-  <p>Los archivos están instalados, pero falta preparar la base de datos para el procesamiento interactivo.</p>
-  <a class="btn primary" href="<?= View::e($base . '/settings/update') ?>">Completar actualización</a>
-</div></section>
+<section class="panel manual-engine-card is-warning">
+  <div class="panel-body">
+    <strong>Actualización pendiente</strong>
+    <p>Falta preparar la base de datos para habilitar el procesamiento manual exacto.</p>
+    <a class="btn primary" href="<?= View::e($base . '/settings/update') ?>">Completar actualización</a>
+  </div>
+</section>
 <?php else: ?>
-<section class="panel manual-engine-card is-ready"><div class="panel-body manual-engine-summary">
-  <div><span class="status-dot"></span><strong>Procesamiento manual listo</strong>
-    <p>Cada confirmacion ejecuta un solo trabajo exacto mientras esta pestana permanece abierta.</p></div>
-  <?php if ($activeSession): ?><a class="btn primary" href="<?= View::e($base . '/settings/manual-processing/session?id=' . (int) $activeSession['id']) ?>">Ver campaña activa</a><?php endif; ?>
-</div></section>
+<section class="panel manual-engine-card is-ready">
+  <div class="panel-body manual-engine-summary">
+    <div>
+      <span class="status-dot"></span><strong>Listo para procesamiento manual exacto</strong>
+      <p>Una confirmación procesa únicamente las filas del preview, hasta el límite elegido, bajo una sola autoridad global.</p>
+    </div>
+  </div>
+</section>
 <?php endif; ?>
 
-<?php $smartDrainSessionToken = is_array(($smartDrain['session'] ?? null)) ? (string) ($smartDrain['session']['session_token'] ?? '') : ''; ?>
-<section class="panel manual-engine-card" id="k10-manual-drain" data-k10-drain data-status-url="<?= View::e($base . '/settings/manual-processing/drain/status.json') ?>" data-csrf="<?= View::e(Csrf::token()) ?>" data-session-token="<?= View::e($smartDrainSessionToken) ?>">
+<section class="panel manual-config">
   <div class="panel-head">
     <div>
-      <p class="eyebrow">Procesamiento manual seguro</p>
-      <h2>Drenar un paso a la vez</h2>
-      <p>Use esta tarjeta cuando necesite avanzar trabajo elegible desde el navegador sin iniciar procesos en segundo plano.</p>
+      <p class="eyebrow">1 · Qué procesar</p>
+      <h2>Elegir trabajo</h2>
+      <p>El preview sólo incluirá trabajos elegibles para ejecución manual exacta.</p>
     </div>
   </div>
   <div class="panel-body">
-    <?php if (empty($smartDrainReady)): ?>
-      <div class="alert info"><strong>Instalación pendiente.</strong><p>Esta opción aparecerá después de aplicar la actualización requerida. No crea otra cola ni otro motor.</p></div>
+    <form method="post" action="<?= View::e($base . '/settings/manual-processing/preview') ?>" class="manual-config-form">
+      <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
+      <input type="hidden" name="origin" value="<?= View::e((string) ($origin ?? 'manual_center')) ?>">
+      <input type="hidden" name="interval_seconds" value="0">
+      <input type="hidden" name="block_pause_seconds" value="0">
+      <input type="hidden" name="max_blocks" value="0">
+      <input type="hidden" name="max_duration_minutes" value="0">
+      <?php foreach ((array) ($originContext ?? []) as $key => $value): ?>
+        <?php if ($value !== '' && $value !== 0): ?>
+          <input type="hidden" name="<?= View::e((string) $key) ?>" value="<?= View::e((string) $value) ?>">
+        <?php endif; ?>
+      <?php endforeach; ?>
+
+      <div class="manual-scope-grid">
+        <?php foreach ($scopeLabels as $key => $meta): ?>
+          <label class="manual-scope-card">
+            <input type="radio" name="scope" value="<?= View::e($key) ?>" <?= $scope === $key ? 'checked' : '' ?>>
+            <strong><?= View::e($meta[0]) ?></strong>
+            <span><?= View::e($meta[1]) ?></span>
+          </label>
+        <?php endforeach; ?>
+      </div>
+
+      <div class="manual-config-grid">
+        <label>
+          Cuenta Mercado Libre
+          <input type="number" min="0" name="account_id" value="<?= (int) ($accountId ?? 0) ?>" placeholder="0 = todas las autorizadas">
+          <small>Siempre se revalida empresa y cuenta antes de encolar.</small>
+        </label>
+        <label>
+          ¿Cuántos procesar?
+          <input type="number" min="1" max="60" name="block_size" value="<?= $configuredLimit ?>">
+          <small>Procesa como máximo N filas exactas del preview. No continúa después.</small>
+        </label>
+      </div>
+
+      <div class="manual-actions">
+        <button class="btn primary" type="submit" <?= empty($campaignReady) || !empty($emergencyStop) ? 'disabled' : '' ?>>Previsualizar trabajo exacto</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+<?php if ($preview !== null): ?>
+<section class="panel manual-preview" id="resultado-calculo">
+  <div class="panel-head">
+    <div>
+      <p class="eyebrow">3 · Preview exacto</p>
+      <h2>Qué se va a procesar</h2>
+      <p>Esta selección queda ligada al botón. Si procesa, sólo puede tomar estas filas y hasta <?= $previewLimit ?> trabajo(s).</p>
+    </div>
+  </div>
+  <div class="panel-body">
+    <div class="metric-grid manual-metric-grid">
+      <article><span>Elegibles ahora</span><strong><?= (int) ($preview['eligible_jobs'] ?? count($previewRows)) ?></strong></article>
+      <article><span>Límite elegido</span><strong><?= $previewLimit ?></strong></article>
+      <article><span>Alcance</span><strong><?= View::e((string) ($preview['configuration']['scope'] ?? $scope)) ?></strong></article>
+      <article><span>Expira en</span><strong><?= $duration(max(0, (int) ($preview['expires_in_seconds'] ?? 0))) ?></strong></article>
+    </div>
+
+    <?php if ($previewRows === []): ?>
+      <div class="alert info">
+        <strong>No hay trabajo exacto seguro ahora.</strong>
+        <p>No se ejecutó nada. La cola automática conserva su ritmo normal.</p>
+      </div>
     <?php else: ?>
-      <?php $drainSession = is_array(($smartDrain['session'] ?? null)) ? $smartDrain['session'] : null; ?>
-      <?php $drainProfile = is_array(($drainSession['profile'] ?? null)) ? $drainSession['profile'] : []; ?>
-      <p><span class="badge neutral">MANUAL_EXACT</span> Un solo trabajo por paso, máximo una petición remota en vuelo y la misma autoridad de ejecución del procesamiento automático.</p>
-      <div class="metric-grid manual-metric-grid">
-        <article><span>Estado</span><strong data-k10-state><?= View::e((string) ($smartDrain['state'] ?? 'OFF')) ?></strong></article>
-        <article><span>Trabajos completados</span><strong data-k10-processed><?= (int) ($drainSession['jobs_processed'] ?? 0) ?></strong></article>
-        <article><span>HTTP físicos observados</span><strong data-k10-remote><?= (int) ($drainSession['remote_calls_observed'] ?? 0) ?></strong></article>
-        <article><span>Lote remoto actual / máximo</span><strong><span data-k10-burst-current><?= (int) ($drainSession['burst_remote_calls_current'] ?? 0) ?></span>/<span data-k10-burst-max><?= (int) ($drainProfile['remote_calls_per_burst'] ?? 1) ?></span></strong></article>
-        <article><span>Versión del perfil</span><strong data-k10-profile-revision><?= (int) ($drainSession['profile_revision'] ?? 1) ?></strong></article>
-        <article><span>Próxima ventana segura</span><strong data-k10-next-safe><?= View::e((string) (($drainSession['last_result']['effective_next_safe_at'] ?? '') ?: 'N/A')) ?></strong></article>
-        <article><span>Heartbeat</span><strong data-k10-heartbeat><?= View::e((string) ($drainSession['heartbeat_at'] ?? 'N/A')) ?></strong></article>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>Tipo</th><th>Cuenta</th><th>Origen</th><th>Estado</th></tr></thead>
+          <tbody>
+            <?php foreach (array_slice($previewRows, 0, $previewLimit) as $index => $row): ?>
+              <tr>
+                <td><?= $index + 1 ?></td>
+                <td><?= View::e((string) ($row['label'] ?? $row['queue_key'] ?? 'trabajo')) ?></td>
+                <td><?= (int) ($row['meli_account_id'] ?? 0) ?></td>
+                <td><?= View::e((string) ($row['source_alias'] ?? $row['source_id'] ?? 'exacto')) ?></td>
+                <td><span class="badge neutral">SELECTED_EXACT_ONLY</span></td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
       </div>
-      <div class="alert warning" data-k10-429-panel>
-        <strong>429 y errores peligrosos</strong>
-        <p data-k10-last-result><?= View::e((string) (($drainSession['last_result']['classification'] ?? '') ?: 'Sin resultado todavía.')) ?></p>
-        <p>Ante un HTTP 429 real se pausa y se respeta la espera segura. La opción conservadora nunca acorta Retry-After ni reintenta a ciegas.</p>
-      </div>
-      <p class="manual-browser-note" data-k10-feedback aria-live="polite">Listo. Esta pestaña ejecuta pasos seriales; si la cierra, la sesión expira y el procesamiento automático puede retomar.</p>
-      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/start') ?>" class="manual-confirm-form" data-k10-action="start">
+
+      <form method="post" action="<?= View::e($base . '/settings/manual-processing/start') ?>" class="manual-confirm-form">
         <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
-        <input type="hidden" name="remote_calls_per_burst" value="<?= (int) ($drainProfile['remote_calls_per_burst'] ?? 1) ?>" data-k10-profile-field="remote_calls_per_burst">
-        <input type="hidden" name="minimum_delay_between_remote_calls" value="<?= (int) ($drainProfile['minimum_delay_between_remote_calls'] ?? 15) ?>" data-k10-profile-field="minimum_delay_between_remote_calls">
-        <input type="hidden" name="cooldown_after_burst" value="<?= (int) ($drainProfile['cooldown_after_burst'] ?? 30) ?>" data-k10-profile-field="cooldown_after_burst">
-        <input type="hidden" name="429_action" value="<?= View::e((string) ($drainProfile['429_action'] ?? 'pause_and_ask')) ?>" data-k10-profile-field="429_action">
-        <input type="hidden" name="bounded_5xx_preferences" value="<?= View::e((string) ($drainProfile['bounded_5xx_preferences'] ?? 'pause_and_ask')) ?>" data-k10-profile-field="bounded_5xx_preferences">
-        <button class="btn primary" type="submit" data-k10-start>Iniciar procesamiento manual</button>
+        <input type="hidden" name="preview_token" value="<?= View::e((string) ($preview['preview_token'] ?? '')) ?>">
+        <input type="hidden" name="scope" value="<?= View::e((string) ($preview['configuration']['scope'] ?? $scope)) ?>">
+        <input type="hidden" name="process_limit" value="<?= $previewLimit ?>">
+        <p><strong>Confirmación:</strong> procesar máximo <?= $previewLimit ?> trabajo(s) exactos del preview. Sin campaña, sin sesión, sin continuación oculta.</p>
+        <button class="btn primary" type="submit">Procesar selección exacta</button>
       </form>
-      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/profile') ?>" class="manual-confirm-form manual-profile-form" data-k10-action="profile" <?= $drainSession ? '' : 'hidden' ?>>
-        <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
-        <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
-        <input type="hidden" name="drain_generation" value="<?= (int) ($drainSession['drain_generation'] ?? 0) ?>" data-k10-generation-field>
-        <label>Máximo de HTTP físicos por tanda <input type="number" min="1" max="60" name="remote_calls_per_burst" value="<?= (int) ($drainProfile['remote_calls_per_burst'] ?? 1) ?>" data-k10-profile-field="remote_calls_per_burst"></label>
-        <label>Intervalo mínimo (s) <input type="number" min="15" max="3600" name="minimum_delay_between_remote_calls" value="<?= (int) ($drainProfile['minimum_delay_between_remote_calls'] ?? 15) ?>" data-k10-profile-field="minimum_delay_between_remote_calls"></label>
-        <label>Enfriamiento después de tanda (s) <input type="number" min="0" max="3600" name="cooldown_after_burst" value="<?= (int) ($drainProfile['cooldown_after_burst'] ?? 30) ?>" data-k10-profile-field="cooldown_after_burst"></label>
-        <label>HTTP 429
-          <select name="429_action" data-k10-profile-field="429_action">
-            <option value="pause_and_ask" <?= (($drainProfile['429_action'] ?? 'pause_and_ask') === 'pause_and_ask') ? 'selected' : '' ?>>Pausar y revisar</option>
-            <option value="auto_degrade" <?= (($drainProfile['429_action'] ?? '') === 'auto_degrade') ? 'selected' : '' ?>>Bajar ritmo manual automáticamente</option>
-          </select>
-        </label>
-        <label>HTTP 5xx
-          <select name="bounded_5xx_preferences" data-k10-profile-field="bounded_5xx_preferences">
-            <option value="pause_and_ask" <?= (($drainProfile['bounded_5xx_preferences'] ?? 'pause_and_ask') === 'pause_and_ask') ? 'selected' : '' ?>>Pausar y revisar</option>
-            <option value="cooldown" <?= (($drainProfile['bounded_5xx_preferences'] ?? '') === 'cooldown') ? 'selected' : '' ?>>Enfriar sin reintento ciego</option>
-          </select>
-        </label>
-        <button class="btn" type="submit">Guardar perfil para el siguiente paso</button>
-      </form>
-      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/step') ?>" class="manual-confirm-form" data-k10-action="step" <?= $drainSession ? '' : 'hidden' ?>>
-        <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
-        <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
-        <input type="hidden" name="drain_generation" value="<?= (int) ($drainSession['drain_generation'] ?? 0) ?>" data-k10-generation-field>
-        <button class="btn" type="submit" data-k10-step>Ejecutar un paso</button>
-      </form>
-      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/heartbeat') ?>" data-k10-action="heartbeat" hidden>
-        <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
-        <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
-        <input type="hidden" name="drain_generation" value="<?= (int) ($drainSession['drain_generation'] ?? 0) ?>" data-k10-generation-field>
-      </form>
-      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/pause') ?>" class="manual-confirm-form" data-k10-action="pause" <?= $drainSession ? '' : 'hidden' ?>>
-        <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
-        <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
-        <input type="hidden" name="drain_generation" value="<?= (int) ($drainSession['drain_generation'] ?? 0) ?>" data-k10-generation-field>
-        <button class="btn" type="submit">Pausar</button>
-      </form>
-      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/resume') ?>" class="manual-confirm-form" data-k10-action="resume" <?= $drainSession ? '' : 'hidden' ?>>
-        <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
-        <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
-        <input type="hidden" name="drain_generation" value="<?= (int) ($drainSession['drain_generation'] ?? 0) ?>" data-k10-generation-field>
-        <button class="btn" type="submit">Reanudar</button>
-      </form>
-      <form method="post" action="<?= View::e($base . '/settings/manual-processing/drain/stop') ?>" class="manual-confirm-form" data-k10-action="stop" <?= $drainSession ? '' : 'hidden' ?>>
-        <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
-        <input type="hidden" name="session_token" value="<?= View::e($smartDrainSessionToken) ?>" data-k10-token-field>
-        <input type="hidden" name="drain_generation" value="<?= (int) ($drainSession['drain_generation'] ?? 0) ?>" data-k10-generation-field>
-        <button class="btn danger" type="submit">Finalizar / devolver al automático</button>
-      </form>
+    <?php endif; ?>
+
+    <?php if ($exclusionGroups !== []): ?>
       <details class="cron-technical">
-        <summary>Detalle técnico avanzado</summary>
-        <div class="details-content">
-          <p><span class="badge neutral">K10</span> <span class="badge neutral">Queue V4 boundary</span> Si el procesamiento automático posee la autoridad global, el inicio responde ocupado y no reclama ni consulta Mercado Libre.</p>
+        <summary>Trabajos excluidos del preview</summary>
+        <div class="manual-exclusion-grid">
+          <?php foreach ($exclusionGroups as $group): ?>
+            <article>
+              <strong><?= View::e((string) ($group['label'] ?? 'Excluido')) ?></strong>
+              <p><?= (int) ($group['count'] ?? 0) ?> trabajo(s). <?= View::e((string) ($group['description'] ?? 'No elegible para manual exacto.')) ?></p>
+              <?php if (!empty($group['url'])): ?><a href="<?= View::e($group['url']) ?>">Ver detalle</a><?php endif; ?>
+            </article>
+          <?php endforeach; ?>
         </div>
       </details>
     <?php endif; ?>
   </div>
 </section>
-
-<?php if (!empty($smartDrainReady) && empty($emergencyStop)): ?>
-<script>
-(() => {
-  const panel = document.querySelector('[data-k10-drain]');
-  if (!panel) return;
-  const statusUrl = panel.dataset.statusUrl || '';
-  let token = panel.dataset.sessionToken || '';
-  const csrf = panel.dataset.csrf || '';
-  const stateEl = panel.querySelector('[data-k10-state]');
-  const processedEl = panel.querySelector('[data-k10-processed]');
-  const remoteEl = panel.querySelector('[data-k10-remote]');
-  const heartbeatEl = panel.querySelector('[data-k10-heartbeat]');
-  const feedbackEl = panel.querySelector('[data-k10-feedback]');
-  const burstCurrentEl = panel.querySelector('[data-k10-burst-current]');
-  const burstMaxEl = panel.querySelector('[data-k10-burst-max]');
-  const nextSafeEl = panel.querySelector('[data-k10-next-safe]');
-  const profileRevisionEl = panel.querySelector('[data-k10-profile-revision]');
-  const lastResultEl = panel.querySelector('[data-k10-last-result]');
-  const tokenFields = () => panel.querySelectorAll('[data-k10-token-field]');
-  const generationFields = () => panel.querySelectorAll('[data-k10-generation-field]');
-  const actionForms = () => panel.querySelectorAll('[data-k10-action]');
-  let inFlight = false;
-  let loopEnabled = false;
-  let loopTimer = 0;
-  const setBusy = (busy) => {
-    panel.setAttribute('aria-busy', busy ? 'true' : 'false');
-    panel.querySelectorAll('button').forEach((button) => { button.disabled = busy; });
-  };
-  const show = (message) => {
-    if (feedbackEl) feedbackEl.textContent = message;
-  };
-  const update = (payload) => {
-    const session = payload && payload.session ? payload.session : null;
-    const state = payload && payload.state ? payload.state : (session && session.state ? session.state : 'OFF');
-    if (stateEl) stateEl.textContent = state;
-    if (processedEl) processedEl.textContent = String(session && session.jobs_processed ? session.jobs_processed : 0);
-    if (remoteEl) remoteEl.textContent = String(session && session.remote_calls_observed ? session.remote_calls_observed : 0);
-    if (heartbeatEl) heartbeatEl.textContent = session && session.heartbeat_at ? session.heartbeat_at : 'N/A';
-    const last = session && session.last_result ? session.last_result : {};
-    const profile = session && session.profile ? session.profile : {};
-    if (burstCurrentEl) burstCurrentEl.textContent = String(session && session.burst_remote_calls_current ? session.burst_remote_calls_current : 0);
-    if (burstMaxEl) burstMaxEl.textContent = String(profile.remote_calls_per_burst || 1);
-    if (nextSafeEl) nextSafeEl.textContent = last.effective_next_safe_at || payload.next_safe_at || 'N/A';
-    if (profileRevisionEl) profileRevisionEl.textContent = String(session && session.profile_revision ? session.profile_revision : 1);
-    if (lastResultEl) lastResultEl.textContent = last.classification || payload.message || 'Sin resultado todavía.';
-    if (session && session.session_token) {
-      token = session.session_token;
-      panel.dataset.sessionToken = token;
-      tokenFields().forEach((field) => { field.value = token; });
-    }
-    if (session && session.drain_generation !== undefined) {
-      generationFields().forEach((field) => { field.value = String(session.drain_generation); });
-    }
-    const hasSession = !!token && !['OFF', 'EXPIRED', 'ABANDONED', 'RELEASING'].includes(state);
-    actionForms().forEach((form) => {
-      const action = form.dataset.k10Action || '';
-      if (['step', 'stop', 'profile'].includes(action)) form.hidden = !hasSession;
-      if (action === 'pause') form.hidden = !hasSession || state === 'PAUSED';
-      if (action === 'resume') form.hidden = !hasSession || state !== 'PAUSED';
-    });
-    if (['PAUSED', 'RATE_LIMITED', 'OFF', 'EXPIRED', 'ABANDONED', 'RELEASING'].includes(state)) {
-      loopEnabled = false;
-      window.clearTimeout(loopTimer);
-    }
-  };
-  const nextDelay = (payload) => {
-    const raw = payload && (payload.next_safe_at || (payload.session && payload.session.last_result && payload.session.last_result.effective_next_safe_at));
-    if (!raw) return 500;
-    const at = Date.parse(String(raw).replace(' ', 'T') + 'Z');
-    return Number.isFinite(at) ? Math.max(500, at - Date.now()) : 500;
-  };
-  const runOneStepSoon = () => {
-    const form = panel.querySelector('form[data-k10-action="step"]');
-    if (form) {
-      loopTimer = window.setTimeout(() => post(form, true), 500);
-    }
-  };
-  const scheduleStep = (payload) => {
-    window.clearTimeout(loopTimer);
-    if (!loopEnabled || !token) return;
-    const state = payload && payload.state ? payload.state : '';
-    const claimed = Number(payload && payload.claimed ? payload.claimed : 0);
-    const hasSafeTime = !!(payload && (payload.next_safe_at || (payload.session && payload.session.last_result && payload.session.last_result.effective_next_safe_at)));
-    if (state === 'ACTIVE' && claimed < 1 && !hasSafeTime) {
-      loopEnabled = false;
-      show('Sin trabajo elegible para este paso. La sesión queda segura; Cron puede retomar cuando corresponda.');
-      return;
-    }
-    if (state === 'ACTIVE' || state === 'COOLING') {
-      loopTimer = window.setTimeout(() => {
-        const form = panel.querySelector('form[data-k10-action="step"]');
-        if (form) post(form, true);
-      }, nextDelay(payload));
-    }
-  };
-  const post = async (form, fromLoop = false) => {
-    if (inFlight) return;
-    inFlight = true;
-    setBusy(true);
-    try {
-      const response = await fetch(form.action, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {'Accept': 'application/json'},
-        body: new FormData(form),
-      });
-      const payload = await response.json();
-      update(payload);
-      show(payload.message || (response.ok ? 'Acción aplicada.' : 'No se pudo tomar la autoridad global.'));
-      const action = form.dataset.k10Action || '';
-      if (action === 'start' || action === 'resume') {
-        loopEnabled = true;
-        runOneStepSoon();
-      } else {
-        if (action === 'pause' || action === 'stop') loopEnabled = false;
-        if (fromLoop || loopEnabled) scheduleStep(payload);
-      }
-    } catch (error) {
-      show('No se pudo contactar el endpoint K10. Recargue la página antes de intentar de nuevo.');
-    } finally {
-      inFlight = false;
-      setBusy(false);
-    }
-  };
-  panel.querySelectorAll('form[data-k10-action]').forEach((form) => {
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      post(form);
-    });
-  });
-  const refresh = async () => {
-    if (!statusUrl || !token) return;
-    try {
-      const url = new URL(statusUrl, window.location.href);
-      url.searchParams.set('session_token', token);
-      const generationField = panel.querySelector('[data-k10-generation-field]');
-      if (generationField) url.searchParams.set('drain_generation', generationField.value || '');
-      const response = await fetch(url.toString(), {credentials: 'same-origin', headers: {'Accept': 'application/json'}});
-      if (response.ok) update(await response.json());
-    } catch (error) {}
-  };
-  const heartbeat = async () => {
-    if (!token || inFlight) return;
-    const body = new FormData();
-    body.set('_token', csrf);
-    body.set('session_token', token);
-    const generationField = panel.querySelector('[data-k10-generation-field]');
-    if (generationField) body.set('drain_generation', generationField.value || '');
-    try {
-      const response = await fetch('<?= View::e($base . '/settings/manual-processing/drain/heartbeat') ?>', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {'Accept': 'application/json'},
-        body,
-      });
-      if (response.ok) update(await response.json());
-    } catch (error) {}
-  };
-  window.setInterval(refresh, 15000);
-  window.setInterval(heartbeat, 15000);
-})();
-</script>
 <?php endif; ?>
 
-<?php if ($campaignReady && empty($emergencyStop) && !$activeSession): ?>
-<section class="panel manual-panel">
-  <div class="panel-head"><div><p class="eyebrow"><?= $preview === null ? 'PASO 1' : 'PASO 2' ?></p><h2><?= $preview === null ? '¿Qué desea procesar?' : 'Configure el ritmo' ?></h2></div></div>
+<section class="panel manual-engine-card">
   <div class="panel-body">
-  <form method="post" action="<?= View::e($base . '/settings/manual-processing/preview') ?>" class="manual-campaign-form" data-manual-preview-form>
-    <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
-    <input type="hidden" name="origin" value="<?= View::e((string) $origin) ?>">
-    <?php foreach ((array) $originContext as $contextKey => $contextValue): ?>
-      <?php if ((string) $contextValue !== '' && (int) $contextValue !== 0): ?>
-        <input type="hidden" name="<?= View::e((string) $contextKey) ?>" value="<?= View::e((string) $contextValue) ?>">
-      <?php endif; ?>
-    <?php endforeach; ?>
-    <fieldset><legend>Selección</legend><div class="manual-choice-grid">
-      <?php foreach ($scopeLabels as $key => [$label, $description]): ?>
-      <label class="manual-choice-card"><input type="radio" name="scope" value="<?= View::e($key) ?>" <?= $scope === $key ? 'checked' : '' ?>>
-        <span><strong><?= View::e($label) ?></strong><small><?= View::e($description) ?></small></span></label>
-      <?php endforeach; ?>
-    </div></fieldset>
-    <fieldset class="manual-rhythm-grid"><legend>Limites usados para calcular disponibilidad</legend>
-      <label><span>Resultados antes de guardar checkpoint</span><input type="number" name="block_size" min="1" max="60" value="<?= (int) $blockSize ?>"><small>No equivale a salidas HTTP.</small></label>
-      <label><span>Después de cada salida HTTP</span><span class="input-with-unit"><input type="number" name="interval_seconds" min="0" max="300" step="0.1" value="<?= View::e((string) $intervalSeconds) ?>"><em>segundos</em></span></label>
-      <label><span>Pausa después del checkpoint</span><span class="input-with-unit"><input type="number" name="block_pause_seconds" min="0" max="3600" step="1" value="<?= View::e((string) $blockPauseSeconds) ?>"><em>segundos</em></span></label>
-      <label><span>Puntos de avance máximos</span><input type="number" name="max_blocks" min="0" max="10000" value="<?= (int) $maxBlocks ?>" aria-describedby="max-blocks-help"><small id="max-blocks-help">0 significa hasta terminar.</small></label>
-      <label><span>Duración máxima</span><span class="input-with-unit"><input type="number" name="max_duration_minutes" min="0" max="10080" value="<?= (int) $maxDurationMinutes ?>"><em>minutos</em></span><small>0 significa sin límite.</small></label>
-      <div class="manual-readonly-setting"><span>Ejecucion</span><strong>Un solo trabajo por confirmacion</strong></div>
-    </fieldset>
-    <div class="alert info"><strong>Comparte el techo HTTP de Cron.</strong><p>El cálculo manual guarda avance cada <?= (int) $blockSize ?> resultado(s), pero cada confirmación procesa un único trabajo exacto y respeta el techo global. Permitido ahora: <?= View::e(number_format((float) ($rhythmPreview['effective_rpm'] ?? 0), 1, ',', '.')) ?> HTTP/min, limitado por <?= View::e((string) ($rhythmPreview['limiting_scope'] ?? 'protección disponible')) ?>. Puede ir más lento, nunca más rápido.</p></div>
-    <div class="manual-quick-delays" aria-label="Intervalos rápidos">
-      <?php foreach ([0,1,2,5,10,20,30,60,300] as $delay): ?><button type="button" class="chip" data-manual-delay="<?= $delay ?>"><?= $delay < 60 ? $delay . ' s' : ($delay / 60) . ' min' ?></button><?php endforeach; ?>
-    </div>
-    <button class="btn primary" type="submit" data-manual-preview-submit>
-      <span data-ready-label>Calcular trabajos disponibles</span>
-      <span data-busy-label hidden>Comprobando trabajos…</span>
-    </button>
-  </form>
+    <p><span class="badge neutral">ACTIVE_DRAINERS_MAX=1</span> Manual y automático comparten la autoridad global de ejecución.</p>
+    <p><span class="badge neutral">BACKGROUND_CONTINUATION=0</span> Al responder la petición no queda un drainer manual vivo.</p>
   </div>
 </section>
-
-<?php if ($preview !== null): ?>
-<section class="panel manual-review-card" id="resultado-calculo" tabindex="-1" aria-live="polite">
-  <div class="panel-head"><div><p class="eyebrow">PASO 3</p><h2>Revise antes de comenzar</h2>
-    <p>El cálculo no consulta Mercado Libre y utiliza un modo seguro con recursos exactos. Vigente hasta <?= View::e((string) ($preview['expires_at'] ?? '')) ?> UTC.</p></div></div>
-  <div class="panel-body">
-    <?php if (empty($preview['can_start_campaign'])): ?>
-      <?php if ($scope === 'audits'): ?>
-        <div class="empty-state"><strong>Primero debe crear una comprobación.</strong><p>Seleccione una cuenta y un periodo en Control de ventas. Allí podrá comprobar, revisar diferencias y preparar una reparación segura.</p><a class="btn primary" href="<?= View::e($base) ?>/sales-control">Ir a Control de ventas</a></div>
-      <?php else: ?>
-        <div class="empty-state"><strong>No hay trabajos remotos exactos listos ahora.</strong><p>El cálculo terminó correctamente. Abra uno de los grupos para ver cada trabajo, entender por qué no entró y llegar a su solución.</p></div>
-      <?php endif; ?>
-      <?php if ($exclusionGroups !== []): ?>
-      <div class="manual-preview-breakdown" aria-label="Resultado completo del cálculo">
-        <?php foreach ($exclusionGroups as $group): ?>
-          <a class="manual-preview-group is-<?= View::e((string) $group['tone']) ?>" href="<?= View::e($base . $group['url']) ?>">
-            <strong><?= (int) $group['count'] ?></strong>
-            <span><?= View::e((string) $group['label']) ?></span>
-            <small><?= View::e((string) $group['explanation']) ?></small>
-            <b><?= View::e((string) $group['action']) ?> →</b>
-          </a>
-        <?php endforeach; ?>
-      </div>
-      <div class="manual-safety-note"><strong>Procesar rápido no significa saltar protecciones.</strong><p>Solo entran consultas exactas que el ERP puede reservar y reanudar sin duplicarlas. Los errores, horarios futuros y trabajos por etapas se abren desde su grupo para resolverlos correctamente.</p></div>
-      <?php endif; ?>
-    <?php else: ?>
-      <p class="manual-conclusion">Hay <strong><?= (int) $preview['eligible_jobs'] ?> trabajos</strong> disponibles. Esta confirmacion procesara solamente el primero y ejecutara como maximo una salida HTTP.</p>
-      <div class="metric-grid manual-metric-grid">
-        <article><span>Trabajos</span><strong><?= (int) $preview['eligible_jobs'] ?></strong></article>
-        <article><span>HTTP máximos estimados</span><strong><?= (int) $preview['estimated_calls'] ?></strong></article>
-        <article><span>Puntos de avance estimados</span><strong><?= max(1, (int) ($preview['total_blocks'] ?? 1)) ?></strong></article>
-        <article><span>Duración aproximada</span><strong><?= View::e($duration((int) $preview['estimated_duration_seconds'])) ?></strong></article>
-      </div>
-      <div class="alert info"><strong>El reloj controla llamadas reales.</strong><p>Una publicación, una página de órdenes o una descripción consumirá como máximo una salida remota antes de respetar la espera configurada.</p></div>
-      <div class="table-scroll"><table class="data-table compact"><caption>Operaciones incluidas en la campaña</caption><thead><tr><th>Operación</th><th>Trabajos</th><th>HTTP estimados</th><th>Puntos de avance</th><th>Ritmo efectivo</th></tr></thead><tbody>
-      <?php foreach ($preview['operations'] as $operation): ?><tr><td><?= View::e((string) $operation['label']) ?></td><td><?= (int) $operation['items'] ?></td><td><?= (int) $operation['calls'] ?></td><td><?= (int) ($operation['blocks'] ?? 1) ?></td><td><?= View::e(number_format(((int) $operation['effective_interval_ms']) / 1000, 1, ',', '.')) ?> s<?= !empty($operation['adjusted']) ? ' · protegido' : '' ?></td></tr><?php endforeach; ?>
-      </tbody></table></div>
-      <?php if ($exclusionGroups !== []): ?>
-      <div class="manual-preview-breakdown" aria-label="Trabajos que no entrarán en la campaña">
-        <?php foreach ($exclusionGroups as $group): ?>
-          <a class="manual-preview-group is-<?= View::e((string) $group['tone']) ?>" href="<?= View::e($base . $group['url']) ?>">
-            <strong><?= (int) $group['count'] ?></strong>
-            <span><?= View::e((string) $group['label']) ?></span>
-            <small><?= View::e((string) $group['explanation']) ?></small>
-            <b><?= View::e((string) $group['action']) ?> →</b>
-          </a>
-        <?php endforeach; ?>
-      </div>
-      <details class="technical-details"><summary>Vista rápida de las primeras exclusiones</summary>
-        <ul><?php foreach (array_slice((array) $preview['excluded_jobs'], 0, 25) as $excluded): ?><li><strong><?= View::e((string) ($excluded['label'] ?? 'Trabajo')) ?>:</strong> <?= View::e((string) ($excluded['reason'] ?? 'No disponible.')) ?></li><?php endforeach; ?></ul>
-      </details>
-      <?php endif; ?>
-      <?php if (!empty($preview['selection_limited'])): ?><div class="alert info"><strong>La selección tiene un límite.</strong><p>Los trabajos restantes seguirán disponibles para otra confirmación exacta o para la automatización V4.</p></div><?php endif; ?>
-      <?php if (!empty($preview['contains_descriptions'])): ?><div class="alert warning"><strong>Incluye descripciones.</strong><p>Aunque solicite un intervalo menor, se aplicarán al menos 20 segundos y una descripción por bloque.</p></div><?php endif; ?>
-      <form method="post" action="<?= View::e($base . '/settings/manual-processing/start') ?>" class="manual-confirm-form">
-        <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>"><input type="hidden" name="scope" value="<?= View::e($scope) ?>">
-        <input type="hidden" name="preview_token" value="<?= View::e((string) ($preview['preview_token'] ?? '')) ?>">
-        <input type="hidden" name="origin" value="<?= View::e((string) $origin) ?>">
-        <?php foreach ((array) $originContext as $contextKey => $contextValue): ?>
-          <?php if ((string) $contextValue !== '' && (int) $contextValue !== 0): ?>
-            <input type="hidden" name="<?= View::e((string) $contextKey) ?>" value="<?= View::e((string) $contextValue) ?>">
-          <?php endif; ?>
-        <?php endforeach; ?>
-        <input type="hidden" name="preset" value="custom"><input type="hidden" name="block_size" value="<?= (int) $blockSize ?>">
-        <input type="hidden" name="interval_seconds" value="<?= View::e((string) $intervalSeconds) ?>"><input type="hidden" name="block_pause_seconds" value="<?= View::e((string) $blockPauseSeconds) ?>">
-        <input type="hidden" name="max_blocks" value="<?= (int) $maxBlocks ?>"><input type="hidden" name="max_duration_minutes" value="<?= (int) $maxDurationMinutes ?>">
-        <?php if (!empty($preview['contains_descriptions'])): ?><label class="manual-confirm-delicate"><input type="checkbox" name="confirm_delicate" value="1" required><span>Entiendo que las descripciones avanzan con un límite especial.</span></label><?php endif; ?>
-        <p class="manual-browser-note"><strong>Mantenga abierta esta pagina.</strong> La peticion termina despues de un unico resultado y no deja una campana en segundo plano.</p>
-        <button class="btn primary" type="submit">Procesar un trabajo</button>
-      </form>
-    <?php endif; ?>
-  </div>
-</section>
-<?php endif; ?>
-<?php endif; ?>

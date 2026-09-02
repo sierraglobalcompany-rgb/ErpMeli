@@ -119,7 +119,7 @@ require __DIR__ . '/_automation_nav.php';
       <h2 id="release-integrity-title"><?= $integrityOk ? 'Instalación íntegra' : ($integrityState === 'schema_pending' ? 'Migración de integridad pendiente' : 'Instalación mezclada') ?></h2>
       <p>
         <?php if ($integrityOk): ?>
-          Los archivos, Queue V4 y el esquema pertenecen a la misma release.
+          Los archivos, la automatización y el esquema pertenecen a la misma release.
         <?php elseif ($integrityState === 'schema_pending'): ?>
           Los archivos coinciden, pero debe completar la migración requerida antes de ejecutar el lanzador único.
         <?php else: ?>

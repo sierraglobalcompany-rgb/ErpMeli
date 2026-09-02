@@ -13,7 +13,25 @@ k1b_assert(str_contains($manual, 'Máximo de llamadas API'), 'Manual must expose
 k1b_assert(str_contains($manual, 'Límite de llamadas API'), 'Manual preview must expose API call limit.');
 k1b_assert(str_contains($singleStep, 'Pendientes disponibles: llamadas API solicitadas'), 'Manual result message must be call-centric.');
 
-foreach (['Cola disponible', 'Trabajos procesados', 'Alcance del trabajo', 'Límite elegido'] as $forbidden) {
+foreach ([
+    'Cola disponible',
+    'Pausar cola',
+    'Cola única',
+    'cola Webhook',
+    'cola Webhook‑First',
+    'cola automática',
+    'Cola financiera activa',
+    'procesar colas',
+    'trabajos del cron',
+    'Trabajos procesados',
+    'Bloques por cron',
+    'Recursos por lote',
+    'Máximo por trabajo',
+    'Descripciones por lote',
+    'Pausa entre lotes',
+    'Alcance del trabajo',
+    'Límite elegido',
+] as $forbidden) {
     k1b_assert(!str_contains($manual, $forbidden), "Manual primary copy still contains {$forbidden}");
 }
 

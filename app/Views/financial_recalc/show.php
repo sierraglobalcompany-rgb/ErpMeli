@@ -13,8 +13,8 @@ $jobDiagnosticId = isset($job['diagnostic_id']) ? (string) $job['diagnostic_id']
 ?>
 <div class="page-head">
   <div>
-    <a class="link" href="<?= View::e($base) ?>/financial-recalc">← Volver a cola financiera</a>
-    <h1>Job financiero #<?= (int) $job['id'] ?></h1>
+    <a class="link" href="<?= View::e($base) ?>/financial-recalc">← Volver a procesamiento financiero</a>
+    <h1>Recálculo financiero #<?= (int) $job['id'] ?></h1>
     <p>Recálculo inteligente: local → detectar faltantes → billing → neto conciliado.</p>
   </div>
   <div class="page-actions">
@@ -42,16 +42,16 @@ $jobDiagnosticId = isset($job['diagnostic_id']) ? (string) $job['diagnostic_id']
   <h2>Acciones</h2>
   <div class="page-actions">
     <a class="btn primary" href="<?= View::e($base) ?>/settings/manual-processing?scope=finance&amp;origin=financial&amp;account_id=<?= (int) ($job['meli_account_id'] ?? 0) ?>">Procesar finanzas ahora</a>
-    <form method="post" action="<?= View::e($base) ?>/financial-recalc/retry-failed" data-confirm="Reintentará errores de este job.">
+    <form method="post" action="<?= View::e($base) ?>/financial-recalc/retry-failed" data-confirm="Reintentará errores de este recálculo.">
       <input type="hidden" name="_token" value="<?= Csrf::token() ?>">
       <input type="hidden" name="job_id" value="<?= (int) $job['id'] ?>">
       <button class="btn">Reintentar errores</button>
     </form>
     <?php if (in_array((string) $job['status'], ['pending','running','error'], true)): ?>
-    <form method="post" action="<?= View::e($base) ?>/financial-recalc/cancel" data-confirm="Cancelará este job financiero sin borrar el historial.">
+    <form method="post" action="<?= View::e($base) ?>/financial-recalc/cancel" data-confirm="Cancelará este recálculo financiero sin borrar el historial.">
       <input type="hidden" name="_token" value="<?= Csrf::token() ?>">
       <input type="hidden" name="job_id" value="<?= (int) $job['id'] ?>">
-      <button class="btn danger">Cancelar job</button>
+      <button class="btn danger">Cancelar recálculo</button>
     </form>
     <?php endif; ?>
   </div>
@@ -59,7 +59,7 @@ $jobDiagnosticId = isset($job['diagnostic_id']) ? (string) $job['diagnostic_id']
 
 <section class="panel table-panel mt-2">
   <header class="panel-head">
-    <h2>Órdenes del job</h2>
+    <h2>Órdenes del recálculo</h2>
     <div class="page-actions">
       <a class="btn small" href="<?= View::e($base) ?>/financial-recalc/show?id=<?= (int) $job['id'] ?>">Todas</a>
       <a class="btn small" href="<?= View::e($base) ?>/financial-recalc/show?id=<?= (int) $job['id'] ?>&status=pending">Pendientes</a>

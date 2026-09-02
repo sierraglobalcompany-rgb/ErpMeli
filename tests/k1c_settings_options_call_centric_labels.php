@@ -30,10 +30,27 @@ $expect('api.budget.account_requests_per_15m', 'Capacidad por cuenta', 'llamadas
 $expect('api.budget.web_request_api_limit', 'Máximo desde una pantalla', 'llamadas API');
 $expect('sync.queue_max_chunks_per_run', 'Ventanas tomadas por cron', 'ventanas', true);
 $expect('notifications.worker_batch_limit', 'Recursos por ciclo', 'recursos', true);
+$expect('financial_recalc.enabled', 'Procesamiento financiero activo');
 $expect('financial_recalc.max_orders_per_job', 'Máximo por recálculo', 'órdenes', true);
 
 $combined = json_encode($sections, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-foreach (['Bloques por cron', 'Recursos por lote', 'Máximo por trabajo', 'consultas / 15 min'] as $forbidden) {
+foreach ([
+    'Pausar cola',
+    'Cola única',
+    'cola Webhook',
+    'cola Webhook‑First',
+    'cola automática',
+    'Cola financiera activa',
+    'procesar colas',
+    'trabajos del cron',
+    'Trabajos procesados',
+    'Bloques por cron',
+    'Recursos por lote',
+    'Máximo por trabajo',
+    'Descripciones por lote',
+    'Pausa entre lotes',
+    'consultas / 15 min',
+] as $forbidden) {
     k1b_assert(!str_contains($combined, $forbidden), "Forbidden primary configuration phrase remains: {$forbidden}");
 }
 

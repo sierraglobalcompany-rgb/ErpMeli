@@ -245,7 +245,7 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
     <?php if ($previewRows === []): ?>
       <div class="alert info">
         <strong>No hay pendientes exactos seguros ahora.</strong>
-        <p>No se ejecutó nada. La cola automática conserva su ritmo normal.</p>
+        <p>No se ejecutó nada. La automatización natural conserva su ritmo normal.</p>
       </div>
     <?php else: ?>
       <div class="table-wrap">

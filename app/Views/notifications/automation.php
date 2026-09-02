@@ -21,12 +21,12 @@ $recentFailures = is_array($recentFailures ?? null) ? $recentFailures : [];
 <section class="guided-status <?= $automatic ? 'is-success' : ($pending > 0 ? 'is-danger' : 'is-warning') ?>">
   <div>
     <span class="eyebrow">Estado del lanzador único</span>
-    <h2><?= $automatic ? 'Automatización funcionando' : ($pending > 0 ? 'Hay trabajo esperando automatización' : 'Automatización pendiente de configurar') ?></h2>
+    <h2><?= $automatic ? 'Automatización funcionando' : ($pending > 0 ? 'Hay pendientes esperando automatización' : 'Automatización pendiente de configurar') ?></h2>
     <p><?= $automatic
         ? ($errors > 0
             ? 'El lanzador único está enviando señales. Hay recursos con error que requieren diagnóstico o reintento controlado.'
             : 'El lanzador único ha enviado al menos dos señales consecutivas y no hay errores pendientes.')
-        : 'Configure el lanzador único en Hostinger. Mientras tanto, los trabajos permanecen guardados.' ?></p>
+        : 'Configure el lanzador único en Hostinger. Mientras tanto, los pendientes permanecen guardados.' ?></p>
   </div>
   <div class="guided-status-value"><strong><?= $pending ?></strong><span>pendientes</span></div>
 </section>
@@ -72,7 +72,7 @@ $recentFailures = is_array($recentFailures ?? null) ? $recentFailures : [];
 <section class="automation-actions-grid">
   <article class="panel">
     <h2>2. Procesar ahora</h2>
-    <p>Revise primero el trabajo pendiente y deje que el lanzador único lo procese sin mantener una petición web abierta.</p>
+    <p>Revise primero los pendientes y deje que el lanzador único los atienda sin mantener una petición web abierta.</p>
     <a class="btn primary" href="<?= View::e($base) ?>/settings/manual-processing?scope=sales&amp;origin=notifications">Procesar ventas y notificaciones</a>
   </article>
 </section>

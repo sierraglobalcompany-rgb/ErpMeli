@@ -3,8 +3,9 @@
 use App\Core\Csrf;
 use App\Core\Env;
 use App\Core\View;
-use App\Services\DateTimePresenter;
 use App\Services\AssetVersionService;
+use App\Services\AutomationHumanLanguageService;
+use App\Services\DateTimePresenter;
 
 $base = rtrim(Env::get('APP_URL', ''), '/');
 $apiHealthAsset = View::asset($base, 'api-health.js') . '&v=' . rawurlencode(AssetVersionService::fingerprint('assets/api-health.js'));
@@ -36,7 +37,7 @@ $rateLimitPriorityCount = count(array_filter($priorityIncidents, static fn(array
 $apiHealthSection = 'overview';
 $apiHealthHours = (int) ($overview['hours'] ?? 24);
 $apiHealthCheckedAt = $overview['checked_at'] ?? null;
-$operatorCheckedAtLabel = $apiHealthCheckedAt ? DateTimePresenter::formatQueue((string) $apiHealthCheckedAt, 'd/m H:i') : '—';
+$operatorCheckedAtLabel = $apiHealthCheckedAt ? DateTimePresenter::formatQueue((string) $apiHealthCheckedAt, 'd/m H:i') : '';
 $incidentLink = static function (array $overrides = []) use ($base, $apiHealthHours, $overview): string {
     $query = array_merge([
         'hours' => $apiHealthHours,
@@ -57,7 +58,7 @@ if (empty($apiHealthPartial)) {
     <div>
       <span class="eyebrow">Salud Mercado Libre</span>
       <h2 id="api-now-title">Ahora</h2>
-      <p>Datos verificados · última actualización <?= View::e($operatorCheckedAtLabel) ?></p>
+      <p><?= View::e(AutomationHumanLanguageService::verifiedDataLabel($operatorCheckedAtLabel)) ?></p>
     </div>
     <a class="btn" href="<?= View::e($incidentLink(['hours' => 24, 'http_status' => 429, 'origin' => 'remote'])) ?>">Ver 429 remotos</a>
   </header>
@@ -154,7 +155,7 @@ if (empty($apiHealthPartial)) {
     <span class="api-protection-icon" aria-hidden="true">Ⅱ</span>
     <div>
       <strong>Consultas a Mercado Libre bloqueadas por mantenimiento</strong>
-      <p>No se iniciarán consultas, renovaciones OAuth ni campañas remotas. Los datos y trabajos permanecen guardados.</p>
+      <p>No se iniciarán consultas, renovaciones OAuth ni campañas remotas. Los datos y pendientes permanecen guardados.</p>
     </div>
   </article>
 </section>

@@ -300,7 +300,7 @@ final class ApiHealthOverviewService
             }
             return [
                 'available' => true,
-                'source_label' => 'CERTIFICADO · api_request_logs directo',
+                'source_label' => 'Datos verificados',
                 'provenance' => '60m es estado actual; 24h es contexto; 30d es histórico.',
                 'windows' => $windows,
             ];

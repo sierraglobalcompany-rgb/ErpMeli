@@ -61,7 +61,7 @@ final class NavigationRepository
                 'label' => 'Administración',
                 'icon' => 'users',
                 'items' => [
-                    $this->item('/settings/manual-processing', 'refresh', 'Procesamiento manual'),
+                    $this->item('/settings/manual-processing', 'refresh', 'Procesar ahora'),
                     $this->item('/companies', 'building', 'Organización', ['/companies', '/accounts']),
                     $this->item('/users', 'users', 'Usuarios y accesos'),
                     $this->item('/settings', 'file', 'Configuración'),
@@ -161,7 +161,7 @@ final class NavigationRepository
                     '/settings/catalogs',
                     '/settings/system',
                 ]],
-                ['href' => '/settings/cron', 'label' => 'Procesamiento', 'matches' => [
+                ['href' => '/settings/cron', 'label' => 'Automatización', 'matches' => [
                     '/settings/cron',
                     '/settings/manual-processing',
                 ]],

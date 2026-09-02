@@ -9,8 +9,8 @@ $csrfToken = Csrf::token();
 <div class="page-head cron-page-head">
   <div>
     <span class="eyebrow">AUTOMATIZACIÓN</span>
-    <h1>Procesamiento automático</h1>
-    <p>Estado actual, último ciclo, trabajo útil y atención necesaria sin mezclar histórico con alarmas.</p>
+    <h1>Centro de automatización</h1>
+    <p>Estado actual, último ciclo, llamadas API físicas y atención necesaria sin mezclar histórico con alarmas.</p>
   </div>
   <div class="page-actions">
     <a class="btn" href="<?= View::e($base) ?>/settings/api-health">Salud API</a>
@@ -78,26 +78,26 @@ $csrfToken = Csrf::token();
 
   <section class="cron-task-section" aria-labelledby="queue-work-title">
     <div class="section-heading"><div>
-      <h2 id="queue-work-title">Trabajo efectivo por llamadas API</h2>
+      <h2 id="queue-work-title">Atención efectiva por llamadas API</h2>
       <p>Lectura reciente del ciclo natural; mide llamadas API físicas y no ejecuta cron manual.</p>
     </div></div>
-    <section class="cron-primary-grid" aria-label="Trabajo efectivo">
-      <article><span>Completados</span><strong data-qv4-work="completed">—</strong></article>
-      <article><span>Diferidos</span><strong data-qv4-work="deferred">—</strong></article>
+    <section class="cron-primary-grid" aria-label="Atención efectiva">
+      <article><span>Elementos completados</span><strong data-qv4-work="completed">—</strong></article>
+      <article><span>Elementos aplazados</span><strong data-qv4-work="deferred">—</strong></article>
       <article><span>Efectividad</span><strong data-qv4-work="ratio">—</strong></article>
     </section>
   </section>
 
   <section class="cron-task-section" aria-labelledby="queue-now-title">
     <div class="section-heading"><div>
-      <h2 id="queue-now-title">Cola ahora</h2>
-      <p>Sólo “Listos” entra al FIFO; lo demás espera su autoridad o revisión.</p>
+      <h2 id="queue-now-title">Pendientes ahora</h2>
+      <p>Sólo “Listos” entra al turno FIFO; lo demás espera su autoridad o revisión.</p>
     </div></div>
-    <section class="cron-primary-grid" aria-label="Contadores de cola automática">
+    <section class="cron-primary-grid" aria-label="Contadores de pendientes automáticos">
       <article><span>Listos</span><strong data-qv4-count="ready">0</strong></article>
       <article><span>Esperando</span><strong data-qv4-count="waiting">0</strong></article>
       <article><span>Revisión</span><strong data-qv4-count="review">0</strong></article>
-      <article><span>Ejecutando</span><strong data-qv4-count="running">0</strong></article>
+      <article><span>En atención</span><strong data-qv4-count="running">0</strong></article>
       <span hidden data-qv4-count="dead">0</span>
     </section>
   </section>

@@ -6,7 +6,7 @@ use App\QueueV4Clean\QueueV4CleanWorker;
 
 $base = rtrim(Env::get('APP_URL', ''), '/');
 $scopeLabels = [
-  'available_queue' => ['Cola disponible', 'Procesa directamente los trabajos que el sistema tiene listos ahora.', (int) ($availableQueueCount ?? 0) . ' listos ahora'],
+  'available_queue' => ['Pendientes disponibles ahora', 'Atiende directamente lo que el sistema tiene listo ahora.', (int) ($availableQueueCount ?? 0) . ' listos ahora'],
   'recommended' => ['Recomendado', 'Lo más seguro para avanzar ahora.'],
   'sales' => ['Ventas', 'Órdenes y notificaciones.'],
   'finance' => ['Finanzas', 'Conciliación y cálculo.'],
@@ -17,15 +17,15 @@ $scopeLabels = [
   'all' => ['Todo lo elegible', 'Todo lo elegible.'],
 ];
 $scopeHelp = [
-  'available_queue' => 'Procesa sólo la cola que está lista ahora, con la misma elegibilidad que la automatización natural.',
-  'recommended' => 'Muestra primero trabajo elegible, seguro y de bajo ruido para adelantar desde esta pestaña.',
-  'sales' => 'Filtra trabajos manuales relacionados con órdenes, notificaciones y ventas.',
-  'finance' => 'Filtra trabajos financieros que ya estén autorizados por su fuente de dominio.',
+  'available_queue' => 'Atiende sólo pendientes listos ahora, con la misma elegibilidad que la automatización natural.',
+  'recommended' => 'Muestra primero elementos elegibles, seguros y de bajo ruido para adelantar desde esta pestaña.',
+  'sales' => 'Filtra pendientes manuales relacionados con órdenes, notificaciones y ventas.',
+  'finance' => 'Filtra pendientes financieros que ya estén autorizados por su fuente de dominio.',
   'audits' => 'Filtra tareas de revisión operativa que pueden resolverse de forma acotada.',
   'products' => 'Filtra sincronización de publicaciones y datos de producto.',
   'descriptions' => 'Filtra descripciones; mantiene controles conservadores por ser una carga delicada.',
   'modules' => 'Filtra capacidades aisladas sin iniciar procesos en segundo plano.',
-  'all' => 'Muestra todos los trabajos exactos elegibles dentro del contexto autorizado actual.',
+  'all' => 'Muestra todos los pendientes exactos elegibles dentro del contexto autorizado actual.',
 ];
 $availableQueueMax = max(1, (int) QueueV4CleanWorker::HARD_MAX_CALLS);
 $availableQueueOptions = array_values(array_filter(
@@ -113,7 +113,7 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
   <div class="panel-head">
     <div>
       <p class="eyebrow">5 · Resultado</p>
-      <h2>Cola disponible procesada</h2>
+      <h2>Pendientes disponibles atendidos</h2>
       <p>La petición terminó. No quedó continuación manual en segundo plano.</p>
     </div>
   </div>
@@ -121,10 +121,10 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
     <div class="metric-grid manual-metric-grid">
       <article><span>Llamadas API solicitadas</span><strong><?= (int) ($manualAvailableQueueResult['requested_api_calls'] ?? $manualAvailableQueueResult['requested_count'] ?? 0) ?></strong></article>
       <article><span>Llamadas API usadas</span><strong><?= (int) ($manualAvailableQueueResult['api_calls_used'] ?? 0) ?></strong></article>
-      <article><span>Trabajos procesados</span><strong><?= (int) ($manualAvailableQueueResult['processed_count'] ?? 0) ?></strong></article>
-      <article><span>Completados</span><strong><?= (int) ($manualAvailableQueueResult['completed_count'] ?? 0) ?></strong></article>
-      <article><span>Esperando</span><strong><?= (int) ($manualAvailableQueueResult['waiting_count'] ?? 0) ?></strong></article>
-      <article><span>Revisión / errores</span><strong><?= (int) ($manualAvailableQueueResult['review_error_count'] ?? 0) ?></strong></article>
+      <article><span>Elementos atendidos</span><strong><?= (int) ($manualAvailableQueueResult['processed_count'] ?? 0) ?></strong></article>
+      <article><span>Elementos completados</span><strong><?= (int) ($manualAvailableQueueResult['completed_count'] ?? 0) ?></strong></article>
+      <article><span>Elementos esperando</span><strong><?= (int) ($manualAvailableQueueResult['waiting_count'] ?? 0) ?></strong></article>
+      <article><span>Elementos para revisión</span><strong><?= (int) ($manualAvailableQueueResult['review_error_count'] ?? 0) ?></strong></article>
       <article><span>No procesados</span><strong><?= (int) ($manualAvailableQueueResult['not_processed_count'] ?? max(0, (int) ($manualAvailableQueueResult['requested_count'] ?? 0) - (int) ($manualAvailableQueueResult['processed_count'] ?? 0))) ?></strong></article>
     </div>
     <a class="btn primary" href="<?= View::e($base . '/settings/manual-processing?scope=available_queue') ?>">Procesar más</a>
@@ -143,10 +143,10 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
   </div>
   <div class="panel-body">
     <div class="metric-grid manual-metric-grid">
-      <article><span>Procesados</span><strong><?= (int) ($manualResult['processed'] ?? 0) ?></strong></article>
-      <article><span>Completados</span><strong><?= (int) ($manualResult['completed'] ?? 0) ?></strong></article>
-      <article><span>Esperando</span><strong><?= (int) ($manualResult['waiting'] ?? 0) ?></strong></article>
-      <article><span>Revisión / errores</span><strong><?= (int) ($manualResult['review'] ?? 0) ?></strong></article>
+      <article><span>Elementos atendidos</span><strong><?= (int) ($manualResult['processed'] ?? 0) ?></strong></article>
+      <article><span>Elementos completados</span><strong><?= (int) ($manualResult['completed'] ?? 0) ?></strong></article>
+      <article><span>Elementos esperando</span><strong><?= (int) ($manualResult['waiting'] ?? 0) ?></strong></article>
+      <article><span>Elementos para revisión</span><strong><?= (int) ($manualResult['review'] ?? 0) ?></strong></article>
     </div>
     <a class="btn primary" href="<?= View::e($base . '/settings/manual-processing') ?>">Procesar más</a>
   </div>
@@ -157,7 +157,7 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
   <div class="panel-head">
     <div>
       <p class="eyebrow">1 · Qué procesar</p>
-      <h2>Alcance del trabajo</h2>
+      <h2>Alcance del procesamiento</h2>
       <p>El preview sólo incluirá filas elegibles ahora, dentro del contexto global autorizado.</p>
     </div>
   </div>
@@ -203,7 +203,7 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
               <option value="<?= $size ?>" <?= $configuredLimit === $size ? 'selected' : '' ?>><?= $size ?> llamada<?= $size === 1 ? '' : 's' ?></option>
             <?php endforeach; ?>
           </select>
-          <small>Consume como máximo N llamadas físicas a Mercado Libre. Trabajo local puede avanzar sin gastar llamadas.</small>
+          <small>Consume como máximo N llamadas físicas a Mercado Libre. La atención local puede avanzar sin gastar llamadas.</small>
         </label>
       </div>
 
@@ -228,23 +228,23 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
       <p class="eyebrow">3 · Previsualizar</p>
       <h2>Qué se va a procesar</h2>
       <?php if ($isAvailableQueuePreview): ?>
-        <p>Esta es la cola disponible en este momento. Al procesar, el sistema vuelve a validar los trabajos y tomará hasta <?= $previewLimit ?> que continúen disponibles.</p>
+        <p>Estos son los pendientes disponibles en este momento. Al procesar, el sistema vuelve a validar la elegibilidad y tomará hasta <?= $previewLimit ?> que continúen disponibles.</p>
       <?php else: ?>
-        <p>Esta selección queda ligada al botón. Si procesa, sólo puede tomar estas filas y hasta <?= $previewLimit ?> trabajo(s).</p>
+        <p>Esta selección queda ligada al botón. Si procesa, sólo puede tomar estas filas y hasta <?= $previewLimit ?> elemento(s).</p>
       <?php endif; ?>
     </div>
   </div>
   <div class="panel-body">
     <div class="metric-grid manual-metric-grid">
       <article><span>Elegibles ahora</span><strong><?= (int) ($preview['eligible_jobs'] ?? count($previewRows)) ?></strong></article>
-      <article><span>Límite elegido</span><strong><?= $previewLimit ?> llamada<?= $previewLimit === 1 ? '' : 's' ?></strong></article>
-      <article><span>Alcance</span><strong><?= View::e($isAvailableQueuePreview ? 'Cola disponible' : (string) ($preview['configuration']['scope'] ?? $scope)) ?></strong></article>
+      <article><span>Límite de llamadas API</span><strong><?= $previewLimit ?> llamada<?= $previewLimit === 1 ? '' : 's' ?></strong></article>
+      <article><span>Alcance</span><strong><?= View::e($isAvailableQueuePreview ? 'Pendientes disponibles' : (string) ($preview['configuration']['scope'] ?? $scope)) ?></strong></article>
       <article><span>Expira en</span><strong><?= $duration(max(0, (int) ($preview['expires_in_seconds'] ?? 0))) ?></strong></article>
     </div>
 
     <?php if ($previewRows === []): ?>
       <div class="alert info">
-        <strong>No hay trabajo exacto seguro ahora.</strong>
+        <strong>No hay pendientes exactos seguros ahora.</strong>
         <p>No se ejecutó nada. La cola automática conserva su ritmo normal.</p>
       </div>
     <?php else: ?>
@@ -260,13 +260,13 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
               <tr>
                 <?php if ($isAvailableQueuePreview): ?>
                   <td><?= $index + 1 ?></td>
-                  <td><?= View::e((string) ($row['human_label'] ?? $row['label'] ?? 'Trabajo disponible')) ?></td>
+                  <td><?= View::e((string) ($row['human_label'] ?? $row['label'] ?? 'Pendiente disponible')) ?></td>
                   <td><?= View::e((string) ($row['content_summary'] ?? $row['resource_label'] ?? 'Recurso disponible')) ?></td>
                   <td><?= View::e((string) ($row['account_name'] ?? $row['account_alias'] ?? ((int) ($row['meli_account_id'] ?? 0) === (int) ($accountId ?? 0) ? $manualAccountLabel : 'Cuenta autorizada'))) ?></td>
                   <td><span class="badge neutral"><?= View::e((string) ($row['status_label'] ?? $row['state_label'] ?? 'Listo ahora')) ?></span></td>
                 <?php else: ?>
                   <td><?= $index + 1 ?></td>
-                  <td><?= View::e((string) ($row['label'] ?? $row['queue_key'] ?? 'trabajo')) ?><br><small><?= View::e((string) ($row['source_alias'] ?? $row['source_id'] ?? 'exacto')) ?></small></td>
+                  <td><?= View::e((string) ($row['label'] ?? $row['queue_key'] ?? 'elemento')) ?><br><small><?= View::e((string) ($row['source_alias'] ?? $row['source_id'] ?? 'exacto')) ?></small></td>
                   <td><?= View::e((string) ($row['account_name'] ?? $row['account_alias'] ?? ((int) ($row['meli_account_id'] ?? 0) === (int) ($accountId ?? 0) ? $manualAccountLabel : 'Cuenta autorizada'))) ?></td>
                   <td><?= View::e((string) ($row['why_eligible'] ?? 'Seleccionado por previsualización y alcance autorizado.')) ?></td>
                   <td><span class="badge neutral">Seleccionado</span></td>
@@ -283,22 +283,22 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
         <input type="hidden" name="scope" value="<?= View::e((string) ($preview['configuration']['scope'] ?? $scope)) ?>">
         <input type="hidden" name="process_limit" value="<?= $previewLimit ?>">
         <?php if ($isAvailableQueuePreview): ?>
-          <p><strong>Confirmación:</strong> usar hasta <?= $previewLimit ?> llamada<?= $previewLimit === 1 ? '' : 's' ?> API en trabajos que continúen disponibles.</p>
+          <p><strong>Confirmación:</strong> usar hasta <?= $previewLimit ?> llamada<?= $previewLimit === 1 ? '' : 's' ?> API en pendientes que continúen disponibles.</p>
         <?php else: ?>
-          <p><strong>Confirmación:</strong> usar máximo <?= $previewLimit ?> llamada(s) API sobre trabajos exactos del preview. Sin campaña, sin sesión, sin continuación oculta.</p>
+          <p><strong>Confirmación:</strong> usar máximo <?= $previewLimit ?> llamada(s) API sobre elementos exactos del preview. Sin campaña, sin sesión, sin continuación oculta.</p>
         <?php endif; ?>
-        <button class="btn primary" type="submit"><?= $isAvailableQueuePreview ? 'Procesar Cola disponible' : 'PROCESAR ' . $previewLimit ?></button>
+        <button class="btn primary" type="submit"><?= $isAvailableQueuePreview ? 'Procesar pendientes disponibles' : 'PROCESAR ' . $previewLimit ?></button>
       </form>
     <?php endif; ?>
 
     <?php if ($exclusionGroups !== []): ?>
       <details class="cron-technical">
-        <summary>Trabajos excluidos del preview</summary>
+        <summary>Pendientes excluidos del preview</summary>
         <div class="manual-exclusion-grid">
           <?php foreach ($exclusionGroups as $group): ?>
             <article>
               <strong><?= View::e((string) ($group['label'] ?? 'Excluido')) ?></strong>
-              <p><?= (int) ($group['count'] ?? 0) ?> trabajo(s). <?= View::e((string) ($group['description'] ?? 'No elegible para manual exacto.')) ?></p>
+              <p><?= (int) ($group['count'] ?? 0) ?> elemento(s). <?= View::e((string) ($group['description'] ?? 'No elegible para manual exacto.')) ?></p>
               <?php if (!empty($group['url'])): ?><a href="<?= View::e($group['url']) ?>">Ver detalle</a><?php endif; ?>
             </article>
           <?php endforeach; ?>

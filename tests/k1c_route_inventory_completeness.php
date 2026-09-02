@@ -35,4 +35,17 @@ foreach ($required as $route) {
     k1b_assert(str_contains($routes, "'{$route}'") || str_contains($routes, "\"{$route}\""), "Route missing from router: {$route}");
 }
 
+$embedded = [
+    'app/Views/settings/cron_shell.php' => '/settings/cron',
+];
+
+foreach ($embedded as $view => $route) {
+    k1b_assert(str_contains($inventory, $view . ',EMBEDDED_VIEW,'), "Embedded view missing from K1C inventory: {$view}");
+    k1b_assert(is_file(__DIR__ . '/../' . $view), "Embedded view file missing: {$view}");
+    k1b_assert(str_contains($routes, "'" . $route . "'") || str_contains($routes, '"' . $route . '"'), "Embedded view host route missing: {$route}");
+}
+
+k1b_assert(!str_contains($inventory, '/settings/cron_shell,GET,'), 'cron_shell must not be inventoried as a direct route.');
+k1b_assert(!str_contains($routes, "'/settings/cron_shell'") && !str_contains($routes, '"/settings/cron_shell"'), 'cron_shell must not be registered as a direct public route.');
+
 echo "STATUS=PASS K1C_ROUTE_INVENTORY_COMPLETENESS\n";

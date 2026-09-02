@@ -1377,7 +1377,7 @@ final class SettingsController
                 Session::put('manual_available_queue_result', $result);
                 Session::flash(
                     $status === 'waiting' || $status === 'review' ? 'warning' : 'success',
-                    (string) ($result['message'] ?? 'Cola disponible procesada.')
+                    (string) ($result['message'] ?? 'Pendientes disponibles atendidos.')
                 );
                 $this->redirect('/settings/manual-processing?scope=available_queue#resultado-proceso');
             }

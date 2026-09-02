@@ -2,15 +2,16 @@
 use App\Core\Env;
 use App\Core\View;
 use App\Repositories\SettingsDefinitionRepository;
+use App\Services\AutomationHumanLanguageService;
 
 $base = rtrim(Env::get('APP_URL', ''), '/');
 $sections = (new SettingsDefinitionRepository())->sections();
 $sectionMeta = [
     'general' => ['General', 'Zona horaria y comportamiento general.'],
-    'synchronization' => ['Sincronización', 'Colas, pausas y automatización de órdenes.'],
+    'synchronization' => ['Sincronización', 'Pendientes, pausas y automatización de órdenes.'],
     'mercadolibre' => ['Mercado Libre', 'Protección API y presupuesto preventivo.'],
     'communications' => ['Atención y avisos', 'Preguntas, reclamos y notificaciones.'],
-    'financial' => ['Conciliación financiera', 'Recálculos, billing y lotes.'],
+    'financial' => ['Conciliación financiera', 'Recálculos, billing y esperas seguras.'],
     'catalogs' => ['Catálogos', 'Paginación, estadísticas y descripciones.'],
     'system' => ['Sistema', 'Procesamiento automático, diagnóstico y actualizaciones.'],
 ];
@@ -28,17 +29,29 @@ $cronHealthy = (string) ($cron['state'] ?? '') === 'ok';
   <article class="status-card <?= $cronHealthy ? 'is-success' : 'is-warning' ?>">
     <span class="status-card-label">Automatización</span>
     <strong><?= View::e((string) ($cron['label'] ?? 'Sin información')) ?></strong>
-    <p><?= View::e((string) ($cron['message'] ?? 'Revise el estado del cron.')) ?></p>
-    <a href="<?= View::e($base) ?>/settings/cron">Ver procesamiento</a>
+    <p><?= View::e((string) ($cron['message'] ?? 'Revise el centro de automatización.')) ?></p>
+    <a href="<?= View::e($base) ?>/settings/cron">Ver centro</a>
+  </article>
+  <article class="status-card">
+    <span class="status-card-label">Capacidad API</span>
+    <strong><?= View::e(AutomationHumanLanguageService::callCapacityLabel()) ?></strong>
+    <p>La unidad visible es la llamada física a Mercado Libre, no lotes ni trabajos internos.</p>
+    <a href="<?= View::e($base) ?>/settings/api-workload">Ver ritmo</a>
+  </article>
+  <article class="status-card">
+    <span class="status-card-label">Procesamiento manual</span>
+    <strong><?= View::e(AutomationHumanLanguageService::manualAvailableLabel()) ?></strong>
+    <p>Una petición autenticada atiende un solo paso idempotente mientras la pestaña está abierta.</p>
+    <a href="<?= View::e($base) ?>/settings/manual-processing">Procesar ahora</a>
   </article>
   <article class="status-card <?= ($diagnostic['ml_write_enabled'] ?? 'false') === 'false' ? 'is-success' : 'is-warning' ?>">
-    <span class="status-card-label">Seguridad Mercado Libre</span>
+    <span class="status-card-label">Salud Mercado Libre</span>
     <strong>Solo lectura <?= ($diagnostic['ml_write_enabled'] ?? 'false') === 'false' ? 'activa' : 'requiere revisión' ?></strong>
     <p>Las escrituras hacia Mercado Libre deben permanecer bloqueadas.</p>
     <a href="<?= View::e($base) ?>/settings/api-health">Ver salud API</a>
   </article>
   <article class="status-card">
-    <span class="status-card-label">Versión</span>
+    <span class="status-card-label">Sistema</span>
     <strong><?= View::e((string) ($diagnostic['installed_version'] ?? '—')) ?></strong>
     <p>Archivos preparados: <?= View::e((string) ($diagnostic['file_version'] ?? '—')) ?>.</p>
     <a href="<?= View::e($base) ?>/settings/update">Ver actualizaciones</a>

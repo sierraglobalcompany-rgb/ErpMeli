@@ -7,25 +7,19 @@
   "publication_policy": {
     "base_commit": "b9d1644522e7b36d5729c5ba090279b3ffc50fb8",
     "authority_model": "FULL_MANAGED_RUNTIME",
-    "package_file_count": 942,
-    "component_count": 941,
-    "paths_sha256": "21d12af65cd3d3c47acfdda666c6e7cf03c227c7ca1a998629aaef79470aff07",
-    "dependency_registry_sha256": "4b994be4ef952414d762329338982db076f612bf212b3c21d4cddecfa4b8c3f9",
+    "package_file_count": 959,
+    "component_count": 958,
+    "paths_sha256": "8dd746a7f0fb9ca71e8f9ed7aebde7a8795e87ee62bf6518019f7ef3675b5cbf",
+    "dependency_registry_sha256": "519eff0b61ffd02594357da17dbf0ffb66c0a747458be9e978fff88c5eae2321",
     "raw_git_blobs": true,
     "protected_external_state_excluded": true,
     "build_only_excluded": true
   },
   "components": {
-    "runtime_htaccess": {
-      "path": ".htaccess",
-      "sha256": "2b844de5855c232ec7b257e852a0ddfbd4fa91ec3ebd69e67d3e854237486057",
-      "sha256_lf": "3a6208ec504c40b8ccae5c9fa00ca2cb07c5f9f9353d01e2e993c17df6fb943d",
-      "text": true
-    },
-    "runtime_version": {
-      "path": "VERSION",
-      "sha256": "c574ef9046cc08a8e25633809076b35ba3e6e11957545137915d9c29b4affdd9",
-      "sha256_lf": "41a39e6fe55d4b5017a57ada401c997fa990445a32fc5d2d59f1fc0cc8ec29a2",
+    "cron_probe": {
+      "path": "jobs/cron_probe.php",
+      "sha256": "13759ceba80634011427b0c5978362feb2149e117a223a2a719e80953353fc65",
+      "sha256_lf": "73031dd029984375812d5200ff3cb020a2719842d4bd6193dacaec694d82e720",
       "text": true
     },
     "runtime_actualizar_php": {
@@ -916,16 +910,16 @@
       "sha256_lf": "9c57fa7eba37d6701442019247c5c00d1965a9d7d8312699ac83265e24af0112",
       "text": true
     },
-    "runtime_app_queuecore_queuecorepreremoteblockedexception_php": {
-      "path": "app/QueueCore/QueueCorePreRemoteBlockedException.php",
-      "sha256": "88ee474829e4817b7987892ecc10713022df46593bc87475bffa22f0ff57bc67",
-      "sha256_lf": "ca091ee4b0f358df7d0304ed645ac1bf9441429b00d0b09346a8f040197224bf",
-      "text": true
-    },
     "runtime_app_queuecore_queuecorepreflightservice_php": {
       "path": "app/QueueCore/QueueCorePreflightService.php",
       "sha256": "00137609086b840c6a3c781e4851dfdeb2261b10a24ef10e7fce7700efc1d19e",
       "sha256_lf": "5b0d23b15d186f0a96d32b8de7e90a321d48b774c7283eec0d62e52cc0995de7",
+      "text": true
+    },
+    "runtime_app_queuecore_queuecorepreremoteblockedexception_php": {
+      "path": "app/QueueCore/QueueCorePreRemoteBlockedException.php",
+      "sha256": "88ee474829e4817b7987892ecc10713022df46593bc87475bffa22f0ff57bc67",
+      "sha256_lf": "ca091ee4b0f358df7d0304ed645ac1bf9441429b00d0b09346a8f040197224bf",
       "text": true
     },
     "runtime_app_queuecore_queuecorereadinessoperationlock_php": {
@@ -1030,16 +1024,16 @@
       "sha256_lf": "62831d0e35234453304460329ec6c6f5a8c0310eca9fa435201ae4ab0c3a2604",
       "text": true
     },
-    "runtime_app_queuecore_queuerunrequest_php": {
-      "path": "app/QueueCore/QueueRunRequest.php",
-      "sha256": "6b56c51c6bf399513e317b196e4e1d26cc9936833c72b8395d4503165eb9f2df",
-      "sha256_lf": "de5c65c130e867a0af02e784f0673953f7e10aa307cab1df9440528425283a13",
-      "text": true
-    },
     "runtime_app_queuecore_queuerunner_php": {
       "path": "app/QueueCore/QueueRunner.php",
       "sha256": "db24d2d38e3f47a61d62d749301d1edcf23831ad7e28b98ae4d0cf8bcf001346",
       "sha256_lf": "7fef805a7641a8cd69e782944da948f77ec1516ac18d1de51134ec6d14607553",
+      "text": true
+    },
+    "runtime_app_queuecore_queuerunrequest_php": {
+      "path": "app/QueueCore/QueueRunRequest.php",
+      "sha256": "6b56c51c6bf399513e317b196e4e1d26cc9936833c72b8395d4503165eb9f2df",
+      "sha256_lf": "de5c65c130e867a0af02e784f0673953f7e10aa307cab1df9440528425283a13",
       "text": true
     },
     "runtime_app_queuecore_queuescheduler_php": {
@@ -1260,8 +1254,8 @@
     },
     "runtime_app_repositories_navigationrepository_php": {
       "path": "app/Repositories/NavigationRepository.php",
-      "sha256": "c391461b42192d80cf9f1e84e1c36c59360196ad003de0acc70b314a908a6e9f",
-      "sha256_lf": "913689487abf0b67c91422ec99b3fdb46dd6fb56cfae86e28cd6cc990466cd73",
+      "sha256": "3abbcbd13def4ba5cd7012d47fd13e8f8df5cf13679133fa9162b54c1e155150",
+      "sha256_lf": "3abbcbd13def4ba5cd7012d47fd13e8f8df5cf13679133fa9162b54c1e155150",
       "text": true
     },
     "runtime_app_repositories_routemetadatarepository_php": {
@@ -1272,8 +1266,8 @@
     },
     "runtime_app_repositories_settingsdefinitionrepository_php": {
       "path": "app/Repositories/SettingsDefinitionRepository.php",
-      "sha256": "1652e2ca64ff7a929ec14c52be8a5625d92a50f5a914cd5cb823d900b7e49885",
-      "sha256_lf": "2f67f33686fd93d38314823029d431012a69f1fa2085e7ed93857bc9804023a9",
+      "sha256": "bbc01d5b3e8185ba3acae4d7a1c10049fbb587bd14fa6700b5499685b5f34102",
+      "sha256_lf": "bbc01d5b3e8185ba3acae4d7a1c10049fbb587bd14fa6700b5499685b5f34102",
       "text": true
     },
     "runtime_app_services_administrativereauthenticationservice_php": {
@@ -1350,8 +1344,8 @@
     },
     "runtime_app_services_apihealthoverviewservice_php": {
       "path": "app/Services/ApiHealthOverviewService.php",
-      "sha256": "6b21932343c008f658b1444a7e13373146b6034a5148942589630d70fa9ce250",
-      "sha256_lf": "97b77720898d5f9d0e5c15c20d549f3d97be28e71ae92becbc76af15ad940b7e",
+      "sha256": "46ccfa55fb979cd1f5edd9298cb044a8e5494ea7bf473a43105ba2b11565aa37",
+      "sha256_lf": "46ccfa55fb979cd1f5edd9298cb044a8e5494ea7bf473a43105ba2b11565aa37",
       "text": true
     },
     "runtime_app_services_apihealthsafemessageservice_php": {
@@ -1484,6 +1478,12 @@
       "path": "app/Services/AutomationCapacityService.php",
       "sha256": "0b1529148a7df6136666e9e49f152fbc11fa294fcb78d67974266cb61905a13a",
       "sha256_lf": "7307756545b76989b67c50b00197fef49eb7e9e1e126ea5be0cb175d02b8e1de",
+      "text": true
+    },
+    "runtime_app_services_automationhumanlanguageservice_php": {
+      "path": "app/Services/AutomationHumanLanguageService.php",
+      "sha256": "c40a952fab27b623aeda06b5d18a0b4953f6de02493be4d4e4670aa9a8b55076",
+      "sha256_lf": "c40a952fab27b623aeda06b5d18a0b4953f6de02493be4d4e4670aa9a8b55076",
       "text": true
     },
     "runtime_app_services_automationruntimestatusservice_php": {
@@ -2410,16 +2410,16 @@
       "sha256_lf": "4bfbcbcdb4be8154ca9bf6bf0e4b8d6069ed4450d891fbeddc8f604e16412df8",
       "text": true
     },
-    "runtime_app_services_logqueryservice_php": {
-      "path": "app/Services/LogQueryService.php",
-      "sha256": "74e9e6c81986d60fa2810bc18b4e3fb328a1d789cc919382d39b52cc0e227caf",
-      "sha256_lf": "a4522a0608b02ca1e881921ce94b8fbe3089d4ee9477aa09d91ef2f395e5f385",
-      "text": true
-    },
     "runtime_app_services_logger_php": {
       "path": "app/Services/Logger.php",
       "sha256": "306c8f8e89480a0e23b6babc131fab5741d004814be9f6feb5aa0775655877a0",
       "sha256_lf": "b9042dd2911bace75dee101347832bb5ea30c8956f273dd66e1a5bb7b49f460e",
+      "text": true
+    },
+    "runtime_app_services_logqueryservice_php": {
+      "path": "app/Services/LogQueryService.php",
+      "sha256": "74e9e6c81986d60fa2810bc18b4e3fb328a1d789cc919382d39b52cc0e227caf",
+      "sha256_lf": "a4522a0608b02ca1e881921ce94b8fbe3089d4ee9477aa09d91ef2f395e5f385",
       "text": true
     },
     "runtime_app_services_maintenanceexecutionlock_php": {
@@ -2472,8 +2472,8 @@
     },
     "runtime_app_services_manualcampaignpreviewservice_php": {
       "path": "app/Services/ManualCampaignPreviewService.php",
-      "sha256": "80c434d1d749b49920ece14f84b84060244cefa7cdcc0b4c20e13c8ac355eb85",
-      "sha256_lf": "056924e0e5ac588fb3e023dd0fa678f6d850baf2630db98c841e7a2bbd3be479",
+      "sha256": "10899c1c13c0435b6dd7c8bb7becbf8ce423417fcfdfb4988f0756c68f837a51",
+      "sha256_lf": "10899c1c13c0435b6dd7c8bb7becbf8ce423417fcfdfb4988f0756c68f837a51",
       "text": true
     },
     "runtime_app_services_manualcampaignreservationguard_php": {
@@ -2520,8 +2520,8 @@
     },
     "runtime_app_services_manualsinglestepservice_php": {
       "path": "app/Services/ManualSingleStepService.php",
-      "sha256": "d213503c5c1cb3590c4d29bbe6d09d4a59a3869771bdbb7a2b76c8e459892225",
-      "sha256_lf": "d7a379bf3ba80047f11ac60e522f4ff249c40fd65fcddb269b2e403587f0fe12",
+      "sha256": "6a5d6a86fd77ac965d16087c76cc05e8df7db85b0a551a84b179d4e20c178c74",
+      "sha256_lf": "6a5d6a86fd77ac965d16087c76cc05e8df7db85b0a551a84b179d4e20c178c74",
       "text": true
     },
     "runtime_app_services_manualstalesourceexception_php": {
@@ -2746,16 +2746,16 @@
       "sha256_lf": "ec064fbdd7df158c6251ed0f6b093a7c55b896a95a32de9afe6c1a0be9c9a6d4",
       "text": true
     },
-    "runtime_app_services_notificationworkitemservice_php": {
-      "path": "app/Services/NotificationWorkItemService.php",
-      "sha256": "ab33c9c3d4a3985b4abc59c241af23c9f69a985fb83bf6268734ceff6dddd33e",
-      "sha256_lf": "8ba09536a2edbbfb5d9112dc48a7289a7d106dc1228203262c1a866d9fe85d53",
-      "text": true
-    },
     "runtime_app_services_notificationworkerrecoveryservice_php": {
       "path": "app/Services/NotificationWorkerRecoveryService.php",
       "sha256": "412e08b2a504ee81976f9895e4ce8bc39ad89d35fbae46873b64f56541c61182",
       "sha256_lf": "caf2e015de865fa1c2dd92d810ecdf827efe52d09ee32a84cbf8382bdf628a58",
+      "text": true
+    },
+    "runtime_app_services_notificationworkitemservice_php": {
+      "path": "app/Services/NotificationWorkItemService.php",
+      "sha256": "ab33c9c3d4a3985b4abc59c241af23c9f69a985fb83bf6268734ceff6dddd33e",
+      "sha256_lf": "8ba09536a2edbbfb5d9112dc48a7289a7d106dc1228203262c1a866d9fe85d53",
       "text": true
     },
     "runtime_app_services_oauthrefreshbusyexception_php": {
@@ -2936,6 +2936,12 @@
       "path": "app/Services/QueueOAuthDurableRecoveryStore.php",
       "sha256": "ec99ca6389b09d66ccbc8f32b88b0f6ca40c7b543cfb5eed51cb1f5969d409e4",
       "sha256_lf": "681cfcb83f86237851b6d31f99cd0631f735cced348dc4fe7f8b7dc0070c8e81",
+      "text": true
+    },
+    "runtime_app_services_queuev4diagnosticbundleservice_php": {
+      "path": "app/Services/QueueV4DiagnosticBundleService.php",
+      "sha256": "3ee3e8092475cca6dfa4e63cfb115c68a5dc5e9c17022558d9f26e06ce0786a7",
+      "sha256_lf": "ffcf97eb201155bc04dcf7d7b797eee3970c81bcbec4820730f18822fe5a561f",
       "text": true
     },
     "runtime_app_services_queuev4pretransportdeferredexception_php": {
@@ -3544,12 +3550,6 @@
       "sha256_lf": "2effeac0ce6e35b04e9d3d8a4f781c2a146c88a317e8736b5c0c6d007361db2e",
       "text": true
     },
-    "runtime_app_views_billing_tabs_php": {
-      "path": "app/Views/billing/_tabs.php",
-      "sha256": "ba044ec50d3ee92fb0067494f00ce8c157ae036f31bf55c5a1ce14ad453456c5",
-      "sha256_lf": "851cdca373a60614cfb970744fd4b18946a0f5b0921a9f5fd6ccbbe6cd2b7242",
-      "text": true
-    },
     "runtime_app_views_billing_date_index_php": {
       "path": "app/Views/billing/date/index.php",
       "sha256": "fc58719023c2524c09d8db9997ab9e1793b18fbf4fa187f2ee7dc504c2b28876",
@@ -3580,10 +3580,10 @@
       "sha256_lf": "c3ea117084d98200e8a18d62276962518e954fb37c8939bdecba11ed9bccaebe",
       "text": true
     },
-    "runtime_app_views_catalogs_items_php": {
-      "path": "app/Views/catalogs/_items.php",
-      "sha256": "90f38e3fd0ab0c19664b58257ca0fe332d6780b0a6be784c0a4b4aafec54cd15",
-      "sha256_lf": "718b2dd79be0d0c6e62f3907ad1f17b5be2cb95e52020e2cbed4a73dbb7cd371",
+    "runtime_app_views_billing_tabs_php": {
+      "path": "app/Views/billing/_tabs.php",
+      "sha256": "ba044ec50d3ee92fb0067494f00ce8c157ae036f31bf55c5a1ce14ad453456c5",
+      "sha256_lf": "851cdca373a60614cfb970744fd4b18946a0f5b0921a9f5fd6ccbbe6cd2b7242",
       "text": true
     },
     "runtime_app_views_catalogs_categories_php": {
@@ -3614,6 +3614,12 @@
       "path": "app/Views/catalogs/index.php",
       "sha256": "d71536c8e12992caabb3fe4e03c9786ae4cb36ced5b5a99c4e3094c6ee6a26ec",
       "sha256_lf": "dec62718d6c0468a684c400bd743078dd7ffc708823ad7c204c896e45b0c8743",
+      "text": true
+    },
+    "runtime_app_views_catalogs_items_php": {
+      "path": "app/Views/catalogs/_items.php",
+      "sha256": "90f38e3fd0ab0c19664b58257ca0fe332d6780b0a6be784c0a4b4aafec54cd15",
+      "sha256_lf": "718b2dd79be0d0c6e62f3907ad1f17b5be2cb95e52020e2cbed4a73dbb7cd371",
       "text": true
     },
     "runtime_app_views_catalogs_print_php": {
@@ -3652,6 +3658,12 @@
       "sha256_lf": "aa084d14a44fb62a4a6021ce545c8397f4e9b781e621db4da25bfed0924d5826",
       "text": true
     },
+    "runtime_app_views_dashboard_index_php": {
+      "path": "app/Views/dashboard/index.php",
+      "sha256": "37542d1c88eff604341d309c6b2888d3fbbe35879689ed1d2ccda856c71a6dfc",
+      "sha256_lf": "68232923af1e3effd84613fe61684295a4bcd83809dfb0270882058aa9c560a7",
+      "text": true
+    },
     "runtime_app_views_dashboard_operations_php": {
       "path": "app/Views/dashboard/_operations.php",
       "sha256": "df1a61b2acd5c0d0996d06dc8991f89888a5d777add549e69d57640c91c251f0",
@@ -3662,12 +3674,6 @@
       "path": "app/Views/dashboard/_summary.php",
       "sha256": "ea7da720af766e09197410603a081a33394d0f7211d148bda7fa4dd1f814e003",
       "sha256_lf": "f37a71bad126484893060af8703184c73db3752892a707d497ed2baa8eb448cf",
-      "text": true
-    },
-    "runtime_app_views_dashboard_index_php": {
-      "path": "app/Views/dashboard/index.php",
-      "sha256": "37542d1c88eff604341d309c6b2888d3fbbe35879689ed1d2ccda856c71a6dfc",
-      "sha256_lf": "68232923af1e3effd84613fe61684295a4bcd83809dfb0270882058aa9c560a7",
       "text": true
     },
     "runtime_app_views_errors_404_php": {
@@ -3708,20 +3714,20 @@
     },
     "runtime_app_views_financial_recalc_errors_php": {
       "path": "app/Views/financial_recalc/errors.php",
-      "sha256": "9c7596d1ff6e21102817672aa94a842d23f67856c1c7f1779155cb2071cc9bb4",
-      "sha256_lf": "2546fa26d5734defd543525ccd9771ab02d0bfc98f27dbaa25844c805e12d3d8",
+      "sha256": "088ddfc6bfbda7acf29cc30ace0d14340f923839220a16fbda3c1008f1005ccc",
+      "sha256_lf": "088ddfc6bfbda7acf29cc30ace0d14340f923839220a16fbda3c1008f1005ccc",
       "text": true
     },
     "runtime_app_views_financial_recalc_index_php": {
       "path": "app/Views/financial_recalc/index.php",
-      "sha256": "54ededc67ef44c1ba9775b14326d5fadd8b5aa692180b571745eade0aaaeb4bd",
-      "sha256_lf": "0881e88dd86b276f393b815dd950067d0cb991080888b66a4075cc407e2f5bad",
+      "sha256": "7b9a43abec1cd2a941bba94e76f92f9467e2d56d1253ae8cf4475e1628a742eb",
+      "sha256_lf": "7b9a43abec1cd2a941bba94e76f92f9467e2d56d1253ae8cf4475e1628a742eb",
       "text": true
     },
     "runtime_app_views_financial_recalc_show_php": {
       "path": "app/Views/financial_recalc/show.php",
-      "sha256": "657c4a627bac73b1cdbb651f8febb3197e117a9aeeb453f41e8851c3e45183cd",
-      "sha256_lf": "f08ff9c5fbee35315b2680a71857ca357390b735c3f5dda3a5bca686c96b1fc8",
+      "sha256": "65297a2fbb1a2ea2caf571ca58012115e5c03b059a5329f88f111e2a39ddcd0f",
+      "sha256_lf": "65297a2fbb1a2ea2caf571ca58012115e5c03b059a5329f88f111e2a39ddcd0f",
       "text": true
     },
     "runtime_app_views_inventory_index_php": {
@@ -3750,8 +3756,8 @@
     },
     "runtime_app_views_notifications_automation_php": {
       "path": "app/Views/notifications/automation.php",
-      "sha256": "4f328d6e214955641f2b0f20d62cc3c4f87229f9bb21fdaa355675ac4690da46",
-      "sha256_lf": "38eabbe6a275db513ed0b08d70523600821766d8cf41e0f1ffe0db5b9e50af8b",
+      "sha256": "8023d4c7b933f5b4a2bdda537e325b68168fb16c24f0ee804a736182a841ae52",
+      "sha256_lf": "8023d4c7b933f5b4a2bdda537e325b68168fb16c24f0ee804a736182a841ae52",
       "text": true
     },
     "runtime_app_views_notifications_events_php": {
@@ -3762,20 +3768,14 @@
     },
     "runtime_app_views_notifications_index_php": {
       "path": "app/Views/notifications/index.php",
-      "sha256": "f0a21528a3b25406564a3d1d66438f859f60f66a68702b3d84acda3126596e53",
-      "sha256_lf": "266c1f2cfc99fb1d5f97b0ec7055440cf1f18270c5f3e98d52ae26835af9ea31",
+      "sha256": "040b3296dd7a37f70a5fcd2dd2318a5091d405623b62e79634efda9db5054327",
+      "sha256_lf": "040b3296dd7a37f70a5fcd2dd2318a5091d405623b62e79634efda9db5054327",
       "text": true
     },
     "runtime_app_views_notifications_missed_php": {
       "path": "app/Views/notifications/missed.php",
       "sha256": "db38dc6b759b14774fa15cdacddb005355f1ea5707df5c13538311e1474d0dab",
       "sha256_lf": "2f38e72487e1df1698797b7701811d204cf6fc21c0417c51c55d3f1788996f26",
-      "text": true
-    },
-    "runtime_app_views_orders_table_php": {
-      "path": "app/Views/orders/_table.php",
-      "sha256": "4c125bfd85739991d371b3ef4f1ee5cb2fd17f74f17a67ee6ca7a8a56764c8e6",
-      "sha256_lf": "b24998cea3c6a35f1f58ab57e663834f26e846ad27fc6404d2d7e6030d519946",
       "text": true
     },
     "runtime_app_views_orders_index_php": {
@@ -3788,6 +3788,12 @@
       "path": "app/Views/orders/show.php",
       "sha256": "1e171a039ae78a930f0fd17807af043610e43bc6643469111d9b34b3856cb5df",
       "sha256_lf": "0d9b3407c91c8cd77337a4c7d92bb583b6dca04e724bcb240e62d898af50204d",
+      "text": true
+    },
+    "runtime_app_views_orders_table_php": {
+      "path": "app/Views/orders/_table.php",
+      "sha256": "4c125bfd85739991d371b3ef4f1ee5cb2fd17f74f17a67ee6ca7a8a56764c8e6",
+      "sha256_lf": "b24998cea3c6a35f1f58ab57e663834f26e846ad27fc6404d2d7e6030d519946",
       "text": true
     },
     "runtime_app_views_products_imports_index_php": {
@@ -3806,12 +3812,6 @@
       "path": "app/Views/products/links/index.php",
       "sha256": "a1fb3266ade206d606366a0b5894a60f35100985b8a2e7c24a73c653d4229c4a",
       "sha256_lf": "89d7f8034c850f23c9306360bd766d8c0a4253135971b19c58f0cad77cb474ab",
-      "text": true
-    },
-    "runtime_app_views_products_meli_table_php": {
-      "path": "app/Views/products/meli/_table.php",
-      "sha256": "9efc4576ceb49f23f28c5521eedd45a8a786ca440a336feacd7e12b3b9972706",
-      "sha256_lf": "b1207d9250923e1231b779bd30e9e9ec18893c7b2b6bedd6d60e48ea030fe063",
       "text": true
     },
     "runtime_app_views_products_meli_index_php": {
@@ -3836,6 +3836,12 @@
       "path": "app/Views/products/meli/show.php",
       "sha256": "e3454015c5530b31bc2a3533324561b16eeeece9480278eb14bf8bfd38307867",
       "sha256_lf": "e4ed5382f6ba34049807c76b5a4901fbeff01d7d45d8aff2e2f0e815eae012ce",
+      "text": true
+    },
+    "runtime_app_views_products_meli_table_php": {
+      "path": "app/Views/products/meli/_table.php",
+      "sha256": "9efc4576ceb49f23f28c5521eedd45a8a786ca440a336feacd7e12b3b9972706",
+      "sha256_lf": "b1207d9250923e1231b779bd30e9e9ec18893c7b2b6bedd6d60e48ea030fe063",
       "text": true
     },
     "runtime_app_views_products_unlinked_index_php": {
@@ -3874,12 +3880,6 @@
       "sha256_lf": "5b77ee77a1e10754f6aa16395dc0d28788630e84daefc3ae265aa05a5d16e077",
       "text": true
     },
-    "runtime_app_views_reports_tabs_php": {
-      "path": "app/Views/reports/_tabs.php",
-      "sha256": "5b25df728d7ac5af2b085dd8c9e6bfe49775e3ffc4f173240216016425d87cab",
-      "sha256_lf": "bde7475d264334b36525bf45d02b003be5b9dd52fcddd2670c5f2b4c165b5ac1",
-      "text": true
-    },
     "runtime_app_views_reports_date_index_php": {
       "path": "app/Views/reports/date/index.php",
       "sha256": "ff5bf8a1f4f2150ee7572a51a5ed9f05fd9e13f159b74ac4eaeb05c02ccfdf04",
@@ -3910,16 +3910,58 @@
       "sha256_lf": "ef6279ee39f0bea9d655ee4c83923a9649fd96c628390345b7ab193f51cf7018",
       "text": true
     },
-    "runtime_app_views_sales_import_status_php": {
-      "path": "app/Views/sales/_import_status.php",
-      "sha256": "b3da2e07487a1e14615ac052b256d3325cee98afec7a5d52a129792ff58ccfad",
-      "sha256_lf": "f277faca3e0baa48dfcd72bbe2b67515963aac690cbfc930ab9449a89ae28493",
+    "runtime_app_views_reports_tabs_php": {
+      "path": "app/Views/reports/_tabs.php",
+      "sha256": "5b25df728d7ac5af2b085dd8c9e6bfe49775e3ffc4f173240216016425d87cab",
+      "sha256_lf": "bde7475d264334b36525bf45d02b003be5b9dd52fcddd2670c5f2b4c165b5ac1",
       "text": true
     },
     "runtime_app_views_sales_claims_index_php": {
       "path": "app/Views/sales/claims/index.php",
       "sha256": "2a5b4800d5bea81c0b0e3c1fa22dba8cb2c10789aa1741a9c4f8d536d192abcf",
       "sha256_lf": "798bb91d40d39344fc888447a8e04bc98cfb3ccef3f5992e2744820f2f25ad58",
+      "text": true
+    },
+    "runtime_app_views_sales_control_closes_php": {
+      "path": "app/Views/sales_control/closes.php",
+      "sha256": "94e83e47062e27a1544c631f9e1bf1f97b60e4254b75299ee75102f45ec73ac8",
+      "sha256_lf": "31f4f361828da8c29bf062a0d4cde6ddae0a0de10eb3bc5e87b6bec83091eaad",
+      "text": true
+    },
+    "runtime_app_views_sales_control_fiscal_php": {
+      "path": "app/Views/sales_control/fiscal.php",
+      "sha256": "01174865232218177244a1bd9a099ab12fa55ac36b84a86a5e1fdbc1cfabccc5",
+      "sha256_lf": "06d6c02d1bccfe22854715ea24ae732007dde15869a0909b0bb696517adabd6c",
+      "text": true
+    },
+    "runtime_app_views_sales_control_index_php": {
+      "path": "app/Views/sales_control/index.php",
+      "sha256": "6e6f855b9dfeafe8f39cdd209c8a73592eba2b0ae27ad4f7ff898dc38821e078",
+      "sha256_lf": "55591297969cf894dd62d08bd775c1bca340e2f3a731a6f44efdc5a20988e0d6",
+      "text": true
+    },
+    "runtime_app_views_sales_control_issues_php": {
+      "path": "app/Views/sales_control/issues.php",
+      "sha256": "2a9efbc22feda7ed7a786aa526e19f8cb4e6e2efac9831f9f291c2dca9900dce",
+      "sha256_lf": "1404735d89278c05dfe1f1b237c82a9a74755baa1bf818c4fe7bda017d7cc38d",
+      "text": true
+    },
+    "runtime_app_views_sales_control_month_php": {
+      "path": "app/Views/sales_control/month.php",
+      "sha256": "fb7467e368aa8a895a0efc7ebe0da385a376e1d6715aba708ade632c76668bbe",
+      "sha256_lf": "1fc421609c54f8c9bcc3125e4812702757dc495323273d38f940ec2015c3d153",
+      "text": true
+    },
+    "runtime_app_views_sales_control_nav_php": {
+      "path": "app/Views/sales_control/_nav.php",
+      "sha256": "c682bdfc8a3b3d5465158e53ed9a0de3d764bfea5aefe57cb964c2f5afb050a0",
+      "sha256_lf": "1fcd798bff1a948d04b78899aeaddbebc8855be84e0da1359116d00b9d98dec1",
+      "text": true
+    },
+    "runtime_app_views_sales_import_status_php": {
+      "path": "app/Views/sales/_import_status.php",
+      "sha256": "b3da2e07487a1e14615ac052b256d3325cee98afec7a5d52a129792ff58ccfad",
+      "sha256_lf": "f277faca3e0baa48dfcd72bbe2b67515963aac690cbfc930ab9449a89ae28493",
       "text": true
     },
     "runtime_app_views_sales_index_php": {
@@ -3958,16 +4000,16 @@
       "sha256_lf": "a29dbc43feeb93dbc821f97d60d1799e7e7d41ee8601ee2fdf63d7f9cba0def2",
       "text": true
     },
-    "runtime_app_views_sales_shipments_table_php": {
-      "path": "app/Views/sales/shipments/_table.php",
-      "sha256": "c699503472cac50fd3788410354861ef751726af84bebeb58766f85dbeeef9e8",
-      "sha256_lf": "e6532f9a99bce130328a964a3de561b91f55b1081a9ad979a20d4121ebf3c85e",
-      "text": true
-    },
     "runtime_app_views_sales_shipments_index_php": {
       "path": "app/Views/sales/shipments/index.php",
       "sha256": "7cc48d9f947de72677b0a81f68ff9de754d7c6d2e430ac4ad4ec20e4cd84c52c",
       "sha256_lf": "24969e4450d9c458c7ba40a766af6850a119d567dc8eb9af8eb947db999c90e2",
+      "text": true
+    },
+    "runtime_app_views_sales_shipments_table_php": {
+      "path": "app/Views/sales/shipments/_table.php",
+      "sha256": "c699503472cac50fd3788410354861ef751726af84bebeb58766f85dbeeef9e8",
+      "sha256_lf": "e6532f9a99bce130328a964a3de561b91f55b1081a9ad979a20d4121ebf3c85e",
       "text": true
     },
     "runtime_app_views_sales_show_php": {
@@ -3976,40 +4018,16 @@
       "sha256_lf": "f18261b234db0533c825deac9618a11cb4bfa6db37eba4ed0f2d2e651a434a71",
       "text": true
     },
-    "runtime_app_views_sales_control_nav_php": {
-      "path": "app/Views/sales_control/_nav.php",
-      "sha256": "c682bdfc8a3b3d5465158e53ed9a0de3d764bfea5aefe57cb964c2f5afb050a0",
-      "sha256_lf": "1fcd798bff1a948d04b78899aeaddbebc8855be84e0da1359116d00b9d98dec1",
+    "runtime_app_views_settings_api_docs_endpoint_php": {
+      "path": "app/Views/settings/api_docs_endpoint.php",
+      "sha256": "fe09d1ed0d4594c87b35da5bdf3586119ab7688b23c9eb590d2864a076b6df8b",
+      "sha256_lf": "22050cff69a44bfc5b0766d17d7aef283c1c95de2e63183f7ac842a7d9fa57ad",
       "text": true
     },
-    "runtime_app_views_sales_control_closes_php": {
-      "path": "app/Views/sales_control/closes.php",
-      "sha256": "94e83e47062e27a1544c631f9e1bf1f97b60e4254b75299ee75102f45ec73ac8",
-      "sha256_lf": "31f4f361828da8c29bf062a0d4cde6ddae0a0de10eb3bc5e87b6bec83091eaad",
-      "text": true
-    },
-    "runtime_app_views_sales_control_fiscal_php": {
-      "path": "app/Views/sales_control/fiscal.php",
-      "sha256": "01174865232218177244a1bd9a099ab12fa55ac36b84a86a5e1fdbc1cfabccc5",
-      "sha256_lf": "06d6c02d1bccfe22854715ea24ae732007dde15869a0909b0bb696517adabd6c",
-      "text": true
-    },
-    "runtime_app_views_sales_control_index_php": {
-      "path": "app/Views/sales_control/index.php",
-      "sha256": "6e6f855b9dfeafe8f39cdd209c8a73592eba2b0ae27ad4f7ff898dc38821e078",
-      "sha256_lf": "55591297969cf894dd62d08bd775c1bca340e2f3a731a6f44efdc5a20988e0d6",
-      "text": true
-    },
-    "runtime_app_views_sales_control_issues_php": {
-      "path": "app/Views/sales_control/issues.php",
-      "sha256": "2a9efbc22feda7ed7a786aa526e19f8cb4e6e2efac9831f9f291c2dca9900dce",
-      "sha256_lf": "1404735d89278c05dfe1f1b237c82a9a74755baa1bf818c4fe7bda017d7cc38d",
-      "text": true
-    },
-    "runtime_app_views_sales_control_month_php": {
-      "path": "app/Views/sales_control/month.php",
-      "sha256": "fb7467e368aa8a895a0efc7ebe0da385a376e1d6715aba708ade632c76668bbe",
-      "sha256_lf": "1fc421609c54f8c9bcc3125e4812702757dc495323273d38f940ec2015c3d153",
+    "runtime_app_views_settings_api_docs_php": {
+      "path": "app/Views/settings/api_docs.php",
+      "sha256": "3cf2b6d3dc016c591bd246bc95cfc2a38666f9a3f9734fb198ea979cc4d3cefa",
+      "sha256_lf": "4ce34d1589aeb67a9ff0313dba316d5fcab763c126530aff861d57dec5d85ca1",
       "text": true
     },
     "runtime_app_views_settings_api_emergency_controls_php": {
@@ -4018,10 +4036,28 @@
       "sha256_lf": "be4366d5e5316df3df9e2cdb90d61ba2dc6c291d783d8a71e32f73ffa6e9deff",
       "text": true
     },
+    "runtime_app_views_settings_api_health_accounts_php": {
+      "path": "app/Views/settings/api_health_accounts.php",
+      "sha256": "7edb2d544c6850389a87cbb4bae2d9c92d6fd1c5b194861478d5be3c425d9e4e",
+      "sha256_lf": "256f19928e250ccca2449e9cdcc304dc7aff83d9bccda29b62c9cc89767a02c0",
+      "text": true
+    },
     "runtime_app_views_settings_api_health_header_php": {
       "path": "app/Views/settings/_api_health_header.php",
       "sha256": "0ff3d353ee7adb10097d9f71aa802fd2e3a4df9d477233993c9e01771656c3d9",
       "sha256_lf": "74e6db055042926bfe0d267b0cf438c9334262b74f6a7bd0f98e7ff2eb9b222c",
+      "text": true
+    },
+    "runtime_app_views_settings_api_health_incident_show_php": {
+      "path": "app/Views/settings/api_health_incident_show.php",
+      "sha256": "12d2f310adc147e7fefaea12a98725cbed9a9ac218f6c9ea111d181250255a96",
+      "sha256_lf": "25364ae4982b017e066660e961f06de554fa1ee46a5d65aa26a2f4f989db159a",
+      "text": true
+    },
+    "runtime_app_views_settings_api_health_incidents_php": {
+      "path": "app/Views/settings/api_health_incidents.php",
+      "sha256": "961d90c83efc95757461da886cb296536d0229b79217f9cee6e558fc42af84f0",
+      "sha256_lf": "375316cb3e0c2443b2c229f6ffcfdda3498366366d548a928d0da795eae71c23",
       "text": true
     },
     "runtime_app_views_settings_api_health_nav_php": {
@@ -4036,46 +4072,10 @@
       "sha256_lf": "1e7419a8f24307f06293986b8ca671e5fe25fd217893c9bf8a89406f7fc7fc94",
       "text": true
     },
-    "runtime_app_views_settings_automation_nav_php": {
-      "path": "app/Views/settings/_automation_nav.php",
-      "sha256": "17af9a8aaa2a452ad3b595194e5b43c7e6feeed8ad5d48a258418ad2385616ec",
-      "sha256_lf": "d5cecc422204a1bf8efdce0749478afd93dbd0b76f2e1787c2e41bffb524d68a",
-      "text": true
-    },
-    "runtime_app_views_settings_api_docs_php": {
-      "path": "app/Views/settings/api_docs.php",
-      "sha256": "3cf2b6d3dc016c591bd246bc95cfc2a38666f9a3f9734fb198ea979cc4d3cefa",
-      "sha256_lf": "4ce34d1589aeb67a9ff0313dba316d5fcab763c126530aff861d57dec5d85ca1",
-      "text": true
-    },
-    "runtime_app_views_settings_api_docs_endpoint_php": {
-      "path": "app/Views/settings/api_docs_endpoint.php",
-      "sha256": "fe09d1ed0d4594c87b35da5bdf3586119ab7688b23c9eb590d2864a076b6df8b",
-      "sha256_lf": "22050cff69a44bfc5b0766d17d7aef283c1c95de2e63183f7ac842a7d9fa57ad",
-      "text": true
-    },
     "runtime_app_views_settings_api_health_php": {
       "path": "app/Views/settings/api_health.php",
-      "sha256": "0f21a088223eca5d9b927ae24ad98a1af015cab3da4013a017bf5fad92796bf4",
-      "sha256_lf": "182e445f690cf4d302cda90bb1e44be19af1897884917fddc769a6ced7f15a18",
-      "text": true
-    },
-    "runtime_app_views_settings_api_health_accounts_php": {
-      "path": "app/Views/settings/api_health_accounts.php",
-      "sha256": "7edb2d544c6850389a87cbb4bae2d9c92d6fd1c5b194861478d5be3c425d9e4e",
-      "sha256_lf": "256f19928e250ccca2449e9cdcc304dc7aff83d9bccda29b62c9cc89767a02c0",
-      "text": true
-    },
-    "runtime_app_views_settings_api_health_incident_show_php": {
-      "path": "app/Views/settings/api_health_incident_show.php",
-      "sha256": "12d2f310adc147e7fefaea12a98725cbed9a9ac218f6c9ea111d181250255a96",
-      "sha256_lf": "25364ae4982b017e066660e961f06de554fa1ee46a5d65aa26a2f4f989db159a",
-      "text": true
-    },
-    "runtime_app_views_settings_api_health_incidents_php": {
-      "path": "app/Views/settings/api_health_incidents.php",
-      "sha256": "961d90c83efc95757461da886cb296536d0229b79217f9cee6e558fc42af84f0",
-      "sha256_lf": "375316cb3e0c2443b2c229f6ffcfdda3498366366d548a928d0da795eae71c23",
+      "sha256": "f159fddf62e69e9d8692b94581cbd010d38eda2cbed5c79a52d8028ba91fb0b3",
+      "sha256_lf": "f159fddf62e69e9d8692b94581cbd010d38eda2cbed5c79a52d8028ba91fb0b3",
       "text": true
     },
     "runtime_app_views_settings_api_health_protection_php": {
@@ -4104,8 +4104,8 @@
     },
     "runtime_app_views_settings_api_workload_php": {
       "path": "app/Views/settings/api_workload.php",
-      "sha256": "c16b88b0f81a6370e3f83ffb71ae242b8c4a75877c3e0095b9a01c928c2204c4",
-      "sha256_lf": "1cea2ee585a130766765f4a28aa3eba60e0b7162b739d119d4c410d6cf721baf",
+      "sha256": "8412887eba5f920f2fc3ded97cd9955242ca4910dfc843742505d8bce3358c88",
+      "sha256_lf": "8412887eba5f920f2fc3ded97cd9955242ca4910dfc843742505d8bce3358c88",
       "text": true
     },
     "runtime_app_views_settings_automation_attention_php": {
@@ -4124,6 +4124,12 @@
       "path": "app/Views/settings/automation_history.php",
       "sha256": "87ee230b457b8d66a64c242e3e74ca833a7a58e574d00a09c430c6143478c8cd",
       "sha256_lf": "d3bc9c6d5e708bbb4f5894a243e87b0ff6c0c1ab4a8be6982539507ea6334cfb",
+      "text": true
+    },
+    "runtime_app_views_settings_automation_nav_php": {
+      "path": "app/Views/settings/_automation_nav.php",
+      "sha256": "b13b743ed549b0247c4eace887fda00f4535cfb7cf043a7c71bb88675a63ad78",
+      "sha256_lf": "b13b743ed549b0247c4eace887fda00f4535cfb7cf043a7c71bb88675a63ad78",
       "text": true
     },
     "runtime_app_views_settings_automation_next_php": {
@@ -4164,20 +4170,14 @@
     },
     "runtime_app_views_settings_cron_php": {
       "path": "app/Views/settings/cron.php",
-      "sha256": "6ac865d217cc5ecac4bced8d46064698f3507c45593faefd7247055689b1bfa5",
-      "sha256_lf": "32ba30098fdca6d6de449255338d9fed6c839b1551f8c8de268601d2bb5d4647",
+      "sha256": "827a568b8958fa3e3ed3e74f92ada0ca48981dd69c823cfdaf9043dda57ac34b",
+      "sha256_lf": "827a568b8958fa3e3ed3e74f92ada0ca48981dd69c823cfdaf9043dda57ac34b",
       "text": true
     },
     "runtime_app_views_settings_cron_shell_php": {
       "path": "app/Views/settings/cron_shell.php",
-      "sha256": "915008ede0979bfc69b75c60055e1fe0743a0cfb66d8e1490d97991a62a258cc",
-      "sha256_lf": "c56ac87cc42ffaa0bf5de99b8a451d51393b4f57a8624b89e1e6fad32573d3f1",
-      "text": true
-    },
-    "runtime_app_views_settings_queue_v4_diagnostic_bundle_php": {
-      "path": "app/Views/settings/_queue_v4_diagnostic_bundle.php",
-      "sha256": "4b1fcc2370f32fc153ef43720715f0228199289d1a03e8ffb238a607f4d69cf3",
-      "sha256_lf": "6808851ce4fbaffe8157e593cb3bff7e617ca4ec403a35eeac6a6b152e5b35fa",
+      "sha256": "f29090bd96626da141159414a428b7169959bd9a7dce1f739491577e225f008c",
+      "sha256_lf": "f29090bd96626da141159414a428b7169959bd9a7dce1f739491577e225f008c",
       "text": true
     },
     "runtime_app_views_settings_cron_v3_parked_php": {
@@ -4218,20 +4218,20 @@
     },
     "runtime_app_views_settings_index_php": {
       "path": "app/Views/settings/index.php",
-      "sha256": "d6d7ce2efa249e5560e0ea1246ab4dab4f829341f518865a12e11a5158166492",
-      "sha256_lf": "23c9fee8cab477c32737aaf358f00ab0570196cabcae6978a2968238c206a949",
-      "text": true
-    },
-    "runtime_app_views_settings_manual_processing_php": {
-      "path": "app/Views/settings/manual_processing.php",
-      "sha256": "2437b4320c7637c47d9399ec278e15afd0ba3c99f044cc9eaf55211662026781",
-      "sha256_lf": "6932fb92f4e46ea99a125b79f29e4afb4321f6e166eebcd9d195a4b72d5e30f3",
+      "sha256": "c66633b746d34a2b1cfd3378b2ed49cca6af961b908a285def922be50a588de0",
+      "sha256_lf": "c66633b746d34a2b1cfd3378b2ed49cca6af961b908a285def922be50a588de0",
       "text": true
     },
     "runtime_app_views_settings_manual_processing_excluded_php": {
       "path": "app/Views/settings/manual_processing_excluded.php",
       "sha256": "99d2c3d6c3b055f3b937500bfc3001e67bae32fa774046f86a0d766ef3fe5a9d",
       "sha256_lf": "0a5b818d7fb3d19d88f2e5770bde3cafc91bc34a2dcd0020457d5f9b01059437",
+      "text": true
+    },
+    "runtime_app_views_settings_manual_processing_php": {
+      "path": "app/Views/settings/manual_processing.php",
+      "sha256": "000f105c8678041f9273c85a7e1ad9b98af3b044ea435330b1dbe7def813ac8a",
+      "sha256_lf": "000f105c8678041f9273c85a7e1ad9b98af3b044ea435330b1dbe7def813ac8a",
       "text": true
     },
     "runtime_app_views_settings_migration_diagnostics_php": {
@@ -4244,6 +4244,12 @@
       "path": "app/Views/settings/modules.php",
       "sha256": "41ff1a068b80f656d836680ddd859d6932b9360c6dc2f894fc1c0484ac1b3b7d",
       "sha256_lf": "0c81f8e7c12122e82aae4c8f4697b5641554eca69036f3cde70f276fa8494f08",
+      "text": true
+    },
+    "runtime_app_views_settings_queue_v4_diagnostic_bundle_php": {
+      "path": "app/Views/settings/_queue_v4_diagnostic_bundle.php",
+      "sha256": "4b1fcc2370f32fc153ef43720715f0228199289d1a03e8ffb238a607f4d69cf3",
+      "sha256_lf": "6808851ce4fbaffe8157e593cb3bff7e617ca4ec403a35eeac6a6b152e5b35fa",
       "text": true
     },
     "runtime_app_views_settings_section_php": {
@@ -4308,8 +4314,8 @@
     },
     "runtime_app_views_sync_index_php": {
       "path": "app/Views/sync/index.php",
-      "sha256": "81e59560366f716e46608860c6235b8ef4cb13863c11b6e2e362d11194130944",
-      "sha256_lf": "517314a16b05633091f51cd1f693e76cabb1452a4d8e851c1875b43f6a16e3f8",
+      "sha256": "3c1c8b0ac04597717edbc7ac19755549f296564eec27976011bbfbc6828ddae7",
+      "sha256_lf": "3c1c8b0ac04597717edbc7ac19755549f296564eec27976011bbfbc6828ddae7",
       "text": true
     },
     "runtime_app_views_sync_recurring_php": {
@@ -4334,6 +4340,84 @@
       "path": "app/Views/webhooks/index.php",
       "sha256": "dda75f1acea270f286afb044501083cd0d8bc66f80f799faf0d40fc233547cf8",
       "sha256_lf": "4d4be4ed5eb33e0fab1269a20201944f62894b3e283845b39b6a592145eb14eb",
+      "text": true
+    },
+    "runtime_app_work_adapters_queuecoredrainauthority_php": {
+      "path": "app/Work/Adapters/QueueCoreDrainAuthority.php",
+      "sha256": "64dc9386877dc827599dfae03ab22b235619f802a9c50d314346fa0132243826",
+      "sha256_lf": "64dc9386877dc827599dfae03ab22b235619f802a9c50d314346fa0132243826",
+      "text": true
+    },
+    "runtime_app_work_adapters_queuev4canonicalworkstore_php": {
+      "path": "app/Work/Adapters/QueueV4CanonicalWorkStore.php",
+      "sha256": "237514faab1a2972da9f810942d952fa390bdd1e224136328e5aad6dfcc9f1e6",
+      "sha256_lf": "237514faab1a2972da9f810942d952fa390bdd1e224136328e5aad6dfcc9f1e6",
+      "text": true
+    },
+    "runtime_app_work_adapters_queuev4currentdrainer_php": {
+      "path": "app/Work/Adapters/QueueV4CurrentDrainer.php",
+      "sha256": "a41e4eb49b533d89cb54b73a3e00aba7440d97f57be9654987c3181a84185aa8",
+      "sha256_lf": "a41e4eb49b533d89cb54b73a3e00aba7440d97f57be9654987c3181a84185aa8",
+      "text": true
+    },
+    "runtime_app_work_contracts_canonicalworkstore_php": {
+      "path": "app/Work/Contracts/CanonicalWorkStore.php",
+      "sha256": "4cd4227d855bca5531f002b4f5156a81dfcc1a76bf2ce5549a443e0661d3f53c",
+      "sha256_lf": "4cd4227d855bca5531f002b4f5156a81dfcc1a76bf2ce5549a443e0661d3f53c",
+      "text": true
+    },
+    "runtime_app_work_contracts_drainauthoritycontract_php": {
+      "path": "app/Work/Contracts/DrainAuthorityContract.php",
+      "sha256": "91e0bdbc8e31006ec4602a5b6b9b0211233cfcb90a30da90270973f65eb7d575",
+      "sha256_lf": "91e0bdbc8e31006ec4602a5b6b9b0211233cfcb90a30da90270973f65eb7d575",
+      "text": true
+    },
+    "runtime_app_work_contracts_drainercontract_php": {
+      "path": "app/Work/Contracts/DrainerContract.php",
+      "sha256": "d30cb4fd8af76594643cfd58b7e8b303f125ed677ddae9f40c97769c4788b24e",
+      "sha256_lf": "d30cb4fd8af76594643cfd58b7e8b303f125ed677ddae9f40c97769c4788b24e",
+      "text": true
+    },
+    "runtime_app_work_contracts_workadmissioncontract_php": {
+      "path": "app/Work/Contracts/WorkAdmissionContract.php",
+      "sha256": "a3f2a9d686ce23404296def5f2f6ee989828cf910d56ad279ab18b75480a7215",
+      "sha256_lf": "a3f2a9d686ce23404296def5f2f6ee989828cf910d56ad279ab18b75480a7215",
+      "text": true
+    },
+    "runtime_app_work_drainauthoritytoken_php": {
+      "path": "app/Work/DrainAuthorityToken.php",
+      "sha256": "6728555d3328951f9816a5432575bf733f7eb05520d96801830d3617273a6a69",
+      "sha256_lf": "6728555d3328951f9816a5432575bf733f7eb05520d96801830d3617273a6a69",
+      "text": true
+    },
+    "runtime_app_work_drainresult_php": {
+      "path": "app/Work/DrainResult.php",
+      "sha256": "237058ba7417161d0c419713fa05c3faaab6fd0267dd4918399bf0985302010d",
+      "sha256_lf": "237058ba7417161d0c419713fa05c3faaab6fd0267dd4918399bf0985302010d",
+      "text": true
+    },
+    "runtime_app_work_workadmissionreceipt_php": {
+      "path": "app/Work/WorkAdmissionReceipt.php",
+      "sha256": "9213e834766ee2ce82dbf36c97cadfd3700ce3400f121a84224aaf07d65f6054",
+      "sha256_lf": "9213e834766ee2ce82dbf36c97cadfd3700ce3400f121a84224aaf07d65f6054",
+      "text": true
+    },
+    "runtime_app_work_workcontractversion_php": {
+      "path": "app/Work/WorkContractVersion.php",
+      "sha256": "0de3182aa89a6bfd43890b71134bc8b26181379c8fb8d00ec8d03ec2e1e03d70",
+      "sha256_lf": "0de3182aa89a6bfd43890b71134bc8b26181379c8fb8d00ec8d03ec2e1e03d70",
+      "text": true
+    },
+    "runtime_app_work_workenvelope_php": {
+      "path": "app/Work/WorkEnvelope.php",
+      "sha256": "9d6efb43258e9468850d5df2b0d27166361f13efb68c0da00729ea45af1fb60c",
+      "sha256_lf": "9d6efb43258e9468850d5df2b0d27166361f13efb68c0da00729ea45af1fb60c",
+      "text": true
+    },
+    "runtime_app_work_workexecutionresult_php": {
+      "path": "app/Work/WorkExecutionResult.php",
+      "sha256": "870aa3b90202a4ab0563522289310ad3af2165129a8535ac0c1ac7880ec63416",
+      "sha256_lf": "870aa3b90202a4ab0563522289310ad3af2165129a8535ac0c1ac7880ec63416",
       "text": true
     },
     "runtime_asset_php": {
@@ -4546,10 +4630,40 @@
       "sha256_lf": "fde4b82894615b12edd54dc494f29e890859597abc44bff8f8f4c1a94e40f653",
       "text": true
     },
+    "runtime_docs_architecture_k1b_canonical_work_contract_md": {
+      "path": "docs/architecture/k1b-canonical-work-contract.md",
+      "sha256": "13fcd62c0305871a8220c5508964584aa67379fac275919329f8f76bf41c1e44",
+      "sha256_lf": "13fcd62c0305871a8220c5508964584aa67379fac275919329f8f76bf41c1e44",
+      "text": true
+    },
+    "runtime_docs_architecture_k1b_v4_coupling_audit_csv": {
+      "path": "docs/architecture/K1B_V4_COUPLING_AUDIT.csv",
+      "sha256": "4e936e613d8c169bad04f61174a12f067a91801edd4f24cd6bb079c2ae692e9b",
+      "sha256_lf": "4e936e613d8c169bad04f61174a12f067a91801edd4f24cd6bb079c2ae692e9b",
+      "text": true
+    },
+    "runtime_docs_releases_k1b_github_only_md": {
+      "path": "docs/releases/k1b-github-only.md",
+      "sha256": "90edb8f9f192dbe9d1c26249b895c732b95902966d710c5535dd28fe950c8e77",
+      "sha256_lf": "90edb8f9f192dbe9d1c26249b895c732b95902966d710c5535dd28fe950c8e77",
+      "text": true
+    },
+    "runtime_htaccess": {
+      "path": ".htaccess",
+      "sha256": "2b844de5855c232ec7b257e852a0ddfbd4fa91ec3ebd69e67d3e854237486057",
+      "sha256_lf": "3a6208ec504c40b8ccae5c9fa00ca2cb07c5f9f9353d01e2e993c17df6fb943d",
+      "text": true
+    },
     "runtime_index_php": {
       "path": "index.php",
       "sha256": "d276c37740e1bfe36dfc4f91a8cd87ec155b3b4bfe9954b8b4b7eff2dfe60bd3",
       "sha256_lf": "befdf35b69a17f2e3b61606ecfb35c90f84e8bc0cc30ee39549a6c6270fcf7e4",
+      "text": true
+    },
+    "runtime_jobs_api_incident_materializer_diagnose_php": {
+      "path": "jobs/api_incident_materializer_diagnose.php",
+      "sha256": "a23a4b2f3079232ded79ef17e1f725beb2893d4f875096eca08f0d6aee774d66",
+      "sha256_lf": "c54995b60d527dd50d4bec8f29d4b7be7b143e2d8a8033915d8b68bd0f8a4ad8",
       "text": true
     },
     "runtime_jobs_automation_emergency_stop_php": {
@@ -4562,6 +4676,12 @@
       "path": "jobs/_bootstrap.php",
       "sha256": "2b20fed9af32d267d98e7f073d6f54ee0f848e34e2e509f07ee1505d7ea8d9e0",
       "sha256_lf": "9459083a8e5d84b997954a96f3d973f232a281647ecbee6a5bfebe4a69d64b49",
+      "text": true
+    },
+    "runtime_jobs_cleanup_raw_php": {
+      "path": "jobs/cleanup_raw.php",
+      "sha256": "655f6c4ba18ff281a0d0100883ae6173a163dfe8048fd6fb6128dc7302df4b8f",
+      "sha256_lf": "1b08de86e4b94c559c778849d1e36609fc708e38c597ce26144496762f212260",
       "text": true
     },
     "runtime_jobs_cron_entry_state_php": {
@@ -4580,30 +4700,6 @@
       "path": "jobs/_prebootstrap_runtime_paths.php",
       "sha256": "94d12b19621530068d6b4bfe9dc3f2f95f21f24666c76aa43d8da702a5ef9bee",
       "sha256_lf": "e5596bc9963fabd6bd0697fbe78e6ed3bca3e51d811c1199477be0994085a69c",
-      "text": true
-    },
-    "runtime_jobs_retired_job_php": {
-      "path": "jobs/_retired_job.php",
-      "sha256": "1cbad657c8e7bb7a72fb33cfb8e5ec5936e2e9308004a80768b22c51c5485234",
-      "sha256_lf": "8917705e4eda4e631e930e5bb22780dd986cb1a62184805992e6d209bffb3e96",
-      "text": true
-    },
-    "runtime_jobs_api_incident_materializer_diagnose_php": {
-      "path": "jobs/api_incident_materializer_diagnose.php",
-      "sha256": "a23a4b2f3079232ded79ef17e1f725beb2893d4f875096eca08f0d6aee774d66",
-      "sha256_lf": "c54995b60d527dd50d4bec8f29d4b7be7b143e2d8a8033915d8b68bd0f8a4ad8",
-      "text": true
-    },
-    "runtime_jobs_cleanup_raw_php": {
-      "path": "jobs/cleanup_raw.php",
-      "sha256": "655f6c4ba18ff281a0d0100883ae6173a163dfe8048fd6fb6128dc7302df4b8f",
-      "sha256_lf": "1b08de86e4b94c559c778849d1e36609fc708e38c597ce26144496762f212260",
-      "text": true
-    },
-    "cron_probe": {
-      "path": "jobs/cron_probe.php",
-      "sha256": "13759ceba80634011427b0c5978362feb2149e117a223a2a719e80953353fc65",
-      "sha256_lf": "73031dd029984375812d5200ff3cb020a2719842d4bd6193dacaec694d82e720",
       "text": true
     },
     "runtime_jobs_process_database_maintenance_php": {
@@ -4652,6 +4748,12 @@
       "path": "jobs/reset_imported_meli_data.php",
       "sha256": "5b8190a65760a26d15cc3ae4ca724f9da2683035c29b084de1e4a0810400421e",
       "sha256_lf": "b389c717216959ce5c4e534ef5b7f69f5cce9729a4f02d2f9c5b6fd992929764",
+      "text": true
+    },
+    "runtime_jobs_retired_job_php": {
+      "path": "jobs/_retired_job.php",
+      "sha256": "1cbad657c8e7bb7a72fb33cfb8e5ec5936e2e9308004a80768b22c51c5485234",
+      "sha256_lf": "8917705e4eda4e631e930e5bb22780dd986cb1a62184805992e6d209bffb3e96",
       "text": true
     },
     "runtime_jobs_sync_monthly_report_php": {
@@ -4726,12 +4828,6 @@
       "sha256_lf": "dbcb2c6f23062d9b7f302c6ea9e69a2272aa7c6ad761f5f61213d1a6bb7088c9",
       "text": true
     },
-    "runtime_public_htaccess": {
-      "path": "public/.htaccess",
-      "sha256": "6d00e2c1d40eafae61fdb66c51b82176504babd58a04b2b9c7ca3fbd149eda7b",
-      "sha256_lf": "6737e9da51d830872bcb5f10a97488e7ebb364a57650f58255e918e0138c48a3",
-      "text": true
-    },
     "runtime_public_assets_api_health_js": {
       "path": "public/assets/api-health.js",
       "sha256": "8c23c98a01803ba75a0b4f302d2317b1d3c615a2de883e9291f8add2d34f85e1",
@@ -4774,12 +4870,6 @@
       "sha256_lf": "d39a77499331a036a14993c87dd71a9f29e880b7a238a19c0b86e19a0238be7c",
       "text": true
     },
-    "runtime_public_assets_installer_responsive_css": {
-      "path": "public/assets/installer-responsive.css",
-      "sha256": "68296d2ff548ae5106cd000bbe9d14e7addb46d5f3743f3aa4f141b09c98d04b",
-      "sha256_lf": "caca64c81875133060b996943b897da704fea366e2abdbe24fb89021a9b6b44a",
-      "text": true
-    },
     "runtime_public_assets_installer_css": {
       "path": "public/assets/installer.css",
       "sha256": "c85d938ab6ae64721dfc41798bf79783418022e3eecc82f5b1042460486cae0f",
@@ -4790,6 +4880,12 @@
       "path": "public/assets/installer.js",
       "sha256": "4de1f5c3363bbbd6c55fb5ac3141200f840833486ddc4e645e6256de3dfb377f",
       "sha256_lf": "16dd449ec224a4aca0fcf6fca53df47a7315926b0064e2093382f6b15924e607",
+      "text": true
+    },
+    "runtime_public_assets_installer_responsive_css": {
+      "path": "public/assets/installer-responsive.css",
+      "sha256": "68296d2ff548ae5106cd000bbe9d14e7addb46d5f3743f3aa4f141b09c98d04b",
+      "sha256_lf": "caca64c81875133060b996943b897da704fea366e2abdbe24fb89021a9b6b44a",
       "text": true
     },
     "runtime_public_assets_modules_modules_css": {
@@ -4838,6 +4934,12 @@
       "path": "public/assets/ux.js",
       "sha256": "0fed4c2fc82a7e62e2e4e4dad2604540e93c8bbd2343df8f48143d7212abfbde",
       "sha256_lf": "a06abab4c5574185d2a37537e788770fd88bc50b6dc65e66e4a0ad41b830cea7",
+      "text": true
+    },
+    "runtime_public_htaccess": {
+      "path": "public/.htaccess",
+      "sha256": "6d00e2c1d40eafae61fdb66c51b82176504babd58a04b2b9c7ca3fbd149eda7b",
+      "sha256_lf": "6737e9da51d830872bcb5f10a97488e7ebb364a57650f58255e918e0138c48a3",
       "text": true
     },
     "runtime_public_index_php": {
@@ -4966,12 +5068,6 @@
       "sha256_lf": "343690824180eb680809779b321b29e1d7a47d79041cae555e47230ee6e31d7b",
       "text": true
     },
-    "runtime_resources_release_managed_runtime_dependencies_2_36_1_json": {
-      "path": "resources/release/managed-runtime-dependencies-2.36.1.json",
-      "sha256": "6e29f979fff99ea13603ab77bd339c54faeeaa4fec562673426854c00054c45f",
-      "sha256_lf": "6e29f979fff99ea13603ab77bd339c54faeeaa4fec562673426854c00054c45f",
-      "text": true
-    },
     "runtime_resources_release_managed_runtime_dependencies_2_36_10_json": {
       "path": "resources/release/managed-runtime-dependencies-2.36.10.json",
       "sha256": "96a068e18ea618d36faadc1e8e2f4792fc796b7542cf67aa9532dc925e2cccd1",
@@ -5006,6 +5102,12 @@
       "path": "resources/release/managed-runtime-dependencies-2.36.15.json",
       "sha256": "3c607ce1d486e11c5e95a50ff3d3bc0917483df7994d34aa18e64ce801ace973",
       "sha256_lf": "3c607ce1d486e11c5e95a50ff3d3bc0917483df7994d34aa18e64ce801ace973",
+      "text": true
+    },
+    "runtime_resources_release_managed_runtime_dependencies_2_36_1_json": {
+      "path": "resources/release/managed-runtime-dependencies-2.36.1.json",
+      "sha256": "6e29f979fff99ea13603ab77bd339c54faeeaa4fec562673426854c00054c45f",
+      "sha256_lf": "6e29f979fff99ea13603ab77bd339c54faeeaa4fec562673426854c00054c45f",
       "text": true
     },
     "runtime_resources_release_managed_runtime_dependencies_2_36_2_json": {
@@ -5140,12 +5242,6 @@
       "sha256_lf": "aa4d4e0fa1943d19c1afb47e6a4dea1dbef3b04557cae57181500823477161d7",
       "text": true
     },
-    "runtime_resources_release_managed_runtime_dependencies_2_39_1_json": {
-      "path": "resources/release/managed-runtime-dependencies-2.39.1.json",
-      "sha256": "d2b40c492277bcaba999b93363274c7003802772b5c48f315be4de809b998378",
-      "sha256_lf": "d2b40c492277bcaba999b93363274c7003802772b5c48f315be4de809b998378",
-      "text": true
-    },
     "runtime_resources_release_managed_runtime_dependencies_2_39_10_json": {
       "path": "resources/release/managed-runtime-dependencies-2.39.10.json",
       "sha256": "563bf0debf7e0476613eaf488d7e3655e338fc0a1dfe25a453595ad83a56c0cf",
@@ -5206,6 +5302,12 @@
       "sha256_lf": "696fae9f0919da1e1f31a20d012abfd48d206206669c9d0122bd843a4d2c37f2",
       "text": true
     },
+    "runtime_resources_release_managed_runtime_dependencies_2_39_1_json": {
+      "path": "resources/release/managed-runtime-dependencies-2.39.1.json",
+      "sha256": "d2b40c492277bcaba999b93363274c7003802772b5c48f315be4de809b998378",
+      "sha256_lf": "d2b40c492277bcaba999b93363274c7003802772b5c48f315be4de809b998378",
+      "text": true
+    },
     "runtime_resources_release_managed_runtime_dependencies_2_39_2_json": {
       "path": "resources/release/managed-runtime-dependencies-2.39.2.json",
       "sha256": "817cf44477a527a383c5ce18d6a7e8d61d914e4ede0ebf219e06073e54a66be0",
@@ -5262,8 +5364,8 @@
     },
     "runtime_resources_release_managed_runtime_dependencies_2_40_1_json": {
       "path": "resources/release/managed-runtime-dependencies-2.40.1.json",
-      "sha256": "ec2af8650b85bbae7d1d7bfaa3566a4e0e0c8c8b05cfe1ba2217437b549caa4d",
-      "sha256_lf": "ec2af8650b85bbae7d1d7bfaa3566a4e0e0c8c8b05cfe1ba2217437b549caa4d",
+      "sha256": "519eff0b61ffd02594357da17dbf0ffb66c0a747458be9e978fff88c5eae2321",
+      "sha256_lf": "519eff0b61ffd02594357da17dbf0ffb66c0a747458be9e978fff88c5eae2321",
       "text": true
     },
     "runtime_resources_release_production_legacy_quarantine_2_36_1_json": {
@@ -5512,12 +5614,6 @@
       "sha256_lf": "b66e19aecd61344e829c0de70617256c7d7235bec73056bd023e48ab81c7e751",
       "text": true
     },
-    "runtime_resources_release_updater_authority_2_39_1_json": {
-      "path": "resources/release/updater-authority-2.39.1.json",
-      "sha256": "ff8196f1b4217f67017794c48b650d8df864006b7a6e2c7dfb236b1ee9cb9e12",
-      "sha256_lf": "ff8196f1b4217f67017794c48b650d8df864006b7a6e2c7dfb236b1ee9cb9e12",
-      "text": true
-    },
     "runtime_resources_release_updater_authority_2_39_10_json": {
       "path": "resources/release/updater-authority-2.39.10.json",
       "sha256": "4455367112fc8e18228d2b96577f8f945cd5af62d7890609aa68a6036bfeff8d",
@@ -5576,6 +5672,12 @@
       "path": "resources/release/updater-authority-2.39.19.json",
       "sha256": "efaad242b6ec6f22a92e23d2540177441fc31372aa24c0f942097a01fde4d6e2",
       "sha256_lf": "efaad242b6ec6f22a92e23d2540177441fc31372aa24c0f942097a01fde4d6e2",
+      "text": true
+    },
+    "runtime_resources_release_updater_authority_2_39_1_json": {
+      "path": "resources/release/updater-authority-2.39.1.json",
+      "sha256": "ff8196f1b4217f67017794c48b650d8df864006b7a6e2c7dfb236b1ee9cb9e12",
+      "sha256_lf": "ff8196f1b4217f67017794c48b650d8df864006b7a6e2c7dfb236b1ee9cb9e12",
       "text": true
     },
     "runtime_resources_release_updater_authority_2_39_2_json": {
@@ -5644,118 +5746,22 @@
       "sha256_lf": "7b90dab866e6b49d785ce8c706f3ea7ce7db6846fdd1678e6a953a6bf4e31fd5",
       "text": true
     },
-    "runtime_stop_php": {
-      "path": "stop.php",
-      "sha256": "07a037b3d67483857ab75bd95b7a18310120a2779a114668571b12550b9e0ebc",
-      "sha256_lf": "ed615c5e5e51edb11bda15083a2d8e0ec9d4725613f40e863987daf2728f0305",
-      "text": true
-    },
     "runtime_stop_index_php": {
       "path": "stop/index.php",
       "sha256": "de3792f5e8e73173205720ca9f4907e026a574a512ce195fb550d4cd591cdcc1",
       "sha256_lf": "df0a07f5dcbd2b047f996434dd3092512cc9daa2962519be1b44fa499f06b51e",
       "text": true
     },
-    "runtime_app_services_queuev4diagnosticbundleservice_php": {
-      "path": "app/Services/QueueV4DiagnosticBundleService.php",
-      "sha256": "3ee3e8092475cca6dfa4e63cfb115c68a5dc5e9c17022558d9f26e06ce0786a7",
-      "sha256_lf": "ffcf97eb201155bc04dcf7d7b797eee3970c81bcbec4820730f18822fe5a561f",
+    "runtime_stop_php": {
+      "path": "stop.php",
+      "sha256": "07a037b3d67483857ab75bd95b7a18310120a2779a114668571b12550b9e0ebc",
+      "sha256_lf": "ed615c5e5e51edb11bda15083a2d8e0ec9d4725613f40e863987daf2728f0305",
       "text": true
     },
-    "runtime_app_work_workcontractversion_php": {
-      "path": "app/Work/WorkContractVersion.php",
-      "sha256": "0de3182aa89a6bfd43890b71134bc8b26181379c8fb8d00ec8d03ec2e1e03d70",
-      "sha256_lf": "0de3182aa89a6bfd43890b71134bc8b26181379c8fb8d00ec8d03ec2e1e03d70",
-      "text": true
-    },
-    "runtime_app_work_workenvelope_php": {
-      "path": "app/Work/WorkEnvelope.php",
-      "sha256": "9d6efb43258e9468850d5df2b0d27166361f13efb68c0da00729ea45af1fb60c",
-      "sha256_lf": "9d6efb43258e9468850d5df2b0d27166361f13efb68c0da00729ea45af1fb60c",
-      "text": true
-    },
-    "runtime_app_work_workadmissionreceipt_php": {
-      "path": "app/Work/WorkAdmissionReceipt.php",
-      "sha256": "9213e834766ee2ce82dbf36c97cadfd3700ce3400f121a84224aaf07d65f6054",
-      "sha256_lf": "9213e834766ee2ce82dbf36c97cadfd3700ce3400f121a84224aaf07d65f6054",
-      "text": true
-    },
-    "runtime_app_work_drainresult_php": {
-      "path": "app/Work/DrainResult.php",
-      "sha256": "237058ba7417161d0c419713fa05c3faaab6fd0267dd4918399bf0985302010d",
-      "sha256_lf": "237058ba7417161d0c419713fa05c3faaab6fd0267dd4918399bf0985302010d",
-      "text": true
-    },
-    "runtime_app_work_workexecutionresult_php": {
-      "path": "app/Work/WorkExecutionResult.php",
-      "sha256": "870aa3b90202a4ab0563522289310ad3af2165129a8535ac0c1ac7880ec63416",
-      "sha256_lf": "870aa3b90202a4ab0563522289310ad3af2165129a8535ac0c1ac7880ec63416",
-      "text": true
-    },
-    "runtime_app_work_drainauthoritytoken_php": {
-      "path": "app/Work/DrainAuthorityToken.php",
-      "sha256": "6728555d3328951f9816a5432575bf733f7eb05520d96801830d3617273a6a69",
-      "sha256_lf": "6728555d3328951f9816a5432575bf733f7eb05520d96801830d3617273a6a69",
-      "text": true
-    },
-    "runtime_app_work_contracts_workadmissioncontract_php": {
-      "path": "app/Work/Contracts/WorkAdmissionContract.php",
-      "sha256": "a3f2a9d686ce23404296def5f2f6ee989828cf910d56ad279ab18b75480a7215",
-      "sha256_lf": "a3f2a9d686ce23404296def5f2f6ee989828cf910d56ad279ab18b75480a7215",
-      "text": true
-    },
-    "runtime_app_work_contracts_canonicalworkstore_php": {
-      "path": "app/Work/Contracts/CanonicalWorkStore.php",
-      "sha256": "4cd4227d855bca5531f002b4f5156a81dfcc1a76bf2ce5549a443e0661d3f53c",
-      "sha256_lf": "4cd4227d855bca5531f002b4f5156a81dfcc1a76bf2ce5549a443e0661d3f53c",
-      "text": true
-    },
-    "runtime_app_work_contracts_drainauthoritycontract_php": {
-      "path": "app/Work/Contracts/DrainAuthorityContract.php",
-      "sha256": "91e0bdbc8e31006ec4602a5b6b9b0211233cfcb90a30da90270973f65eb7d575",
-      "sha256_lf": "91e0bdbc8e31006ec4602a5b6b9b0211233cfcb90a30da90270973f65eb7d575",
-      "text": true
-    },
-    "runtime_app_work_contracts_drainercontract_php": {
-      "path": "app/Work/Contracts/DrainerContract.php",
-      "sha256": "d30cb4fd8af76594643cfd58b7e8b303f125ed677ddae9f40c97769c4788b24e",
-      "sha256_lf": "d30cb4fd8af76594643cfd58b7e8b303f125ed677ddae9f40c97769c4788b24e",
-      "text": true
-    },
-    "runtime_app_work_adapters_queuecoredrainauthority_php": {
-      "path": "app/Work/Adapters/QueueCoreDrainAuthority.php",
-      "sha256": "64dc9386877dc827599dfae03ab22b235619f802a9c50d314346fa0132243826",
-      "sha256_lf": "64dc9386877dc827599dfae03ab22b235619f802a9c50d314346fa0132243826",
-      "text": true
-    },
-    "runtime_app_work_adapters_queuev4canonicalworkstore_php": {
-      "path": "app/Work/Adapters/QueueV4CanonicalWorkStore.php",
-      "sha256": "237514faab1a2972da9f810942d952fa390bdd1e224136328e5aad6dfcc9f1e6",
-      "sha256_lf": "237514faab1a2972da9f810942d952fa390bdd1e224136328e5aad6dfcc9f1e6",
-      "text": true
-    },
-    "runtime_app_work_adapters_queuev4currentdrainer_php": {
-      "path": "app/Work/Adapters/QueueV4CurrentDrainer.php",
-      "sha256": "a41e4eb49b533d89cb54b73a3e00aba7440d97f57be9654987c3181a84185aa8",
-      "sha256_lf": "a41e4eb49b533d89cb54b73a3e00aba7440d97f57be9654987c3181a84185aa8",
-      "text": true
-    },
-    "runtime_docs_architecture_k1b_v4_coupling_audit_csv": {
-      "path": "docs/architecture/K1B_V4_COUPLING_AUDIT.csv",
-      "sha256": "4e936e613d8c169bad04f61174a12f067a91801edd4f24cd6bb079c2ae692e9b",
-      "sha256_lf": "4e936e613d8c169bad04f61174a12f067a91801edd4f24cd6bb079c2ae692e9b",
-      "text": true
-    },
-    "runtime_docs_architecture_k1b_canonical_work_contract_md": {
-      "path": "docs/architecture/k1b-canonical-work-contract.md",
-      "sha256": "13fcd62c0305871a8220c5508964584aa67379fac275919329f8f76bf41c1e44",
-      "sha256_lf": "13fcd62c0305871a8220c5508964584aa67379fac275919329f8f76bf41c1e44",
-      "text": true
-    },
-    "runtime_docs_releases_k1b_github_only_md": {
-      "path": "docs/releases/k1b-github-only.md",
-      "sha256": "90edb8f9f192dbe9d1c26249b895c732b95902966d710c5535dd28fe950c8e77",
-      "sha256_lf": "90edb8f9f192dbe9d1c26249b895c732b95902966d710c5535dd28fe950c8e77",
+    "runtime_version": {
+      "path": "VERSION",
+      "sha256": "c574ef9046cc08a8e25633809076b35ba3e6e11957545137915d9c29b4affdd9",
+      "sha256_lf": "41a39e6fe55d4b5017a57ada401c997fa990445a32fc5d2d59f1fc0cc8ec29a2",
       "text": true
     }
   }

@@ -12,4 +12,3 @@ Decision:
 Reason:
 
 K1B established the canonical work/drainer contract. K1C is a UX and configuration cleanup on top of that contract, not a second migration. Removing technical debt from runtime compatibility paths belongs to a later explicit cleanup after K1B is merged and production evidence is stable.
-

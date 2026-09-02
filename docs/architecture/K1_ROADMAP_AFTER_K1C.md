@@ -12,4 +12,3 @@
    - internal Queue V4 naming;
    - historical source/batch table names.
 5. Do not change Cron cadence, schema, updater or Mercado Libre transport as part of K1C.
-

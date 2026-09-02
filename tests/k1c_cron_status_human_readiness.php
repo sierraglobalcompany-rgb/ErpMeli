@@ -16,4 +16,3 @@ k1b_assert(str_contains($cron, 'Pendientes ahora'), 'Cron shell must show pendin
 k1b_assert(str_contains($cron, 'Comando') && str_contains($cron, '--max-jobs=2'), 'Legacy max-jobs alias must remain only in advanced diagnostics.');
 
 echo "STATUS=PASS K1C_CRON_STATUS_HUMAN_READINESS\n";
-

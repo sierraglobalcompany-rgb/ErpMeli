@@ -36,4 +36,3 @@ foreach ($required as $route) {
 }
 
 echo "STATUS=PASS K1C_ROUTE_INVENTORY_COMPLETENESS\n";
-

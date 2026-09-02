@@ -38,4 +38,3 @@ foreach (['Bloques por cron', 'Recursos por lote', 'Máximo por trabajo', 'consu
 }
 
 echo "STATUS=PASS K1C_SETTINGS_OPTIONS_CALL_CENTRIC_LABELS\n";
-

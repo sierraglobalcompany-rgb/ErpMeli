@@ -17,4 +17,3 @@ k1b_assert(
 );
 
 echo "STATUS=PASS K1C_AUTOMATION_UI_TERMS\n";
-

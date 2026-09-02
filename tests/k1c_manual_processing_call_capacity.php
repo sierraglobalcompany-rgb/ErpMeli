@@ -18,4 +18,3 @@ foreach (['Cola disponible', 'Trabajos procesados', 'Alcance del trabajo', 'Lím
 }
 
 echo "STATUS=PASS K1C_MANUAL_PROCESSING_CALL_CAPACITY\n";
-

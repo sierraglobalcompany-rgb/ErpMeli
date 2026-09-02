@@ -48,4 +48,3 @@ foreach ($files as $file) {
 }
 
 echo "STATUS=PASS K1C_NO_BATCH_JOB_AUTHORITY_IN_PRIMARY_UI\n";
-

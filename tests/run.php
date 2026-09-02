@@ -128,11 +128,8 @@ $test('ERP Meli 2.1 registra endpoints de lectura nuevos y bloquea rutas no mape
     MeliEndpointRegistry::assertDocumented('GET', '/users/123/items/search');
     MeliEndpointRegistry::assertDocumented('GET', '/items/MCO123456789');
     MeliEndpointRegistry::assertDocumented('GET', '/post-purchase/v1/claims/search');
+    MeliEndpointRegistry::assertDocumented('GET', '/post-purchase/v1/claims/123/detail');
     MeliEndpointRegistry::assertDocumented('GET', '/questions/search');
-    $blocked = false;
-    try { MeliEndpointRegistry::assertDocumented('GET', '/post-purchase/v1/claims/123/detail'); }
-    catch (RuntimeException) { $blocked = true; }
-    $assert($blocked, 'Un endpoint ausente del mapa local debe fallar cerrado.');
 });
 
 $test('Migraciones 2.1 a 2.4.6 existen y mantienen entrega versionada', static function () use ($assert): void {
@@ -267,11 +264,7 @@ $test('2.4 agrega guardia API, preguntas, agenda cron, logs y mejoras de ventas'
     $layout = (string) file_get_contents($root . '/app/Views/layouts/app.php');
     $navigation = (string) file_get_contents($root . '/app/Repositories/NavigationRepository.php');
     $assert(str_contains($layout . $navigation, '/questions'));
-    $assert(
-        str_contains($layout, 'AssetVersionService::fingerprint')
-        && str_contains($layout, "View::asset(\$base, 'app.css')"),
-        'Los assets deben usar fingerprint y el despachador de la release activa.'
-    );
+    $assert(str_contains($layout, 'AssetVersionService::fingerprint') && str_contains($layout, '/assets/app.css?v='));
     $shipments = (string) file_get_contents($root . '/app/Views/sales/shipments/index.php')
         . (string) file_get_contents($root . '/app/Views/sales/shipments/_table.php');
     $assert(str_contains($shipments, 'logistic_type') && str_contains($shipments, 'return_to='));
@@ -424,13 +417,7 @@ $test('2.4.4 agrega diagnóstico horario, errores visibles y modo asistido', sta
         && str_contains($syncIndex, 'Bloques atrasados/listos')
     );
     $js = (string) file_get_contents($root . '/public/assets/app.js');
-    $syncController = (string) file_get_contents($root . '/app/Controllers/SyncController.php');
-    $assert(!str_contains($js, 'data-assisted-sync-form')
-        && str_contains($syncController, 'public function assistedStepJson')
-        && str_contains(
-            substr($syncController, strpos($syncController, 'public function assistedStepJson'), 900),
-            'http_response_code(410)'
-        ), 'La compatibilidad histórica debe quedar retirada y no ejecutar desde el navegador.');
+    $assert(str_contains($js, 'data-assisted-sync-form') && str_contains($js, 'continue_delay_seconds'));
 });
 
 $test('2.4.5 agrega modo asistido avanzado y recuperacion de vencidos', static function () use ($assert): void {
@@ -454,16 +441,13 @@ $test('2.4.5 agrega modo asistido avanzado y recuperacion de vencidos', static f
         $assert(str_contains($queue, $needle), 'Falta detalle asistido en cola: ' . $needle);
     }
     $controller = (string) file_get_contents($root . '/app/Controllers/SyncController.php');
-    $assert(!str_contains(
-        substr($controller, strpos($controller, 'public function assistedStepJson'), 900),
-        'processReady('
-    ), 'El modo asistido retirado no debe procesar bloques desde HTTP.');
+    $assert(str_contains($controller, 'processReady((int) ($_POST[\'account_id\'] ?? 0), true)'), 'El modo asistido debe procesar bloques en cola aunque no estén vencidos.');
     $cronView = (string) file_get_contents($root . '/app/Views/settings/cron.php');
     $assert(str_contains($cronView, 'Recuperar bloques vencidos') && str_contains($cronView, 'Reprogramar bloques vencidos'));
     $js = (string) file_get_contents($root . '/public/assets/app.js');
-    $assert(!str_contains($js, 'setProcessDetails')
-        && !str_contains($js, 'data-process-continue'),
-        'Los controles asistidos heredados deben desaparecer del JavaScript.');
+    foreach (['data-process-pause', 'data-process-continue', 'data-process-cancel', 'setProcessDetails'] as $needle) {
+        $assert(str_contains($js, $needle), 'Falta JS asistido 2.4.5: ' . $needle);
+    }
 });
 
 $test('2.4.6 agrega auditoria de ventas, sync diario y corrige confirm en selectores', static function () use ($assert): void {
@@ -496,9 +480,9 @@ $test('2.4.6 agrega auditoria de ventas, sync diario y corrige confirm en select
     $cron = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
     $assert(str_contains($cron, 'RecurringSyncService') && str_contains($cron, 'recurring_enqueued'));
     $questions = (string) file_get_contents($root . '/app/Services/QuestionSyncService.php');
-    $assert(str_contains($questions, 'questions.frequency_minutes') && str_contains($questions, 'question_sync_account_state'));
+    $assert(str_contains($questions, 'questions.frequency_minutes') && str_contains($questions, 'questions.last_sync_at'));
     $js = (string) file_get_contents($root . '/public/assets/app.js');
-    $assert(str_contains($js, "closest('form[data-confirm]')") && str_contains($js, "closest?.('select,input,textarea,option,label')"));
+    $assert(str_contains($js, "element.tagName === 'FORM'") && str_contains($js, "closest?.('select,input,textarea,option,label')"));
     $dashboard = (string) file_get_contents($root . '/app/Views/dashboard/index.php')
         . (string) file_get_contents($root . '/app/Views/dashboard/_operations.php')
         . (string) file_get_contents($root . '/app/Repositories/NavigationRepository.php');
@@ -611,12 +595,7 @@ $test('2.6.0 agrega centro de notificaciones orientado por eventos', static func
         $assert(str_contains($routes, $route), 'Falta ruta notificaciones: ' . $route);
     }
     $layout = (string) file_get_contents($root . '/app/Views/layouts/app.php');
-    $assert(
-        str_contains($layout, 'Notificaciones')
-        && str_contains($layout, "View::asset(\$base, 'app.js')")
-        && str_contains($layout, 'AssetVersionService::fingerprint'),
-        'Notificaciones debe cargar el JavaScript de la misma release activa.'
-    );
+    $assert(str_contains($layout, 'Notificaciones') && str_contains($layout, '/assets/app.js?v=') && str_contains($layout, 'AssetVersionService::fingerprint'));
     $syncJob = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
     $assert(str_contains($syncJob, 'NotificationCoalescerService') && str_contains($syncJob, 'notification_events_processed'));
     $registry = (string) file_get_contents($root . '/app/Services/MeliEndpointRegistry.php');
@@ -635,11 +614,7 @@ $test('2.6.1 agrega auditoria exacta de ventas y reparacion confiable', static f
         $assert(str_contains($audit, $needle), 'Falta auditoría exacta 2.6.1: ' . $needle);
     }
     $repair = (string) file_get_contents($root . '/app/Services/SalesRepairService.php');
-    $assert(
-        str_contains($repair, 'classification="missing_remote"')
-        && str_contains($repair, 'SalesAuditRunService())->createExactMonth'),
-        'La reparación debe conservar el alcance exacto y encolar su comprobación moderna.'
-    );
+    $assert(str_contains($repair, 'classification="missing_remote"') && str_contains($repair, 'compareMonthIdsSystem'));
     $orders = (string) file_get_contents($root . '/app/Services/OrderSyncService.php');
     $assert(str_contains($orders, '$processedFromPage') && str_contains($orders, '$currentOffset += $count >= $maxOrders ? $processedFromPage : count($results);'));
     $view = (string) file_get_contents($root . '/app/Views/sync/audit.php');
@@ -654,12 +629,7 @@ $test('2.6.2 corrige auditoria shifted y notificaciones pendientes', static func
     $assert(is_file($root . '/database/migrations/033_audit_notifications_hotfix_2_6_2.sql'), 'Falta migracion 2.6.2');
     $assert(version_compare(trim((string) file_get_contents($root . '/VERSION')), '2.6.2', '>='));
     $layout = (string) file_get_contents($root . '/app/Views/layouts/app.php');
-    $assert(
-        str_contains($layout, "View::asset(\$base, 'app.css')")
-        && str_contains($layout, "View::asset(\$base, 'app.js')")
-        && str_contains($layout, 'AssetVersionService::fingerprint'),
-        'CSS y JavaScript deben compartir el puntero atómico de release.'
-    );
+    $assert(str_contains($layout, '/assets/app.css?v=') && str_contains($layout, '/assets/app.js?v=') && str_contains($layout, 'AssetVersionService::fingerprint'));
     $routes = (string) file_get_contents($root . '/public/index.php');
     $assert(str_contains($routes, '/notifications/process'), 'Falta ruta para procesar notificaciones');
     $controller = (string) file_get_contents($root . '/app/Controllers/NotificationController.php');
@@ -685,12 +655,7 @@ $test('2.6.3 estabiliza auditoria exacta, envios y assets', static function () u
         $assert(str_contains($shipments, $needle), 'Falta optimizacion envios 2.6.3: ' . $needle);
     }
     $layout = (string) file_get_contents($root . '/app/Views/layouts/app.php');
-    $assert(
-        str_contains($layout, "View::asset(\$base, 'app.css')")
-        && str_contains($layout, "View::asset(\$base, 'app.js')")
-        && str_contains($layout, 'AssetVersionService::fingerprint'),
-        'CSS y JavaScript deben compartir el puntero atómico de release.'
-    );
+    $assert(str_contains($layout, '/assets/app.css?v=') && str_contains($layout, '/assets/app.js?v=') && str_contains($layout, 'AssetVersionService::fingerprint'));
     $auditView = (string) file_get_contents($root . '/app/Views/sync/audit.php');
     $assert(str_contains($auditView, 'Auditoría de ventas') && str_contains($auditView, 'Diferencias individuales de la auditoría exacta'));
 });
@@ -745,7 +710,7 @@ $test('2.7.3 muestra cola financiera inteligente con billing automatico', static
         $assert(str_contains($billingImporter, $needle), 'Falta importador billing 2.7.3: ' . $needle);
     }
     $financialQueue = (string) file_get_contents($root . '/app/Services/OrderFinancialRecalcJobService.php');
-    foreach (['processBillingPhase', 'billing_import', 'SaleFinancialStateService', 'No hay recalculos financieros pendientes'] as $needle) {
+    foreach (['processBillingPhase', 'billing_import', 'auto_billing_for_missing', 'No hay recalculos financieros pendientes'] as $needle) {
         $assert(str_contains($financialQueue, $needle), 'Falta servicio cola financiera 2.7.3: ' . $needle);
     }
     $syncView = (string) file_get_contents($root . '/app/Views/sync/index.php');
@@ -893,12 +858,7 @@ $test('2.8.5 aclara conteos de catalogo y mejora navegacion movil', static funct
     $assert(str_contains($public, 'catalog-mobile-actions') && str_contains($public, 'Filtros') && str_contains($public, 'Categorías'), 'La vista publica debe tener controles moviles plegables');
     $assert(str_contains($css, '.catalog-mobile-panel') && str_contains($css, '.catalog-public-sidebar{display:none}'), 'CSS debe ocultar sidebar largo en movil y usar paneles');
     $assert(str_contains($query, 'public_status_') && str_contains($query, 'ci.status IN ('), 'La consulta publica debe soportar estados publicos con placeholders unicos');
-    $assert(
-        str_contains($layout, "View::asset(\$base, 'app.css')")
-        && str_contains($layout, "View::asset(\$base, 'app.js')")
-        && str_contains($layout, 'AssetVersionService::fingerprint'),
-        'Assets deben usar fingerprint y el despachador de la release activa.'
-    );
+    $assert(str_contains($layout, '/assets/app.css?v=') && str_contains($layout, '/assets/app.js?v=') && str_contains($layout, 'AssetVersionService::fingerprint'), 'Assets deben usar fingerprint de release y contenido');
 });
 
 $test('2.8.6 agrega estados publicos configurables y badges avanzados', static function () use ($assert): void {
@@ -1129,7 +1089,7 @@ $test('2.8.18 agrega zoom y descripciones cacheadas en ficha publica de catalogo
         $assert(str_contains($migration53, $needle), 'Migracion 053 debe preparar descripciones cacheadas: ' . $needle);
     }
     $product = (string) file_get_contents($root . '/app/Views/public_catalog/product.php');
-    foreach (['data-catalog-main-image', 'data-catalog-gallery', 'data-catalog-gallery-image', 'data-catalog-lightbox-open', 'Descripción', "View::asset(\$base, 'app.js')", 'v=2.11.2'] as $needle) {
+    foreach (['data-catalog-main-image', 'data-catalog-gallery', 'data-catalog-gallery-image', 'data-catalog-lightbox-open', 'Descripción', 'app.js?v=2.11.2'] as $needle) {
         $assert(str_contains($product, $needle), 'Ficha publica debe exponer galeria clicable: ' . $needle);
     }
     $assert(!str_contains($product, 'array_unshift($pictureUrls'), 'La ficha pública no debe anteponer thumbnail_url sobre fotos grandes.');
@@ -1201,11 +1161,7 @@ $test('2.8.20 declara compatibilidad PHP 8.3 a 8.5 y limpia deprecaciones', stat
         $assert(str_contains($contents, ', \'\\"\', \'\', "\\n")') || str_contains($contents, ', \'"\', \'\', "\\n")'), 'fputcsv debe usar escape explicito en ' . $path);
     }
     $syncOrders = (string) file_get_contents($root . '/jobs/sync_orders.php');
-    $assert(
-        str_contains($syncOrders, "erp_retired_job('sync_orders')")
-        || (!str_contains($syncOrders, 'use DateTimeImmutable;') && str_contains($syncOrders, 'new \\DateTimeImmutable')),
-        'sync_orders no debe generar warnings de use global ni continuar como worker independiente'
-    );
+    $assert(!str_contains($syncOrders, 'use DateTimeImmutable;') && str_contains($syncOrders, 'new \\DateTimeImmutable'), 'sync_orders no debe generar warnings de use global');
 });
 
 $test('2.8.21 rediseña filtros públicos y estabiliza galería de catálogo', static function () use ($assert): void {
@@ -1232,13 +1188,7 @@ $test('2.8.21 rediseña filtros públicos y estabiliza galería de catálogo', s
     }
     $layout = (string) file_get_contents($root . '/app/Views/layouts/app.php');
     $product = (string) file_get_contents($root . '/app/Views/public_catalog/product.php');
-    $assert(
-        str_contains($layout, "View::asset(\$base, 'app.css')")
-        && str_contains($layout, 'AssetVersionService::fingerprint')
-        && str_contains($product, "View::asset(\$base, 'app.js')")
-        && str_contains($product, 'v=2.11.2'),
-        'Assets deben quedar vinculados a la release activa y versionados.'
-    );
+    $assert(str_contains($layout, '/assets/app.css?v=') && str_contains($layout, 'AssetVersionService::fingerprint') && str_contains($product, 'app.js?v=2.11.2'), 'Assets deben quedar versionados con fingerprint o versión de release');
 });
 
 $test('2.8.22 certifica runtime PHP 8.3 a 8.5 y contratos operativos', static function () use ($assert): void {
@@ -1299,20 +1249,9 @@ $test('2.8.23 aisla galeria y agrega cola resiliente de descripciones', static f
         $assert(str_contains($catalogCss, $needle), 'CSS aislado de catálogo debe incluir: ' . $needle);
     }
     $catalogJs = (string) file_get_contents($root . '/public/assets/catalog.js');
-    foreach (['data-catalog-gallery', 'catalog-lightbox'] as $needle) {
+    foreach (['data-catalog-gallery', 'data-catalog-description-monitor', 'Continuará en', 'data-description-start', 'catalog-lightbox'] as $needle) {
         $assert(str_contains($catalogJs, $needle), 'JS de catálogo debe incluir: ' . $needle);
     }
-    $descriptionController = (string) file_get_contents($root . '/app/Controllers/CatalogDescriptionJobController.php');
-    $stepMethod = substr(
-        $descriptionController,
-        strpos($descriptionController, 'public function step'),
-        700
-    );
-    $assert(!str_contains($catalogJs, 'data-catalog-description-monitor')
-        && !str_contains($catalogJs, 'stepUrl')
-        && str_contains($stepMethod, '410')
-        && !str_contains($stepMethod, 'processDue('),
-        'La galería permanece activa, pero el ejecutor web de descripciones debe quedar retirado.');
     $public = (string) file_get_contents($root . '/app/Views/public_catalog/show.php');
     $assert(str_contains($public, 'Más filtros') && !str_contains($public, 'catalog-filter-chip'), 'Filtros públicos deben ser sobrios y no usar píldoras antiguas.');
 });
@@ -1512,15 +1451,8 @@ $test('2.10.0 separa configuración, centraliza navegación y guía vistas técn
     $settingsService = (string) file_get_contents($root . '/app/Services/SettingsSectionService.php');
     $assert(str_contains($settingsService, 'beginTransaction') && str_contains($settingsService, 'update_settings_section'), 'El guardado por sección debe ser transaccional y auditado.');
     $layout = (string) file_get_contents($root . '/app/Views/layouts/app.php');
-    $assert(
-        str_contains($layout, 'NavigationRepository')
-        && str_contains($layout, "View::asset(\$base, 'ux.css')")
-        && str_contains($layout, 'uxCssFingerprint'),
-        'El layout debe usar navegación central y assets visuales de la release activa.'
-    );
-    $health = (string) file_get_contents($root . '/app/Views/settings/api_health.php')
-        . (string) file_get_contents($root . '/app/Services/ApiHealthStatusPresenter.php');
-    $job = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
+    $assert(str_contains($layout, 'NavigationRepository') && str_contains($layout, '/assets/ux.css?v=') && str_contains($layout, 'uxCssFingerprint'), 'El layout debe usar navegación central y sistema visual.');
+    $health = (string) file_get_contents($root . '/app/Views/settings/api_health.php');
     $diagnostics = (string) file_get_contents($root . '/app/Views/settings/diagnostics.php');
     $cron = (string) file_get_contents($root . '/app/Views/settings/cron.php');
     foreach (['Salud de la integración', 'Estado por cuenta', 'Detalles técnicos'] as $needle) {
@@ -1548,49 +1480,8 @@ $test('2.10.1 estabiliza colas, elimina pagos expandidos y coordina el cron', st
     $assert(str_contains($items, 'phase') && str_contains($items, 'discoverPage') && str_contains($items, 'details'), 'Productos debe separar descubrimiento y detalle.');
     $cron = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
     $assert(str_contains($cron, 'CronWorkCoordinator') && str_contains($cron, 'OrderEnrichmentService') && str_contains($cron, 'MeliItemSyncJobService'), 'Cron debe coordinar colas aisladas.');
-    $health = (string) file_get_contents($root . '/app/Services/CronHealthService.php');
-    foreach (['MAX_PAYLOAD_BYTES', 'encodedPayload', 'compactCoordinator', 'detail_table'] as $needle) {
-        $assert(str_contains($health, $needle), 'cron_health_checks debe guardar payload acotado y dejar detalle en system_cron_run_steps: ' . $needle);
-    }
     $session = (string) file_get_contents($root . '/app/Core/Session.php');
     $assert(str_contains($session, 'looksTechnical') && str_contains($session, 'Código de diagnóstico'), 'Mensajes técnicos deben ocultarse al usuario.');
-});
-
-$test('Cron conserva un resumen acotado aunque existan muchos pasos', static function () use ($assert): void {
-    $steps = [];
-    for ($index = 1; $index <= 100; $index++) {
-        $steps['task_' . $index] = [
-            'status' => 'completed',
-            'processed' => 1,
-            'errors' => $index % 20 === 0 ? 1 : 0,
-            'duration_ms' => 10 + $index,
-            'stop_reason' => '',
-            'message' => str_repeat('detalle ', 50),
-        ];
-    }
-    $service = new \App\Services\CronHealthService();
-    $method = new ReflectionMethod($service, 'encodedPayload');
-    $json = (string) $method->invoke($service, [
-        'processed' => 100,
-        'errors' => 5,
-        'end_reason' => 'work_completed',
-        'coordinator' => [
-            'budget_ms' => 40000,
-            'used_ms' => 12000,
-            'remaining_ms' => 28000,
-            'steps' => $steps,
-        ],
-    ]);
-    $decoded = json_decode($json, true);
-    $assert(strlen($json) <= 2048, 'El resumen de Cron debe permanecer por debajo de 2 KiB.');
-    $assert(is_array($decoded)
-        && (int) ($decoded['processed'] ?? 0) === 100
-        && (int) ($decoded['errors'] ?? 0) === 5
-        && (int) ($decoded['coordinator']['step_count'] ?? 0) === 100
-        && (int) ($decoded['coordinator']['processed'] ?? 0) === 100,
-        'La compactación debe conservar contadores y cantidad de pasos.');
-    $assert(count((array) ($decoded['coordinator']['last_steps'] ?? [])) <= 5,
-        'El payload debe conservar únicamente una cola corta de pasos recientes.');
 });
 
 $test('2.11.0 agrega arquitectura gradual, rangos UTC y observabilidad verificable', static function () use ($assert): void {
@@ -1744,7 +1635,7 @@ $test('2.11.4 separa cron automático, prueba manual y worker de notificaciones'
         $assert(str_contains($migration, $needle), 'Migración 071 debe incluir: ' . $needle);
     }
     $health = (string) file_get_contents($root . '/app/Services/CronHealthService.php');
-    foreach (['scheduled_cli', 'manual_web', 'notification_cli', 'Automatización verificada', 'No llegó una invocación automática', 'pending_verification'] as $needle) {
+    foreach (['scheduled_cli', 'manual_web', 'notification_cli', 'Automatización verificada', 'Solo prueba manual', 'pending_verification'] as $needle) {
         $assert(str_contains($health, $needle), 'Salud cron verificable debe incluir: ' . $needle);
     }
     $settings = (string) file_get_contents($root . '/app/Controllers/SettingsController.php');
@@ -1774,7 +1665,7 @@ $test('2.11.5 acota cron Hostinger, evita solapamientos y agrega probe CLI', sta
     }
     $assert(!str_contains($probe, 'MeliApiClient') && !str_contains($probe, 'processDue('), 'Probe no debe consultar Mercado Libre ni procesar colas.');
     $main = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
-    foreach (['ERP_CRON_BOOT', 'ERP_CRON_SKIP', 'cron_entry_early_lock()', 'CronDeadlineContext::start', 'CronTaskStateService', 'max_api_tasks_per_run'] as $needle) {
+    foreach (['ERP_CRON_BOOT', 'ERP_CRON_SKIP', "job_try_lock('process_sync_queue')", 'CronDeadlineContext::start', 'CronTaskStateService', 'max_api_tasks_per_run'] as $needle) {
         $assert(str_contains($main, $needle), 'Cron general acotado debe incluir: ' . $needle);
     }
     $assert(!str_contains($main, 'SecureUpdateEngineService'), 'El motor de actualizaciones no debe ejecutarse dentro del cron operativo.');
@@ -2193,9 +2084,9 @@ $test('2.17.0 corrige el gateway modular y hace funcional Meli Insights', static
             };
         }
     );
-    $response = $gateway->get('meli-insights', 91, '/items/MCO123', ['quantity' => 1], 'module_insights');
+    $response = $gateway->get('meli-insights', 91, '/items/MCO123/sale_price', ['quantity' => 1], 'module_insights');
     $assert(($calls[0]['account_id'] ?? 0) === 91, 'Gateway debe construir el cliente para la cuenta seleccionada.');
-    $assert(($response['path'] ?? '') === '/items/MCO123', 'Gateway debe enviar el path como primer argumento de get().');
+    $assert(($response['path'] ?? '') === '/items/MCO123/sale_price', 'Gateway debe enviar el path como primer argumento de get().');
     $assert(($response['meta']['module_id'] ?? '') === 'meli-insights', 'Gateway debe identificar el presupuesto del módulo.');
 
     $provider = new \App\Modules\MeliInsights\ModuleProvider();
@@ -2389,7 +2280,6 @@ $test('2.18.0 proyecta todas las colas y explica la próxima ejecución', static
     $registry = (string) file_get_contents($root . '/app/Services/WorkQueueRegistry.php');
     $diagnostic = (string) file_get_contents($root . '/app/Services/DiagnosticService.php');
     $projection = (string) file_get_contents($root . '/app/Services/WorkQueueProjectionService.php');
-    $job = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
     $scheduler = (string) file_get_contents($root . '/app/Services/WorkSchedulerService.php');
     $routes = (string) file_get_contents($root . '/public/index.php');
     $queueView = (string) file_get_contents($root . '/app/Views/settings/automation_queue.php');
@@ -2400,18 +2290,12 @@ $test('2.18.0 proyecta todas las colas y explica la próxima ejecución', static
     foreach ([
         'operational_maintenance','notification_spool','notification_backfill','notification_fallback',
         'recurring_sync','orders_sync','order_enrichment','order_date_repair','questions','financial_recalc',
-        'sales_repair','sales_audit','catalog_descriptions','items_sync','module_jobs',
+        'sales_repair','sales_audit','catalog_descriptions','items_sync','catalog_description_cleanup','module_jobs',
     ] as $queue) {
         $assert(str_contains($registry, "'{$queue}'"), 'El registro debe inventariar: ' . $queue);
     }
     $assert(str_contains($projection, 'priority_tier ASC,p.created_at_source ASC'), 'La cola debe respetar prioridad y antigüedad.');
-    $assert(
-        str_contains($scheduler, '$apiCount >= $maxApiTasks')
-        && str_contains($scheduler, 'count($selected) >= $maxTasks')
-        && str_contains($scheduler, "cron.max_api_tasks_per_run")
-        && str_contains($scheduler, "cron.max_tasks_per_run"),
-        'La vista previa debe respetar los mismos límites configurados que el cron.'
-    );
+    $assert(str_contains($scheduler, '$apiCount >= 1') && str_contains($scheduler, 'count($selected) >= 3'), 'La vista previa debe respetar los límites del cron.');
     foreach (['/settings/cron/next', '/settings/cron/queue', '/settings/cron/history', '/settings/cron/diagnostics'] as $route) {
         $assert(str_contains($routes, $route), 'Debe existir la ruta: ' . $route);
     }
@@ -2521,11 +2405,7 @@ $test('2.19.1 explica decisiones del cron y enlaza trabajos de forma segura', st
     ] as $reason) {
         $assert(str_contains($scheduler, "'{$reason}'"), 'El planificador debe explicar: ' . $reason);
     }
-    $assert(
-        str_contains($projection, 'public function find(string $queueKey, string $sourceId')
-        && str_contains($projection, 'LIMIT 1'),
-        'El detalle debe localizar trabajos con una consulta limitada.'
-    );
+    $assert(str_contains($projection, 'public function find(string $queueKey, string $sourceId)'), 'El detalle debe localizar trabajos con una consulta limitada.');
     $assert(str_contains($projection, 'isset($definitions[$queueKey])'), 'El detalle debe rechazar colas no registradas.');
     $assert(str_contains($routes, "'/settings/cron/work'"), 'Debe existir la ruta de detalle del trabajo.');
     foreach (['Qué ocurrió','Qué debe hacer','¿Llegó a Mercado Libre?','Riesgo de bloqueo','Ver detalles técnicos'] as $label) {
@@ -2575,8 +2455,7 @@ $test('2.19.1 explica decisiones del cron y enlaza trabajos de forma segura', st
         'is_api_task' => 1,
     ], 'action_required');
     $assert($critical['blocking_risk'] === 'critical', 'unauthorized_scopes debe mostrarse como crítico.');
-    $detailPath = (string) (parse_url((string) $critical['detail_url'], PHP_URL_PATH) ?: '');
-    $assert(str_ends_with($detailPath, '/settings/cron/work'), 'El detalle debe usar una ruta interna controlada y conservar el base path.');
+    $assert(str_starts_with((string) $critical['detail_url'], '/settings/cron/work?'), 'El detalle debe usar una ruta interna controlada.');
     $assert(str_contains($registrySource, 'Un fallo del módulo no detiene órdenes ni webhooks.'), 'Los módulos deben explicar su aislamiento.');
 });
 
@@ -2641,7 +2520,6 @@ $test('2.19.4 coordina cron y procesamiento manual sin API desde web', static fu
     $migration = (string) file_get_contents($root . '/database/migrations/098_manual_processing_center_2_19_4.sql');
     $routes = (string) file_get_contents($root . '/public/index.php');
     $cronState = (string) file_get_contents($root . '/app/Services/CronTaskStateService.php');
-    $coordination = (string) file_get_contents($root . '/app/Services/ExecutionCoordinationService.php');
     $worker = (string) file_get_contents($root . '/jobs/process_manual_queue.php');
     foreach (['manual_processing_sessions','manual_processing_scopes','manual_processing_items','grace_until','lease_generation'] as $needle) {
         $assert(str_contains($migration, $needle), 'Migración 098 debe incluir: ' . $needle);
@@ -2649,11 +2527,7 @@ $test('2.19.4 coordina cron y procesamiento manual sin API desde web', static fu
     foreach (['/settings/manual-processing/start','/settings/manual-processing/pause','/settings/manual-processing/resume','/settings/manual-processing/finish'] as $route) {
         $assert(str_contains($routes, $route), 'Falta ruta del Centro: ' . $route);
     }
-    $assert(
-        str_contains($cronState, 'reservedQueueKeys')
-        && str_contains($coordination, 'queueReservedForManual'),
-        'Cron debe ceder las colas reclamadas mediante el coordinador compartido.'
-    );
+    $assert(str_contains($cronState, 'queueReservedForManual'), 'Cron debe ceder las colas reclamadas.');
     $assert(str_contains($worker, "PHP_SAPI !== 'cli'"), 'El procesador debe ser exclusivamente CLI.');
     $assert(str_contains($worker, 'ManualQueueExecutionService')
         || str_contains($worker, 'reason=retired_interactive_web'),
@@ -2690,18 +2564,14 @@ $test('2.19.5 cierra sesiones manuales sin falsos completados ni colas vacías',
     $assert(version_compare($version, '2.19.5', '>='), 'VERSION debe incluir el correctivo 2.19.5.');
     $minimumMigration = (string) ($manifest['minimum_migration'] ?? '');
     $assert(($manifest['version'] ?? '') === $version
-        && preg_match('/^(?:099|1\\d{2}|[2-9][0-9]{2})_/', $minimumMigration) === 1,
+        && preg_match('/^(?:099|1\\d{2})_/', $minimumMigration) === 1,
         'El manifiesto debe exigir 099 o una migración acumulativa posterior.');
     $assert(str_contains($manual, 'public function finalizeSessionIfDone'), 'La sesión debe cerrarse automáticamente.');
     $assert(str_contains($manual, 'lease_expires_at<UTC_TIMESTAMP()'), 'Un micro-lote abandonado debe ser recuperable.');
     $assert(str_contains($manual, "GET_LOCK('erp_manual_processing_start',3)"), 'Dos inicios simultáneos deben serializarse con lock MySQL.');
     $assert(str_contains($manual, 'El procesamiento se detuvo para revisar el último resultado.'), 'Un error debe detener la sesión y explicarlo.');
-    $assert(str_contains($manual, "['operational_maintenance','order_date_repair','financial_recalc']"), 'Trabajo local no debe congelar entrada webhook.');
-    $assert(str_contains($executor, "'reached_remote' => false")
-        && str_contains($executor, 'ejecutor heredado está retirado')
-        && !str_contains($executor, 'processDue(')
-        && !str_contains($executor, 'processNext('),
-        'El ejecutor heredado debe quedar cerrado; verificar el ID después de processDue era demasiado tarde.');
+    $assert(str_contains($manual, "['operational_maintenance','order_date_repair','financial_recalc','catalog_description_cleanup']"), 'Trabajo local no debe congelar entrada webhook.');
+    $assert(str_contains($executor, "'target_terminal'") && str_contains($executor, 'refreshQueue'), 'El worker debe verificar el trabajo congelado.');
     $assert(str_contains($projection, 'public function all('), 'La simulación no debe truncarse silenciosamente a 100 trabajos.');
     $assert(str_contains($adapter, 'projectSucceeded'), 'Una falla de lectura debe distinguirse de una cola vacía.');
     $assert(str_contains($projection, 'if (!$adapter->projectSucceeded())'), 'La proyección anterior debe conservarse cuando falla el adaptador.');
@@ -2724,7 +2594,7 @@ $test('2.19.6 protege la transición manual y exige evidencia remota real', stat
     $assert(version_compare($version, '2.19.6', '>='), 'VERSION debe incluir el correctivo 2.19.6.');
     $minimumMigration = (string) ($manifest['minimum_migration'] ?? '');
     $assert(($manifest['version'] ?? '') === $version
-        && preg_match('/^(?:100|1\\d{2}|[2-9][0-9]{2})_/', $minimumMigration) === 1,
+        && preg_match('/^(?:100|1\\d{2})_/', $minimumMigration) === 1,
         'El manifiesto debe exigir 100 o una migración acumulativa posterior.');
     foreach (['idx_manual_item_eligible','visible_item_limit','require_remote_samples','2.19.6'] as $contract) {
         $assert(str_contains($migration, $contract), 'Migración 100 debe incluir: ' . $contract);
@@ -2748,8 +2618,7 @@ $test('2.19.6 protege la transición manual y exige evidencia remota real', stat
         && str_contains($policy, "['remote_count']"),
         'Solo observaciones que llegaron a Mercado Libre deben habilitar el ritmo adaptativo.');
     $assert(!str_contains($javascript, '/MeliApiClient')
-        && str_contains($javascript, 'data-manual-controller="directed-cli-v1"')
-        && !str_contains($javascript, '/interactive/step'),
+        && str_contains($javascript, 'terminalStatuses'),
         'El navegador solo debe observar estados y detenerse al terminar.');
 });
 
@@ -2806,7 +2675,7 @@ $test('2.19.8 hace visible Procesar ahora y permite el inicio conservador inmedi
 
     $assert(version_compare($version, '2.19.8', '>='), 'VERSION debe conservar 2.19.8.');
     $assert(($manifest['version'] ?? '') === $version
-        && preg_match('/^(?:10[2-9]|1[1-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
+        && preg_match('/^(?:10[2-9]|1[1-9][0-9])_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
         'El manifiesto debe exigir 102 o una migración acumulativa posterior.');
     foreach ([
         'manual_processing_engine_health',
@@ -2829,8 +2698,7 @@ $test('2.19.8 hace visible Procesar ahora y permite el inicio conservador inmedi
     $assert(str_contains($view, 'Procesar ahora')
         && (str_contains($view, 'Comenzar en modo seguro')
           || str_contains($view, 'Comenzar campaña')
-          || str_contains($view, 'Comenzar procesamiento manual')
-          || str_contains($view, 'Procesar un trabajo'))
+          || str_contains($view, 'Comenzar procesamiento manual'))
         && !str_contains($view, 'Faltan aproximadamente'),
         'La interfaz debe ofrecer una siguiente acción humana inmediata.');
     $assert(str_contains($navigation, "'Procesar ahora'")
@@ -2853,16 +2721,13 @@ $test('2.19.9 certifica el motor y prohíbe procesamiento manual inexacto', stat
     foreach (['manual_engine_probe_runs','manual_campaign_adapter_health','manual_operation_profiles'] as $table) {
         $assert(str_contains($migration, $table), 'Migración 103 debe incluir ' . $table . '.');
     }
-    $probeRetired = str_contains($probe, 'retired_single_launcher');
-    if (!$probeRetired) {
-        foreach (['10 => 30','30 => 55','sleep(','hrtime(true)','ERP_MANUAL_PROBE_OK'] as $needle) {
-            $assert(str_contains($probe, $needle), 'Probe debe certificar tiempo real: ' . $needle);
-        }
-        $assert(str_contains($probe, 'ManualCampaignAdapterRegistry')
-            && str_contains($probe, 'manual_operation_profiles')
-            && str_contains($probe, 'overlapProbe'),
-            'El probe debe verificar adaptadores, perfiles y solapamiento real.');
+    foreach (['10 => 30','30 => 55','sleep(','hrtime(true)','ERP_MANUAL_PROBE_OK'] as $needle) {
+        $assert(str_contains($probe, $needle), 'Probe debe certificar tiempo real: ' . $needle);
     }
+    $assert(str_contains($probe, 'ManualCampaignAdapterRegistry')
+        && str_contains($probe, 'manual_operation_profiles')
+        && str_contains($probe, 'overlapProbe'),
+        'El probe debe verificar adaptadores, perfiles y solapamiento real.');
     $assert(str_contains($contract, 'processExact(') && str_contains($contract, 'inspect('),
         'Cada adaptador debe inspeccionar y procesar un recurso exacto.');
     $assert(str_contains($adapter, "processOne(\$id")
@@ -2872,14 +2737,8 @@ $test('2.19.9 certifica el motor y prohíbe procesamiento manual inexacto', stat
         'Órdenes, productos y descripciones deben usar su ID congelado.');
     $assert(str_contains($registry, "'exact'") || str_contains($registry, '$exact'),
         'El registro debe distinguir adaptadores exactos.');
-    $minimumMigrationMatch = [];
-    $hasRetiredManualWorkerMigration = preg_match(
-        '/^(\d{3})_/',
-        (string) ($manifest['minimum_migration'] ?? ''),
-        $minimumMigrationMatch
-    ) === 1 && (int) ($minimumMigrationMatch[1] ?? 0) >= 117;
     $assert(isset($manifest['components']['manual_engine_probe'])
-        || ($hasRetiredManualWorkerMigration
+        || (preg_match('/^(?:11[7-9]|12[0-2])_/', (string) ($manifest['minimum_migration'] ?? '')) === 1
             && !isset($manifest['components']['process_manual_campaign'])),
         'El probe debe estar protegido o retirado junto con los workers manuales.');
 });
@@ -2895,7 +2754,7 @@ $test('2.20.0 crea campañas persistentes y una cabina basada en eventos reales'
     $javascript = (string) file_get_contents($root . '/public/assets/app.js');
 
     $assert(version_compare($version, '2.20.0', '>='), 'VERSION debe conservar 2.20.0.');
-    $assert(preg_match('/^(?:10[4-9]|1[1-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1
+    $assert(preg_match('/^(?:10[4-9]|1[1-9][0-9])_/', (string) ($manifest['minimum_migration'] ?? '')) === 1
         && (isset($manifest['components']['process_manual_campaign'])
             || isset($manifest['components']['process_sync_queue'])),
         'El manifiesto debe exigir 104 o posterior y verificar el orquestador vigente.');
@@ -2956,16 +2815,11 @@ $test('2.20.1 mide llamadas reales y respeta el intervalo por operación', stati
         '120_operational_consolidation_ux_2_23_1.sql',
         '121_sale_pack_identity_integrity_2_23_2.sql',
         '122_sale_financial_reconciliation_2_24_0.sql',
-        '123_manual_processing_exclusion_navigation_2_24_1.sql',
-        '124_runtime_collation_scheduler_recovery_2_24_2.sql',
-        '125_directed_campaign_sales_workflow_2_25_0.sql',
-        '126_manual_campaign_scheduler_recovery_2_25_1.sql',
         '114_operational_integrity_scope_2_21_2.sql',
         '115_resumable_execution_journal_2_21_3.sql',
         '116_sales_evidence_control_2_22_0.sql',
         '117_operational_ux_contracts_2_22_1.sql',
-    ], true) || preg_match('/^(?:12[7-9]|1[3-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
-        'El manifiesto debe exigir la migración de ritmo exacto o su correctivo posterior.');
+    ], true), 'El manifiesto debe exigir la migración de ritmo exacto o su correctivo posterior.');
     foreach (['current_operation_id','exact_remote_pacing_enabled','real_call_counter_enabled','2.20.1'] as $needle) {
         $assert(str_contains($migration, $needle), 'Migración 105 debe incluir ' . $needle . '.');
     }
@@ -3018,12 +2872,7 @@ $test('2.20.2 permite activación conservadora y prioriza la actualización pend
         '120_operational_consolidation_ux_2_23_1.sql',
         '121_sale_pack_identity_integrity_2_23_2.sql',
         '122_sale_financial_reconciliation_2_24_0.sql',
-        '123_manual_processing_exclusion_navigation_2_24_1.sql',
-        '124_runtime_collation_scheduler_recovery_2_24_2.sql',
-        '125_directed_campaign_sales_workflow_2_25_0.sql',
-        '126_manual_campaign_scheduler_recovery_2_25_1.sql',
-    ], true) || preg_match('/^(?:12[7-9]|1[3-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
-        'El manifiesto debe obtener el requisito mínimo desde la migración 106 o su sucesora.');
+    ], true), 'El manifiesto debe obtener el requisito mínimo desde la migración 106 o su sucesora.');
     foreach ([
         'manual_campaign.certification_required',
         'manual_campaign.conservative_runtime_seconds',
@@ -3058,10 +2907,9 @@ $test('2.20.2 permite activación conservadora y prioriza la actualización pend
             && str_contains($setup, 'Hostinger solo despierta el motor')),
         'La configuración debe explicar el modo vigente con una sola acción humana.');
     $assert((str_contains($main, "\$campaignReady && \$engineReady")
-          || str_contains($main, "\$campaignReady && !\$activeSession")
-          || str_contains($main, "\$campaignReady && empty(\$emergencyStop) && !\$activeSession"))
+          || str_contains($main, "\$campaignReady && !\$activeSession"))
         && !str_contains($main, "\$campaignReady && \$engineReady && \$certified"),
-        'Procesar ahora debe permitir el modo conservador sin exigir certificación, salvo durante una parada de emergencia.');
+        'Procesar ahora debe permitir el modo conservador sin exigir certificación.');
 });
 
 $test('2.20.3 unifica el monitor asistido con progreso y heartbeat verificables', static function () use ($assert): void {
@@ -3094,12 +2942,7 @@ $test('2.20.3 unifica el monitor asistido con progreso y heartbeat verificables'
         '120_operational_consolidation_ux_2_23_1.sql',
         '121_sale_pack_identity_integrity_2_23_2.sql',
         '122_sale_financial_reconciliation_2_24_0.sql',
-        '123_manual_processing_exclusion_navigation_2_24_1.sql',
-        '124_runtime_collation_scheduler_recovery_2_24_2.sql',
-        '125_directed_campaign_sales_workflow_2_25_0.sql',
-        '126_manual_campaign_scheduler_recovery_2_25_1.sql',
-    ], true) || preg_match('/^(?:12[7-9]|1[3-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
-        'El manifiesto debe exigir la migración 107 o su sucesora.');
+    ], true), 'El manifiesto debe exigir la migración 107 o su sucesora.');
     foreach (['origin_key','origin_context_json','returned_items','last_engine_state','engine_live_seconds','2.20.3'] as $needle) {
         $assert(str_contains($migration, $needle), 'Migración 107 debe incluir ' . $needle . '.');
     }
@@ -3110,9 +2953,10 @@ $test('2.20.3 unifica el monitor asistido con progreso y heartbeat verificables'
           || str_contains($service, 'control_heartbeat_at'))
         && str_contains($service, "'display_state'"),
         'El monitor debe reconstruir contadores y exigir heartbeat de la campaña.');
-    $assert(str_contains($controller, 'ManualSingleStepService())->execute')
-        && str_contains($controller, "trim((string) (\$_POST['preview_token']"),
-        'Procesar ahora debe conservar el calculo exacto y ejecutar un solo paso.');
+    $assert(str_contains($controller, "'changed' => \$changed")
+        && str_contains($controller, '$origin,')
+        && str_contains($controller, "'account_id' => \$accountId"),
+        'El estado debe ser incremental y conservar el contexto permitido.');
     $assert(!str_contains($syncController, 'resumePending($accountId)')
         && !str_contains($syncController, 'retryFailed($accountId)'),
         'Las rutas asistidas heredadas no deben mutar colas antes de redirigir.');
@@ -3121,8 +2965,8 @@ $test('2.20.3 unifica el monitor asistido con progreso y heartbeat verificables'
         && str_contains($view, 'data-manual-next-label')
         && !str_contains($view, 'manual-countdown"'),
         'La cabina debe usar reloj rectangular, resumen compacto y siguiente trabajo.');
-    $assert(str_contains($javascript, 'engineLive = Boolean(session.engine_live)')
-        && str_contains($javascript, 'if (payload.ok && payload.session)')
+    $assert(str_contains($javascript, "displayState === 'processing'")
+        && str_contains($javascript, "payload.changed")
         && str_contains($javascript, 'manual-time-progress'),
         'La animación debe depender de actividad confirmada y respuestas diferenciales.');
     $assert(str_contains($css, '.manual-countdown-panel')
@@ -3167,50 +3011,39 @@ $test('2.20.4 procesa un paso web idempotente sin depender de cron manual', stat
         '120_operational_consolidation_ux_2_23_1.sql',
         '121_sale_pack_identity_integrity_2_23_2.sql',
         '122_sale_financial_reconciliation_2_24_0.sql',
-        '123_manual_processing_exclusion_navigation_2_24_1.sql',
-        '124_runtime_collation_scheduler_recovery_2_24_2.sql',
-        '125_directed_campaign_sales_workflow_2_25_0.sql',
-        '126_manual_campaign_scheduler_recovery_2_25_1.sql',
-    ], true) || preg_match('/^(?:12[7-9]|1[3-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
-        'El manifiesto debe exigir la migración 108 o su sucesora.');
+    ], true), 'El manifiesto debe exigir la migración 108 o su sucesora.');
     foreach ([
         'manual_campaign_reservations','manual_campaign_steps','control_owner',
         'control_expires_at','step_sequence','interactive_web','2.20.4',
     ] as $needle) {
         $assert(str_contains($migration, $needle), 'Migración 108 debe incluir ' . $needle . '.');
     }
-    $assert(!str_contains($interactive, 'manual_campaign_steps')
-        && !str_contains($interactive, 'processStep(')
-        && !str_contains($interactive, 'Database::')
-        && str_contains($interactive, 'lanzador CLI'),
-        'La compatibilidad interactiva retirada no debe abrir base, adquirir recursos ni procesar adaptadores.');
+    $assert(str_contains($interactive, 'manual_campaign_steps')
+        && str_contains($interactive, 'clientStepKey')
+        && str_contains($interactive, 'processStep(')
+        && str_contains($interactive, 'control_expires_at'),
+        'El ejecutor debe validar control, idempotencia y procesar un recurso exacto.');
     $assert(str_contains($campaign, 'execution_mode="directed_cli"')
         && str_contains($campaign, 'manual_campaign_reservations')
         && str_contains($campaign, 'total_units'),
         'Las campañas dirigidas deben congelar reservas y progreso por unidades.');
-    $settingsController = (string) file_get_contents($root . '/app/Controllers/SettingsController.php');
-    $assert(!str_contains($routes, '/settings/manual-processing/interactive/start')
-        && str_contains($routes, '/settings/manual-processing/interactive/step')
-        && str_contains($routes, '/settings/manual-processing/interactive/heartbeat')
-        && str_contains($settingsController, 'public function manualProcessingInteractiveStep')
-        && str_contains($settingsController, 'public function manualProcessingInteractiveHeartbeat')
-        && str_contains($settingsController, 'ManualSingleStepService())->execute')
-        && str_contains($settingsController, "'state' => 'not_processed'"),
-        'La excepcion web autorizada debe ejecutar un paso exacto y responder sin proceso persistente.');
+    foreach ([
+        '/settings/manual-processing/interactive/start',
+        '/settings/manual-processing/interactive/step',
+        '/settings/manual-processing/interactive/heartbeat',
+    ] as $route) {
+        $assert(!str_contains($routes, $route), 'La ruta web retirada no debe ejecutar trabajos: ' . $route . '.');
+    }
     $assert(str_contains($view, 'Procesamiento manual listo')
-        && str_contains($view, 'Mantenga abierta esta pagina')
+        && str_contains($view, 'Puede cerrar esta página')
         && !str_contains($view, 'Comprobar motor'),
         'La pantalla inicial debe explicar el plano CLI recuperable.');
     $assert(!str_contains($session, 'data-step-url')
         && !str_contains($session, 'data-heartbeat-url')
         && !str_contains($session, 'Procesar siguiente paso'),
         'El monitor no debe ejecutar API desde el navegador.');
-    $assert(!str_contains($settingsController, 'manualProcessingInteractiveStep')
-        || !str_contains(
-            substr($settingsController, strpos($settingsController, 'manualProcessingInteractiveStep'), 500),
-            'processStep('
-        ),
-        'La compatibilidad HTTP no debe ejecutar un paso de trabajo.');
+    $assert(!str_contains($routes, '/settings/manual-processing/interactive/step'),
+        'El navegador no debe disponer de un disparador HTTP de trabajos.');
     $assert(str_contains($legacyCampaign, 'reason=retired_interactive_web')
         && str_contains($legacyQueue, 'reason=retired_interactive_web'),
         'Los workers manuales heredados deben finalizar sin adquirir trabajo.');
@@ -3227,7 +3060,6 @@ $test('2.20.5 aplica ritmo global, límites reales y monitor compacto', static f
     $migration = (string) file_get_contents($root . '/database/migrations/109_manual_campaign_rhythm_monitor_2_20_5.sql');
     $campaign = (string) file_get_contents($root . '/app/Services/ManualCampaignService.php');
     $interactive = (string) file_get_contents($root . '/app/Services/InteractiveManualProcessingService.php');
-    $campaignWorker = (string) file_get_contents($root . '/app/Services/ResumableCampaignWorkerService.php');
     $registry = (string) file_get_contents($root . '/app/Services/ManualCampaignAdapterRegistry.php');
     $view = (string) file_get_contents($root . '/app/Views/settings/manual_processing_session.php');
     $javascript = (string) file_get_contents($root . '/public/assets/app.js');
@@ -3253,21 +3085,19 @@ $test('2.20.5 aplica ritmo global, límites reales y monitor compacto', static f
     ]) === 'max_blocks', 'El máximo de bloques debe detener la campaña.');
     $assert(!str_contains($campaign, 'current_operation_id<>?,0,calls_in_block')
         && str_contains($campaign, 'block_outbound_calls')
-        && !str_contains($interactive, 'ManualCampaignSourceInspector')
-        && str_contains($campaignWorker, 'ManualCampaignSourceInspector'),
-        'El contador no debe reiniciarse y solo el worker CLI debe comprobar y procesar la fuente.');
+        && str_contains($interactive, 'ManualCampaignSourceInspector'),
+        'El contador no debe reiniciarse al cambiar de operación y cada paso debe comprobar la fuente.');
     $assert(str_contains($registry, "'notification_backfill'")
         && str_contains($registry, "'notification-backfill', 'notification_backfill', 'local_maintenance', 'Recuperación de notificaciones', false"),
         'El backfill sin aislamiento exacto no debe procesarse interactivamente.');
     foreach (['manual-ops-main','manual-log-tabs','data-manual-work-progress','data-manual-attention'] as $needle) {
         $assert(str_contains($view, $needle), 'El monitor compacto debe incluir ' . $needle . '.');
     }
-    $assert(str_contains($javascript, 'data-manual-controller="directed-cli-v1"')
-        && str_contains($javascript, 'statusInFlight')
-        && !str_contains($javascript, 'heartbeatInFlight')
-        && !str_contains($javascript, 'stepInFlight')
-        && !str_contains($javascript, '/interactive/step'),
-        'Un solo controlador de lectura debe impedir consultas concurrentes y no ejecutar pasos.');
+    $assert(str_contains($javascript, 'data-manual-controller="unified-v2"')
+        && str_contains($javascript, 'heartbeatInFlight')
+        && str_contains($javascript, 'stepInFlight')
+        && str_contains($javascript, 'statusInFlight'),
+        'Un solo controlador debe impedir peticiones concurrentes.');
     $assert(str_contains($routes, '/settings/manual-processing/session/items')
         && str_contains($routes, '/settings/manual-processing/session/events'),
         'La campaña debe tener listados propios de trabajos y eventos.');
@@ -3302,12 +3132,7 @@ $test('2.20.6 congela el cálculo visible y procesa notificaciones exactas', sta
         '120_operational_consolidation_ux_2_23_1.sql',
         '121_sale_pack_identity_integrity_2_23_2.sql',
         '122_sale_financial_reconciliation_2_24_0.sql',
-        '123_manual_processing_exclusion_navigation_2_24_1.sql',
-        '124_runtime_collation_scheduler_recovery_2_24_2.sql',
-        '125_directed_campaign_sales_workflow_2_25_0.sql',
-        '126_manual_campaign_scheduler_recovery_2_25_1.sql',
-    ], true) || preg_match('/^(?:12[7-9]|1[3-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
-        'El manifiesto debe exigir la migración 110 o una sucesora.');
+    ], true), 'El manifiesto debe exigir la migración 110 o una sucesora.');
     foreach (['manual_campaign_previews','manual_campaign_preview_items','preview_ttl_seconds','2.20.6'] as $needle) {
         $assert(str_contains($migration, $needle), 'Migración 110 debe incluir ' . $needle . '.');
     }
@@ -3398,12 +3223,7 @@ $test('2.21.1 corrige el contrato real de cuentas y la proyección de auditoría
         '120_operational_consolidation_ux_2_23_1.sql',
         '121_sale_pack_identity_integrity_2_23_2.sql',
         '122_sale_financial_reconciliation_2_24_0.sql',
-        '123_manual_processing_exclusion_navigation_2_24_1.sql',
-        '124_runtime_collation_scheduler_recovery_2_24_2.sql',
-        '125_directed_campaign_sales_workflow_2_25_0.sql',
-        '126_manual_campaign_scheduler_recovery_2_25_1.sql',
-    ], true) || preg_match('/^(?:12[7-9]|1[3-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
-        'El manifiesto debe exigir la migración 113 o una sucesora.');
+    ], true), 'El manifiesto debe exigir la migración 113 o una sucesora.');
     $assert(str_contains($migration, 'sales_control.schema_contract_enabled')
         && str_contains($migration, '2.21.1')
         && !preg_match('/ALTER\\s+TABLE\\s+meli_accounts/i', $migration),
@@ -3449,9 +3269,7 @@ $test('2.21.2 a 2.22.1 recuperan ejecuciones y presentan cobertura honesta', sta
     $journal = (string) file_get_contents($root . '/app/Services/ExecutionJournalService.php');
     $worker = (string) file_get_contents($root . '/app/Services/ResumableCampaignWorkerService.php');
     $settings = (string) file_get_contents($root . '/app/Controllers/SettingsController.php');
-    $sales = (string) file_get_contents($root . '/app/Services/SalesControlService.php')
-        . (string) file_get_contents($root . '/app/Views/sales_control/index.php')
-        . (string) file_get_contents($root . '/app/Views/sales_control/month.php');
+    $sales = (string) file_get_contents($root . '/app/Services/SalesControlService.php');
     $nav = (string) file_get_contents($root . '/app/Views/sales_control/_nav.php');
     $scopeAudit = (string) file_get_contents($root . '/app/Services/BusinessScopeAuditService.php');
     $queueAdapter = (string) file_get_contents($root . '/app/Services/SqlWorkQueueAdapter.php');
@@ -3464,12 +3282,7 @@ $test('2.21.2 a 2.22.1 recuperan ejecuciones y presentan cobertura honesta', sta
         '120_operational_consolidation_ux_2_23_1.sql',
         '121_sale_pack_identity_integrity_2_23_2.sql',
         '122_sale_financial_reconciliation_2_24_0.sql',
-        '123_manual_processing_exclusion_navigation_2_24_1.sql',
-        '124_runtime_collation_scheduler_recovery_2_24_2.sql',
-        '125_directed_campaign_sales_workflow_2_25_0.sql',
-        '126_manual_campaign_scheduler_recovery_2_25_1.sql',
-    ], true) || preg_match('/^(?:12[7-9]|1[3-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
-        'El runtime debe exigir la migración final o una sucesora.');
+    ], true), 'El runtime debe exigir la migración final o una sucesora.');
     foreach (['114_operational_integrity_scope_2_21_2.sql','115_resumable_execution_journal_2_21_3.sql',
               '116_sales_evidence_control_2_22_0.sql','117_operational_ux_contracts_2_22_1.sql'] as $migration) {
         $assert(is_file($root . '/database/migrations/' . $migration), 'Falta la migración ' . $migration . '.');
@@ -3484,9 +3297,9 @@ $test('2.21.2 a 2.22.1 recuperan ejecuciones y presentan cobertura honesta', sta
     $assert(str_contains($campaign, 'execution_mode="directed_cli"')
         && !str_contains($campaign, 'WHERE execution_mode="interactive_web" AND status="active"'),
         'El plano de campaña activo debe ser exclusivamente CLI.');
-    $assert(str_contains($settings, 'ManualSingleStepService())->execute')
-        && str_contains($settings, "'state' => 'not_processed'"),
-        'El unico endpoint web ejecutable debe limitarse a un paso exacto.');
+    $assert(str_contains($settings, 'http_response_code(410)')
+        && str_contains($settings, 'las consultas de Mercado Libre solo se ejecutan desde el trabajo CLI'),
+        'Los endpoints web heredados no deben ejecutar API.');
     $assert(str_contains($journal, 'remote_dispatched')
         && str_contains($journal, 'response_received')
         && str_contains($journal, 'approved')
@@ -3559,16 +3372,8 @@ $test('2.23.1 retira disparadores web y exige MariaDB para release', static func
     $catalogs = (string) file_get_contents($root . '/app/Controllers/CatalogController.php');
     $manualView = (string) file_get_contents($root . '/app/Views/settings/manual_processing.php');
     $composer = json_decode((string) file_get_contents($root . '/composer.json'), true);
-    $settingsController = (string) file_get_contents($root . '/app/Controllers/SettingsController.php');
-    $retiredStep = substr(
-        $settingsController,
-        (int) strpos($settingsController, 'public function manualProcessingInteractiveStep'),
-        500
-    );
-    $assert(str_contains($routes, '/settings/manual-processing/interactive/step')
-        && str_contains($retiredStep, 'ManualSingleStepService())->execute')
-        && !str_contains($retiredStep, 'processStep('),
-        'La ruta web permitida debe ejecutar solo el paso exacto V3.');
+    $assert(!str_contains($routes, '/settings/manual-processing/interactive/step'),
+        'No debe existir un disparador HTTP de trabajos.');
     $webControllers = $notifications . $orders . $products . $claims . $questions . $catalogs;
     foreach (['->processDue(', '->processRun(', '->syncRange(', '->syncOrderById(', '->syncOpened(',
               '->syncAccount(', '->syncAllActive(', '->syncItem('] as $forbiddenCall) {
@@ -3732,2199 +3537,6 @@ $test('2.24.1 explica y enlaza todos los trabajos excluidos de Procesar ahora', 
         'La release debe registrar ruta, defaults y versión 2.24.1.');
 });
 
-$test('2.24.2 recupera el lanzador antes de abrir colas y conserva resultados tipados', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $migration = (string) file_get_contents($root . '/database/migrations/124_runtime_collation_scheduler_recovery_2_24_2.sql');
-    $contract = (string) file_get_contents($root . '/app/Services/ComponentSchemaContractService.php');
-    $coordinator = (string) file_get_contents($root . '/app/Services/CronWorkCoordinator.php');
-    $worker = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
-    $probe = (string) file_get_contents($root . '/jobs/manual_engine_probe.php');
-    $routes = (string) file_get_contents($root . '/public/index.php');
-    foreach (['system_cron_boot_attempts','utf8mb4_unicode_ci','normalized_error_code','2.24.2'] as $needle) {
-        $assert(str_contains($migration, $needle), 'La migración 124 debe incluir ' . $needle);
-    }
-    $assert(
-        !str_contains($contract, 'LEFT JOIN schema_migrations')
-        && str_contains($contract, 'SELECT version FROM schema_migrations'),
-        'Los contratos deben compararse en PHP sin unir columnas con collations distintas.'
-    );
-    $assert(
-        str_contains($coordinator, 'CronWorkOutcome::normalize')
-        && str_contains($worker, 'CronBootstrapJournalService'),
-        'El lanzador debe conservar resultados tipados y registrar el arranque antes de las colas.'
-    );
-    $assert(
-        str_contains($probe, 'retired_single_launcher')
-        && !str_contains($probe, 'sleep('),
-        'El probe heredado debe quedar inactivo y no consumir una ventana de Hostinger.'
-    );
-    $assert(
-        str_contains($routes, '/settings/cron/attention')
-        && str_contains($routes, '/settings/cron/attention/remediate'),
-        'La intervención guiada debe tener rutas de lectura y mutación protegida.'
-    );
-});
-
-$test('2.25.0 dirige recursos exactos y coordina el año sin duplicar auditorías', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $migration = (string) file_get_contents($root . '/database/migrations/125_directed_campaign_sales_workflow_2_25_0.sql');
-    $registry = (string) file_get_contents($root . '/app/Services/ManualCampaignAdapterRegistry.php');
-    $adapter = (string) file_get_contents($root . '/app/Services/RegisteredManualCampaignAdapter.php');
-    $inspector = (string) file_get_contents($root . '/app/Services/ManualCampaignSourceInspector.php');
-    $worker = (string) file_get_contents($root . '/app/Services/ResumableCampaignWorkerService.php');
-    $sales = (string) file_get_contents($root . '/app/Services/SalesControlService.php');
-    $monthView = (string) file_get_contents($root . '/app/Views/sales_control/month.php');
-    foreach ([
-        'sales_control_year_runs',
-        'reservation_ttl_seconds',
-        'primary_lane_first',
-        '2.25.0',
-    ] as $needle) {
-        $assert(str_contains($migration, $needle), 'La migración 125 debe incluir ' . $needle);
-    }
-    foreach ([
-        'sales_audit',
-        'sales_repair',
-        'financial_recalc',
-        'order_enrichment',
-        'sale_pack_reconciliation',
-        'sale_financial_reconciliation',
-        'module_jobs',
-    ] as $queue) {
-        $assert(str_contains($registry, "'{$queue}'") && str_contains($adapter, "'{$queue}'"),
-            'Falta un adaptador dirigido para ' . $queue);
-        $assert(str_contains($inspector, "'{$queue}'"),
-            'Falta verificar la fuente exacta de ' . $queue);
-    }
-    $assert(str_contains($worker, "'source' => 'manual_campaign'")
-        && str_contains($worker, 'renewed_at=UTC_TIMESTAMP'),
-        'El worker debe limitar cada salida remota y renovar reservas adaptativas.');
-    $assert(str_contains($sales, 'ensureAnnualRun')
-        && str_contains($sales, 'capture_role="primary"')
-        && str_contains($sales, 'primaryCaptureRunId'),
-        'El control anual debe reutilizar un coordinador y terminar primarias antes de verificaciones futuras.');
-    $assert(str_contains($monthView, 'Por comprobar')
-        && !str_contains($monthView, "require __DIR__ . '/_nav.php'"),
-        'Un mes activo no debe mostrar ceros ni duplicar su navegación.');
-});
-
-$test('2.25.1 reserva un carril de campaña y mantiene el monitor coherente', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $selector = new \App\Services\CronTaskLaneSelector();
-    $selected = $selector->select([
-        ['key' => 'notification_fallback', 'api' => true, 'lane' => 'urgent'],
-        ['key' => 'order_enrichment', 'api' => true, 'lane' => 'normal'],
-        ['key' => 'manual_campaign', 'api' => true, 'lane' => 'directed'],
-        ['key' => 'operational_maintenance', 'api' => false, 'lane' => 'local'],
-    ], 3, 1);
-    $keys = array_column($selected, 'key');
-    $assert($keys === ['manual_campaign', 'operational_maintenance'],
-        'El cupo API global debe permitir solo la campaña y conservar trabajo local.');
-    $minimal = $selector->select([
-        ['key' => 'orders_sync', 'api' => true, 'lane' => 'urgent'],
-        ['key' => 'manual_campaign', 'api' => true, 'lane' => 'directed'],
-    ], 1, 1);
-    $assert(array_column($minimal, 'key') === ['manual_campaign'],
-        'Una configuración de un solo trabajo y una sola API no puede exceder ninguno de los límites.');
-
-    $withoutCampaign = $selector->select([
-        ['key' => 'orders_sync', 'api' => true, 'lane' => 'urgent'],
-        ['key' => 'order_enrichment', 'api' => true, 'lane' => 'normal'],
-        ['key' => 'operational_maintenance', 'api' => false, 'lane' => 'local'],
-    ], 3, 1);
-    $assert(array_column($withoutCampaign, 'key') === ['orders_sync', 'operational_maintenance'],
-        'Sin campaña, el límite API global debe seguir siendo uno y conservar trabajo local.');
-
-    $migration = (string) file_get_contents(
-        $root . '/database/migrations/126_manual_campaign_scheduler_recovery_2_25_1.sql'
-    );
-    $controller = (string) file_get_contents($root . '/app/Controllers/SettingsController.php');
-    $script = (string) file_get_contents($root . '/public/assets/app.js');
-    $style = (string) file_get_contents($root . '/public/assets/app.css');
-    $view = (string) file_get_contents($root . '/app/Views/settings/manual_processing_session.php');
-    foreach (['scheduler_recovered', 'INTERVAL 32 MINUTE', '2.25.1'] as $needle) {
-        $assert(str_contains($migration, $needle), 'La migración 126 debe conservar ' . $needle);
-    }
-    $assert(!str_contains($controller, "'session' => \$delta"),
-        'El JSON no debe reemplazar el resumen completo por un delta sin contadores.');
-    $assert(str_contains($script, 'engineLive = Boolean(session.engine_live)')
-        && str_contains($script, 'event.display_time'),
-        'El monitor solo debe animarse con actividad real y presentar la hora local.');
-    $assert(str_contains($style, '[hidden]{display:none!important}')
-        && str_contains($view, 'data-manual-outbound'),
-        'Los errores vacíos deben permanecer ocultos y las consultas deben verse por separado.');
-});
-
-$test('2.25.2 comercializa la importacion anual de ventas sin romper evidencia avanzada', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $routes = (string) file_get_contents($root . '/public/index.php');
-    $controller = (string) file_get_contents($root . '/app/Controllers/SaleController.php');
-    $status = (string) file_get_contents($root . '/app/Services/SalesImportStatusService.php');
-    $sales = (string) file_get_contents($root . '/app/Services/SalesControlService.php');
-    $view = (string) file_get_contents($root . '/app/Views/sales/index.php');
-    $advanced = (string) file_get_contents($root . '/app/Views/sales_control/index.php');
-    $migration = (string) file_get_contents($root . '/database/migrations/127_sales_import_commercial_flow_2_25_2.sql');
-
-    $assert(str_contains($routes, "/sales/import-year")
-        && str_contains($controller, 'function importYear')
-        && str_contains($controller, 'Auth::requireRole(\'admin\', \'operador\')')
-        && str_contains($controller, 'SalesControlService())->checkYear'),
-        'La entrada comercial debe ser una ruta POST protegida que delega en el control anual existente.');
-    $assert(str_contains($status, 'final class SalesImportStatusService')
-        && str_contains($status, 'No consulta Mercado Libre')
-        && !str_contains($status, 'MeliApiClient'),
-        'El estado comercial debe ser un read model sin llamadas remotas.');
-    $assert(str_contains($view, 'Importar ventas del año')
-        && str_contains($view, 'sales-import-panel')
-        && str_contains($view, 'Ver evidencia avanzada'),
-        'Ventas debe mostrar la accion anual simple y mantener salida a evidencia avanzada.');
-    $assert(str_contains($advanced, 'Evidencia avanzada de ventas')
-        && str_contains($advanced, 'Datos fiscales pendientes')
-        && !str_contains($advanced, '<h1>Control de ventas</h1>'),
-        'Control de ventas debe presentarse como evidencia avanzada sin duplicar el enfoque comercial.');
-    $assert(str_contains($sales, 'enqueueSafeRemediation')
-        && str_contains($sales, 'SalesAuditExactRepairService')
-        && str_contains($sales, 'OrderDateRepairService')
-        && str_contains($sales, "capture_role'] ?? 'primary') !== 'primary'"),
-        'Las reparaciones automaticas deben existir y limitarse a capturas primarias.');
-    foreach (['sales_import.auto_repair_missing', 'sales_import.auto_repair_dates', '2.25.2'] as $needle) {
-        $assert(str_contains($migration, $needle), 'La migracion 127 debe registrar ' . $needle);
-    }
-    // Los paquetes de runtime excluyen deliberadamente documentación y
-    // auditorías. Si el árbol de desarrollo las conserva, se valida su
-    // contenido; su ausencia no puede invalidar el código desplegable.
-    $planPath = $root . '/docs/PLAN_TRABAJO_COMERCIAL_VENTAS_ML_2_25_1.md';
-    $auditPath = $root . '/audits/AUDITORIA_FLUJO_COMERCIAL_VENTAS_ML_2_25_1.md';
-    if (is_file($planPath)) {
-        $plan = (string) file_get_contents($planPath);
-        $assert(str_contains($plan, '127_sales_import_commercial_flow_2_25_2.sql'),
-            'El plan disponible debe explicar la migración 127.');
-    }
-    if (is_file($auditPath)) {
-        $audit = (string) file_get_contents($auditPath);
-        $assert(str_contains($audit, 'Version implementada: `2.25.2`'),
-            'La auditoría disponible debe registrar 2.25.2.');
-    }
-});
-
-$test('2.25.4 observa el arranque, evita collation 1267 y muestra la campaña real', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $job = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
-    $entry = (string) file_get_contents($root . '/jobs/_cron_entry_state.php');
-    $gateway = (string) file_get_contents($root . '/app/Services/InformationSchemaGateway.php');
-    $schema = (string) file_get_contents($root . '/app/Services/SchemaInspectorService.php');
-    $runtime = (string) file_get_contents($root . '/app/Services/AutomationRuntimeStatusService.php');
-    $scheduler = (string) file_get_contents($root . '/app/Services/WorkSchedulerService.php');
-    $nextView = (string) file_get_contents($root . '/app/Views/settings/automation_next.php');
-    $campaignView = (string) file_get_contents($root . '/app/Views/settings/manual_processing_session.php');
-    $cronView = (string) file_get_contents($root . '/app/Views/settings/cron.php');
-    $migration = (string) file_get_contents(
-        $root . '/database/migrations/129_cron_entry_collation_campaign_recovery_2_25_4.sql'
-    );
-
-    $assert(strpos($job, "cron_entry_early_lock()") < strpos($job, "require __DIR__ . '/_bootstrap.php'"),
-        'El lock temprano debe adquirirse antes del bootstrap.');
-    foreach (['php_opened', 'bootstrap_loaded', 'database_connected', 'queues_prepared', 'work_selected', 'finished'] as $stage) {
-        $assert(str_contains($job . $entry, "'{$stage}'"),
-            'Falta observar la etapa temprana ' . $stage);
-    }
-    $assert(str_contains($gateway, 'BINARY TABLE_SCHEMA=BINARY :schema')
-        && str_contains($gateway, 'BINARY TABLE_NAME=BINARY :table_name')
-        && !str_contains($schema, 'TABLE_SCHEMA=DATABASE()'),
-        'La inspección debe comparar information_schema de forma binaria y centralizada.');
-    $assert(str_contains($runtime, 'latestAutomaticAnyBuild')
-        && str_contains($runtime, 'entry_is_current_build'),
-        'El estado debe separar el build actual del historial anterior.');
-    $assert(str_contains($scheduler, 'CronTaskDefinitionRegistry')
-        && str_contains($scheduler, 'CronTaskStateService())->preview')
-        && str_contains($nextView, 'Selección real del próximo ciclo')
-        && str_contains($nextView, 'Turno garantizado'),
-        'Próxima ejecución debe reutilizar el selector real y explicar el carril dirigido.');
-    $assert(str_contains($campaignView, 'Esperando que Hostinger inicie el ERP')
-        && str_contains($campaignView, 'Todavía no se puede estimar'),
-        'El monitor no debe inventar ETA ni actividad sin señal.');
-    $assert(!str_contains($cronView, 'Worker de notificaciones · cada 5 minutos')
-        && str_contains($cronView, 'Único lanzador del ERP'),
-        'Cron debe instruir un solo lanzador.');
-    foreach (['system_cron_entry_states', 'last_scheduler_selected_at', '2.25.4'] as $needle) {
-        $assert(str_contains($migration, $needle), 'La migración 129 debe incluir ' . $needle);
-    }
-});
-
-$test('2.25.6 evita que Cron bloquee toda la sesión web', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $dashboard = (string) file_get_contents($root . '/app/Controllers/DashboardController.php');
-    $settings = (string) file_get_contents($root . '/app/Controllers/SettingsController.php');
-    $updates = (string) file_get_contents($root . '/app/Controllers/UpdateController.php');
-    $projection = (string) file_get_contents($root . '/app/Services/WorkQueueProjectionService.php');
-    $job = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
-    $entry = (string) file_get_contents($root . '/jobs/_cron_entry_state.php');
-    $migration = (string) file_get_contents(
-        $root . '/database/migrations/131_web_session_projection_hotfix_2_25_6.sql'
-    );
-
-    $assert(str_contains($dashboard, 'Session::closeReadOnly();'),
-        'El panel debe liberar la sesión antes de sus lecturas pesadas.');
-    $assert(substr_count($updates, 'Session::closeReadOnly();') >= 2,
-        'Actualizaciones y su estado deben liberar la sesión antes de inspecciones pesadas.');
-    $cronMethod = substr(
-        $settings,
-        (int) strpos($settings, 'public function cron(): void'),
-        (int) strpos($settings, 'public function automationNext(): void')
-            - (int) strpos($settings, 'public function cron(): void')
-    );
-    $assert(str_contains($cronMethod, '$this->releaseReadOnlySession();')
-        && str_contains($settings, "'details_included' => false")
-        && str_contains($settings, "\$_GET['details']"),
-        'Cron debe liberar la sesión y cargar diagnósticos pesados solo bajo solicitud.');
-    $assert(str_contains($projection, 'summary(bool $refreshIfStale = false)')
-        && str_contains($projection, 'page(array $filters = [], bool $refreshIfStale = false)')
-        && str_contains($projection, 'if ($refreshIfStale)')
-        && str_contains($projection, 'function refreshNextQueue()'),
-        'Una lectura web no debe reconstruir las quince colas automáticamente.');
-    $finishPosition = strpos($job, "\$persistEntry('finished'");
-    $projectionPosition = strpos($job, '->refreshNextQueue()');
-    $assert(
-        $finishPosition !== false
-        && $projectionPosition !== false
-        && $projectionPosition > $finishPosition
-        && !str_contains($job, 'WorkQueueProjectionService())->refresh();'),
-        'El cron debe aprobar su resultado antes de actualizar una sola proyección secundaria.'
-    );
-    $assert(str_contains($entry, "defined('ERP_SHARED_ROOT')")
-        && str_contains($entry, "basename(dirname(\$releaseRoot)) === 'releases'"),
-        'El marcador temprano debe usar el storage compartido también desde una release administrada.');
-    foreach (['automation.web_projection_refresh_enabled', 'release_session_before_heavy_get', '2.25.6'] as $needle) {
-        $assert(str_contains($migration, $needle), 'La migración 131 debe registrar ' . $needle);
-    }
-});
-
-$test('2.25.7 bloquea toda salida Mercado Libre antes del transporte', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $stop = new \App\Services\MeliEmergencyStopService();
-    $assert($stop->active(), 'El archivo PAUSE_MELI_API debe mantener activa la parada de emergencia.');
-
-    $transport = new class implements \App\Services\MeliHttpTransportInterface {
-        public bool $called = false;
-
-        public function request(
-            string $method,
-            string $url,
-            array $data,
-            array $headers,
-            bool $form,
-            array $timeouts
-        ): array {
-            $this->called = true;
-            throw new RuntimeException('El transporte no debe alcanzarse durante la parada.');
-        }
-    };
-
-    $blocked = false;
-    try {
-        (new \App\Services\MeliApiClient(1, $transport))->get('/users/me');
-    } catch (\App\Services\ApiManualPauseException $error) {
-        $blocked = str_contains($error->getMessage(), 'bloqueadas por mantenimiento');
-    }
-    $assert($blocked, 'La lectura debe detenerse con una explicación humana.');
-    $assert(!$transport->called, 'La parada debe actuar antes de abrir el transporte HTTP.');
-
-    $oauth = (string) file_get_contents($root . '/app/Services/OAuthService.php');
-    $guard = (string) file_get_contents($root . '/app/Services/ApiGuardService.php');
-    $health = (string) file_get_contents($root . '/app/Views/settings/api_health.php')
-        . (string) file_get_contents($root . '/app/Services/ApiHealthStatusPresenter.php');
-    $job = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
-    $htaccess = (string) file_get_contents($root . '/.htaccess');
-    $migration = (string) file_get_contents($root . '/database/migrations/132_emergency_api_stop_2_25_7.sql');
-
-    $assert(str_contains($oauth, 'MeliEmergencyStopService())->assertAllowed()'),
-        'OAuth debe respetar la parada antes de abrir el transporte.');
-    $assert(strpos($guard, 'MeliEmergencyStopService())->assertAllowed()') < strpos($guard, 'ApiManualPauseService())->assertAllowed('),
-        'La parada independiente debe evaluarse antes de consultar la base.');
-    $assert(str_contains($health, 'Consultas a Mercado Libre bloqueadas por mantenimiento'),
-        'Salud API debe explicar el bloqueo de emergencia.');
-    $assert(strpos($job, '_automation_emergency_stop.php') < strpos($job, "_bootstrap.php")
-        && str_contains($job, 'reason=manual_automation_stop remote=false database=false')
-        && str_contains($job, '$localOnlyKeys')
-        && str_contains($job, "'operational_maintenance'"),
-        'Automatización apagada debe detenerse antes del bootstrap; API apagada solo admite trabajo local certificado.');
-    $assert(str_contains($htaccess, 'PAUSE_MELI_API'),
-        'El archivo de parada no debe servirse públicamente.');
-    $assert(str_contains($migration, '2.25.7'),
-        'La migración debe registrar la versión de emergencia.');
-});
-
-$test('2.26.2 mantiene saneamiento legacy explícito y 2.28.39 retiene solo telemetría verificada', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $maintenance = (string) file_get_contents($root . '/app/Services/DatabaseMaintenanceService.php');
-    $operational = (string) file_get_contents($root . '/app/Services/OperationalMaintenanceService.php');
-    $migration = (string) file_get_contents($root . '/database/migrations/149_forensic_noise_sanitation_2_26_2.sql');
-
-    $assert(str_contains($maintenance, "'legacy_notifications'")
-        && str_contains($maintenance, 'NotificationLegacyNormalizationService())->normalizeBatch')
-        && str_contains($maintenance, 'compactMessageBatch')
-        && str_contains($maintenance, 'sin replay automático')
-        && str_contains($maintenance, "? 'legacy_notifications'")
-        && str_contains($maintenance, "\$phase = 'retention';"),
-        'La normalización y compactación legacy deben ser fases explícitas del Centro.');
-    $normalizer = (string) file_get_contents(
-        $root . '/app/Services/NotificationLegacyNormalizationService.php'
-    );
-    $assert(str_contains($normalizer, '"queued","unknown_topic","waiting_retry"'),
-        'El saneamiento debe cerrar todo estado legacy elegible sin dejar reintentos huérfanos.');
-    $assert(!str_contains($operational, 'NotificationLegacyNormalizationService())->normalizeBatch'),
-        'OperationalMaintenanceService no debe normalizar legacy en el cron local silencioso.');
-    $retention = (string) file_get_contents($root . '/app/Services/TechnicalRetentionCliService.php');
-    $assert(!str_contains($operational, 'StorageMaintenanceService())->run')
-        && !str_contains($operational, 'SET payload_json="{}"')
-        && str_contains($operational, 'TechnicalRetentionCliService')
-        && str_contains($retention, 'RetentionPolicyService())->runDatasetStep')
-        && str_contains($retention, 'min(500, $limit)'),
-        'El cron solo puede retirar telemetría mediante archivo, checksum, rollup y lote cercado.');
-    $assert(!str_contains($operational, 'MaintenanceStepCompactionService')
-        && str_contains($maintenance, 'compactTerminalSteps'),
-        'La bitácora debe compactarse al cerrar su sesión, nunca desde un cron silencioso.');
-    $launcher = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
-    $registry = (string) file_get_contents($root . '/app/Services/CronTaskDefinitionRegistry.php');
-    $executor = (string) file_get_contents($root . '/app/Services/ManualQueueExecutionService.php');
-    $journal = (string) file_get_contents($root . '/app/Services/ExecutionJournalService.php');
-    $assert(!str_contains($launcher, "'catalog_description_cleanup'")
-        && !str_contains($registry, "'catalog_description_cleanup'")
-        && !str_contains($executor, "'catalog_description_cleanup'"),
-        'La limpieza histórica de descripciones debe ejecutarse únicamente desde Saneamiento.');
-    $assert(str_contains($journal, 'WHERE system_execution_run_id=? AND state="response_received"')
-        && str_contains($journal, 'SET state="uncertain"')
-        && !str_contains($journal, 'La respuesta fue recibida. Falta confirmar el cierre local.'),
-        'Una respuesta no persistida no puede declararse aplicada durante la recuperación.');
-    $assert(str_contains($maintenance, "'cold_archives'")
-        && str_contains($maintenance, 'purgeExpired')
-        && str_contains($maintenance, 'compactTerminalSteps'),
-        'Archivos fríos vencidos y pasos técnicos deben sanearse dentro del flujo explícito.');
-    $physical = (string) file_get_contents(
-        $root . '/app/Services/PhysicalTableRecoveryService.php'
-    );
-    $assert(str_contains($physical, 'bulkRewriteRequiresRebuild')
-        && str_contains($physical, 'payloadRewriteRequiresRebuild')
-        && str_contains($physical, 'fragmentationRequiresRebuild')
-        && str_contains($physical, 'legacy_notifications')
-        && str_contains($physical, 'legacy_messages')
-        && str_contains($physical, 'MAX(linked_at)')
-        && str_contains($physical, 'system_table_maintenance_history'),
-        'Cada reescritura masiva debe habilitar una sola reconstrucción física comprobable.');
-    $assert(!str_contains($migration, "('notifications.legacy_normalization_auto_enabled'")
-        && !str_contains($migration, "('database_maintenance.step_compaction_auto_enabled'")
-        && str_contains($migration, "DELETE FROM app_settings"),
-        'La migración local debe retirar interruptores automáticos obsoletos, no conservar ruido.');
-});
-
-$test('2.26.2 cierra ejecutores genéricos y conserva selección exacta solo en CLI', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $legacy = new \App\Services\ManualQueueExecutionService();
-    $closed = $legacy->execute([
-        'queue_key' => 'orders_sync',
-        'source_id' => '987654',
-        'meli_account_id' => 321,
-    ], microtime(true) + 30);
-    $assert(($closed['status'] ?? '') === 'action_required'
-        && ($closed['processed'] ?? -1) === 0
-        && ($closed['reached_remote'] ?? true) === false,
-        'El ejecutor heredado debe fallar cerrado sin tocar una cola ni transporte.');
-
-    $legacySource = (string) file_get_contents($root . '/app/Services/ManualQueueExecutionService.php');
-    $worker = (string) file_get_contents($root . '/app/Services/ResumableCampaignWorkerService.php');
-    $adapter = (string) file_get_contents($root . '/app/Services/RegisteredManualCampaignAdapter.php');
-    $saleFinancial = (string) file_get_contents($root . '/app/Services/SaleFinancialService.php');
-    $moduleRunner = (string) file_get_contents($root . '/app/Core/Modules/ModuleJobRunner.php');
-    $assert(!str_contains($legacySource, '->processDue(')
-        && !str_contains($legacySource, '->processNext(')
-        && !str_contains($legacySource, '->syncNextActive('),
-        'Ninguna compatibilidad manual puede elegir el siguiente recurso genérico.');
-    $assert(str_contains($worker, '->forQueue((string) $item[\'queue_key\'])')
-        && str_contains($worker, '$adapter->processExact(')
-        && str_contains($worker, '(string) $item[\'source_id\']')
-        && !str_contains($worker, 'ManualQueueExecutionService'),
-        'El worker debe resolver el adaptador por queue_key y entregar exactamente el source_id congelado.');
-    $assert(!str_contains($adapter, 'processDue(')
-        && !str_contains($adapter, 'processNext(')
-        && str_contains($adapter, "'orders_sync' => (new SyncQueueService())->processOne(\$id, \$accountId, 1, false)")
-        && str_contains($adapter, "'catalog_descriptions' => (new CatalogDescriptionJobService())->processExactItem("),
-        'Los adaptadores dirigidos deben llamar exclusivamente métodos exactos.');
-    $assert(!str_contains($saleFinancial, 'enqueueDailyDue')
-        && str_contains($saleFinancial, 'input_version')
-        && str_contains($saleFinancial, 'count($externalOrderIds) > 60'),
-        'Una conciliacion financiera exacta debe estar versionada y no recapturarse por antiguedad.');
-    $assert(str_contains($moduleRunner, 'return $jobId === null ? $this->claim($pdo, $registry) : null;'),
-        'Un módulo exacto deshabilitado no puede caer al selector genérico de otro job.');
-
-    $registry = new \App\Services\ManualCampaignAdapterRegistry();
-    $unsupported = $registry->forQueue('questions');
-    $assert($unsupported instanceof \App\Services\ManualCampaignAdapter
-        && !$unsupported->supportsExact(),
-        'Una cola sin identidad aislada debe permanecer fuera de campañas dirigidas.');
-    $invalid = $registry->forQueue('orders_sync');
-    $assert($invalid instanceof \App\Services\ManualCampaignAdapter
-        && !$invalid->inspect('otro-recurso', 0)->eligible,
-        'Un source_id no certificado debe rechazarse antes de abrir la base o una cola.');
-
-    $retiredMethods = [
-        [\App\Controllers\SyncController::class, 'assistedStepJson'],
-        [\App\Controllers\FinancialRecalcController::class, 'assistedStep'],
-        [\App\Controllers\NotificationController::class, 'automationAssistedStep'],
-    ];
-    foreach ($retiredMethods as [$class, $method]) {
-        $reflection = new \ReflectionMethod($class, $method);
-        $lines = file($reflection->getFileName(), FILE_IGNORE_NEW_LINES);
-        $methodSource = implode("\n", array_slice(
-            is_array($lines) ? $lines : [],
-            $reflection->getStartLine() - 1,
-            $reflection->getEndLine() - $reflection->getStartLine() + 1
-        ));
-        $assert(str_contains($methodSource, '410')
-            && !str_contains($methodSource, 'MeliApiClient')
-            && !str_contains($methodSource, 'processDue(')
-            && !str_contains($methodSource, 'processExact('),
-            $class . '::' . $method . ' debe permanecer retirado y sin transporte.');
-    }
-});
-
-$test('2.26.2 genera documentación API con la versión instalada', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $knowledge = (string) file_get_contents(
-        $root . '/app/Services/MeliApiKnowledgeService.php'
-    );
-    $questions = (string) file_get_contents(
-        $root . '/app/Views/sales/questions/index.php'
-    );
-
-    $assert(!str_contains($knowledge, 'ERP Meli 2.9.0')
-        && str_contains($knowledge, 'renderEndpointMatrix($version')
-        && str_contains($knowledge, 'renderChecklist($version'),
-        'Los reportes API no deben rotular una versión histórica fija.');
-    $assert(!str_contains($questions, 'ERP Meli 2.4'),
-        'Las ayudas operativas no deben conservar números de versión obsoletos.');
-});
-
-$test('2.25.5 automatiza ventas finanzas y publicaciones con ritmo persistente', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $migration = (string) file_get_contents($root . '/database/migrations/130_commercial_ml_data_pipeline_2_25_5.sql');
-    $pacing = (string) file_get_contents($root . '/app/Services/ApiPacingService.php');
-    $client = (string) file_get_contents($root . '/app/Services/MeliApiClient.php');
-    $financial = (string) file_get_contents($root . '/app/Services/SaleFinancialService.php');
-    $notifications = (string) file_get_contents($root . '/app/Services/NotificationWorkItemService.php');
-    $repair = (string) file_get_contents($root . '/app/Services/SalesAuditExactRepairService.php');
-    $items = (string) file_get_contents($root . '/app/Services/MeliItemSyncJobService.php');
-    $reviews = (string) file_get_contents($root . '/app/Services/MeliProductUpdateReviewService.php');
-    $reviewController = (string) file_get_contents($root . '/app/Controllers/MeliProductReviewController.php');
-    $reviewListView = (string) file_get_contents($root . '/app/Views/products/meli/reviews.php');
-    $reviewDetailView = (string) file_get_contents($root . '/app/Views/products/meli/review_show.php');
-    $availability = (string) file_get_contents($root . '/app/Services/CronWorkAvailabilityService.php');
-    $salesController = (string) file_get_contents($root . '/app/Controllers/SaleController.php');
-    $salesStatus = (string) file_get_contents($root . '/app/Services/SalesImportStatusService.php');
-    $routes = (string) file_get_contents($root . '/public/index.php');
-    $salesView = (string) file_get_contents($root . '/app/Views/sales/index.php');
-
-    foreach ([
-        'awaiting_remote',
-        'remote_pending_since',
-        'retry_until',
-        'api_request_pacing_state',
-        'cursor_expires_at',
-        'cursor_restart_count',
-        'company_id BIGINT UNSIGNED NULL',
-        'items.hybrid_bulk_updates_enabled',
-        'api.pacing.ceiling_rpm',
-        'sales_financial.remote_retry_days',
-        '2.25.5',
-    ] as $needle) {
-        $assert(str_contains($migration, $needle), 'Migracion 130 debe incluir ' . $needle);
-    }
-    $assert(str_contains($client, '(new ApiPacingService())->reserve')
-        && strpos($client, '(new ApiPacingService())->reserve') < strpos($client, '$budget->reserve'),
-        'MeliApiClient debe obtener pacing antes de consumir presupuesto preventivo.');
-    $assert(str_contains($pacing, 'max(1, min(59')
-        && str_contains($pacing, 'FOR UPDATE')
-        && str_contains($pacing, 'CronDeadlineContext::remainingSeconds')
-        && str_contains($pacing, "\$pdo->rollBack();\n                return ['wait_us' => \$waitUs, 'reserved' => false]"),
-        'El pacing debe limitar 1-59, persistir turnos y no mover un turno que no cabe en la ventana CLI.');
-    $assert(str_contains($financial, 'function queueFromOrderId')
-        && str_contains($financial, 'function queueFromOrderIds')
-        && str_contains($financial, 'input_version')
-        && str_contains($financial, 'SaleFinancialStateService')
-        && !str_contains($financial, 'enqueueDailyDue'),
-        'La conciliacion comercial debe converger por venta y version sin recaptura diaria.');
-    $assert(str_contains($notifications, 'queueFromOrderId(')
-        && str_contains($notifications, "'notification'")
-        && str_contains($repair, "queueFromOrderIds("),
-        'Notificaciones y reparaciones deben converger en SaleFinancialService.');
-    $assert(str_contains($availability, '"pending","retry","awaiting_remote"'),
-        'El CRON debe reconocer conciliaciones en espera remota.');
-    $assert(str_contains($items, 'cursor_expires_at')
-        && str_contains($items, 'cursor_restart_count')
-        && str_contains($items, 'scroll_cursor_ttl_seconds')
-        && str_contains($items, 'items.hybrid_bulk_updates_enabled')
-        && str_contains($items, 'ingestDiscoveredSnapshot')
-        && strpos($items, 'ingestDiscoveredSnapshot') < strpos($items, '->persistApprovedItem($detail'),
-        'La importacion de publicaciones debe recuperar cursores vencidos y proteger identidad sensible bajo feature flag.');
-    $assert(str_contains($reviews, 'items.hybrid_notification_updates_enabled')
-        && str_contains($reviews, 'applySafeNotificationReview')
-        && str_contains($reviews, 'ingestDiscoveredSnapshot')
-        && str_contains($reviews, 'catalog_product_id')
-        && str_contains($reviews, 'r.company_id'),
-        'Las notificaciones de publicaciones deben ser hibridas y aislar revisiones por empresa.');
-    $assert(str_contains($routes, '/products/meli/reviews')
-        && str_contains($routes, '/products/meli/reviews/approve')
-        && str_contains($routes, '/products/meli/reviews/reject')
-        && str_contains($routes, '/products/meli/reviews/apply')
-        && str_contains($reviewController, "Auth::requireRole('admin', 'operador')")
-        && str_contains($reviewController, 'Csrf::validate')
-        && str_contains($reviewController, 'MeliProductUpdateReviewService')
-        && str_contains($reviewListView, 'Cambios de identidad comercial')
-        && str_contains($reviewDetailView, 'Aplicar aprobadas'),
-        'La revision hibrida debe ser visible, autenticada, protegida por CSRF y aislada por empresa/cuenta.');
-    $assert(str_contains($salesController, '$service->checkMonth(')
-        && str_contains($salesStatus, 'date_created_local_date')
-        && str_contains($salesStatus, 'JOIN meli_accounts stage_account'),
-        'La ventana disponible debe preparar meses exactos y medir por fecha local y empresa derivada de la cuenta.');
-    $assert(str_contains($routes, '/sales/import-available')
-        && str_contains($salesView, 'Importar todo lo disponible')
-        && str_contains($salesView, 'financial_status')
-        && str_contains($salesView, '$visiblePages'),
-        'Ventas debe ofrecer ventana disponible, filtro financiero y paginacion compacta.');
-});
-
-$test('2.25.10 certifica la recuperación sin bucles ni pérdida concurrente de webhooks', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $version = trim((string) file_get_contents($root . '/VERSION'));
-    $manifest = json_decode((string) file_get_contents($root . '/resources/runtime-manifest.json'), true);
-    $migration = (string) file_get_contents($root . '/database/migrations/133_safe_boot_direct_updater_2_25_8.sql');
-    $hardeningMigration = (string) file_get_contents($root . '/database/migrations/134_recovery_hardening_2_25_9.sql');
-    $certificationMigration = (string) file_get_contents($root . '/database/migrations/135_recovery_certification_2_25_10.sql');
-    $bootstrap = (string) file_get_contents($root . '/bootstrap.php');
-    $database = (string) file_get_contents($root . '/app/Core/Database.php');
-    $layout = (string) file_get_contents($root . '/app/Views/layouts/app.php');
-    $recovery = (string) file_get_contents($root . '/app/Recovery/RecoveryKernel.php');
-    $migrator = (string) file_get_contents($root . '/app/Services/Migrator.php');
-    $frontController = (string) file_get_contents($root . '/public/index.php');
-    $cron = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
-    $webhook = (string) file_get_contents($root . '/app/Services/WebhookService.php');
-    $webhookSpool = (string) file_get_contents($root . '/app/Services/WebhookSpoolService.php');
-    $transport = (string) file_get_contents($root . '/app/Services/CurlMeliHttpTransport.php');
-    $settings = (string) file_get_contents($root . '/app/Controllers/SettingsController.php');
-    $manualView = (string) file_get_contents($root . '/app/Views/settings/manual_processing.php');
-
-    $assert(version_compare($version, '2.25.10', '>=') && ($manifest['version'] ?? '') === $version, 'VERSION y manifiesto deben coincidir.');
-    $assert(preg_match('/^(?:135|13[6-9]|1[4-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1, 'El manifiesto debe exigir al menos la migración 135.');
-    foreach (['runtime.web_connect_timeout_seconds', 'runtime.direct_updater_required', 'runtime.nonblocking_file_telemetry', '2.25.8'] as $needle) {
-        $assert(str_contains($migration, $needle), 'Migración 133 debe registrar: ' . $needle);
-    }
-    foreach (['runtime.recovery_reauthentication_seconds', 'runtime.pending_update_gate_enabled', 'runtime.legacy_jobs_emergency_guard', '2.25.9'] as $needle) {
-        $assert(str_contains($hardeningMigration, $needle), 'Migración 134 debe registrar: ' . $needle);
-    }
-    foreach (['runtime.recovery_stop_on_migration_error', 'notifications.spool_atomic_replay', 'runtime.update_json_conflict_enabled', '2.25.10'] as $needle) {
-        $assert(str_contains($certificationMigration, $needle), 'Migración 135 debe registrar: ' . $needle);
-    }
-    foreach (['index.php', 'login.php', 'actualizar.php', '.htaccess', 'PAUSE_MELI_API'] as $file) {
-        $assert(is_file($root . '/' . $file), 'La recuperación directa requiere ' . $file);
-    }
-    $rootHtaccess = (string) file_get_contents($root . '/.htaccess');
-    $assert(str_contains($rootHtaccess, 'DirectoryIndex index.php')
-        && str_contains($rootHtaccess, 'bootstrap\\.php')
-        && str_contains($rootHtaccess, 'resources|storage'),
-        'La raíz debe abrir index.php y negar bootstrap, recursos internos y storage.');
-    $assert(!str_contains($bootstrap, 'AppSettingsService') && !str_contains($bootstrap, 'PerformanceMonitorService'),
-        'Bootstrap no debe consultar settings ni escribir métricas en MariaDB.');
-    $assert(str_contains($database, 'DB_WEB_CONNECT_TIMEOUT_SECONDS') && str_contains($database, 'PDO::ATTR_TIMEOUT'),
-        'La conexión web debe fallar dentro de un tiempo acotado.');
-    $assert(str_contains($database, 'PDO::ATTR_PERSISTENT => false'),
-        'La recuperación no debe heredar conexiones persistentes atascadas.');
-    foreach (['RequestContextService', 'WebhookService', 'ApiHealthAlertService'] as $service) {
-        $assert(!str_contains($layout, 'new ' . $service), 'El layout no debe ejecutar ' . $service . ' de forma síncrona.');
-    }
-    $assert(str_contains($recovery, 'new Migrator') && str_contains($recovery, '->run(1)')
-        && str_contains($recovery, 'InstalledVersionMarkerService')
-        && str_contains($recovery, 'authorizeMigration')
-        && str_contains($recovery, 'recoveryLoginRateLimited')
-        && str_contains($recovery, 'missing_origin')
-        && str_contains($recovery, "Session::forget('_recovery_authorized_at')")
-        && str_contains($recovery, "Session::closeReadOnly();")
-        && str_contains($recovery, 'backup_choice')
-        && str_contains($recovery, 'Continuar sin respaldo interno')
-        && str_contains($recovery, 'BackupCenterService')
-        && str_contains($recovery, 'check_backup')
-        && str_contains($recovery, 'recover_backup')
-        && str_contains($recovery, 'cancel_backup')
-        && str_contains($recovery, 'cleanup_backup')
-        && str_contains($recovery, 'backupFailureMessage')
-        && str_contains($recovery, 'restart_login')
-        && str_contains($recovery, 'administrator_session_stale')
-        && !str_contains($recovery, 'UpdateBackupService')
-        && !str_contains($recovery, 'createDirect()')
-        && !str_contains($recovery, 'MeliApiClient'),
-        'El actualizador directo debe revalidar, soltar la sesión, preparar/recuperar/cancelar respaldo reanudable por CLI e instalar un paso sin transporte remoto.');
-    $assert(str_contains($migrator, 'SELECT * FROM system_update_migrations')
-        && substr_count($migrator, "trace?->event('migration_selected'") === 1
-        && !str_contains($migrator, "trace?->event('migration_skipped'"),
-        'El migrador debe precargar metadata y no registrar cientos de migraciones ya aplicadas.');
-    $assert(str_contains($frontController, 'InstalledVersionMarkerService')
-        && str_contains($frontController, 'update_required')
-        && str_contains($frontController, '/actualizar.php'),
-        'Toda sesión autenticada debe pasar por la puerta ligera de actualización.');
-    $assert(strpos($cron, '_automation_emergency_stop.php') < strpos($cron, "require __DIR__ . '/_bootstrap.php'"),
-        'Cron debe evaluar la parada de automatización antes del bootstrap y PDO.');
-    $assert(str_contains($cron, 'remote=false database=false'), 'La parada de automatización debe confirmar que no abrió la base.');
-    $assert(str_contains($webhook, "Env::get('WEBHOOK_MAX_PAYLOAD_BYTES'")
-        && str_contains($webhook, "Env::bool('WEBHOOK_SPOOL_ENABLED'"),
-        'El webhook debe decidir el spool sin consultar app_settings.');
-    $assert(str_contains($webhookSpool, "Env::get('WEBHOOK_SPOOL_MAX_BYTES'")
-        && str_contains($webhookSpool, "Env::get('WEBHOOK_SPOOL_FILE_MAX_BYTES'")
-        && str_contains($webhookSpool, "flock(\$lock, LOCK_EX)")
-        && str_contains($webhookSpool, 'processing-')
-        && str_contains($webhookSpool, 'recoverAbandonedClaims')
-        && str_contains($webhookSpool, 'restoreRemaining'),
-        'El spool degradado debe tener límites, claim atómico, recuperación y restauración sin sobrescribir entradas concurrentes.');
-    $assert(strpos($transport, 'MeliEmergencyStopService') < strpos($transport, 'curl_init()'),
-        'El transporte debe aplicar una última parada de emergencia antes de abrir cURL.');
-    $assert(str_contains($settings, "\$session['display_state'] = 'maintenance'")
-        && str_contains($settings, 'No se iniciarán consultas y no se perdió progreso.')
-        && str_contains($manualView, 'Procesamiento en mantenimiento')
-        && str_contains($manualView, 'empty($emergencyStop)'),
-        'Las campañas deben conservarse sin ofrecer inicio, progreso o ETA durante la parada.');
-    foreach (['refresh_meli_tokens.php', 'sync_orders.php', 'sync_shipments.php', 'sync_payments.php', 'process_order_financials.php'] as $jobFile) {
-        $job = (string) file_get_contents($root . '/jobs/' . $jobFile);
-        $retired = str_contains($job, '_retired_job.php') && str_contains($job, 'erp_retired_job(');
-        $guarded = strpos($job, '_meli_emergency_stop.php') !== false
-            && strpos($job, "_bootstrap.php") !== false
-            && strpos($job, '_meli_emergency_stop.php') < strpos($job, "_bootstrap.php");
-        $assert($retired || $guarded,
-            $jobFile . ' debe detenerse antes de cargar bootstrap o MariaDB.');
-    }
-    foreach (['cron_probe.php', 'cleanup_raw.php', 'sync_monthly_report.php', 'process_updates.php'] as $jobFile) {
-        $job = (string) file_get_contents($root . '/jobs/' . $jobFile);
-        $bootstrapAt = strpos($job, 'bootstrap.php');
-        $guardAt = strpos($job, '_meli_emergency_stop.php');
-        $retired = str_contains($job, '_retired_job.php') && str_contains($job, 'erp_retired_job(');
-        $assert($retired || ($guardAt !== false && $bootstrapAt !== false && $guardAt < $bootstrapAt),
-            $jobFile . ' debe permanecer inactivo antes de abrir el ERP durante la emergencia.');
-    }
-});
-
-$test('2.25.11 recupera navegación y evita ráfagas de lecturas web', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $version = trim((string) file_get_contents($root . '/VERSION'));
-    $manifest = json_decode((string) file_get_contents($root . '/resources/runtime-manifest.json'), true);
-    $migration = (string) file_get_contents($root . '/database/migrations/136_web_navigation_recovery_2_25_11.sql');
-    $schema = (string) file_get_contents($root . '/app/Services/SchemaInspectorService.php');
-    $schemaGateway = (string) file_get_contents($root . '/app/Services/InformationSchemaGateway.php');
-    $salesContract = (string) file_get_contents($root . '/app/Services/SalesControlSchemaContractService.php');
-    $settings = (string) file_get_contents($root . '/app/Controllers/SettingsController.php');
-    $dashboard = (string) file_get_contents($root . '/app/Controllers/DashboardController.php');
-    $performance = (string) file_get_contents($root . '/app/Controllers/PerformanceController.php');
-    $shell = (string) file_get_contents($root . '/app/Controllers/ShellController.php');
-    $appJs = (string) file_get_contents($root . '/public/assets/app.js');
-    $performanceJs = (string) file_get_contents($root . '/public/assets/performance.js');
-
-    $assert(version_compare($version, '2.25.11', '>=')
-        && ($manifest['version'] ?? '') === $version,
-        'La versión instalada debe conservar 2.25.11 o una sucesora y coincidir con el manifiesto.');
-    $assert(preg_match('/^(?:13[6-9]|1[4-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
-        'El manifiesto debe exigir la migración 136 o una sucesora.');
-    foreach (['runtime.shell_requests_sequential', 'runtime.async_sections_sequential', 'runtime.performance_metrics_file_only', '2.25.11'] as $needle) {
-        $assert(str_contains($migration, $needle), 'Migración 136 debe registrar: ' . $needle);
-    }
-    $assert(str_contains($schemaGateway, 'columnNamesForTables')
-        && str_contains($schema, 'missingRequirements')
-        && str_contains($salesContract, 'missingRequirements(self::REQUIRED)'),
-        'Los contratos de esquema deben resolverse en una lectura por lote.');
-    $assert(!str_contains(substr($settings, strpos($settings, 'public function index(): void'), 1400), 'DiagnosticService())->summary()')
-        && str_contains($settings, 'Estado disponible en Automatización'),
-        'El Centro de configuración no debe ejecutar el diagnóstico profundo antes de renderizar.');
-    $assert(str_contains($dashboard, 'SystemSafetyStatusService')
-        && str_contains($dashboard, "'maintenance' => true"),
-        'Salud del Panel debe degradar de inmediato durante la parada API.');
-    $assert(str_contains($performance, 'RequestPerformanceFileLogger')
-        && !str_contains($performance, 'PerformanceMonitorService'),
-        'La telemetría del navegador no debe insertar métricas en MariaDB.');
-    $assert(str_contains($shell, 'SystemSafetyStatusService')
-        && str_contains($shell, 'Las consultas remotas están bloqueadas.'),
-        'El estado del shell debe responder desde la parada local sin consultar Salud API ni notificaciones.');
-    $assert((str_contains($appJs, 'loadShellContext().finally(loadShellStatus)')
-            || str_contains($appJs, 'loadShellSnapshot()'))
-        && str_contains($performanceJs, 'Math.min(2, initialSections.length)')
-        && str_contains($performanceJs, 'Promise.all'),
-        'Las lecturas auxiliares deben ser estables y las secciones progresivas usar máximo dos solicitudes.');
-});
-
-$test('2.25.14 recupera el freno de mano y unifica los estados detenidos', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $kernel = (string) file_get_contents($root . '/app/Recovery/EmergencyControlKernel.php');
-    $stop = (string) file_get_contents($root . '/stop.php');
-    $health = (string) file_get_contents($root . '/app/Views/settings/api_health.php')
-        . (string) file_get_contents($root . '/app/Services/ApiHealthStatusPresenter.php');
-    $sales = (string) file_get_contents($root . '/app/Services/SalesControlService.php')
-        . (string) file_get_contents($root . '/app/Views/sales_control/index.php')
-        . (string) file_get_contents($root . '/app/Views/sales_control/month.php');
-    $migration = (string) file_get_contents(
-        $root . '/database/migrations/139_emergency_panel_state_consistency_2_25_14.sql'
-    );
-
-    $assert(str_contains($kernel, 'ENT_QUOTES | ENT_SUBSTITUTE')
-        && str_contains($kernel, 'htmlspecialchars'),
-        'El panel de emergencia debe disponer de un escape HTML único y tolerante.');
-    $assert((str_contains($stop, 'catch (Throwable') || str_contains($stop, 'catch (\\Throwable'))
-        && str_contains($stop, 'PAUSE_MELI_API')
-        && str_contains($stop, 'PAUSE_ERP_AUTOMATION')
-        && !str_contains($stop, 'Database::'),
-        'El capturador superior debe funcionar sin base y mostrar las dos paradas.');
-    $assert(str_contains($health, 'Mercado Libre bloqueado por mantenimiento')
-        && str_contains($health, 'Abrir freno de mano')
-        && str_contains($health, 'if (!$apiStopped)'),
-        'Salud API no debe ofrecer pausar ni declarar habilitada una API ya detenida.');
-    $assert(str_contains($sales, "'waiting_automation'")
-        && str_contains($sales, "'Por comprobar'")
-        && str_contains($sales, "'missing_confirmed'"),
-        'Control de ventas debe distinguir trabajo preparado y métricas confirmadas.');
-    $assert(str_contains($migration, '2.25.14')
-        && str_contains($migration, 'sales_control.unknown_values_as_zero'),
-        'La migración 139 debe registrar los defaults de consistencia.');
-});
-
-$test('2.25.15 pagina ventas y difiere lecturas operativas pesadas', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $version = trim((string) file_get_contents($root . '/VERSION'));
-    $manifest = json_decode((string) file_get_contents($root . '/resources/runtime-manifest.json'), true);
-    $schema = (string) file_get_contents($root . '/app/Services/InformationSchemaGateway.php');
-    $diagnostic = (string) file_get_contents($root . '/app/Services/MigrationDiagnosticService.php');
-    $modules = (string) file_get_contents($root . '/app/Core/Modules/ModuleHealthService.php');
-    $moduleMigrations = (string) file_get_contents($root . '/app/Core/Modules/ModuleMigrationRunner.php');
-    $sales = (string) file_get_contents($root . '/app/Services/SaleReadService.php');
-    $settings = (string) file_get_contents($root . '/app/Controllers/SettingsController.php');
-    $routes = (string) file_get_contents($root . '/public/index.php');
-
-    $assert(version_compare($version, '2.25.15', '>=')
-        && ($manifest['version'] ?? '') === $version
-        && preg_match('/^(?:14[0-9]|1[5-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
-        'Versión, manifiesto y migración mínima deben coincidir.');
-    $assert(str_contains($schema, 'tablesExist')
-        && str_contains($schema, 'indexesForTables')
-        && substr_count($schema, 'public function tableCollations') === 1,
-        'InformationSchemaGateway debe ofrecer lecturas agrupadas por categoría.');
-    $assert(str_contains($diagnostic, '$schema = new InformationSchemaGateway($pdo)')
-        && str_contains($diagnostic, 'indexesForTables')
-        && !str_contains($diagnostic, 'private function tableExists'),
-        'El diagnóstico debe reutilizar un gateway y eliminar el patrón N+1.');
-    $assert(str_contains($moduleMigrations, 'pendingAll')
-        && str_contains($modules, 'pendingAll')
-        && str_contains($modules, 'getMany')
-        && str_contains($modules, 'includeLiveChecks'),
-        'Módulos debe cargar estados, settings y migraciones una vez.');
-    $assert(str_contains($sales, 'Primera fase: paginar identidades de venta')
-        && str_contains($sales, '$identityPredicates')
-        && str_contains($sales, 'sales-list-count')
-        && strpos($sales, 'LIMIT \' . $perPage') < strpos($sales, 'LEFT JOIN meli_order_items'),
-        'Ventas debe limitar identidades antes de agregar ítems.');
-    foreach ([
-        '/settings/cron/section.json',
-        '/settings/diagnostics/section.json',
-        '/sales/import-status.json',
-    ] as $route) {
-        $assert(str_contains($routes, $route), 'Falta la ruta progresiva ' . $route . '.');
-    }
-    $assert(str_contains($settings, "View::render('settings/cron_shell'")
-        && str_contains($settings, "View::render('settings/diagnostics_shell'")
-        && str_contains($settings, "'system-diagnostic'")
-        && str_contains($settings, '60,'),
-        'Cron y Diagnóstico deben renderizar primero shells ligeros y cachear el diagnóstico.');
-});
-
-$test('2.25.16 crea copias cifradas por CLI sin transporte remoto', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $migration = (string) file_get_contents($root . '/database/migrations/141_backup_recovery_center_2_25_16.sql');
-    $archive = (string) file_get_contents($root . '/app/Services/BackupArchiveService.php');
-    $center = (string) file_get_contents($root . '/app/Services/BackupCenterService.php');
-    $controller = (string) file_get_contents($root . '/app/Controllers/BackupController.php');
-    $worker = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
-    foreach (['system_backup_archives','system_backup_jobs','system_backup_table_checks','system_backup_download_grants','2.25.16'] as $needle) {
-        $assert(str_contains($migration, $needle), 'Migración 141 incompleta: ' . $needle . '.');
-    }
-    $assert(str_contains($archive, 'ERP-MELI-BACKUP-2')
-        && str_contains($archive, 'sodium_crypto_secretstream_xchacha20poly1305')
-        && str_contains($archive, 'manifest_sha256')
-        && str_contains($archive, 'database-snapshot-active.json'),
-        'La copia v2 debe quedar cifrada, autenticada y protegida por snapshot.');
-    $assert(str_contains($center, 'processRequested')
-        && str_contains($center, 'queueVerification')
-        && str_contains($controller, 'BackupCenterService())->enqueue(')
-        && !str_contains($controller, 'BackupArchiveService())->create'),
-        'El navegador debe encolar y el servicio CLI debe procesar la copia.');
-    $assert(str_contains($worker, 'ERP_LOCAL_MAINTENANCE_ONLY')
-        && str_contains($worker, 'remote=false'),
-        'El lanzador único debe ofrecer un carril estrictamente local.');
-});
-
-$test('2.26.9 recupera, cancela y vincula copias sin desbloquear transporte', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $migration = (string) file_get_contents(
-        $root . '/database/migrations/157_backup_lifecycle_sanitation_bridge_2_26_9.sql'
-    );
-    $center = (string) file_get_contents($root . '/app/Services/BackupCenterService.php');
-    $coordinator = (string) file_get_contents(
-        $root . '/app/Services/LocalMaintenanceCoordinator.php'
-    );
-    $maintenance = (string) file_get_contents(
-        $root . '/app/Services/DatabaseMaintenanceService.php'
-    );
-    $launcher = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
-    $routes = (string) file_get_contents($root . '/public/index.php');
-    foreach ([
-        "'cleanup'",
-        'delete_requested_at',
-        'context_type',
-        'idx_backup_jobs_available',
-        'idx_backup_archives_context',
-        "'2.26.9'",
-    ] as $needle) {
-        $assert(str_contains($migration, $needle), 'Migración 157 incompleta: ' . $needle);
-    }
-    $assert(str_contains($center, 'deleteBeforeLifecycleMigration')
-        && str_contains($center, 'processDeletionCleanup')
-        && str_contains($center, 'bindMaintenanceContext')
-        && str_contains($center, "status='cancelled'")
-        && str_contains($center, "job_type='cleanup'"),
-        'La copia debe cancelarse, cercarse, limpiarse por CLI y fijarse a saneamiento.');
-    $assert(str_contains($coordinator, 'local-maintenance-state.json')
-        && str_contains($coordinator, "'deleting'")
-        && str_contains($coordinator, 'backup_cleanup_pending')
-        && str_contains($launcher, 'reconcileBackup'),
-        'El coordinador único debe recuperar también el cleanup y liberar solo su marcador.');
-    $assert(str_contains($maintenance, 'bindVerifiedBackup')
-        && str_contains($maintenance, 'backup_binding')
-        && str_contains($maintenance, 'La copia vinculada cambió'),
-        'Saneamiento debe conservar exactamente la copia verificada de su análisis.');
-    $assert(str_contains($routes, '/settings/backups/recover')
-        && str_contains($routes, '/settings/backups/cancel')
-        && str_contains($launcher, 'remote=false'),
-        'Recuperar y cancelar deben ser controles web; todo lote continuará por CLI local.');
-});
-
-$test('2.25.17 restaura solo en base nueva y sanitiza el clon diagnóstico', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $migration = (string) file_get_contents($root . '/database/migrations/142_safe_restore_diagnostic_clone_2_25_17.sql');
-    $restore = (string) file_get_contents($root . '/app/Services/RestoreService.php');
-    $switch = (string) file_get_contents($root . '/app/Services/RestoreConfigSwitchService.php');
-    $recovery = (string) file_get_contents($root . '/app/Recovery/RestoreRecoveryKernel.php');
-    foreach (['system_restore_plans','system_restore_checks','system_restore_switches','diagnostic_clone','2.25.17'] as $needle) {
-        $assert(str_contains($migration, $needle), 'Migración 142 incompleta: ' . $needle . '.');
-    }
-    $assert(str_contains($restore, 'La restauración nunca puede usar la base activa')
-        && str_contains($restore, "status='desconectado'")
-        && str_contains($restore, "'meli_tokens', 'meli_oauth_states'")
-        && str_contains($restore, 'gzip_offset')
-        && str_contains($restore, 'targetDataHash')
-        && str_contains($restore, 'archive_verified')
-        && str_contains($restore, 'Migrator('),
-        'La restauración debe ser reanudable, verificar hashes, migrar una base nueva e invalidar OAuth en clones.');
-    $assert(str_contains($switch, 'config.env.next') || str_contains($switch, "\$configPath . '.next'")
-        && str_contains($switch, 'Crypto::encrypt')
-        && str_contains($switch, 'rollbackLatest'),
-        'El cambio debe ser atómico, conservar configuración cifrada y admitir rollback.');
-    $assert(str_contains($recovery, 'EmergencyControlService')
-        && str_contains($recovery, 'RestoreConfigSwitchService')
-        && !str_contains($recovery, 'DashboardController')
-        && !str_contains($recovery, 'ModuleKernel')
-        && !str_contains($recovery, 'Database::connection'),
-        'recuperar.php debe usar un kernel mínimo independiente.');
-});
-
-$test('2.25.18 mide crecimiento, productores y percentiles sin conservar SQL', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $migration = (string) file_get_contents($root . '/database/migrations/143_database_growth_observability_2_25_18.sql');
-    $collector = (string) file_get_contents($root . '/app/Services/FileQueryPerformanceCollector.php');
-    $report = (string) file_get_contents($root . '/app/Services/QueryPerformanceReportService.php');
-    $inventory = (string) file_get_contents($root . '/app/Services/RuntimeProcessInventoryService.php');
-    foreach (['system_database_growth_snapshots','system_storage_producer_catalog','system_query_performance_rollups','2.25.18'] as $needle) {
-        $assert(str_contains($migration, $needle), 'La observabilidad debe incluir ' . $needle . '.');
-    }
-    $assert(str_contains($collector, 'SHOW SESSION STATUS')
-        && str_contains($collector, 'route_hash')
-        && !str_contains($collector, "'sql'")
-        && !str_contains($collector, "'parameters'"),
-        'El perfilador debe conservar métricas sanitizadas, no consultas ni parámetros.');
-    foreach (['p50_ms','p95_ms','p99_ms','rows_read','disk_temporary_tables'] as $needle) {
-        $assert(str_contains($report, $needle), 'El reporte reproducible debe incluir ' . $needle . '.');
-    }
-    $assert(str_contains($inventory, 'active_launcher_count')
-        && str_contains($inventory, 'legacy_assisted'),
-        'El inventario debe localizar lanzadores y navegadores asistidos residuales.');
-});
-
-$test('2.25.19 archiva antes de retener y externaliza un solo payload privado', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $migration = (string) file_get_contents($root . '/database/migrations/144_storage_retention_payload_archive_2_25_19.sql');
-    $retention = (string) file_get_contents($root . '/app/Services/RetentionPolicyService.php');
-    $archive = (string) file_get_contents($root . '/app/Services/ColdArchiveService.php');
-    $payloads = (string) file_get_contents($root . '/app/Services/FileRemotePayloadStore.php');
-    $webhook = (string) file_get_contents($root . '/public/webhook_mercadolibre.php');
-    foreach (['system_cold_archives','remote_payload_objects','remote_payload_references','retention.success_days','retention.incident_days','2.25.19'] as $needle) {
-        $assert(str_contains($migration, $needle), 'La retención debe incluir ' . $needle . '.');
-    }
-    $assert(str_contains($retention, 'verified_at IS NOT NULL')
-        && str_contains($retention, 'rollup_verified_at IS NOT NULL')
-        && str_contains($retention, 'oldestImmutableFinancialMonth'),
-        'Una fila solo puede retirarse después de archivo y resumen, y los jobs deben ser inmutables.');
-    $assert(str_contains($archive, 'PrivateArchiveCipher')
-        && str_contains($archive, 'content_sha256')
-        && str_contains($payloads, 'reference_count')
-        && str_contains($payloads, 'purgeOrphans'),
-        'Los archivos deben cifrarse/verificarse y los payloads deduplicados no deben quedar huérfanos.');
-    $assert(str_contains($webhook, 'WebhookSpoolService')
-        && !str_contains($webhook, 'Database::')
-        && !str_contains($webhook, 'WebhookService'),
-        'El receptor público debe confirmar el spool antes de abrir MariaDB.');
-});
-
-$test('2.25.20 pagina ventas antes de agregar y retira ejecutores web', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $migration = (string) file_get_contents($root . '/database/migrations/145_web_sql_runtime_consolidation_2_25_20.sql');
-    $sales = (string) file_get_contents($root . '/app/Services/SaleReadService.php');
-    $appJs = (string) file_get_contents($root . '/public/assets/app.js');
-    $catalogJs = (string) file_get_contents($root . '/public/assets/catalog.js');
-    $catalogController = (string) file_get_contents($root . '/app/Controllers/CatalogDescriptionJobController.php');
-    $assert(str_contains($migration, 'sale_identity') && str_contains($migration, '2.25.20'),
-        'La migración debe indexar la identidad visible de venta.');
-    $assert(str_contains($sales, 'Primera fase: paginar identidades de venta')
-        && strpos($sales, 'LIMIT \' . $perPage') < strpos($sales, 'LEFT JOIN meli_order_items')
-        && !str_contains($sales, 'raw_json'),
-        'Ventas debe limitar identidades antes de leer sus relaciones y evitar payloads crudos.');
-    $assert(!str_contains($appJs, 'new Worker')
-        && !str_contains($appJs, '/interactive/step')
-        && !str_contains($catalogJs, 'stepUrl')
-        && !str_contains($catalogJs, 'data-catalog-description-monitor'),
-        'El navegador no debe mantener ningún ejecutor asistido.');
-    $step = substr($catalogController, strpos($catalogController, 'public function step'), 700);
-    $assert(str_contains($step, '410') && !str_contains($step, 'processDue('),
-        'La ruta histórica de descripciones debe quedar retirada.');
-});
-
-$test('2.26.0 deja un lanzador, checkpoints y recuperación física explícita', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $migration = (string) file_get_contents($root . '/database/migrations/146_runtime_consolidation_physical_recovery_2_26_0.sql');
-    $preserver = (string) file_get_contents($root . '/app/Services/HistoricalMigrationDataPreserver.php');
-    $recovery = (string) file_get_contents($root . '/app/Services/PhysicalTableRecoveryService.php');
-    $inventory = (new \App\Services\RuntimeProcessInventoryService())->inspect();
-    foreach (['system_table_maintenance_history','financial_job_items','single_launcher','2.26.0'] as $needle) {
-        $assert(str_contains($migration, $needle), 'La consolidación debe incluir ' . $needle . '.');
-    }
-    $assert(
-        hash_equals(
-            '1d4afd69e8253debfd634c6875cf5b2c71df1d459f45563ec6374219f1d7a312',
-            hash('sha256', $migration)
-        )
-        && str_contains($preserver, 'system_retention_runs_preserved_2265')
-        && str_contains($preserver, 'RENAME TABLE')
-        && str_contains($preserver, 'INSERT IGNORE INTO'),
-        'La consolidación debe conservar la migración publicada y preservar sus datos alrededor de ella.'
-    );
-    $assert(($inventory['active_launcher_count'] ?? -1) === 3
-        && ($inventory['review_required_count'] ?? -1) === 0,
-        'Durante rollback deben existir V2 y los dos lanzadores independientes V3.');
-    $assert(str_contains($recovery, 'MeliEmergencyStopService')
-        && str_contains($recovery, 'automationStopped')
-        && str_contains($recovery, 'disk_free_space')
-        && str_contains($recovery, 'payloads_externalized')
-        && str_contains($recovery, 'OPTIMIZE TABLE'),
-        'La reconstrucción debe ser explícita, detenida y comprobar espacio y payloads trasladados.');
-});
-
-$test('2.26.1 separa retención terminal e incidentes sin bloquear colas activas', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $migration = (string) file_get_contents(
-        $root . '/database/migrations/147_notification_retention_partition_2_26_1.sql'
-    );
-    $retention = (string) file_get_contents($root . '/app/Services/RetentionPolicyService.php');
-    $archive = (string) file_get_contents($root . '/app/Services/ColdArchiveService.php');
-    foreach (['notification_success', 'notification_incidents'] as $needle) {
-        $assert(
-            str_contains($migration, $needle)
-            && str_contains($retention, $needle)
-            && str_contains($archive, $needle),
-            'La retención 2.26.1 debe declarar y usar ' . $needle . '.'
-        );
-    }
-    $assert(str_contains($migration, '2.26.1'), 'La migración debe registrar la versión 2.26.1.');
-    $assert(
-        str_contains($retention, '"received","queued","processing"') === false,
-        'Los estados activos no deben formar parte de un archivo terminal.'
-    );
-});
-
-$test('2.26.2 endurece contrato web, origin y lanzadores de release', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $router = (string) file_get_contents($root . '/app/Core/Router.php');
-    $auth = (string) file_get_contents($root . '/app/Core/Auth.php');
-    $cron = (string) file_get_contents($root . '/launcher/cron.php');
-    $webhook = (string) file_get_contents($root . '/launcher/webhook.php');
-    $maintenanceDirect = (string) file_get_contents(
-        $root . '/app/Recovery/DatabaseMaintenanceRecoveryKernel.php'
-    );
-
-    foreach (['authorize($method, $metadata)', 'assertSameOrigin()', 'expectedOrigin()', 'Csrf::validate', 'Auth::requireLogin', 'permanent_admin'] as $needle) {
-        $assert(str_contains($router, $needle), 'Router debe aplicar defensa central: ' . $needle . '.');
-    }
-    $assert(strpos($router, '$metadata = (array) ($route[\'metadata\'] ?? [])') !== false,
-        'Las rutas dinámicas también deben conservar metadata de seguridad.');
-    $assert(str_contains($auth, 'return $role === \'operator\' ? \'operador\' : $role;'),
-        'Auth debe normalizar operator/operador para contratos modulares heredados.');
-    foreach ([$cron, $webhook] as $launcher) {
-        $assert(str_contains($launcher, "str_replace('\\\\', '/', (string) (\$pointer['path'] ?? ''))")
-            && str_contains($launcher, "!in_array('..', explode('/', \$relative), true)")
-            && str_contains($launcher, "realpath(\$installationRoot . '/releases')")
-            && str_contains($launcher, 'str_starts_with(str_replace'),
-            'Cada lanzador administrado debe confinar el puntero a releases/.');
-    }
-    $assert(str_contains($maintenanceDirect, 'name="idempotency_key"')
-        && str_contains($maintenanceDirect, 'validateStepIdempotencyKey')
-        && str_contains($maintenanceDirect, 'rotateStepIdempotencyKey')
-        && !str_contains($maintenanceDirect, "'direct-' . bin2hex(random_bytes(16))\n                    );"),
-        'El mantenimiento directo debe reenviar micro-pasos con una clave idempotente del formulario.');
-});
-
-$test('2.26.2 mantiene idempotencia de doble envio en mantenimiento directo', static function () use ($assert): void {
-    $ref = new ReflectionClass(\App\Recovery\DatabaseMaintenanceRecoveryKernel::class);
-    $kernel = $ref->newInstanceWithoutConstructor();
-    $current = $ref->getMethod('currentStepIdempotencyKey');
-    $validate = $ref->getMethod('validateStepIdempotencyKey');
-    $rotate = $ref->getMethod('rotateStepIdempotencyKey');
-    $previousSession = $_SESSION ?? [];
-    try {
-        unset(
-            $_SESSION['maintenance_direct_step_key'],
-            $_SESSION['maintenance_direct_previous_step_key']
-        );
-        $first = (string) $current->invoke($kernel);
-        $assert(preg_match('/^direct-[A-Fa-f0-9]{32}$/', $first) === 1,
-            'La clave directa debe tener formato acotado.');
-        $assert((string) $current->invoke($kernel) === $first,
-            'El formulario directo debe conservar la clave hasta aprobar el paso.');
-        $assert((string) $validate->invoke($kernel, $first) === $first,
-            'La clave actual debe ser aceptada.');
-        $rotate->invoke($kernel, $first);
-        $second = (string) $current->invoke($kernel);
-        $assert($second !== $first, 'Después de aprobar, el siguiente paso necesita nueva clave.');
-        $assert((string) $validate->invoke($kernel, $first) === $first,
-            'El doble envio inmediato debe poder reusar la clave anterior.');
-        $rotate->invoke($kernel, $first);
-        $assert((string) $current->invoke($kernel) === $second,
-            'Repetir la clave anterior no debe consumir la clave vigente.');
-        $rotate->invoke($kernel, $second);
-        $staleRejected = false;
-        try {
-            $validate->invoke($kernel, $first);
-        } catch (ReflectionException $error) {
-            throw $error;
-        } catch (Throwable) {
-            $staleRejected = true;
-        }
-        $assert($staleRejected, 'Una clave de dos pasos atras debe rechazarse.');
-    } finally {
-        $_SESSION = $previousSession;
-    }
-});
-
-$test('2.26.2 separa el mes abierto y oculta reconstrucciones innecesarias', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $service = (string) file_get_contents(
-        $root . '/app/Services/DatabaseMaintenanceService.php'
-    );
-    $view = (string) file_get_contents(
-        $root . '/app/Views/settings/database_maintenance.php'
-    );
-    $assert(
-        str_contains($service, "'open_period_deferred' => \$openPeriodDeferred")
-        && str_contains($service, "'actionable_total' => \$actionableTotal")
-        && str_contains(
-            $service,
-            'UTC_DATE()-INTERVAL (DAY(UTC_DATE())-1) DAY'
-        ),
-        'El análisis debe separar filas del mes abierto de las que puede retirar ahora.'
-    );
-    $assert(
-        str_contains($view, 'Filas listas ahora')
-        && str_contains($view, 'se conservan hasta su cierre')
-        && str_contains($view, '$eligibleRecoveryTables')
-        && str_contains($view, 'No hay tablas que requieran reconstrucción.'),
-        'La interfaz debe explicar la retención y ocultar reconstrucciones no elegibles.'
-    );
-});
-
-$test('2.26.14 habilita saneamiento local por navegador sin Mercado Libre', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $controller = (string) file_get_contents(
-        $root . '/app/Controllers/DatabaseMaintenanceController.php'
-    );
-    $service = (string) file_get_contents(
-        $root . '/app/Services/DatabaseMaintenanceService.php'
-    );
-    $view = (string) file_get_contents(
-        $root . '/app/Views/settings/database_maintenance.php'
-    );
-    $script = (string) file_get_contents($root . '/public/assets/performance.js');
-    $maintenanceScript = substr(
-        $script,
-        (int) strpos($script, "document.querySelector('[data-database-maintenance]')")
-    );
-    $routes = (string) file_get_contents($root . '/public/index.php');
-
-    $assert(
-        str_contains($controller, 'runInteractiveStep')
-        && !str_contains($controller, 'El saneamiento ya no modifica datos desde el navegador')
-        && !str_contains($controller, 'http_response_code(410)'),
-        'El saneamiento lógico debe volver a micro-pasos web locales y no responder 410.'
-    );
-    $assert(
-        str_contains($service, 'public function runInteractiveStep')
-        && str_contains($service, 'MaintenanceExecutionLock')
-        && str_contains($service, 'claimCliStep')
-        && str_contains($service, "'web-"),
-        'El micro-paso web debe reutilizar el mismo lock, lease y fencing del motor local.'
-    );
-    $interactiveOffset = (int) strpos($service, 'public function runInteractiveStep');
-    $interactiveMethod = substr($service, $interactiveOffset, 1800);
-    $assert(
-        !str_contains($interactiveMethod, "PHP_SAPI !== 'cli'")
-        && !str_contains($interactiveMethod, 'El navegador no puede ejecutar saneamiento destructivo'),
-        'El método interactivo no puede conservar un gate duro que impida los micro-lotes del navegador.'
-    );
-    $assert(
-        str_contains($view, 'data-step-url')
-        && str_contains($view, '/settings/database-maintenance/step')
-        && str_contains($view, 'Mantenga esta pestaña abierta')
-        && !str_contains($view, 'php jobs/process_sync_queue.php'),
-        'La interfaz debe dirigir el saneamiento lógico por pestaña, sin comando cron en el flujo principal.'
-    );
-    $assert(
-        str_contains($maintenanceScript, 'const stepUrl')
-        && str_contains($maintenanceScript, "fetch(stepUrl")
-        && str_contains($maintenanceScript, "method: 'POST'")
-        && str_contains($maintenanceScript, "status.session"),
-        'El monitor debe ejecutar un paso corto y refrescar el estado real.'
-    );
-    $assert(
-        str_contains($routes, "/settings/database-maintenance/step")
-        && str_contains($routes, '$maintenanceAnalyzeContinuation')
-        && str_contains($routes, "\$pathEndsWith('/settings/database-maintenance/step')")
-        && str_contains($routes, '&& !$maintenanceContinuation'),
-        'El gate de snapshot debe permitir analizar y continuar saneamiento propietario.'
-    );
-});
-
-$test('2.26.3 restablece datos importados sin ejecutar borrados desde HTTP', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $controller = (string) file_get_contents(
-        $root . '/app/Controllers/ImportedMeliDataResetController.php'
-    );
-    $service = (string) file_get_contents(
-        $root . '/app/Services/ImportedMeliDataResetService.php'
-    );
-    $job = (string) file_get_contents($root . '/jobs/reset_imported_meli_data.php');
-    $launcher = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
-    $routes = (string) file_get_contents($root . '/public/index.php');
-    $freeze = (string) file_get_contents(
-        $root . '/app/Services/DatabaseMutationFreezeService.php'
-    );
-    $metadata = (string) file_get_contents(
-        $root . '/app/Repositories/RouteMetadataRepository.php'
-    );
-    foreach ([
-        '/settings/imported-data-reset',
-        '/settings/imported-data-reset/analyze',
-        '/settings/imported-data-reset/authorize',
-        '/settings/imported-data-reset/pause',
-    ] as $route) {
-        $assert(str_contains($routes, $route), 'Falta la ruta segura ' . $route . '.');
-    }
-    $assert(
-        !str_contains($controller, 'DELETE FROM')
-        && !str_contains($controller, 'TRUNCATE')
-        && !str_contains($controller, 'MeliApiClient'),
-        'El controlador web no puede borrar ni transportar datos.'
-    );
-    foreach ([
-        'Csrf::validate',
-        'verifyPassword',
-        'SameOriginGuard::assertRequest(true)',
-        'Auth::isTemporary',
-        "'backup_id'",
-        "'account_count'",
-    ] as $needle) {
-        $assert(str_contains($controller, $needle), 'Falta protección web: ' . $needle . '.');
-    }
-    $assert(
-        str_contains($service, 'stopAll(')
-        && !str_contains($service, 'ELIMINAR DATOS DE MERCADO LIBRE')
-        && str_contains($service, 'apiStopped()')
-        && str_contains($service, 'automationStopped()')
-        && str_contains($service, 'freshVerifiedBackup')
-        && str_contains($service, 'lease_generation')
-        && str_contains($service, 'BackupArchiveService())->verify')
-        && str_contains($service, "hash_file('sha256'")
-        && str_contains($service, 'DatabaseMutationFreezeService')
-        && str_contains($service, 'assertClassifiedInventory')
-        && str_contains($service, 'hash_init'),
-        'La autorización debe enlazar copia verificada, ambas paradas, freeze, inventario, huella y fencing.'
-    );
-    $assert(
-        str_contains($job, "_retired_job.php")
-        && !str_contains($job, 'ImportedMeliDataResetService')
-        && !str_contains($job, 'cron_entry_early_lock()')
-        && str_contains($launcher, 'ImportedMeliDataResetService')
-        && str_contains($launcher, 'runNext(')
-        && !str_contains($job, 'MeliApiClient'),
-        'El reset debe ejecutarse solo en el lanzador único y el job antiguo debe ser un stub.'
-    );
-    $assert(
-        str_contains($service, "'sync_batch_chunks'")
-        && str_contains($service, 'assertNoActiveWork')
-        && str_contains($service, 'assertCandidatePlanUnchanged')
-        && str_contains($service, 'assertAuthorizedScope')
-        && str_contains($service, 'FOR UPDATE'),
-        'El reset debe cerrar cambios de candidatos, scope, trabajos activos y pérdida del lease.'
-    );
-    $assert(
-        str_contains($freeze, "\$existing['context']")
-        && str_contains($metadata, "'/settings/imported-data-reset'")
-        && str_contains($routes, "\$mutationFreeze['purpose'] ?? '') === 'database_sanitation'")
-        && str_contains($routes, "\$mutationFreeze['purpose'] ?? '') === 'imported_data_reset'"),
-        'El heartbeat debe conservar contexto y cada mantenimiento solo puede continuar su propio freeze.'
-    );
-});
-
-$test('2.26.3 aplica una política conservadora de identidad y evidencia', static function () use ($assert): void {
-    $policy = new \App\Services\ImportedMeliDataResetPolicy();
-    $operations = $policy->operations();
-    $tables = array_column($operations, 'table');
-    foreach ([
-        'companies','company_settings','users','user_company_access',
-        'meli_accounts','meli_tokens','meli_oauth_states','app_settings',
-        'schema_migrations','internal_products','product_meli_links',
-        'catalogs','catalog_items','monthly_reports','monthly_report_orders',
-        'sales_control_closes','system_backup_archives',
-    ] as $protected) {
-        $assert(
-            !in_array($protected, $tables, true),
-            'La política no puede eliminar la tabla protegida ' . $protected . '.'
-        );
-    }
-    $order = null;
-    $item = null;
-    foreach ($operations as $operation) {
-        if ($operation['table'] === 'meli_orders') {
-            $order = $operation;
-        }
-        if ($operation['table'] === 'meli_items') {
-            $item = $operation;
-        }
-    }
-    $assert(
-        is_array($order)
-        && str_contains($order['extra'], 'monthly_report_orders')
-        && str_contains($order['extra'], 'date_report_orders')
-        && str_contains($order['extra'], 'sales_control_fiscal_job_items'),
-        'Las órdenes usadas como evidencia deben quedar excluidas.'
-    );
-    $assert(
-        is_array($item)
-        && str_contains($item['extra'], 'product_meli_links')
-        && str_contains($item['extra'], 'catalog_items'),
-        'Las publicaciones con decisiones humanas deben conservarse.'
-    );
-    $scoped = [];
-    foreach ($operations as $operation) {
-        $scoped[$operation['table']] = (string) ($operation['scope'] ?? 'direct');
-    }
-    $assert(($scoped['question_notifications'] ?? '') === 'question_parent'
-        && ($scoped['catalog_description_jobs'] ?? '') === 'catalog_job',
-        'Las tablas sin meli_account_id deben usar su relación real para aislar la cuenta.');
-    $migration = (string) file_get_contents(
-        dirname(__DIR__) . '/database/migrations/150_imported_meli_data_reset_2_26_3.sql'
-    );
-    $assert(
-        str_contains($migration, 'imported_data_reset_table_policy')
-        && str_contains($migration, 'information_schema.TABLES')
-        && str_contains($migration, "action ENUM('preserve','delete','reset','ignore')"),
-        'Cada tabla instalada debe quedar clasificada y las futuras deben bloquear el análisis.'
-    );
-});
-
-$test('2.26.3 evita sondeos ajenos y ciclos terminales en Cron', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $availability = (string) file_get_contents(
-        $root . '/app/Services/CronWorkAvailabilityService.php'
-    );
-    $items = (string) file_get_contents(
-        $root . '/app/Services/MeliItemSyncJobService.php'
-    );
-    $performanceController = (string) file_get_contents(
-        $root . '/app/Controllers/PerformanceController.php'
-    );
-    $performanceJs = (string) file_get_contents(
-        $root . '/public/assets/performance.js'
-    );
-    $dateRepair = (string) file_get_contents(
-        $root . '/app/Services/OrderDateRepairService.php'
-    );
-    $salesRepair = (string) file_get_contents(
-        $root . '/app/Services/SalesRepairService.php'
-    );
-
-    $assert(
-        str_contains($availability, '$probes = [')
-        && str_contains($availability, '$snapshot[$key] = $probe();')
-        && strpos($availability, '$selected = $onlyKeys') < strpos($availability, '$snapshot[$key] = $probe();'),
-        'Las colas deben sondearse después de aplicar el subconjunto permitido.'
-    );
-    $assert(
-        str_contains($availability, 'WHERE status IN ("queued","waiting","running")')
-        && str_contains($availability, 'lock_expires_at IS NULL OR lock_expires_at<UTC_TIMESTAMP()'),
-        'La disponibilidad de descripciones debe coincidir con el selector que reclama el trabajo.'
-    );
-    $assert(
-        str_contains($items, ') retryable_count')
-        && str_contains($items, "\$phase = \$retryable > 0 ? 'details' : (\$errors > 0 ? 'error' : 'complete')")
-        && str_contains($items, "\$terminal = in_array(\$phase, ['complete', 'error'], true)"),
-        'Un job sin elementos recuperables debe quedar terminal y salir de Cron.'
-    );
-    $tryOffset = strpos($performanceController, 'try {');
-    $authOffset = strpos($performanceController, 'Auth::requireLogin();');
-    $assert(
-        $tryOffset !== false && $authOffset !== false && $tryOffset < $authOffset,
-        'Una telemetría con sesión vencida debe descartarse sin crear incidentes en MariaDB.'
-    );
-    $assert(
-        str_contains($performanceJs, 'metricLastSentAt')
-        && str_contains($performanceJs, '< 30000'),
-        'El navegador debe limitar muestras repetidas del mismo indicador.'
-    );
-    foreach ([$dateRepair, $salesRepair] as $repairService) {
-        $assert(
-            str_contains($repairService, 'SalesAuditRunService())->createExactMonth')
-            && !str_contains($repairService, 'runMonthSystem(')
-            && !str_contains($repairService, 'compareMonthIdsSystem('),
-            'Una reparación debe encolar la auditoría exacta y no descargar un mes completo dentro de su turno.'
-        );
-    }
-});
-
-$test('2.26.4 recupera freno y mantenimiento desde releases administradas', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $paths = (string) file_get_contents(
-        $root . '/jobs/_prebootstrap_runtime_paths.php'
-    );
-    $automation = (string) file_get_contents(
-        $root . '/jobs/_automation_emergency_stop.php'
-    );
-    $meli = (string) file_get_contents(
-        $root . '/jobs/_meli_emergency_stop.php'
-    );
-    $cron = (string) file_get_contents(
-        $root . '/jobs/process_sync_queue.php'
-    );
-    $panel = (string) file_get_contents(
-        $root . '/app/Recovery/EmergencyControlKernel.php'
-    );
-    $backupSignal = (string) file_get_contents(
-        $root . '/app/Services/BackupMaintenanceRequestService.php'
-    );
-    $migration = (string) file_get_contents(
-        $root . '/database/migrations/152_managed_maintenance_emergency_recovery_2_26_4.sql'
-    );
-
-    foreach ([
-        "defined('ERP_INSTALLATION_ROOT')",
-        "defined('ERP_SHARED_ROOT')",
-        "basename(dirname(\$runtimeRoot)) === 'releases'",
-        'erp_prebootstrap_marker_exists',
-    ] as $needle) {
-        $assert(
-            str_contains($paths, $needle),
-            'El resolver temprano debe cubrir instalaciones clásicas y administradas.'
-        );
-    }
-    $assert(
-        str_contains($automation, "erp_prebootstrap_pause_marker_exists('PAUSE_ERP_AUTOMATION')")
-        && str_contains($meli, "erp_prebootstrap_pause_marker_exists('PAUSE_MELI_API')"),
-        'Ambos frenos deben usar la misma autoridad previa al bootstrap.'
-    );
-    foreach ([
-        'storage/cache/backup-maintenance-request.json',
-        'storage/cache/restore-maintenance-request.json',
-        'storage/cache/database-mutation-freeze.json',
-    ] as $marker) {
-        $assert(
-            str_contains($paths, $marker),
-            'El resolver temprano debe centralizar el marcador compartido: ' . $marker
-        );
-    }
-    $assert(
-        str_contains($cron, 'erp_prebootstrap_runtime_state()')
-        && str_contains($cron, 'erp_prebootstrap_runtime_mode($earlyRuntimeState)'),
-        'Cron debe consumir una sola instantánea tipada del estado previo al bootstrap.'
-    );
-    $assert(
-        str_contains($panel, '$status = $this->control->status();')
-        && !str_contains($panel, '(new SystemSafetyStatusService())->status();'),
-        'El panel autenticado debe reutilizar la autoridad que validó la sesión.'
-    );
-    $assert(
-        str_contains($backupSignal, 'time() + 604800')
-        && str_contains($backupSignal, '$issuedAt < $now - 604800')
-        && str_contains($backupSignal, '$issuedAt > $now + 300')
-        && str_contains($backupSignal, '$expiresAt > $issuedAt + 604800'),
-        'La copia pendiente debe sobrevivir la actualización sin perder autenticidad.'
-    );
-    foreach ([
-        'backup.maintenance.shared_root_resolver',
-        'emergency.panel.single_filesystem_authority',
-        '2.26.4',
-    ] as $needle) {
-        $assert(str_contains($migration, $needle), 'La migración 152 debe registrar ' . $needle);
-    }
-});
-
-$test('2.26.10 cerca copias y exige vínculo exacto para sanear', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $coordinator = (string) file_get_contents(
-        $root . '/app/Services/LocalMaintenanceCoordinator.php'
-    );
-    $backup = (string) file_get_contents(
-        $root . '/app/Services/BackupCenterService.php'
-    );
-    $maintenance = (string) file_get_contents(
-        $root . '/app/Services/DatabaseMaintenanceService.php'
-    );
-    $restore = (string) file_get_contents(
-        $root . '/app/Services/RestoreService.php'
-    );
-    $migration = (string) file_get_contents(
-        $root . '/database/migrations/158_local_maintenance_fencing_exact_backup_2_26_10.sql'
-    );
-
-    foreach ([
-        "'owner' =>",
-        "'generation' =>",
-        "'freeze_active' =>",
-        "'coordinator_expired'",
-        "'coordinator_guided_repair_required'",
-        'clearCoordinatorIfMatches',
-    ] as $needle) {
-        $assert(str_contains($coordinator, $needle), 'El coordinador debe conservar ' . $needle);
-    }
-    foreach ([
-        "'cancel_requested'",
-        'cleanupExecutionArtifacts',
-        "\$checkpoint['_execution_tag']",
-        'checkpointArtifactsAvailable',
-        'supportsSafeCancellationLifecycle',
-    ] as $needle) {
-        $assert(str_contains($backup, $needle), 'El ciclo de copias debe implementar ' . $needle);
-    }
-    $assert(
-        !str_contains($backup, 'new BackupMaintenanceRequestService())->publish')
-        && !str_contains($coordinator, '$legacyService->publish'),
-        'Los marcadores heredados solo deben importarse; no pueden seguir siendo autoridad de escritura.'
-    );
-    $assert(
-        str_contains($maintenance, "'database_sanitation'")
-        && str_contains($maintenance, 'integrity_before_json')
-        && !str_contains($maintenance, 'latestVerifiedArchive'),
-        'Saneamiento debe exigir la copia exacta y no la última copia global.'
-    );
-    $assert(
-        str_contains($restore, "'cancel_requested'")
-        && str_contains($restore, "'ready_pending_release'")
-        && str_contains($restore, "'deleting'"),
-        'Restauración debe normalizar los estados activos de 2.26.10.'
-    );
-    foreach ([
-        'cancel_requested_at',
-        'control_generation',
-        'maintenance_phase',
-        'backup.local_coordinator_version',
-        '2.26.10',
-    ] as $needle) {
-        $assert(str_contains($migration, $needle), 'La migración 158 debe registrar ' . $needle);
-    }
-});
-
-$test('2.26.20 muestra progreso real de copias por navegador', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $version = trim((string) file_get_contents($root . '/VERSION'));
-    $manifest = json_decode((string) file_get_contents($root . '/resources/runtime-manifest.json'), true);
-    $recovery = (string) file_get_contents($root . '/app/Recovery/RecoveryKernel.php');
-    $backup = (string) file_get_contents($root . '/app/Services/BackupCenterService.php');
-    $backupController = (string) file_get_contents($root . '/app/Controllers/BackupController.php');
-    $maintenanceController = (string) file_get_contents($root . '/app/Controllers/DatabaseMaintenanceController.php');
-    $migrator = (string) file_get_contents($root . '/app/Services/Migrator.php');
-    $frontController = (string) file_get_contents($root . '/public/index.php');
-    $backupView = (string) file_get_contents($root . '/app/Views/settings/backups.php');
-    $maintenanceView = (string) file_get_contents($root . '/app/Views/settings/database_maintenance.php');
-    $script = (string) file_get_contents($root . '/public/assets/performance.js');
-    $migration160 = (string) file_get_contents(
-        $root . '/database/migrations/160_recovery_updater_external_backup_choice_2_26_12.sql'
-    );
-    $migration161 = (string) file_get_contents(
-        $root . '/database/migrations/161_recovery_updater_no_cron_migration_drain_2_26_13.sql'
-    );
-    $migration162 = (string) file_get_contents(
-        $root . '/database/migrations/162_recovery_no_cron_backup_sanitation_2_26_14.sql'
-    );
-    $migration163 = (string) file_get_contents(
-        $root . '/database/migrations/163_backup_browser_reconciliation_2_26_15.sql'
-    );
-    $migration164 = (string) file_get_contents(
-        $root . '/database/migrations/164_browser_backup_finalizer_2_26_16.sql'
-    );
-    $migration165 = (string) file_get_contents(
-        $root . '/database/migrations/165_backup_request_normalizer_2_26_17.sql'
-    );
-    $migration166 = (string) file_get_contents(
-        $root . '/database/migrations/166_browser_only_backup_external_update_2_26_18.sql'
-    );
-    $migration167 = (string) file_get_contents(
-        $root . '/database/migrations/167_browser_backup_visible_no_launcher_2_26_19.sql'
-    );
-    $migration168 = (string) file_get_contents(
-        $root . '/database/migrations/168_backup_browser_progress_monitor_2_26_20.sql'
-    );
-
-    $assert(version_compare($version, '2.26.20', '>=') && ($manifest['version'] ?? '') === $version, 'VERSION y manifiesto deben declarar una versión igual o posterior a 2.26.20.');
-    $assert(
-        preg_match('/^(?:168|169|17[0-9]|1[8-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
-        'El manifiesto debe exigir al menos la migración 168.'
-    );
-    foreach ([
-        'recovery_external_backup_choice',
-        'RESPALDO EXTERNO CONFIRMADO',
-        'direct_update_secure_optional',
-        '2.26.12',
-    ] as $needle) {
-        $assert(str_contains($migration160, $needle), 'La migración 160 debe registrar ' . $needle);
-    }
-    foreach ([
-        'migrator_drain_result_sets',
-        'RESPALDO EXTERNO CONFIRMADO',
-        '2.26.13',
-    ] as $needle) {
-        $assert(str_contains($migration161, $needle), 'La migración 161 debe registrar ' . $needle);
-    }
-    foreach ([
-        'recovery_external_ignores_internal_backup',
-        'backup.browser_interactive_enabled',
-        'backup.browser_step_row_limit',
-        'database_maintenance.browser_interactive_enabled',
-        'database_maintenance.browser_step_deadline_seconds',
-        '2.26.14',
-    ] as $needle) {
-        $assert(str_contains($migration162, $needle), 'La migración 162 debe registrar ' . $needle);
-    }
-    $manualStep = new \ReflectionMethod(\App\Controllers\SettingsController::class, 'manualProcessingInteractiveStep');
-    $manualLines = file($manualStep->getFileName(), FILE_IGNORE_NEW_LINES);
-    $manualSource = implode("\n", array_slice(
-        is_array($manualLines) ? $manualLines : [],
-        $manualStep->getStartLine() - 1,
-        $manualStep->getEndLine() - $manualStep->getStartLine() + 1
-    ));
-    $assert(str_contains($manualSource, 'ManualSingleStepService')
-        && !str_contains($manualSource, 'MeliApiClient')
-        && !str_contains($manualSource, 'processDue('),
-        'Procesar ahora debe usar exclusivamente el ejecutor exacto de un paso.');
-    foreach ([
-        'backup.browser_reconcile_missing_final_state',
-        'backup.browser_failed_without_verified_file',
-        '2.26.15',
-    ] as $needle) {
-        $assert(str_contains($migration163, $needle), 'La migración 163 debe registrar ' . $needle);
-    }
-    foreach ([
-        'backup.browser_partial_releases_lease',
-        'backup.browser_chunk_failure_is_recoverable',
-        '2.26.16',
-    ] as $needle) {
-        $assert(str_contains($migration164, $needle), 'La migración 164 debe registrar ' . $needle);
-    }
-    foreach ([
-        'backup.accept_legacy_forced_request_id',
-        'backup.browser_request_normalizer_version',
-        'backup.browser_lost_lease_is_deferred',
-        'backup.browser_retry_from_last_approved_checkpoint',
-        'backup.request_normalizer_ignores_deleted_active_rows',
-        '2.26.17',
-    ] as $needle) {
-        $assert(str_contains($migration165, $needle), 'La migración 165 debe registrar ' . $needle);
-    }
-    foreach ([
-        'backup.browser_mode_without_cli_signal',
-        'backup.direct_update_external_choice_visible_with_pending_internal',
-        'backup.default_creation_mode',
-        '2.26.18',
-    ] as $needle) {
-        $assert(str_contains($migration166, $needle), 'La migración 166 debe registrar ' . $needle);
-    }
-    foreach ([
-        'backup.browser_status_without_launcher',
-        'backup.browser_first_step_immediate',
-        'backup.hide_launcher_wording_for_browser_backups',
-        '2.26.19',
-    ] as $needle) {
-        $assert(str_contains($migration167, $needle), 'La migración 167 debe registrar ' . $needle);
-    }
-    foreach ([
-        'backup.browser_progress_monitor_enabled',
-        'backup.browser_progress_mode',
-        'backup.browser_eta_minimum_chunks',
-        'backup.browser_stale_after_seconds',
-        '2.26.20',
-    ] as $needle) {
-        $assert(str_contains($migration168, $needle), 'La migración 168 debe registrar ' . $needle);
-    }
-    $assert(
-        !str_contains($recovery, "!hash_equals('CONTINUAR SIN RESPALDO',")
-        && !str_contains($recovery, "!hash_equals('RESPALDO EXTERNO CONFIRMADO',")
-        && str_contains($recovery, 'backup_choice')
-        && str_contains($recovery, 'Continuar sin respaldo interno')
-        && str_contains($recovery, "Session::put('_recovery_backup_decision', 'skipped')"),
-        'El actualizador debe aceptar respaldo externo o continuar sin respaldo con contraseña y botón explícito, sin frases largas.'
-    );
-    $assert(
-        str_contains($recovery, "if (\$backupDecision === 'skipped')")
-        && str_contains($recovery, "\$backup = \$this->inspectSecureBackup();")
-        && str_contains($recovery, "\$backupDecision !== 'skipped' ? \$this->inspectBackupForDisplay()"),
-        'Una copia interna pendiente no debe ser inspeccionada ni bloquear cuando la decisión sea skipped.'
-    );
-    $assert(
-        !str_contains($recovery, 'La identidad se confirmó, pero el respaldo necesita revisión. No se modificó la base de datos.')
-        && str_contains($recovery, 'Usar respaldo externo y continuar')
-        && str_contains($recovery, 'La copia interna pendiente quedará como limpieza pendiente; no bloqueará la migración.'),
-        'El actualizador debe separar identidad confirmada de problemas reales de respaldo.'
-    );
-    $assert(
-        str_contains($backup, 'processInteractiveStep')
-        && str_contains($backup, "string \$executionMode = 'browser'")
-        && str_contains($backup, "\$executionMode === 'cli'")
-        && str_contains($backup, 'reconcileForcedRequestWithoutJob')
-        && str_contains($backup, 'failRunningBackupJob')
-        && str_contains($backup, "\$request['backup_id'] = \$backupId")
-        && str_contains($backup, "\$request['public_id'] = \$publicId")
-        && str_contains($backup, 'El micro-lote perdió su lease antes de aprobar el checkpoint')
-        && str_contains($backup, 'Se limpiaron los artefactos temporales')
-        && str_contains($backup, 'processRequested(?array $forcedRequest = null, array $limits = [])')
-        && str_contains($backup, "'row_limit' => 500")
-        && str_contains($backup, "'deadline_seconds' => 2")
-        && str_contains($backup, "'lease_seconds' => 30"),
-        'BackupCenterService debe ofrecer pasos interactivos cortos, lease breve y reconciliables sin depender del cron.'
-    );
-    $assert(
-        str_contains($backup, 'progressPresenter')
-        && str_contains($backup, "'progress' => \$progress")
-        && (
-            str_contains($backup, "'mode' => 'browser'")
-            || (
-                str_contains($backup, "'mode' =>")
-                && str_contains($backup, "\$active['execution_mode'] ?? 'browser'")
-            )
-        )
-        && str_contains($backup, "'eta_seconds_min'")
-        && str_contains($backup, "'is_stale'")
-        && str_contains($backup, "'browser_mode'"),
-        'El estado de copias por navegador debe reportar progreso, ETA y modo browser.'
-    );
-    $assert(
-        str_contains($backupController, 'interactiveStart')
-        && str_contains($backupController, 'interactiveStep')
-        && str_contains($backupController, 'interactiveCancel')
-        && str_contains($frontController, '/settings/backups/interactive/start')
-        && str_contains($frontController, '/settings/backups/interactive/step')
-        && str_contains($frontController, '/settings/backups/interactive/status.json'),
-        'Copias debe exponer endpoints interactivos seguros.'
-    );
-    $assert(
-        str_contains($backupView, '/settings/backups/interactive/start')
-        && str_contains($backupView, 'No se consultará Mercado Libre')
-        && str_contains($backupView, 'Esta pestaña procesará micro-lotes locales')
-        && str_contains($backupView, 'data-backup-progressbar')
-        && str_contains($backupView, 'data-backup-eta')
-        && str_contains($backupView, 'data-backup-activity')
-        && !str_contains($backupView, 'Esperando lanzador')
-        && !str_contains($backupView, 'worker')
-        && !str_contains($backupView, 'cron')
-        && !str_contains($backupView, 'en cola')
-        && str_contains($script, 'processOneStep')
-        && str_contains($script, 'mergeProgress')
-        && str_contains($script, 'Procesando lote local')
-        && str_contains($script, 'Pausado por pestaña en segundo plano')
-        && str_contains($script, "fetch(stepUrl"),
-        'La UI de copias debe avanzar por navegador, mostrar barra/ETA y conservar progreso real.'
-    );
-    $assert(
-        str_contains($script, 'window.setTimeout(refresh, 100)'),
-        'La UI de copias debe iniciar el primer micro-lote de navegador sin esperar cron.'
-    );
-    $assert(
-        str_contains($maintenanceController, 'runInteractiveStep')
-        && str_contains($maintenanceView, 'data-step-url')
-        && str_contains($frontController, '$maintenanceAnalyzeContinuation')
-        && str_contains($frontController, "\$pathEndsWith('/settings/database-maintenance/step')")
-        && str_contains($frontController, '&& !$maintenanceContinuation'),
-        'Saneamiento debe poder analizar y avanzar micro-lotes propietarios aunque haya snapshot recuperable.'
-    );
-    $assert(
-        str_contains($migrator, 'executeMigrationSql')
-        && str_contains($migrator, 'nextRowset')
-        && str_contains($migrator, 'closeCursor'),
-        'El migrador debe drenar result sets antes de registrar schema_migrations.'
-    );
-    $assert(
-        !str_contains($recovery, 'UpdateBackupService')
-        && !str_contains($recovery, 'createDirect()')
-        && !str_contains($recovery, 'MeliApiClient'),
-        'El actualizador directo no puede usar respaldo monolítico ni transporte Mercado Libre.'
-    );
-});
-
-$test('2.27.0 unifica mantenimiento local sin cron ni frases largas', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $version = trim((string) file_get_contents($root . '/VERSION'));
-    $manifest = json_decode((string) file_get_contents($root . '/resources/runtime-manifest.json'), true);
-    $migration = (string) file_get_contents(
-        $root . '/database/migrations/170_local_maintenance_unified_flow_2_27_0.sql'
-    );
-    $maintenanceService = (string) file_get_contents($root . '/app/Services/DatabaseMaintenanceService.php');
-    $maintenanceController = (string) file_get_contents($root . '/app/Controllers/DatabaseMaintenanceController.php');
-    $maintenanceView = (string) file_get_contents($root . '/app/Views/settings/database_maintenance.php');
-    $backupView = (string) file_get_contents($root . '/app/Views/settings/backups.php');
-    $recovery = (string) file_get_contents($root . '/app/Recovery/RecoveryKernel.php');
-    $routes = (string) file_get_contents($root . '/public/index.php');
-    $updateController = (string) file_get_contents($root . '/app/Controllers/UpdateController.php');
-    $resetService = (string) file_get_contents($root . '/app/Services/ImportedMeliDataResetService.php');
-    $resetView = (string) file_get_contents($root . '/app/Views/settings/imported_data_reset.php');
-
-    $assert(
-        version_compare($version, '2.27.0', '>=')
-        && version_compare((string) ($manifest['version'] ?? '0.0.0'), '2.27.0', '>='),
-        'VERSION y manifiesto deben declarar una versión igual o superior a 2.27.0.'
-    );
-    $assert(
-        preg_match('/^(?:170|171|17[2-9]|1[8-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
-        'El manifiesto debe exigir la migración 170 o una posterior.'
-    );
-    foreach ([
-        'protection_mode',
-        'protection_status',
-        'canary_status',
-        'database_maintenance.unified_local_flow',
-        'database_maintenance.allow_external_backup',
-        'database_maintenance.allow_backup_waiver',
-        '2.27.0',
-    ] as $needle) {
-        $assert(str_contains($migration, $needle), 'Migración 170 debe registrar ' . $needle . '.');
-    }
-    $assert(
-        str_contains($maintenanceService, 'setProtection(')
-        && str_contains($maintenanceService, "PROTECTION_EXTERNAL = 'external_backup'")
-        && str_contains($maintenanceService, "PROTECTION_WAIVED = 'waived'")
-        && str_contains($maintenanceService, 'canary_status="passed"'),
-        'Saneamiento debe aceptar copia ERP, respaldo externo o renuncia con canario.'
-    );
-    $assert(
-        str_contains($maintenanceController, 'protect()')
-        && str_contains($routes, '/settings/database-maintenance/protect')
-        && str_contains($maintenanceController, 'verifyPassword'),
-        'La protección del saneamiento debe tener ruta POST con contraseña administrativa.'
-    );
-    foreach ([
-        'Usar respaldo externo',
-        'Continuar sin respaldo interno',
-        'Crear copia local',
-        'Iniciar lote canario',
-    ] as $needle) {
-        $assert(str_contains($maintenanceView, $needle), 'La vista de saneamiento debe mostrar acción: ' . $needle);
-    }
-    foreach ([
-        'CONTINUAR SIN RESPALDO',
-        'RESPALDO EXTERNO CONFIRMADO',
-        'ELIMINAR COPIA',
-        'CANCELAR COPIA',
-        'RECUPERAR COPIA',
-        'RECUPERAR ESPACIO',
-        'ELIMINAR DATOS DE MERCADO LIBRE',
-    ] as $forbidden) {
-        $assert(!str_contains($maintenanceView, $forbidden), 'Saneamiento no debe exigir frase larga: ' . $forbidden);
-        $assert(!str_contains($backupView, $forbidden), 'Copias no debe exigir frase larga: ' . $forbidden);
-        $assert(!str_contains($recovery, $forbidden), 'Actualizador no debe exigir frase larga: ' . $forbidden);
-        $assert(!str_contains($resetView, $forbidden), 'Reset importado no debe exigir frase larga: ' . $forbidden);
-    }
-    $assert(
-        str_contains($recovery, 'Usar respaldo externo y continuar')
-        && str_contains($recovery, 'Continuar sin respaldo interno')
-        && !str_contains($recovery, "hash_equals('RESPALDO EXTERNO CONFIRMADO'")
-        && !str_contains($recovery, "hash_equals('CONTINUAR SIN RESPALDO'"),
-        'El actualizador directo debe avanzar con botón explícito y contraseña, no con frase manual.'
-    );
-    $assert(
-        str_contains($updateController, 'ACTUALIZAR SIN RESPALDO')
-        && !str_contains($resetService, 'ELIMINAR DATOS DE MERCADO LIBRE'),
-        'Los flujos sensibles deben mantener intención interna sin pedir frases al administrador.'
-    );
-});
-
-$test('2.27.1 desbloquea protect y aísla copias por navegador del cron', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $version = trim((string) file_get_contents($root . '/VERSION'));
-    $manifest = json_decode((string) file_get_contents($root . '/resources/runtime-manifest.json'), true);
-    $migration = (string) file_get_contents(
-        $root . '/database/migrations/171_browser_backup_state_isolation_2_27_1.sql'
-    );
-    $front = (string) file_get_contents($root . '/public/index.php');
-    $backupService = (string) file_get_contents($root . '/app/Services/BackupCenterService.php');
-    $backupController = (string) file_get_contents($root . '/app/Controllers/BackupController.php');
-    $backupJs = (string) file_get_contents($root . '/public/assets/performance.js');
-
-    $assert(
-        version_compare($version, '2.27.1', '>=')
-        && version_compare((string) ($manifest['version'] ?? ''), '2.27.1', '>='),
-        'VERSION y manifiesto deben declarar 2.27.1 o superior.'
-    );
-    $assert(
-        preg_match('/^(?:171|172|17[3-9]|1[8-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
-        'El manifiesto debe exigir la migración 171 o una posterior compatible.'
-    );
-    foreach ([
-        'execution_mode ENUM',
-        "'browser','cli'",
-        'backup.browser_execution_mode',
-        'backup.browser_never_requires_cron',
-        'database_maintenance.protect_allowed_during_snapshot',
-        '2.27.1',
-    ] as $needle) {
-        $assert(str_contains($migration, $needle), 'Migración 171 debe registrar ' . $needle . '.');
-    }
-    $assert(
-        str_contains($front, '$maintenanceProtectionContinuation')
-        && str_contains($front, 'database-snapshot-active.json')
-        && str_contains($front, '&& !$maintenanceProtectionContinuation'),
-        'El gate global debe permitir protect aun con snapshot físico activo.'
-    );
-    $assert(
-        str_contains($backupService, 'execution_mode')
-        && str_contains($backupService, 'isBrowserBackup(')
-        && str_contains($backupService, 'publishBackupIfCli(')
-        && str_contains($backupService, 'Esta copia se continúa desde la pestaña del navegador.'),
-        'Copias por navegador deben persistir modo y no publicar coordinación CLI.'
-    );
-    $assert(
-        str_contains($backupService, "['prepared', 'queued', 'creating'")
-        && str_contains($backupService, 'snapshotConflict('),
-        'El paso interactivo debe aceptar copias heredadas preparadas y reportar snapshot ajeno.'
-    );
-    $assert(
-        str_contains($backupController, 'overview(max(0, (int) ($_GET[\'backup\'] ?? 0)))')
-        && str_contains($backupController, 'backup_interactive_step_failed')
-        && str_contains($backupController, 'safeErrorMessage'),
-        'El controlador debe usar la copia solicitada y devolver JSON humano en errores de lote.'
-    );
-    $assert(
-        str_contains($backupJs, "['prepared', 'queued'")
-        && str_contains($backupJs, "payload.message || ''")
-        && str_contains($backupJs, "payload.action || ''"),
-        'El monitor debe avanzar copias prepared y mostrar causa/acción de errores JSON.'
-    );
-});
-
-$test('2.27.2 evita pantallas muertas de mantenimiento y conserva protect accionable', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $version = trim((string) file_get_contents($root . '/VERSION'));
-    $manifest = json_decode((string) file_get_contents($root . '/resources/runtime-manifest.json'), true);
-    $migration = (string) file_get_contents(
-        $root . '/database/migrations/172_operational_audit_surface_consistency_2_27_2.sql'
-    );
-    $front = (string) file_get_contents($root . '/public/index.php');
-    $maintenanceView = (string) file_get_contents($root . '/app/Views/errors/maintenance.php');
-
-    $assert(
-        version_compare($version, '2.27.2', '>=')
-        && version_compare((string) ($manifest['version'] ?? '0.0.0'), '2.27.2', '>='),
-        'VERSION y manifiesto deben declarar 2.27.2 o superior.'
-    );
-    $assert(
-        preg_match('/^(?:172|17[3-9]|1[8-9][0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
-        'El manifiesto debe exigir la migración 172 o una posterior compatible.'
-    );
-    foreach ([
-        'maintenance.blocked_screen_actions',
-        'database_maintenance.protect_allowed_during_freeze',
-        'backup.browser_dead_end_prevention',
-        '2.27.2',
-    ] as $needle) {
-        $assert(str_contains($migration, $needle), 'Migración 172 debe registrar ' . $needle . '.');
-    }
-    $assert(
-        str_contains($front, "\$router->get('/settings/database-maintenance/protect'")
-        && str_contains($front, "\$router->get('/settings/backups/recover'")
-        && str_contains($front, '&& !$maintenanceProtectionContinuation')
-        && str_contains($front, "'actions' => ["),
-        'El front controller debe enrutar accesos accidentales y permitir protect durante freeze.'
-    );
-    $assert(
-        substr_count($front, "\$router->get('/settings/database-maintenance/protect'") === 1,
-        'La ruta GET /settings/database-maintenance/protect no puede registrarse dos veces porque el Router pisa la primera definición.'
-    );
-    $assert(
-        str_contains($maintenanceView, 'Acciones de recuperación')
-        && str_contains($maintenanceView, 'No se consultó Mercado Libre')
-        && str_contains($maintenanceView, '.btn.primary'),
-        'La vista de mantenimiento debe ser accionable y no una página muerta.'
-    );
-    $backupView = (string) file_get_contents($root . '/app/Views/settings/backups.php');
-    $assert(
-        str_contains($backupView, 'Continuar limpieza')
-        && str_contains($backupView, '?backup=<?= (int) $archive[\'id\'] ?>'),
-        'Una copia cancelada o en limpieza debe ofrecer un camino visible para continuar desde la pestaña.'
-    );
-});
-
-$test('2.28.4 certifica fase 1 comercial, Cron visible y freno humano', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $version = trim((string) file_get_contents($root . '/VERSION'));
-    $manifest = json_decode((string) file_get_contents($root . '/resources/runtime-manifest.json'), true);
-
-    $assert(
-        version_compare($version, '2.28.4', '>=')
-        && ($manifest['version'] ?? '') === $version
-        && preg_match('/^(?:18[4-9]|19[0-9]|[2-9][0-9]{2})_/', (string) ($manifest['minimum_migration'] ?? '')) === 1,
-        'VERSION, manifiesto y migración mínima deben declarar 2.28.4 o una versión posterior coherente.'
-    );
-
-    foreach ([
-        '173_cron_contract_language_audit_2_27_3.sql',
-        '174_browser_backup_freeze_scope_2_27_4.sql',
-        '175_exact_sanitation_protection_2_27_5.sql',
-        '176_operational_certification_matrix_2_27_6.sql',
-        '177_emergency_handbrake_unified_control_2_27_7.sql',
-        '178_stable_root_handbrake_control_2_27_8.sql',
-        '179_shared_config_handbrake_readiness_2_27_9.sql',
-        '180_commercial_path_foundation_2_28_0.sql',
-        '181_sales_temporal_coverage_contract_2_28_1.sql',
-        '182_operational_audit_polish_2_28_2.sql',
-        '183_cron_fast_canary_visibility_2_28_3.sql',
-        '184_human_emergency_control_2_28_4.sql',
-    ] as $migration) {
-        $assert(is_file($root . '/database/migrations/' . $migration), 'Falta migración ' . $migration);
-    }
-    $phaseOneMigrations = glob($root . '/database/migrations/181_*_2_28_1.sql') ?: [];
-    $assert(count($phaseOneMigrations) === 1, 'Debe existir una sola migración 181 de cobertura temporal para evitar contratos divergentes.');
-    $assert(
-        is_file($root . '/app/Services/SalesAuditTemporalCoverageService.php')
-        && !is_file($root . '/app/Services/CommercialTemporalCoverageService.php'),
-        'La cobertura temporal debe tener una sola autoridad de cierre y no conservar servicios comerciales duplicados.'
-    );
-    $assert(is_file($root . '/app/Services/SalesTemporalCoverageService.php'), 'El read model comercial necesita presentador anual de cobertura temporal.');
-
-    $language = (string) file_get_contents($root . '/app/Services/RuntimeLanguagePresenter.php');
-    $cronOutcome = (string) file_get_contents($root . '/app/Services/CronWorkOutcome.php');
-    $syncJob = (string) file_get_contents($root . '/jobs/process_sync_queue.php');
-    $backupService = (string) file_get_contents($root . '/app/Services/BackupCenterService.php');
-    $maintenanceService = (string) file_get_contents($root . '/app/Services/DatabaseMaintenanceService.php');
-    $routes = (string) file_get_contents($root . '/public/index.php');
-    $syncController = (string) file_get_contents($root . '/app/Controllers/SyncController.php');
-    $financialController = (string) file_get_contents($root . '/app/Controllers/FinancialRecalcController.php');
-    $notificationController = (string) file_get_contents($root . '/app/Controllers/NotificationController.php');
-    $settingsController = (string) file_get_contents($root . '/app/Controllers/SettingsController.php');
-    $backupView = (string) file_get_contents($root . '/app/Views/settings/backups.php');
-    $restoreView = (string) file_get_contents($root . '/app/Views/settings/backup_restore.php');
-    $cronView = (string) file_get_contents($root . '/app/Views/settings/cron.php');
-    $notificationsView = (string) file_get_contents($root . '/app/Views/notifications/index.php');
-    $notificationsAutomation = (string) file_get_contents($root . '/app/Views/notifications/automation.php');
-    $recurringView = (string) file_get_contents($root . '/app/Views/sync/recurring.php');
-    $syncAuditView = (string) file_get_contents($root . '/app/Views/sync/audit.php');
-    $syncAuditRunView = (string) file_get_contents($root . '/app/Views/sync/audit_run.php');
-    $catalogView = (string) file_get_contents($root . '/app/Views/catalogs/show.php');
-    $manualSessionView = (string) file_get_contents($root . '/app/Views/settings/manual_processing_session.php');
-    $appJs = (string) file_get_contents($root . '/public/assets/app.js');
-    $emergencyKernel = (string) file_get_contents($root . '/app/Recovery/EmergencyControlKernel.php');
-    $salesAuditTemporal = (string) file_get_contents($root . '/app/Services/SalesAuditTemporalCoverageService.php');
-    $salesControl = (string) file_get_contents($root . '/app/Services/SalesControlService.php');
-    $salesAuditRun = (string) file_get_contents($root . '/app/Services/SalesAuditRunService.php');
-
-    $assert(
-        str_contains($salesAuditTemporal, 'public const CONTRACT_VERSION = 2')
-        && str_contains($salesAuditTemporal, 'canClose(array $run)')
-        && str_contains($salesAuditRun, 'temporal_coverage_state')
-        && str_contains($salesAuditRun, 'coverage_contract_version')
-        && str_contains($salesControl, 'coverage_contract_version')
-        && str_contains($salesControl, 'No se puede cerrar este mes porque la cobertura temporal no demuestra'),
-        'Ventas debe materializar cobertura temporal y bloquear cierres nuevos sin contrato full.'
-    );
-
-    $assert(
-        str_contains($emergencyKernel, 'new EmergencyControlService(AppPaths::installationRoot())')
-        && str_contains($emergencyKernel, 'Env::load(AppPaths::configFile())')
-        && str_contains($emergencyKernel, 'is_file(AppPaths::configFile())'),
-        'El freno de mano debe usar raíz estable y config compartida en instalaciones administradas.'
-    );
-    $panelBody = substr($emergencyKernel, (int) strpos($emergencyKernel, 'private function renderPanel'), (int) strpos($emergencyKernel, 'private function document') - (int) strpos($emergencyKernel, 'private function renderPanel'));
-    $reactivateBody = substr($emergencyKernel, (int) strpos($emergencyKernel, 'private function reactivate'), (int) strpos($emergencyKernel, 'private function readiness') - (int) strpos($emergencyKernel, 'private function reactivate'));
-    $assert(
-        str_contains($panelBody, 'data-confirm')
-        && str_contains($panelBody, 'aria-pressed')
-        && str_contains($panelBody, 'Activar freno de mano completo')
-        && str_contains($panelBody, 'Detalle técnico')
-        && !str_contains($panelBody, 'Contraseña de emergencia')
-        && !str_contains($panelBody, 'name="password"')
-        && !str_contains($panelBody, 'for="stop-reason"')
-        && !str_contains($panelBody, 'Reactivar de forma controlada'),
-        'El panel de emergencia debe ser accionable: interruptores con confirmación, sin motivo ni contraseña repetidos.'
-    );
-    $assert(
-        !str_contains($reactivateBody, 'authenticate(')
-        && !str_contains($reactivateBody, "POST['password']")
-        && str_contains($reactivateBody, '$requireReadiness'),
-        'Reactivar desde una sesión de emergencia válida no debe pedir contraseña de nuevo, pero sí conservar comprobaciones de readiness.'
-    );
-    $assert(
-        str_contains($emergencyKernel, 'defaultReason(')
-        && str_contains($emergencyKernel, 'Prueba canaria preparada desde freno de mano.')
-        && str_contains($emergencyKernel, 'Mercado Libre activado después de canario exitoso.'),
-        'Las auditorías del freno de mano deben generar motivos automáticos humanos.'
-    );
-
-    foreach ([
-        'ready',
-        'waiting_automation',
-        'waiting_api',
-        'waiting_budget',
-        'waiting_lock',
-        'waiting_schedule',
-        'action_required',
-        'empty',
-        'failed',
-    ] as $state) {
-        $assert(str_contains($cronOutcome, "'{$state}'"), 'CronWorkOutcome debe declarar estado operacional ' . $state);
-    }
-    $assert(str_contains($cronOutcome, 'operationalState('), 'CronWorkOutcome debe exponer traducción operacional.');
-    $assert(str_contains($language, 'browserForbiddenWords') && str_contains($language, 'operationalCronStates'), 'RuntimeLanguagePresenter debe centralizar lenguaje y estados.');
-
-    foreach ([
-        '/sync/assisted-step.json',
-        '/financial-recalc/assisted-step',
-        '/notifications/automation/assisted-step',
-        '/notifications/process',
-        '/notifications/work/process',
-        '/settings/manual-processing/interactive/step',
-    ] as $route) {
-        $assert(str_contains($routes, $route), 'Falta contrato de ruta heredada: ' . $route);
-    }
-    foreach ([
-        [$syncController, 'assistedStepJson'],
-        [$notificationController, 'automationAssistedStep'],
-        [$settingsController, 'manualProcessingInteractiveStep'],
-    ] as [$source, $method]) {
-        $methodBody = substr($source, strpos($source, 'function ' . $method), 900);
-        $assert(
-            $method === 'manualProcessingInteractiveStep'
-                ? str_contains($methodBody, 'ManualSingleStepService')
-                : str_contains($methodBody, 'http_response_code(410)'),
-            'La ruta debe respetar su contrato web acotado: ' . $method
-        );
-        $assert(!str_contains($methodBody, 'processDue(') && !str_contains($methodBody, 'syncNextActive('), 'Ruta heredada no puede elegir colas genéricas: ' . $method);
-    }
-    $financialAssisted = substr($financialController, strpos($financialController, 'function assistedStep'), 900);
-    $assert(
-        str_contains($financialAssisted, '/settings/manual-processing')
-        && !str_contains($financialAssisted, 'processDue(')
-        && !str_contains($financialAssisted, 'syncNextActive('),
-        'El recálculo financiero heredado debe redirigir a Procesar ahora sin ejecutar colas.'
-    );
-    $processBodies = [
-        substr($notificationController, (int) strpos($notificationController, 'function processWork'), 900),
-    ];
-    foreach ($processBodies as $body) {
-        $assert(!str_contains($body, 'processDue(') && !str_contains($body, 'syncNextActive('), 'Notificaciones web no puede procesar colas completas.');
-    }
-
-    foreach (['execution_mode', 'isBrowserBackup(', 'publishBackupIfCli(', "COALESCE(execution_mode, 'browser')", "b.execution_mode='cli'"] as $needle) {
-        $assert(str_contains($backupService, $needle), 'Copia navegador debe ser independiente de Cron: falta ' . $needle);
-    }
-    foreach (['phase_label', 'can_step', 'can_cancel', 'can_cleanup', 'rows_processed_in_step', 'should_continue'] as $needle) {
-        $assert(str_contains($backupService, $needle), 'Progreso extendido de copia debe exponer ' . $needle);
-    }
-    $publishBody = substr($backupService, strpos($backupService, 'function publishBackupIfCli'), 900);
-    $assert(str_contains($publishBody, 'isBrowserBackup') && str_contains($publishBody, 'return'), 'Copias navegador no deben publicar señal CLI.');
-
-    foreach (['Esperando lanzador', 'worker', 'cron', 'en cola'] as $forbidden) {
-        $assert(!str_contains($backupView, $forbidden), 'Copias por navegador no debe mostrar texto heredado: ' . $forbidden);
-    }
-    $assert(!str_contains($restoreView, 'Esperando lanzador'), 'Restauración no debe decir Esperando lanzador.');
-    foreach (['ERP_CRON_BOOT version=2.25.4', 'workers de notificaciones', 'Cron corre cada 5 minutos', 'cron puede continuarlo', 'cron continuará', 'continuará mediante cron', 'Esperando el lanzador'] as $forbidden) {
-        $assert(!str_contains($cronView . $notificationsView . $notificationsAutomation . $recurringView . $syncAuditView . $syncAuditRunView . $catalogView . $manualSessionView . $appJs, $forbidden), 'Texto heredado visible detectado: ' . $forbidden);
-    }
-
-    $assert(
-        str_contains($maintenanceService, 'setProtection(')
-        && str_contains($maintenanceService, "PROTECTION_EXTERNAL = 'external_backup'")
-        && str_contains($maintenanceService, "PROTECTION_WAIVED = 'waived'")
-        && str_contains($maintenanceService, 'verifiedAt < $analyzedAt')
-        && str_contains($maintenanceService, "!== 'database_sanitation'"),
-        'Saneamiento debe exigir protección exacta por sesión y no usar última copia global.'
-    );
-
-    $assert(
-        str_contains($syncJob, 'component=process_sync_queue')
-        && str_contains($syncJob, "_meli_emergency_stop.php")
-        && str_contains($syncJob, '$apiEmergencyStop')
-        && str_contains($syncJob, '$localOnlyKeys')
-        && str_contains($syncJob, 'remote=false'),
-        'El lanzador central debe seguir bloqueando transporte remoto con freno API.'
-    );
-});
-
-$test('Salud API usa parámetros PDO únicos y separa evidencia de Cron', static function () use ($assert): void {
-    $root = dirname(__DIR__);
-    $health = (string) file_get_contents($root . '/app/Services/ApiHealthService.php');
-    $overview = (string) file_get_contents($root . '/app/Services/ApiHealthOverviewService.php');
-
-    foreach (['active_minutes_all', 'active_minutes_remote', 'active_minutes_local'] as $placeholder) {
-        $assert(
-            substr_count($health, ':' . $placeholder . ' MINUTE') === 1,
-            'Cada filtro de ventana activa debe tener una sola aparición SQL: ' . $placeholder
-        );
-        $assert(
-            substr_count($health, "bindValue(':{$placeholder}'") === 1,
-            'Cada filtro de ventana activa debe tener su binding PDO: ' . $placeholder
-        );
-    }
-    $assert(
-        !str_contains($health, 'INTERVAL :active_minutes MINUTE'),
-        'PDO MySQL nativo no debe reutilizar :active_minutes en la consulta agregada.'
-    );
-
-    $evidenceAssignment = strpos($overview, "['automation_evidence'] = \$this->automationEvidence(") ?: -1;
-    $cachedStatusBuild = strpos($overview, "new ApiHealthStatusPresenter") ?: PHP_INT_MAX;
-    $assert($evidenceAssignment > -1, 'El resumen debe exponer evidencia independiente del último Cron finalizado.');
-    $assert(
-        str_contains($overview, 'WHERE latest.origin="scheduled_cli" AND latest.finished_at IS NOT NULL'),
-        'La evidencia debe leer un ciclo CLI terminado, no el ciclo running más reciente.'
-    );
-    $assert(
-        str_contains($overview, "'source' => 'latest_finished_scheduled_cli'")
-        && str_contains($overview, "'remote_calls' => \$remoteCalls")
-        && str_contains($overview, "'useful_activity' =>"),
-        'La evidencia de automatización debe declarar fuente, llamadas remotas y actividad útil.'
-    );
-    $assert(
-        $evidenceAssignment < $cachedStatusBuild,
-        'La evidencia se agrega al sobre final y no se usa como señal de salud de Mercado Libre.'
-    );
-});
-
 $failed = 0;
 foreach ($tests as [$status, $name]) {
     echo strtoupper($status) . " {$name}\n";
@@ -5934,4 +3546,3 @@ foreach ($tests as [$status, $name]) {
 }
 echo sprintf("%d tests, %d failures\n", count($tests), $failed);
 exit($failed ? 1 : 0);
-

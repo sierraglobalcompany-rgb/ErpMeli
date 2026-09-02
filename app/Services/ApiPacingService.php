@@ -63,7 +63,8 @@ final class ApiPacingService
                 ->format('Y-m-d H:i:s');
             throw new ApiBudgetExhaustedException(
                 'La próxima consulta quedó espaciada para una ejecución posterior.',
-                $nextSafeAt
+                $nextSafeAt,
+                $slot['blocked_scopes']
             );
         }
         $this->wait($waitUs);
@@ -148,7 +149,7 @@ final class ApiPacingService
     /**
      * @param list<array{key:string,account_id:?int,rpm:int}> $scopes
      */
-    /** @return array{wait_us:int,reserved:bool} */
+    /** @return array{wait_us:int,reserved:bool,blocked_scopes:list<array<string,mixed>>} */
     private function reserveSlots(array $scopes, string $operationKey, int $maximumWaitUs): array
     {
         $pdo = Database::connectionFresh();
@@ -173,12 +174,29 @@ final class ApiPacingService
             );
             $select->execute($keys);
             $waitUs = 0;
+            $blockedScopes = [];
+            $scopesByKey = [];
+            foreach ($scopes as $scope) {
+                $scopesByKey[(string) $scope['key']] = $scope;
+            }
             foreach ($select->fetchAll(PDO::FETCH_ASSOC) as $row) {
-                $waitUs = max($waitUs, (int) $row['wait_us']);
+                $rowWaitUs = (int) $row['wait_us'];
+                $waitUs = max($waitUs, $rowWaitUs);
+                if ($rowWaitUs > max(0, $maximumWaitUs)) {
+                    $scopeKey = (string) $row['scope_key'];
+                    $scope = $scopesByKey[$scopeKey] ?? [];
+                    $blockedScopes[] = [
+                        'scope' => $scopeKey === 'global' ? 'app' : 'account',
+                        'scope_key' => $scopeKey,
+                        'operation_key' => $operationKey,
+                        'account_id' => $scope['account_id'] ?? null,
+                        'wait_us' => $rowWaitUs,
+                    ];
+                }
             }
             if ($waitUs > max(0, $maximumWaitUs)) {
                 $pdo->rollBack();
-                return ['wait_us' => $waitUs, 'reserved' => false];
+                return ['wait_us' => $waitUs, 'reserved' => false, 'blocked_scopes' => $blockedScopes];
             }
             $update = $pdo->prepare(
                 'UPDATE api_request_pacing_state
@@ -203,7 +221,7 @@ final class ApiPacingService
                 ]);
             }
             $pdo->commit();
-            return ['wait_us' => $waitUs, 'reserved' => true];
+            return ['wait_us' => $waitUs, 'reserved' => true, 'blocked_scopes' => []];
         } catch (Throwable $error) {
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();

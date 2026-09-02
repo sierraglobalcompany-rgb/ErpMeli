@@ -1,0 +1,9 @@
+Programa: ErpMeli
+Version: 2.0 PR1 Base segura y estabilizacion
+Fecha de paquete: 2026-06-26
+Produccion: https://www.bodegadigitalmedellin.com/erp-meli/
+Redirect Mercado Libre: https://www.bodegadigitalmedellin.com/erp-meli/meli_callback.php
+Webhook Mercado Libre: https://www.bodegadigitalmedellin.com/erp-meli/webhook_mercadolibre.php
+
+Este paquete NO incluye config.env ni .env.
+Sirve para instalacion desde cero y para actualizar una instalacion existente.

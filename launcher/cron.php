@@ -6,6 +6,15 @@ if (PHP_SAPI !== 'cli') {
     http_response_code(404);
     exit;
 }
+$requestedJob = (string) ($argv[1] ?? '');
+if ($requestedJob === '') {
+    fwrite(STDERR, "CRON_JOB_REQUIRED\n");
+    exit(2);
+}
+if (!hash_equals('queue_v4_clean.php', $requestedJob)) {
+    fwrite(STDERR, "LEGACY_AUTOMATION_BLOCKED\n");
+    exit(2);
+}
 $installationRoot = dirname(__DIR__);
 $pointerPath = $installationRoot . '/shared/current-release.json';
 if (!is_file($pointerPath)) {
@@ -23,7 +32,7 @@ $releaseRoot = $relative !== '' && !str_starts_with($relative, '/') && !in_array
     ? realpath($installationRoot . '/' . $relative)
     : false;
 $releasesRoot = realpath($installationRoot . '/releases');
-$job = basename((string) ($argv[1] ?? 'process_sync_queue.php'));
+$job = $requestedJob;
 if (
     $releaseRoot === false
     || $releasesRoot === false

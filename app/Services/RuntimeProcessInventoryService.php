@@ -17,27 +17,21 @@ final class RuntimeProcessInventoryService
             $source = (string) @file_get_contents($file);
             $name = basename($file);
             $status = 'review_required';
-            if ($name === 'process_sync_queue.php' && str_contains($source, 'reason=v3_operational')) {
-                $status = 'rollback_launcher';
-            } elseif (in_array($name, ['process_sync_queue.php', 'cron_v3_local.php', 'cron_v3_remote.php'], true)) {
+            if ($name === 'queue_v4_clean.php') {
                 $status = 'active_launcher';
             } elseif (str_starts_with($name, '_')) {
                 $status = 'internal_library';
-            } elseif (in_array($name, [
-                'cron_probe.php',
-                'cron_v3_setup_check.php',
-                'cron_v3_doctor.php',
-                'cron_v3_backlog_snapshot.php',
-                'cron_v3_diagnose_legacy.php',
-                'cron_v3_certify.php',
-            ], true)) {
+            } elseif ($name === 'cron_probe.php') {
                 $status = 'diagnostic_only';
+            } elseif (str_starts_with($name, 'queue_core_')) {
+                // Herramientas de diagnóstico o recuperación offline: nunca un Cron.
+                $status = 'manual_offline_only';
             } elseif (in_array($name, [
                 'process_database_maintenance.php',
                 'reset_imported_meli_data.php',
             ], true)) {
                 // Ejecución puntual solicitada por un administrador. No se registra
-                // como lanzador periódico ni compite con process_sync_queue.php.
+                // como lanzador periódico ni compite con Queue V4.
                 $status = 'maintenance_cli';
             } elseif ($this->isSafeStub($source)) {
                 $status = 'safe_stub';
@@ -73,7 +67,7 @@ final class RuntimeProcessInventoryService
             'browser_assets' => $assets,
             'active_launcher_count' => count(array_filter(
                 $jobs,
-                static fn (array $job): bool => in_array($job['status'], ['active_launcher', 'rollback_launcher'], true)
+                static fn (array $job): bool => $job['status'] === 'active_launcher'
             )),
             'review_required_count' => count(array_filter(
                 $jobs,

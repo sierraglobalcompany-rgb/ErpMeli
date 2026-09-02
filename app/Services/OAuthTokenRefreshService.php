@@ -29,6 +29,9 @@ final class OAuthTokenRefreshService
      */
     public function refresh(callable $requestToken): array
     {
+        \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+            \App\QueueV4Clean\QueueV4CleanOAuthStageContext::OAUTH_REFRESH_SERVICE
+        );
         $pdo = Database::connectionFresh();
         if ($pdo->inTransaction()) {
             throw new RuntimeException('No se puede renovar OAuth dentro de una transacción activa.');
@@ -78,6 +81,9 @@ final class OAuthTokenRefreshService
             // atómica y durable en el filesystem privado.
             $queueRecoveryBeforeTransport = $this->queueRecoveryContext();
             if (is_array($queueRecoveryBeforeTransport)) {
+                \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+                    \App\QueueV4Clean\QueueV4CleanOAuthStageContext::TOKEN_ESCROW
+                );
                 (new QueueOAuthDurableRecoveryStore())->assertStorageReady();
                 // The filesystem preflight may take time. Re-read both seller
                 // identity and refresh generation at the last local boundary
@@ -132,6 +138,9 @@ final class OAuthTokenRefreshService
                             $tokenForRecovery
                         );
                     } elseif (is_array($queueRecovery)) {
+                        \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+                            \App\QueueV4Clean\QueueV4CleanOAuthStageContext::TOKEN_ESCROW
+                        );
                         (new QueueOAuthDurableRecoveryStore())->stage(
                             $queueRecovery['company_id'],
                             $this->accountId,
@@ -151,6 +160,9 @@ final class OAuthTokenRefreshService
 
             $pdo = Database::connectionFresh();
             try {
+                \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
+                    \App\QueueV4Clean\QueueV4CleanOAuthStageContext::TOKEN_DB_CAS
+                );
                 $pdo->beginTransaction();
                 $update = $pdo->prepare(is_array($queueRecovery)
                     ? "UPDATE meli_tokens t
@@ -215,10 +227,7 @@ final class OAuthTokenRefreshService
                         $previousRefreshVersion + 1
                     );
                 } else {
-                    (new QueueOAuthDurableRecoveryStore())->clear(
-                        $this->accountId,
-                        $previousRefreshVersion + 1
-                    );
+                    $this->clearCommittedQueueRecoveryBestEffort($previousRefreshVersion + 1);
                 }
             }
 
@@ -282,7 +291,10 @@ final class OAuthTokenRefreshService
     /** @param array<string,mixed> $token */
     private function expiresSoon(array $token): bool
     {
-        $skew = max(30, min(600, $this->settings->int('oauth.token_expiry_skew_seconds', 120)));
+        $source = (string) (ApiExecutionMetadataContext::current()['source'] ?? '');
+        $skew = $source === MeliTransportSourcePolicy::QUEUE_V4_OAUTH
+            ? max(300, min(7200, $this->settings->int('oauth.auto_refresh_lead_seconds', 3600)))
+            : max(30, min(600, $this->settings->int('oauth.token_expiry_skew_seconds', 120)));
         $rawExpiry = trim((string) ($token['expires_at'] ?? ''));
         if ($rawExpiry === '') {
             return true;
@@ -298,10 +310,7 @@ final class OAuthTokenRefreshService
     private function isInvalidGrant(Throwable $error): bool
     {
         return $error instanceof MeliApiException
-            && (
-                strtolower((string) ($error->response['error'] ?? '')) === 'invalid_grant'
-                || str_contains(strtolower($error->getMessage()), 'invalid_grant')
-            );
+            && strtolower((string) ($error->response['error'] ?? '')) === 'invalid_grant';
     }
 
     private function manualEmergencyExpectedMeliUserId(): ?string
@@ -367,7 +376,11 @@ final class OAuthTokenRefreshService
             throw new RuntimeException('La recuperación OAuth pendiente tiene una generación inválida.');
         }
         if ($currentVersion >= $targetVersion) {
-            $this->clearDurableRecovery($manualExpectedMeliUserId !== null, $targetVersion);
+            if ($manualExpectedMeliUserId !== null) {
+                $this->clearDurableRecovery(true, $targetVersion);
+            } else {
+                $this->clearCommittedQueueRecoveryBestEffort($targetVersion);
+            }
             $current['emergency_recovery_applied'] = $manualExpectedMeliUserId !== null;
             $current['queue_recovery_applied'] = $manualExpectedMeliUserId === null;
             return $current;
@@ -427,7 +440,11 @@ final class OAuthTokenRefreshService
             throw $error;
         }
 
-        $this->clearDurableRecovery($manualExpectedMeliUserId !== null, $targetVersion);
+        if ($manualExpectedMeliUserId !== null) {
+            $this->clearDurableRecovery(true, $targetVersion);
+        } else {
+            $this->clearCommittedQueueRecoveryBestEffort($targetVersion);
+        }
         $current['access_token_encrypted'] = (string) $recovery['access_token_encrypted'];
         $current['refresh_token_encrypted'] = (string) $recovery['refresh_token_encrypted'];
         $current['expires_at'] = (string) $recovery['expires_at'];
@@ -439,13 +456,16 @@ final class OAuthTokenRefreshService
         return $current;
     }
 
-    /** @return array{company_id:int,expected_meli_user_id:string,expected_refresh_version:int}|null */
+    /** @return array{company_id:int,expected_meli_user_id:string,expected_refresh_version:int,oauth_operation_id?:int,oauth_lease_owner?:string,oauth_lease_generation?:int}|null */
     private function queueRecoveryContext(): ?array
     {
         $metadata = ApiExecutionMetadataContext::current();
-        if ((string) ($metadata['source'] ?? '') !== 'queue_core'
-            || (string) ($metadata['queue_core_work_type'] ?? '') !== 'oauth_refresh'
-            || (int) ($metadata['queue_core_oauth_refresh'] ?? 0) !== 1) {
+        $source = (string) ($metadata['source'] ?? '');
+        $queueCore = $source === 'queue_core'
+            && (string) ($metadata['queue_core_work_type'] ?? '') === 'oauth_refresh'
+            && (int) ($metadata['queue_core_oauth_refresh'] ?? 0) === 1;
+        $current = $source === MeliTransportSourcePolicy::QUEUE_V4_OAUTH;
+        if (!$queueCore && !$current) {
             return null;
         }
         $accountId = (int) ($metadata['account_id'] ?? 0);
@@ -457,11 +477,25 @@ final class OAuthTokenRefreshService
             || $companyId < 1 || $expected === '' || $expectedVersion < 0) {
             throw new RuntimeException('Queue OAuth recovery context does not match its transport scope.');
         }
-        return [
+        $scope = [
             'company_id' => $companyId,
             'expected_meli_user_id' => $expected,
             'expected_refresh_version' => $expectedVersion,
         ];
+        if ($current) {
+            $operationId = (int) ($metadata['oauth_operation_id'] ?? 0);
+            $owner = (string) ($metadata['oauth_lease_owner'] ?? '');
+            $generation = (int) ($metadata['oauth_lease_generation'] ?? 0);
+            if ($operationId < 1 || $owner === '' || $generation < 1) {
+                throw new RuntimeException('Queue V4 OAuth operation authority is incomplete.');
+            }
+            $scope += [
+                'oauth_operation_id' => $operationId,
+                'oauth_lease_owner' => $owner,
+                'oauth_lease_generation' => $generation,
+            ];
+        }
+        return $scope;
     }
 
     /**
@@ -494,5 +528,18 @@ final class OAuthTokenRefreshService
             return;
         }
         (new QueueOAuthDurableRecoveryStore())->clear($this->accountId, $targetVersion);
+    }
+
+    private function clearCommittedQueueRecoveryBestEffort(int $targetVersion): void
+    {
+        try {
+            (new QueueOAuthDurableRecoveryStore())->clear($this->accountId, $targetVersion);
+        } catch (Throwable $error) {
+            (new \App\QueueV4Clean\QueueV4CleanSafeDiagnosticService())->capture(
+                $error,
+                \App\QueueV4Clean\QueueV4CleanOAuthStageContext::TOKEN_ESCROW,
+                'QUEUE_V4_OAUTH_ESCROW_CLEANUP_DEFERRED'
+            );
+        }
     }
 }

@@ -12,7 +12,6 @@ use App\Core\View;
 use App\Services\SafeErrorPresenter;
 use App\Services\SalesAuditExactRepairService;
 use App\Services\SalesControlService;
-use App\Services\SalesFiscalPreparationService;
 use App\Services\ReadModelCacheService;
 use App\Services\AsyncSectionService;
 use Throwable;
@@ -163,14 +162,13 @@ final class SalesControlController
 
     public function prepareFiscal(): void
     {
-        $this->command(function (): string {
-            $jobId = (new SalesFiscalPreparationService())->create(
-                (int) $_POST['account_id'], (int) $_POST['year'], (int) $_POST['month'],
-                (int) $_POST['company_id'], (int) Auth::id()
-            );
-            Session::flash('success', 'La preparación fiscal quedó en espera. Los datos sensibles se guardarán cifrados.');
-            return '/settings/cron/queue?type=sales_fiscal&source_id=' . $jobId;
-        }, 'No fue posible preparar los datos fiscales.');
+        Auth::requireRole('admin', 'operador');
+        Csrf::validate($_POST['_token'] ?? null);
+        Session::flash(
+            'info',
+            'La preparación fiscal automática está retirada porque no tiene consumidor vigente. No se creó trabajo ni se consultó Mercado Libre.'
+        );
+        $this->redirect($this->monthUrl());
     }
 
     public function close(): void

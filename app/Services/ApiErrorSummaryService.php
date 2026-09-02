@@ -50,6 +50,50 @@ final class ApiErrorSummaryService
         }
     }
 
+    /**
+     * Remote transport is the authority for an operational 429 alert.
+     * Legacy api_error_logs do not retain reached_remote, so they cannot
+     * distinguish an old synthetic status from a Mercado Libre response.
+     *
+     * @param list<int> $accountIds
+     * @param list<int> $companyIds
+     * @return list<array<string,mixed>>
+     */
+    public function recentRemoteRateLimits(int $limit, array $accountIds, array $companyIds): array
+    {
+        $accountIds = array_values(array_unique(array_filter(array_map('intval', $accountIds), static fn(int $id): bool => $id > 0)));
+        $companyIds = array_values(array_unique(array_filter(array_map('intval', $companyIds), static fn(int $id): bool => $id > 0)));
+        if ($accountIds === [] || $companyIds === []) {
+            return [];
+        }
+        try {
+            $statement = Database::connection()->prepare(
+                'SELECT l.meli_account_id,MAX(l.company_id) company_id,MAX(l.endpoint_path) endpoint_path,
+                        MAX(l.created_at) last_seen_at,COUNT(*) repetitions
+                 FROM api_request_logs l
+                 WHERE l.meli_account_id IN (' . implode(',', array_fill(0, count($accountIds), '?')) . ')
+                   AND l.company_id IN (' . implode(',', array_fill(0, count($companyIds), '?')) . ')
+                   AND l.reached_remote=1 AND l.http_status=429
+                   AND l.created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 72 HOUR)
+                 GROUP BY l.meli_account_id,l.endpoint_path
+                 ORDER BY last_seen_at DESC
+                 LIMIT ?'
+            );
+            $position = 1;
+            foreach ($accountIds as $accountId) {
+                $statement->bindValue($position++, $accountId, PDO::PARAM_INT);
+            }
+            foreach ($companyIds as $companyId) {
+                $statement->bindValue($position++, $companyId, PDO::PARAM_INT);
+            }
+            $statement->bindValue($position, max(1, min(100, $limit)), PDO::PARAM_INT);
+            $statement->execute();
+            return $statement->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
     private function recommendation(int $status, string $endpoint): string
     {
         if ($status === 404 && str_contains($endpoint, '/payments/')) {

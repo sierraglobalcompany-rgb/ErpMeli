@@ -11,6 +11,7 @@ $renderField = static function (array $field) use ($values, $fieldId): void {
     $key = $field['key'];
     $id = $fieldId($key);
     $value = (string) ($values[$key] ?? '');
+    $retiredQuestionSetting = in_array($key, ['questions.sync_enabled', 'questions.endpoint_confirmed'], true);
     $recommended = is_bool($field['recommended']) ? ($field['recommended'] ? 'Activado' : 'Desactivado') : (string) $field['recommended'];
 ?>
   <div class="setting-field <?= $field['type'] === 'boolean' ? 'is-toggle' : '' ?>">
@@ -22,7 +23,7 @@ $renderField = static function (array $field) use ($values, $fieldId): void {
       </div>
       <input type="hidden" name="settings[<?= View::e($key) ?>]" value="0">
       <label class="switch" aria-label="<?= View::e($field['label']) ?>">
-        <input id="<?= View::e($id) ?>" type="checkbox" name="settings[<?= View::e($key) ?>]" value="1" <?= in_array($value, ['1', 'true', 'on'], true) ? 'checked' : '' ?> aria-describedby="<?= View::e($id) ?>-help">
+        <input id="<?= View::e($id) ?>" type="checkbox" name="settings[<?= View::e($key) ?>]" value="1" <?= in_array($value, ['1', 'true', 'on'], true) ? 'checked' : '' ?> <?= $retiredQuestionSetting ? 'disabled' : '' ?> aria-describedby="<?= View::e($id) ?>-help">
         <span aria-hidden="true"></span>
       </label>
     <?php else: ?>

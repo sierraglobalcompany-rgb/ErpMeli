@@ -16,7 +16,7 @@ if (!function_exists('erp_retired_job')) {
 
         $safe = preg_replace('/[^A-Za-z0-9_.-]/', '_', $component) ?: 'legacy_job';
         echo 'ERP_JOB_SKIP component=' . $safe
-            . ' reason=retired_single_launcher use=process_sync_queue' . PHP_EOL;
+            . ' reason=retired_queue_v4_only' . PHP_EOL;
         exit(0);
     }
 }

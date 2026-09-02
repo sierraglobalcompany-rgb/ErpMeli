@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.36.2.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.40.1.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -39,12 +39,244 @@ final class ManagedRuntimePublicationPolicy
         'bin/queue_core_dependency_check.php',
         'bin/runtime_process_audit.php',
     ];
-    public const BASE_COMMIT = '75997f864b917c829d19f14e21cd7303d2685776';
-    public const INSTALLED_BASE_COMMIT = 'f91cd534d271b964db1ad9e682260475eca96820';
-    public const VERSION = '2.36.2';
-    public const BUILD_ID = 'erp-meli-2.36.2-managed-entrypoint-bootstrap-rc1-20260809';
-    public const BUILT_AT = '2026-08-09T00:00:00Z';
-    public const MINIMUM_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
+    public const BASE_COMMIT = 'b9d1644522e7b36d5729c5ba090279b3ffc50fb8';
+    public const INSTALLED_BASE_COMMIT = 'b9d1644522e7b36d5729c5ba090279b3ffc50fb8';
+    public const VERSION = '2.40.1';
+    public const BUILD_ID = 'erp-meli-2.40.1-worker-cycle-control-single-truth-rc1-20260827';
+    public const BUILT_AT = '2026-08-27T00:00:00Z';
+    public const MINIMUM_MIGRATION = '300_manual_drain_sessions_2_40_0.sql';
+    private const INVENTORY_MINIMUM_MIGRATION = '295_inventory_warehouse_v1_2_38_0.sql';
+    private const QUEUE_V4_MINIMUM_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';
+    private const LEGACY_MINIMUM_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
+    /** @var array<string,array{build_id:string,minimum_migration:string,dependency_registry:string}> */
+    private const INSTALLED_PROFILES = [
+        '2.36.2' => [
+            'build_id' => 'erp-meli-2.36.2-managed-entrypoint-bootstrap-rc1-20260809',
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.2.json',
+        ],
+        '2.36.3' => [
+            'build_id' => 'erp-meli-2.36.3-direct-updater-authority-hotfix-rc1-20260810',
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.3.json',
+        ],
+        '2.36.4' => [
+            'build_id' => 'erp-meli-2.36.4-safe-config-retirement-hotfix-rc1-20260811',
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.4.json',
+        ],
+        '2.36.5' => [
+            'build_id' => 'erp-meli-2.36.5-v3-retirement-admin-hotfix-rc1-20260811',
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.5.json',
+        ],
+        '2.36.6' => [
+            'build_id' => 'erp-meli-2.36.6-v4-readiness-bootstrap-hotfix-rc1-20260811',
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.6.json',
+        ],
+        '2.36.7' => [
+            'build_id' => 'erp-meli-2.36.7-feature-flag-order-hotfix-rc1-20260811',
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.7.json',
+        ],
+        '2.36.8' => [
+            'build_id' => 'erp-meli-2.36.8-v4-partial-arm-recovery-hotfix-rc1-20260811',
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.8.json',
+        ],
+        '2.36.9' => [
+            'build_id' => 'erp-meli-2.36.9-v4-password-recovery-hotfix-rc1-20260812',
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.9.json',
+        ],
+        '2.36.10' => [
+            'build_id' => 'erp-meli-2.36.10-v4-generation-authority-hotfix-rc1-20260812',
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.10.json',
+        ],
+        '2.36.11' => [
+            'build_id' => 'erp-meli-2.36.11-v4-readiness-classifier-hotfix-rc1-20260812',
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.11.json',
+        ],
+        '2.36.12' => [
+            'build_id' => 'erp-meli-2.36.12-v4-bootstrap-typeerror-hotfix-rc1-20260812',
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.12.json',
+        ],
+        '2.36.13' => [
+            'build_id' => 'erp-meli-2.36.13-v4-config-authority-postimage-hotfix-rc1-20260812',
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.13.json',
+        ],
+        '2.36.14' => [
+            'build_id' => 'erp-meli-2.36.14-v4-operational-readiness-no-preb2-backup-hotfix-rc1-20260812',
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.14.json',
+        ],
+        '2.36.15' => [
+            'build_id' => 'erp-meli-2.36.15-v4-canary-uncertain-get-recovery-hotfix-rc1-20260812',
+            'minimum_migration' => self::LEGACY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.36.15.json',
+        ],
+        '2.37.0' => [
+            'build_id' => 'erp-meli-2.37.0-queue-v4-clean-greenfield-rc1-20260812',
+            'minimum_migration' => self::QUEUE_V4_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.37.0.json',
+        ],
+        '2.37.1' => [
+            'build_id' => 'erp-meli-2.37.1-queue-v4-clean-stabilized-rc1-20260812',
+            'minimum_migration' => self::QUEUE_V4_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.37.1.json',
+        ],
+        '2.37.2' => [
+            'build_id' => 'erp-meli-2.37.2-queue-v4-snapshot-timeout-rc1-20260812',
+            'minimum_migration' => self::QUEUE_V4_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.37.2.json',
+        ],
+        '2.38.0' => [
+            'build_id' => 'erp-meli-2.38.0-inventory-warehouse-v1-rc1-20260812',
+            'minimum_migration' => self::INVENTORY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.38.0.json',
+        ],
+        '2.38.1' => [
+            'build_id' => 'erp-meli-2.38.1-queue-v4-backlog-convergence-rc1-20260813',
+            'minimum_migration' => self::INVENTORY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.38.1.json',
+        ],
+        '2.38.2' => [
+            'build_id' => 'erp-meli-2.38.2-queue-v4-rate-limit-stability-rc1-20260813',
+            'minimum_migration' => self::INVENTORY_MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.38.2.json',
+        ],
+        '2.38.3' => [
+            'build_id' => 'erp-meli-2.38.3-queue-v4-automatic-oauth-control-plane-rc1-20260813',
+            'minimum_migration' => '298_queue_v4_sales_repair_transport_authority_2_38_9.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.38.3.json',
+        ],
+        '2.38.4' => [
+            'build_id' => 'erp-meli-2.38.4-queue-v4-oauth-real-path-containment-rc1-20260813',
+            'minimum_migration' => '296_queue_v4_clean_oauth_control_plane_2_38_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.38.4.json',
+        ],
+        '2.38.5' => [
+            'build_id' => 'erp-meli-2.38.5-queue-v4-transport-sales-api-health-rc1-20260813',
+            'minimum_migration' => '298_queue_v4_sales_repair_transport_authority_2_38_9.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.38.5.json',
+        ],
+        '2.38.6' => [
+            'build_id' => 'erp-meli-2.38.6-private-filesystem-authority-oauth-escrow-rc1-20260814',
+            'minimum_migration' => '298_queue_v4_sales_repair_transport_authority_2_38_9.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.38.6.json',
+        ],
+        '2.38.8' => [
+            'build_id' => 'erp-meli-2.38.8-simple-exact-sales-repair-hotfix-rc1-20260814',
+            'minimum_migration' => '297_queue_v4_transport_sales_api_health_2_38_5.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.38.8.json',
+        ],
+        '2.38.9' => [
+            'build_id' => 'erp-meli-2.38.9-sales-repair-transport-authority-hotfix-rc1-20260814',
+            'minimum_migration' => '298_queue_v4_sales_repair_transport_authority_2_38_9.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.38.9.json',
+        ],
+        '2.39.0' => [
+            'build_id' => 'erp-meli-2.39.0-legacy-cron-fail-closed-rc1-20260814',
+            'minimum_migration' => '298_queue_v4_sales_repair_transport_authority_2_38_9.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.0.json',
+        ],
+        '2.39.1' => [
+            'build_id' => 'erp-meli-2.39.1-legacy-reactivation-fail-closed-rc1-20260815',
+            'minimum_migration' => '298_queue_v4_sales_repair_transport_authority_2_38_9.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.1.json',
+        ],
+        '2.39.2' => [
+            'build_id' => 'erp-meli-2.39.2-b1-stop-orphan-admission-rc1-20260815',
+            'minimum_migration' => '298_queue_v4_sales_repair_transport_authority_2_38_9.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.2.json',
+        ],
+        '2.39.3' => [
+            'build_id' => 'erp-meli-2.39.3-domain-exact-finance-rc1-20260815',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.3.json',
+        ],
+        '2.39.4' => [
+            'build_id' => 'erp-meli-2.39.4-f2b-b429-rhythm-fail-closed-rc1-20260816',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.4.json',
+        ],
+        '2.39.5' => [
+            'build_id' => 'erp-meli-2.39.5-h1-order-exact-context-rc1-20260816',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.5.json',
+        ],
+        '2.39.6' => [
+            'build_id' => 'erp-meli-2.39.6-h2-billing-terminal-hy093-rc1-20260816',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.6.json',
+        ],
+        '2.39.7' => [
+            'build_id' => 'erp-meli-2.39.7-h3-financial-nonfailure-defer-rc1-20260820',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.7.json',
+        ],
+        '2.39.8' => [
+            'build_id' => 'erp-meli-2.39.8-h4-pack-integrity-release-rc1-20260820',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.8.json',
+        ],
+        '2.39.9' => [
+            'build_id' => 'erp-meli-2.39.9-billing-429-emergency-hotfix-rc1-20260820',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.9.json',
+        ],
+        '2.39.10' => [
+            'build_id' => 'erp-meli-2.39.10-v4-bulk-parity-convergence-rc1-20260821',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.10.json',
+        ],
+        '2.39.11' => [
+            'build_id' => 'erp-meli-2.39.11-b429-configurable-kiss-rc1-20260821',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.11.json',
+        ],
+        '2.39.14' => [
+            'build_id' => 'erp-meli-2.39.14-v4-authority-legacy-truth-rc1-20260822',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.14.json',
+        ],
+        '2.39.15' => [
+            'build_id' => 'erp-meli-2.39.15-versioned-23914-amendment-rc1-20260822',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.15.json',
+        ],
+        '2.39.17' => [
+            'build_id' => 'erp-meli-2.39.17-operations-visibility-kiss-rc1-20260822',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.17.json',
+        ],
+        '2.39.18' => [
+            'build_id' => 'erp-meli-2.39.18-versioned-23917-hotfix-rc1-20260822',
+            'minimum_migration' => '299_queue_v4_domain_exact_admission_2_39_3.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.39.18.json',
+        ],
+        '2.40.0' => [
+            'build_id' => 'erp-meli-2.40.0-k10-smart-manual-drain-rc1-20260826',
+            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.40.0.json',
+        ],
+        self::VERSION => [
+            'build_id' => self::BUILD_ID,
+            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'dependency_registry' => self::DEPENDENCY_REGISTRY,
+        ],
+    ];
+
+    /** @param array<string,mixed> $manifest */
+    public static function recognizesInstalledManifest(array $manifest): bool
+    {
+        return self::installedProfile($manifest) !== null;
+    }
 
     /** @return list<string> */
     public static function manifestPaths(string $root, string $head = 'HEAD', string $base = self::BASE_COMMIT): array
@@ -207,7 +439,9 @@ final class ManagedRuntimePublicationPolicy
     /** @param array<string,mixed> $manifest @return list<string> */
     public static function installedManifestIssues(string $root, array $manifest): array
     {
-        $registryPath = rtrim($root, '/\\') . '/' . self::DEPENDENCY_REGISTRY;
+        $profile = self::installedProfile($manifest);
+        $dependencyRegistry = $profile['dependency_registry'] ?? self::DEPENDENCY_REGISTRY;
+        $registryPath = rtrim($root, '/\\') . '/' . $dependencyRegistry;
         $registryBytes = is_file($registryPath) ? file_get_contents($registryPath) : false;
         if (!is_string($registryBytes)) {
             return ['runtime_dependency_registry_missing'];
@@ -262,13 +496,28 @@ final class ManagedRuntimePublicationPolicy
         ) {
             $issues[] = 'manifest_publication_policy_mismatch';
         }
-        if (!hash_equals(self::VERSION, (string) ($manifest['version'] ?? ''))
-            || !hash_equals(self::MINIMUM_MIGRATION, (string) ($manifest['minimum_migration'] ?? ''))
-            || !hash_equals(self::BUILD_ID, (string) ($manifest['build_id'] ?? ''))
-        ) {
+        if ($profile === null) {
             $issues[] = 'manifest_release_identity_mismatch';
         }
         return array_values(array_unique($issues));
+    }
+
+    /**
+     * @param array<string,mixed> $manifest
+     * @return array{build_id:string,minimum_migration:string,dependency_registry:string}|null
+     */
+    private static function installedProfile(array $manifest): ?array
+    {
+        $version = trim((string) ($manifest['version'] ?? ''));
+        $profile = self::INSTALLED_PROFILES[$version] ?? null;
+        if (!is_array($profile)
+            || !hash_equals($profile['build_id'], trim((string) ($manifest['build_id'] ?? '')))
+            || !hash_equals($profile['minimum_migration'], trim((string) ($manifest['minimum_migration'] ?? '')))
+        ) {
+            return null;
+        }
+
+        return $profile;
     }
 
     /**
@@ -541,6 +790,9 @@ final class ManagedRuntimePublicationPolicy
             if (in_array($path, ['.gitattributes', '.gitignore', 'config.env.example', 'phpstan.neon'], true)) {
                 return 'BUILD_ONLY';
             }
+            if ($path === 'H3_BACKLOG_RECOVERY_DESIGN.txt') {
+                return 'NON_RUNTIME';
+            }
             return 'UNCLASSIFIED';
         }
 
@@ -588,7 +840,6 @@ final class ManagedRuntimePublicationPolicy
     {
         return match ($path) {
             'jobs/cron_probe.php' => 'cron_probe',
-            'jobs/process_sync_queue.php' => 'process_sync_queue',
             default => 'runtime_' . trim((string) preg_replace('/[^a-z0-9]+/', '_', strtolower($path)), '_'),
         };
     }

@@ -29,7 +29,7 @@ $importStatusUrl = (string) ($importStatusUrl ?? '/sales/import-status.json');
 $commercialStateLabel = static fn(string $state): string => match ($state) {
     'not_started' => 'Sin preparar',
     'queued' => 'Preparado',
-    'running' => 'Verificando',
+    'running' => 'En ejecución',
     'needs_repair' => 'Faltantes',
     'repairing' => 'Descargando',
     'date_repair_needed' => 'Fechas',
@@ -67,8 +67,8 @@ $financialLabel = static fn(string $status): string => match ($status) {
   <div class="sales-import-copy">
     <div class="eyebrow">Importación anual</div>
     <h2 id="sales-import-title">Importar ventas del año</h2>
-    <p>Seleccione una cuenta y un año para preparar la importación.</p>
-    <small>Mercado Libre puede limitar el historial disponible. El ERP importará y verificará todo lo disponible para esta cuenta.</small>
+    <p>Seleccione una cuenta y un año para preparar trabajos locales.</p>
+    <small>Este botón no consulta Mercado Libre. Las consultas remotas se realizan después mediante el procesador autorizado y comparten sus protecciones de ritmo.</small>
   </div>
   <form class="sales-import-form" method="post" action="<?= View::e($base) ?>/sales/import-year">
     <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">

@@ -122,20 +122,33 @@ final class AlertService
 
     private function alertApiSignals(): int
     {
-        $accountIds = (new BusinessScopeContext())->accountIds();
-        $rows = (new ApiErrorSummaryService())->recentGrouped(50, $accountIds);
+        $scope = new BusinessScopeContext();
+        $accountIds = $scope->accountIds();
+        $companyIds = $scope->companyIds();
+        $summary = new ApiErrorSummaryService();
+        $rows = $summary->recentGrouped(50, $accountIds);
         $allowed = array_fill_keys($accountIds, true);
         $count = 0;
         foreach ($rows as $row) {
             if (!isset($allowed[(int) ($row['meli_account_id'] ?? 0)])) {
                 continue;
             }
-            if ((int) $row['http_status'] === 429) {
-                $count += $this->upsert($row['meli_account_id'] ? (int) $row['meli_account_id'] : null, null, '429', 'critical', 'Rate limit Mercado Libre', 'Se recibieron respuestas 429. Reduzca sincronizaciones o espere backoff.', 'api_error', null, $row);
-            }
             if ((int) $row['http_status'] === 404 && str_contains((string) $row['endpoint_path'], '/payments/')) {
                 $count += $this->upsert($row['meli_account_id'] ? (int) $row['meli_account_id'] : null, null, '404_repetido', 'warning', 'Pago 404 repetido', 'El detalle de pago no está disponible; se conserva resumen de orden.', 'api_error', null, $row);
             }
+        }
+        foreach ($summary->recentRemoteRateLimits(50, $accountIds, $companyIds) as $row) {
+            $count += $this->upsert(
+                (int) ($row['meli_account_id'] ?? 0) ?: null,
+                (int) ($row['company_id'] ?? 0) ?: null,
+                '429',
+                'critical',
+                'Rate limit Mercado Libre',
+                'Mercado Libre respondió HTTP 429. Respete la próxima hora segura y no fuerce reintentos.',
+                'api_request_log',
+                null,
+                $row
+            );
         }
         return $count;
     }

@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "target_version": "2.37.0",
+  "contract": "Queue V4 Clean is an independent greenfield FIFO runtime. The 2.36.15 to 2.37.0 update adds only migration 294 and new Queue V4 Clean authorities; it imports no legacy queue state, creates no production scheduler, activates no engine, performs no readiness automatically and preserves the frozen updater write-set.",
+  "supersedes_inventory": {
+    "path": "resources/release/updater-locked-file-inventory-2.36.1.json",
+    "sha256": "7b90dab866e6b49d785ce8c706f3ea7ce7db6846fdd1678e6a953a6bf4e31fd5",
+    "file_count": 29
+  },
+  "unchanged_locked": {
+    "file_count": 27,
+    "sorted_path_hash_lines_sha256": "76d38e632333da994447234dc809557150bdf7ed09f1c9643aa12056c21a6f5a"
+  },
+  "intentional_locked_changes": [
+    {
+      "path": "app/Services/ReleaseIntegrityService.php",
+      "previous_sha256": "33aa577f0057f9da5ec9bc619e9a794da61df097d03a4c47321c0c618f1dbf82",
+      "target_sha256": "519cecd67ef7ef4142396cedb13de4a23c1bce5463b2bde3eb2f5d1dee80541f",
+      "reason": "Select the exact legacy or managed publication authority from a recognized manifest identity."
+    },
+    {
+      "path": "app/Recovery/RecoveryKernel.php",
+      "previous_sha256": "4e3e02463c7271b0ad31792e64419ee1ff78e8a0054274c469ead73e22b91cf4",
+      "target_sha256": "219db6ee360e9fa20b1c21a0bfeb7b44355e403d9ef7676e72371d3c48daa668",
+      "reason": "Permit authenticated metadata-only completion while preserving the narrow updater write-set."
+    }
+  ],
+  "new_runtime_dependencies": [
+    {"path":"VERSION","sha256":"462fd9d3cfe0c592fae358d924cf44fe06a969c196e4f9fe079a21ebb6288c78"},
+    {"path":"app/Controllers/SettingsController.php","sha256":"60b7a4ff28a0d6333aea7d3dfe919897e5361076478abcbbfdac3b46b3c30b90"},
+    {"path":"app/QueueCore/QueueCoreOwnershipGuard.php","sha256":"6a9afbaa6ddfd1f4f9e9ec719347934cd26c52ff49025703adf5d47580d25622"},
+    {"path":"app/QueueV4Clean/QueueV4CleanControlService.php","sha256":"fbdae6c9fd68f024bd10ef89eb0e1323db54dd3d0b96aefe25cfb0f9a6909a41"},
+    {"path":"app/QueueV4Clean/QueueV4CleanProducer.php","sha256":"16eae8abcf1d6c793f2a56e62ce96aafa637f427073a136cb1478d3e434da2a8"},
+    {"path":"app/QueueV4Clean/QueueV4CleanReadinessService.php","sha256":"574bf7c5e5b4143792f5a0623bf56fe7904923dc545496be3045b003916b4411"},
+    {"path":"app/QueueV4Clean/QueueV4CleanRepository.php","sha256":"73ab114a028c9663ca3be0c7f2bf80ede64665ef289ff01f32829506a147aa59"},
+    {"path":"app/QueueV4Clean/QueueV4CleanScheduler.php","sha256":"21e727a23cc881331fbc72709669ef6cf80c134543d44ae4c00400dfcce08df3"},
+    {"path":"app/QueueV4Clean/QueueV4CleanTransportContext.php","sha256":"473bcbccca23e325ad805985d56e705c4fa38449728ae89bc644b2204e387bf9"},
+    {"path":"app/QueueV4Clean/QueueV4CleanWorker.php","sha256":"958ebb88642a7cac951e27c030b7602941df78620bb6b62c71eccdf2c048e9e8"},
+    {"path":"app/Services/ApiExecutionMetadataContext.php","sha256":"b8a915dddd0a8f18b5aa2492ada4db2dbeae56702d2c76e7718c6ec62b32f8b7"},
+    {"path":"app/Services/CurlMeliHttpTransport.php","sha256":"d0607123b2dbee247afd5c6ba6bb2a3c3a8fb23efcb614c333ddf8dd6be28264"},
+    {"path":"app/Services/ManagedRuntimePublicationPolicy.php","sha256":"94ab04d8e28bec36fa792bdc001fd1a6dacefa7b3ea547be63d4575140f4b1c2"},
+    {"path":"app/Services/MeliApiClient.php","sha256":"4f3f469b0988e7bf4896c564cef2a20f258c44bfff04417d0e7d888c1825cbdd"},
+    {"path":"app/Services/MeliEmergencyStopService.php","sha256":"ba80559ef2567ab867cf268f1e0c59a88964949c99bbbb151858423ef8b5e688"},
+    {"path":"app/Services/OrderSyncService.php","sha256":"2b96854df5a0999941a0eb84aafe7047390258b2996d80e8fc7f29e5239b5151"},
+    {"path":"app/Views/settings/cron_shell.php","sha256":"b6e34b1aee7c6212fef63b8fd392b9cb0ac0607d5f59a5da66f2881e884bfa3a"},
+    {"path":"database/migrations/294_queue_v4_clean_greenfield_2_37_0.sql","sha256":"34b4bad427015595037e4159252739c4e795e9f794f4af7f8f0bb6dd2d483409"},
+    {"path":"jobs/queue_v4_clean.php","sha256":"cc91be8a6dec351111aad231d72b68e275c74ed51cb79cb4d7da5a12ea31ffe0"},
+    {"path":"public/assets/app.js","sha256":"aba7a0f311ec40f4b0b7b29ac4c39f9501c111b41d3031ce2ee13a3cf9ff2571"},
+    {"path":"public/index.php","sha256":"1c9fdc9cbf63bd187902518c5291e4b72c7c2e5217435fb4bda077720ae8984c"},
+    {"path":"resources/release/managed-runtime-dependencies-2.37.0.json","sha256":"a13c2166e143a40f2ee74c6aef328f5423b2621db7a4fe1485af124226187f22"}
+  ]
+}

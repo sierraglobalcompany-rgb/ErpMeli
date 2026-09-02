@@ -30,6 +30,7 @@ final class SettingsSectionService
 
     public function save(string $sectionKey, array $submitted, bool $restoreRecommended = false): array
     {
+        $this->assertRetiredQuestionAdmission($sectionKey, $submitted);
         $section = $this->requireSection($sectionKey);
         $before = $this->values($sectionKey);
         $after = $before;
@@ -39,9 +40,14 @@ final class SettingsSectionService
             foreach ($section['fields'] as $field) {
                 $key = $field['key'];
                 $raw = $restoreRecommended ? $field['recommended'] : ($submitted[$key] ?? null);
-                $value = $this->validate($field, $raw);
-                $this->settings->set($key, $value, $sectionKey);
-                $after[$key] = $value;
+                $after[$key] = $this->validate($field, $raw);
+            }
+            if ($sectionKey === 'mercadolibre') {
+                $this->normalizeBilling429Backoff($after);
+            }
+            foreach ($section['fields'] as $field) {
+                $key = $field['key'];
+                $this->settings->set($key, $after[$key], $sectionKey);
             }
             AuditService::record(
                 $restoreRecommended ? 'restore_recommended_settings' : 'update_settings_section',
@@ -60,6 +66,20 @@ final class SettingsSectionService
             throw $e;
         }
         return $after;
+    }
+
+    private function assertRetiredQuestionAdmission(string $sectionKey, array $submitted): void
+    {
+        if ($sectionKey !== 'communications') {
+            return;
+        }
+        foreach (['questions.sync_enabled', 'questions.endpoint_confirmed'] as $key) {
+            if (in_array(strtolower(trim((string) ($submitted[$key] ?? '0'))), ['1', 'true', 'on', 'yes'], true)) {
+                throw new \RuntimeException(
+                    'La sincronización general de preguntas está retirada. No se cambió la configuración.'
+                );
+            }
+        }
     }
 
     private function validate(array $field, mixed $raw): string
@@ -108,6 +128,21 @@ final class SettingsSectionService
             throw new InvalidArgumentException('El correo indicado no es válido.');
         }
         return mb_substr($value, 0, 500);
+    }
+
+    /** @param array<string,string> $values */
+    private function normalizeBilling429Backoff(array &$values): void
+    {
+        $normalized = ApiRhythmPolicyService::normalizeBilling429BackoffMinutes([
+            $values['api.rhythm.billing_429_backoff_1_minutes'] ?? 30,
+            $values['api.rhythm.billing_429_backoff_2_minutes'] ?? 120,
+            $values['api.rhythm.billing_429_backoff_3_minutes'] ?? 360,
+            $values['api.rhythm.billing_429_backoff_max_minutes'] ?? 720,
+        ]);
+        $values['api.rhythm.billing_429_backoff_1_minutes'] = (string) $normalized[1];
+        $values['api.rhythm.billing_429_backoff_2_minutes'] = (string) $normalized[2];
+        $values['api.rhythm.billing_429_backoff_3_minutes'] = (string) $normalized[3];
+        $values['api.rhythm.billing_429_backoff_max_minutes'] = (string) $normalized[4];
     }
 
     private function requireSection(string $sectionKey): array

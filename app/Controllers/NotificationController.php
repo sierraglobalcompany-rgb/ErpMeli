@@ -179,11 +179,6 @@ final class NotificationController
         $this->redirect('/settings/cron/queue?queue_key=notification_fallback');
     }
 
-    public function processPending(): void
-    {
-        $this->processWork();
-    }
-
     public function processWork(): void
     {
         // Mensaje histórico conservado para trazabilidad: "Sincronización por eventos ejecutada".

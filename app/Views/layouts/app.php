@@ -21,11 +21,12 @@ $safety = (new SystemSafetyStatusService())->status();
 $appCssFingerprint = AssetVersionService::fingerprint('assets/app.css');
 $catalogCssFingerprint = AssetVersionService::fingerprint('assets/catalog.css');
 $uxCssFingerprint = AssetVersionService::fingerprint('assets/ux.css');
-$performanceCssFingerprint = AssetVersionService::fingerprint('assets/performance.css');
 $appJsFingerprint = AssetVersionService::fingerprint('assets/app.js');
 $catalogJsFingerprint = AssetVersionService::fingerprint('assets/catalog.js');
 $uxJsFingerprint = AssetVersionService::fingerprint('assets/ux.js');
-$performanceJsFingerprint = AssetVersionService::fingerprint('assets/performance.js');
+$queryProfileEnabled = Env::bool('ERP_QUERY_PROFILE_ENABLED', true);
+$performanceCssFingerprint = $queryProfileEnabled ? AssetVersionService::fingerprint('assets/performance.css') : '';
+$performanceJsFingerprint = $queryProfileEnabled ? AssetVersionService::fingerprint('assets/performance.js') : '';
 $moduleRoute = preg_match('#/(?:meli-ads|meli-growth|meli-insights|meli-logistics|meli-postsale)(?:/|$)#', $path) === 1;
 $moduleAssets = Auth::check() && $moduleRoute
     ? (new \App\Core\Modules\ModuleKernel())->assets()
@@ -49,6 +50,7 @@ $documentTitle = match (true) {
     str_starts_with($routePath, '/sales') => 'Ventas',
     str_starts_with($routePath, '/orders') => 'Órdenes',
     str_starts_with($routePath, '/products/meli') => 'Productos Mercado Libre',
+    str_starts_with($routePath, '/inventory') => 'Inventario',
     str_starts_with($routePath, '/products') => 'Productos',
     str_starts_with($routePath, '/financial-recalc') => 'Recálculo financiero',
     str_starts_with($routePath, '/reports/profitability') => 'Rentabilidad',
@@ -82,7 +84,7 @@ $isActiveRoute = static fn(array $matches): bool => $navigation->isActive($route
   <link rel="stylesheet" href="<?= View::e(View::asset($base, 'app.css')) ?>&amp;v=<?= View::e($appCssFingerprint) ?>">
   <link rel="stylesheet" href="<?= View::e(View::asset($base, 'catalog.css')) ?>&amp;v=<?= View::e($catalogCssFingerprint) ?>">
   <link rel="stylesheet" href="<?= View::e(View::asset($base, 'ux.css')) ?>&amp;v=<?= View::e($uxCssFingerprint) ?>">
-  <link rel="stylesheet" href="<?= View::e(View::asset($base, 'performance.css')) ?>&amp;v=<?= View::e($performanceCssFingerprint) ?>">
+  <?php if ($queryProfileEnabled): ?><link rel="stylesheet" href="<?= View::e(View::asset($base, 'performance.css')) ?>&amp;v=<?= View::e($performanceCssFingerprint) ?>"><?php endif; ?>
   <?php foreach ($moduleAssets['css'] as $moduleCss): ?><link rel="stylesheet" href="<?= View::e(View::asset($base, preg_replace('#^assets/#', '', $moduleCss) ?: $moduleCss)) ?>&amp;v=<?= View::e(AssetVersionService::fingerprint($moduleCss)) ?>"><?php endforeach; ?>
 </head>
 <body>
@@ -177,7 +179,7 @@ $isActiveRoute = static fn(array $matches): bool => $navigation->isActive($route
 <script src="<?= View::e(View::asset($base, 'app.js')) ?>&amp;v=<?= View::e($appJsFingerprint) ?>"></script>
 <script src="<?= View::e(View::asset($base, 'catalog.js')) ?>&amp;v=<?= View::e($catalogJsFingerprint) ?>"></script>
 <script src="<?= View::e(View::asset($base, 'ux.js')) ?>&amp;v=<?= View::e($uxJsFingerprint) ?>"></script>
-<script src="<?= View::e(View::asset($base, 'performance.js')) ?>&amp;v=<?= View::e($performanceJsFingerprint) ?>"></script>
+<?php if ($queryProfileEnabled): ?><script src="<?= View::e(View::asset($base, 'performance.js')) ?>&amp;v=<?= View::e($performanceJsFingerprint) ?>"></script><?php endif; ?>
 <?php foreach ($moduleAssets['js'] as $moduleJs): ?><script src="<?= View::e(View::asset($base, preg_replace('#^assets/#', '', $moduleJs) ?: $moduleJs)) ?>&amp;v=<?= View::e(AssetVersionService::fingerprint($moduleJs)) ?>"></script><?php endforeach; ?>
 </body>
 </html>

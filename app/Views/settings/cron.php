@@ -52,7 +52,7 @@ $automationTab = 'summary';
 require __DIR__ . '/_automation_nav.php';
 ?>
 <?php if (empty($embedded)): ?>
-<div class="page-head"><div><span class="eyebrow">Automatización</span><h1>Centro de Automatización</h1><p>Compruebe cuándo trabajó, qué procesará y si necesita intervenir.</p></div><div class="page-actions"><a class="btn" href="<?= View::e($base) ?>/settings/api-workload">Capacidad y ritmo</a><a class="btn" href="<?= View::e($base) ?>/settings/cron/next">Ver próxima ejecución</a></div></div>
+<div class="page-head"><div><span class="eyebrow">Procesamiento automático</span><h1>Trabajo programado</h1><p>Compruebe cuándo trabajó, qué procesará y si necesita intervención.</p></div><div class="page-actions"><a class="btn" href="<?= View::e($base) ?>/settings/api-workload">Capacidad y ritmo</a><a class="btn" href="<?= View::e($base) ?>/settings/cron/next">Ver próxima ejecución</a></div></div>
 <?php endif; ?>
 
 <section class="human-status-hero <?= $problem ? 'is-warning' : ($healthy ? 'is-success' : '') ?>"
@@ -60,8 +60,8 @@ require __DIR__ . '/_automation_nav.php';
          data-status-url="<?= View::e($base) ?>/settings/cron/status.json">
   <div class="human-status-mark" aria-hidden="true"><?= $problem ? '!' : ($healthy ? '✓' : '…') ?></div>
   <div>
-    <span class="eyebrow">Automatización general</span>
-    <h2 data-cron-health-label><?= View::e((string) ($runtimeStatus['label'] ?? ($bootstrapStopped ? 'Automatización detenida antes de abrir las colas' : ($cron['label'] ?? 'Sin información')))) ?></h2>
+    <span class="eyebrow">Procesamiento general</span>
+    <h2 data-cron-health-label><?= View::e((string) ($runtimeStatus['label'] ?? ($bootstrapStopped ? 'Procesamiento detenido antes de abrir las colas' : ($cron['label'] ?? 'Sin información')))) ?></h2>
     <p data-cron-health-message><?= View::e(!empty($runtimeStatus['message']) ? (string) $runtimeStatus['message'] : ($bootstrapStopped
         ? 'Hostinger sí ejecutó el lanzador. El ERP se detuvo durante la comprobación de la instalación y no confirmó consultas hacia Mercado Libre.'
         : (string) ($cron['message'] ?? 'No hay información reciente del cron.'))) ?></p>
@@ -119,7 +119,7 @@ require __DIR__ . '/_automation_nav.php';
       <h2 id="release-integrity-title"><?= $integrityOk ? 'Instalación íntegra' : ($integrityState === 'schema_pending' ? 'Migración de integridad pendiente' : 'Instalación mezclada') ?></h2>
       <p>
         <?php if ($integrityOk): ?>
-          Los archivos, el lanzador único y el esquema pertenecen a la misma release.
+          Los archivos, Queue V4 y el esquema pertenecen a la misma release.
         <?php elseif ($integrityState === 'schema_pending'): ?>
           Los archivos coinciden, pero debe completar la migración requerida antes de ejecutar el lanzador único.
         <?php else: ?>
@@ -372,10 +372,10 @@ require __DIR__ . '/_automation_nav.php';
     <div class="table-scroll mt-2"><table class="data-table"><caption>Charset y collation de la conexión MySQL actual</caption><tbody><tr><th>Cliente</th><td><?= View::e((string) ($databaseSession['character_set_client'] ?? '—')) ?></td></tr><tr><th>Conexión</th><td><?= View::e((string) ($databaseSession['character_set_connection'] ?? '—')) ?></td></tr><tr><th>Resultados</th><td><?= View::e((string) ($databaseSession['character_set_results'] ?? '—')) ?></td></tr><tr><th>Collation</th><td><code><?= View::e((string) ($databaseSession['collation_connection'] ?? '—')) ?></code></td></tr><tr><th>Esperada</th><td><code><?= View::e((string) ($databaseSession['expected_collation'] ?? 'utf8mb4_unicode_ci')) ?></code></td></tr></tbody></table></div>
     <div class="table-scroll mt-2"><table class="data-table"><caption>PHP utilizado por web y cron</caption><thead><tr><th>Proceso</th><th>PHP</th><th>SAPI</th><th>Binario</th></tr></thead><tbody><tr><td>Web</td><td><?= View::e((string) ($phpRuntime['version'] ?? PHP_VERSION)) ?></td><td><?= View::e((string) ($phpRuntime['sapi'] ?? PHP_SAPI)) ?></td><td><code><?= View::e((string) ($phpRuntime['binary'] ?? PHP_BINARY)) ?></code></td></tr><tr><td>Último cron</td><td><?= View::e((string) ($cronRuntime['php_version'] ?? 'sin dato')) ?></td><td><?= View::e((string) ($cronRuntime['sapi'] ?? 'sin dato')) ?></td><td><code><?= View::e((string) ($cronRuntime['binary'] ?? 'sin dato')) ?></code></td></tr></tbody></table></div>
     <div class="panel-body">
-      <p><strong>Único lanzador del ERP · solicite cada minuto</strong></p><code><?= View::e($cronCommand) ?></code>
+      <p><strong>Único lanzador automático · solicite cada minuto</strong></p><code><?= View::e($cronCommand) ?></code>
       <p class="muted">La frecuencia real se calcula con las señales recibidas; Hostinger puede entregarlas más tarde.</p>
-      <p class="mt-2"><strong>Diagnóstico corto para “Probar” en Hostinger</strong></p><code><?= View::e($probeCronCommand ?? '') ?></code>
-      <p class="muted mt-2">No configure tareas separadas de notificaciones, campañas ni probes como recurrentes. En “Ver resultado” deben aparecer <code>ERP_CRON_BOOT component=process_sync_queue</code>, <code>ERP_CRON_START</code> y <code>ERP_CRON_OK</code>.</p>
+      <p class="mt-2"><strong>Preflight web</strong></p><p class="muted">“Comprobar instalación” sólo lee integridad, Queue V4, heartbeat y OAuth. No ejecuta Cron ni crea trabajo.</p>
+      <p class="muted mt-2">No configure tareas separadas de notificaciones, campañas ni probes como recurrentes. El único comando recurrente es Queue V4 con <code>--runtime=45 --max-calls=2</code>. Si hPanel todavía muestra <code>--max-jobs=2</code>, el runtime lo normaliza como alias temporal de llamadas.</p>
     </div>
     <?php if ($latest): ?><div class="table-scroll mt-2"><table class="data-table"><caption>Última ejecución automática</caption><tbody><tr><th>Origen</th><td>CLI automático</td></tr><tr><th>Release</th><td><?= View::e((string) ($latest['release_version'] ?? 'sin identificar')) ?> · <code><?= View::e((string) ($latest['release_build_id'] ?? 'build anterior')) ?></code></td></tr><tr><th>Estado</th><td><?= View::e($resultLabel((string) ($latest['result_state'] ?? $latest['status']))) ?></td></tr><tr><th>Inicio</th><td><?= View::e(DateTimePresenter::formatQueue($latest['started_at'])) ?></td></tr><tr><th>Heartbeat</th><td><?= !empty($latest['heartbeat_at']) ? View::e(DateTimePresenter::formatQueue($latest['heartbeat_at'])) : '—' ?></td></tr><tr><th>Fin</th><td><?= !empty($latest['finished_at']) ? View::e(DateTimePresenter::formatQueue($latest['finished_at'])) : '—' ?></td></tr><tr><th>Duración</th><td><?= (int) $latest['duration_ms'] ?> ms</td></tr><tr><th>Código de salida</th><td><?= isset($latest['exit_code']) ? (int) $latest['exit_code'] : '—' ?></td></tr><tr><th>Identificador</th><td><code><?= View::e((string) ($latest['run_token'] ?? '—')) ?></code></td></tr><tr><th>Mensaje</th><td><?= View::e((string) ($latest['message'] ?: '—')) ?></td></tr></tbody></table></div><?php endif; ?>
     <?php if ($latestManual): ?><div class="table-scroll mt-2"><table class="data-table"><caption>Última prueba manual</caption><tbody><tr><th>Origen</th><td>Prueba web; no verifica la programación</td></tr><tr><th>Fecha</th><td><?= View::e(DateTimePresenter::formatQueue($latestManual['finished_at'] ?: $latestManual['started_at'])) ?></td></tr><tr><th>Estado</th><td><?= View::e($resultLabel((string) ($latestManual['result_state'] ?? $latestManual['status']))) ?></td></tr><tr><th>Identificador</th><td><code><?= View::e((string) ($latestManual['run_token'] ?? '—')) ?></code></td></tr></tbody></table></div><?php endif; ?>

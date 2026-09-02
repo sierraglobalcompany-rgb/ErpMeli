@@ -6,6 +6,7 @@ namespace App\QueueCore;
 
 use App\Core\Env;
 use App\Services\EmergencyControlService;
+use App\Services\V4ReadinessBootstrapService;
 use PDO;
 use RuntimeException;
 
@@ -82,6 +83,14 @@ final class QueueCoreReadinessReceiptService
         if (($safety['api'] ?? '') !== 'enabled') {
             return ['ok' => false, 'reason' => 'api_reads_not_enabled'];
         }
+        $scheduler = $this->pdo->prepare(
+            'SELECT setting_value FROM app_settings WHERE setting_key=? LIMIT 1'
+        );
+        $scheduler->execute([V4ReadinessBootstrapService::SCHEDULER_AUTHORITY_KEY]);
+        $schedulerAuthority = json_decode((string) ($scheduler->fetchColumn() ?: ''), true);
+        if (!is_array($schedulerAuthority) || ($schedulerAuthority['status'] ?? '') !== 'absent') {
+            return ['ok' => false, 'reason' => 'hostinger_scheduler_absence_unverified'];
+        }
         $authority = $this->readinessAuthority();
         if ($authority['active_engine'] !== 'disabled'
             || $authority['readiness_mode'] !== 'preparing'
@@ -124,7 +133,7 @@ final class QueueCoreReadinessReceiptService
             }
         }
         $releaseEvidence = new QueueCoreReleaseEvidenceService($this->pdo);
-        foreach (['backup', 'capacity', 'manifest'] as $type) {
+        foreach (['capacity', 'manifest'] as $type) {
             $evidence = $releaseEvidence->requireLatest(
                 $engineGeneration,
                 $type,
@@ -133,14 +142,6 @@ final class QueueCoreReadinessReceiptService
             if (!$evidence['ok']) {
                 return ['ok' => false, 'reason' => $evidence['reason']];
             }
-        }
-        $backupPath=trim((string)Env::get('QUEUE_CORE_APPROVED_BACKUP_PATH',''));
-        $backupSha=trim((string)Env::get('QUEUE_CORE_APPROVED_BACKUP_SHA256',''));
-        // La certificación ya ligó el dump a los conteos vivos previos. En el CAS se
-        // vuelve a abrir y verificar el mismo artefacto/hash sin rechazar crecimiento
-        // legítimo producido por el canario de solo lectura.
-        if(!(new QueueCoreReleaseEvidenceService($this->pdo))->verifyBackup($backupPath,$backupSha,true)['ok']){
-            return ['ok'=>false,'reason'=>'backup_artifact_unavailable'];
         }
         $manifest = (new \App\Services\QueueCoreDeploymentGateService($this->pdo))->runtimeManifestCheck();
         if (!$manifest['ok']) {
@@ -185,11 +186,28 @@ final class QueueCoreReadinessReceiptService
             'contract' => 'checkpoint_then_local_overlap_then_certified_legacy_then_explicit:v1',
             'operator_overrides' => $bootstrapStatement->fetchAll(PDO::FETCH_ASSOC),
         ];
+        $schedulerStatement = $this->pdo->prepare(
+            'SELECT setting_value FROM app_settings WHERE setting_key=? LIMIT 1'
+        );
+        $schedulerStatement->execute([V4ReadinessBootstrapService::SCHEDULER_AUTHORITY_KEY]);
+        $schedulerAuthority = json_decode((string) ($schedulerStatement->fetchColumn() ?: ''), true);
+        $schedulerContext = [
+            'status' => is_array($schedulerAuthority) ? (string) ($schedulerAuthority['status'] ?? 'unknown') : 'unknown',
+            'authority' => is_array($schedulerAuthority) ? (string) ($schedulerAuthority['authority'] ?? 'unknown') : 'unknown',
+            'confirmation_hash' => hash(
+                'sha256',
+                is_array($schedulerAuthority)
+                    ? (string) ($schedulerAuthority['actor_user_id'] ?? '') . '|'
+                        . (string) ($schedulerAuthority['confirmed_at'] ?? '')
+                    : 'missing',
+            ),
+        ];
         $context = [
             'engine_generation' => max(0, $engineGeneration),
             'accounts' => $accounts,
             'features' => $flags,
             'bootstrap_authorities' => $bootstrapAuthorities,
+            'hostinger_scheduler' => $schedulerContext,
             'runtime' => [
                 'cron_v4' => Env::bool('CRON_V4_ENABLED', false),
                 'cron_v3' => Env::bool('CRON_V3_ENABLED', false),
@@ -198,8 +216,6 @@ final class QueueCoreReadinessReceiptService
                 'profile' => $profile,
             ],
             'release_manifest_hash' => is_string($manifestHash) ? $manifestHash : 'missing',
-            'approved_backup_sha256' => strtolower(trim((string) Env::get('QUEUE_CORE_APPROVED_BACKUP_SHA256', ''))),
-            'approved_backup_path_hash' => hash('sha256',str_replace('\\','/',trim((string)Env::get('QUEUE_CORE_APPROVED_BACKUP_PATH','')))),
             'capability_registry_hash' => (new QueueCapabilityRegistry())->authorityHash(),
             'safety' => [
                 'api' => (string) ($safety['api'] ?? 'unknown'),

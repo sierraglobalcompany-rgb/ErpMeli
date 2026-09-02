@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "target_version": "2.36.15",
+  "contract": "The 2.36.15 hotfix preserves the locked updater write-set and transitions 2.36.14 to 2.36.15 without migration. It recovers exactly one uncertain Queue Core canary GET only when its tenant, capability, endpoint, dispatch, attempt and run authorities are exact; mutating, mixed or multiple uncertain work remains blocked. It creates no scheduler, activates no engine and does not run readiness automatically.",
+  "supersedes_inventory": {
+    "path": "resources/release/updater-locked-file-inventory-2.36.1.json",
+    "sha256": "7b90dab866e6b49d785ce8c706f3ea7ce7db6846fdd1678e6a953a6bf4e31fd5",
+    "file_count": 29
+  },
+  "unchanged_locked": {
+    "file_count": 27,
+    "sorted_path_hash_lines_sha256": "76d38e632333da994447234dc809557150bdf7ed09f1c9643aa12056c21a6f5a"
+  },
+  "intentional_locked_changes": [
+    {
+      "path": "app/Services/ReleaseIntegrityService.php",
+      "previous_sha256": "33aa577f0057f9da5ec9bc619e9a794da61df097d03a4c47321c0c618f1dbf82",
+      "target_sha256": "519cecd67ef7ef4142396cedb13de4a23c1bce5463b2bde3eb2f5d1dee80541f",
+      "reason": "Select the exact legacy or managed publication authority from a recognized manifest identity."
+    },
+    {
+      "path": "app/Recovery/RecoveryKernel.php",
+      "previous_sha256": "4e3e02463c7271b0ad31792e64419ee1ff78e8a0054274c469ead73e22b91cf4",
+      "target_sha256": "219db6ee360e9fa20b1c21a0bfeb7b44355e403d9ef7676e72371d3c48daa668",
+      "reason": "Permit authenticated metadata-only completion while preserving the narrow updater write-set."
+    }
+  ],
+  "new_runtime_dependencies": [
+    {
+      "path": "app/Services/ManagedRuntimePublicationPolicy.php",
+      "sha256": "7bc5546207cdfcde73aa51cc73ab830bd0ec85eed8323d9e5ed09dca9bfc1e09"
+    },
+    {
+      "path": "app/Services/DirectUpdateMetadataPromotionService.php",
+      "sha256": "78218b1519cfe8221a86be93953d8f4fb3bbf46cd75a43f6edffafb69a767dce"
+    },
+    {
+      "path": "app/Services/DirectUpdateTransitionPolicy.php",
+      "sha256": "5f67ad44b8ee9f2c6ce59a050a79ca0e0597b78ae97b79cb37e0ab1aaefe4187"
+    },
+    {
+      "path": "app/Services/CronV3RetirementForV4Service.php",
+      "sha256": "8fedd197a8ca43954fd639604b8defce8225f4e3a17ce1113cb5a1d466007422"
+    },
+    {
+      "path": "app/Services/CronV3SetupAssistantService.php",
+      "sha256": "3b6bfdfb0fb474c76dfcae8ccb643c0c1c80a62c230495e31e0980109a8dd4ea"
+    },
+    {
+      "path": "app/Services/V4ReadinessBootstrapService.php",
+      "sha256": "901ed3b9e4be487767c80ecec24d1065b7d930e2dade3739af70292dc3a36585"
+    },
+    {
+      "path": "app/Controllers/SettingsController.php",
+      "sha256": "49f80f4c3ce44424b5834e6504a165cc10db0e71879f4894facc123bf5b3219a"
+    },
+    {
+      "path": "app/Views/settings/cron_shell.php",
+      "sha256": "b780a0041a2a1b9f1687d067be47658ae28fb895204624fa0ab6c9066932fcd2"
+    },
+    {
+      "path": "public/assets/app.js",
+      "sha256": "95c7c9826219ec556bd3f27582d4649e37b296d507bfde4b8ff966e8c5f73ca9"
+    },
+    {
+      "path": "app/QueueCore/QueueCoreFeatureFlagService.php",
+      "sha256": "25e785f44f409f60a3cc1a594a39f6aab7ddf8108d6fee7cdf87487bb6bcdf89"
+    },
+    {
+      "path": "app/QueueCore/QueueCoreReadinessReceiptService.php",
+      "sha256": "732a1c78980dcdb774ebe887eddadb19634725278f5e78648a7ef71817acc312"
+    },
+    {
+      "path": "app/QueueCore/QueueCoreHealthService.php",
+      "sha256": "9d444a6ffa9ddacefc29d99c34b7b8072f98b055f17583c9e791f93bea18e288"
+    },
+    {
+      "path": "app/QueueCore/QueueCoreCanaryService.php",
+      "sha256": "0010dfdb14f25717242abd9081d7ce878af7e258a4e1f727a96f393d11bb87d5"
+    },
+    {
+      "path": "resources/release/managed-runtime-dependencies-2.36.15.json",
+      "sha256": "3c607ce1d486e11c5e95a50ff3d3bc0917483df7994d34aa18e64ce801ace973"
+    },
+    {
+      "path": "app/QueueCore/QueueCoreCanaryUncertainRecoveryService.php",
+      "sha256": "e8332fd6d4ea5401705dcdce0e6fbf924708a57c370aa6729a339a132a38fc88"
+    }
+  ]
+}

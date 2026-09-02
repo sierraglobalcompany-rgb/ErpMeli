@@ -55,7 +55,7 @@ $percent = (float) ($summary['percent'] ?? 0);
       <div class="mini-card"><span>Parciales</span><strong><?= (int) ($summary['partial_items'] ?? 0) ?></strong></div>
     </div>
     <div class="operation-next-step mt-2">
-      <div><strong>Qué hará el ERP</strong><p>Cron continuará con recursos elegibles. Una espera preventiva no se presenta como error.</p></div>
+      <div><strong>Qué hará Queue V4</strong><p>Procesará sólo recursos financieros elegibles. Una espera preventiva no es un error ni garantiza una hora de ejecución.</p></div>
       <div class="page-actions">
       <a class="btn primary" href="<?= View::e($base) ?>/settings/manual-processing?scope=finance&amp;origin=financial<?= $accountId > 0 ? '&amp;account_id=' . (int) $accountId : '' ?>">Procesar finanzas ahora</a>
       <a class="btn" href="<?= View::e($base) ?>/financial-recalc/errors?account_id=<?= (int) $accountId ?>">Revisar recursos con error</a>

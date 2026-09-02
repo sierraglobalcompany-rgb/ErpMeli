@@ -1,5 +1,4 @@
 <?php
-use App\Core\Csrf;
 use App\Core\Env;
 use App\Core\View;
 use App\Services\DateTimePresenter;
@@ -13,11 +12,7 @@ $base = rtrim(Env::get('APP_URL',''),'/');
     <div class="field"><label>Cuenta Mercado Libre</label><select class="input" name="account_id"><option value="0">Todas</option><?php foreach($accounts as $a): ?><option value="<?= (int)$a['id'] ?>" <?= (int)$filters['account_id']===(int)$a['id']?'selected':'' ?>><?= View::e($a['account_name']) ?></option><?php endforeach; ?></select></div>
     <button class="btn">Filtrar</button>
   </form>
-  <form class="inline-form mt-2" method="post" action="<?= View::e($base) ?>/questions/sync" data-confirm="Revisará preguntas solo si el endpoint está confirmado y la sincronización está activada.">
-    <input type="hidden" name="_token" value="<?= Csrf::token() ?>">
-    <input type="hidden" name="account_id" value="<?= (int)$filters['account_id'] ?>">
-    <button class="btn primary">Revisar preguntas ahora</button>
-  </form>
+  <p class="muted mt-2">La búsqueda general está retirada porque no tiene consumidor vigente. Las preguntas exactas notificadas conservan su ruta segura.</p>
 </section>
 <section class="alert info">El ERP no responde preguntas ni envía mensajes a Mercado Libre. Solo las lista y genera alertas internas o correo opcional.</section>
 <section class="panel table-panel">

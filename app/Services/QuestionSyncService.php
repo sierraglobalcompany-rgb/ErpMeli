@@ -10,6 +10,8 @@ use Throwable;
 
 final class QuestionSyncService
 {
+    private const AUTOMATIC_ADMISSION_ENABLED = false;
+
     public function enabled(): bool
     {
         return (new AppSettingsService())->bool('questions.sync_enabled', false);
@@ -17,6 +19,10 @@ final class QuestionSyncService
 
     public function syncAllActive(): array
     {
+        if (!self::AUTOMATIC_ADMISSION_ENABLED) {
+            return ['accounts' => 0, 'questions' => 0, 'skipped' => true];
+        }
+
         if (!$this->enabled()) {
             return ['accounts' => 0, 'questions' => 0, 'skipped' => true];
         }
@@ -49,6 +55,10 @@ final class QuestionSyncService
     /** @return array{accounts:int,questions:int,skipped:bool,account_id?:int} */
     public function syncNextActive(): array
     {
+        if (!self::AUTOMATIC_ADMISSION_ENABLED) {
+            return ['accounts' => 0, 'questions' => 0, 'skipped' => true];
+        }
+
         if (!$this->enabled()) {
             return ['accounts' => 0, 'questions' => 0, 'skipped' => true];
         }
@@ -89,6 +99,10 @@ final class QuestionSyncService
 
     public function syncAccount(int $accountId): int
     {
+        if (!self::AUTOMATIC_ADMISSION_ENABLED) {
+            return 0;
+        }
+
         $settings = new AppSettingsService();
         if (!$settings->bool('questions.endpoint_confirmed', false)) {
             Logger::write('info', 'Sincronizacion de preguntas omitida: endpoint pendiente de confirmar.', ['account_id' => $accountId]);

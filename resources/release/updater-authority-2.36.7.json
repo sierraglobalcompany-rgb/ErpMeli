@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "target_version": "2.36.7",
+  "contract": "The 2.36.7 hotfix preserves the locked updater write-set and changes only the V4 readiness consumer to compare the exact feature-flag set independently of insertion order. It creates no scheduler, activates no engine and adds no migration.",
+  "supersedes_inventory": {
+    "path": "resources/release/updater-locked-file-inventory-2.36.1.json",
+    "sha256": "7b90dab866e6b49d785ce8c706f3ea7ce7db6846fdd1678e6a953a6bf4e31fd5",
+    "file_count": 29
+  },
+  "unchanged_locked": {
+    "file_count": 27,
+    "sorted_path_hash_lines_sha256": "76d38e632333da994447234dc809557150bdf7ed09f1c9643aa12056c21a6f5a"
+  },
+  "intentional_locked_changes": [
+    {
+      "path": "app/Services/ReleaseIntegrityService.php",
+      "previous_sha256": "33aa577f0057f9da5ec9bc619e9a794da61df097d03a4c47321c0c618f1dbf82",
+      "target_sha256": "519cecd67ef7ef4142396cedb13de4a23c1bce5463b2bde3eb2f5d1dee80541f",
+      "reason": "Select the exact legacy or managed publication authority from a recognized manifest identity."
+    },
+    {
+      "path": "app/Recovery/RecoveryKernel.php",
+      "previous_sha256": "4e3e02463c7271b0ad31792e64419ee1ff78e8a0054274c469ead73e22b91cf4",
+      "target_sha256": "219db6ee360e9fa20b1c21a0bfeb7b44355e403d9ef7676e72371d3c48daa668",
+      "reason": "Permit authenticated metadata-only completion while preserving the narrow updater write-set."
+    }
+  ],
+  "new_runtime_dependencies": [
+    {"path": "app/Services/ManagedRuntimePublicationPolicy.php", "sha256": "31a4e5e92038654b3d756f25c70f156bd6e80d5cfe1b61e00d282cda2ea94696"},
+    {"path": "app/Services/DirectUpdateMetadataPromotionService.php", "sha256": "78218b1519cfe8221a86be93953d8f4fb3bbf46cd75a43f6edffafb69a767dce"},
+    {"path": "app/Services/DirectUpdateTransitionPolicy.php", "sha256": "5f67ad44b8ee9f2c6ce59a050a79ca0e0597b78ae97b79cb37e0ab1aaefe4187"},
+    {"path": "app/Services/CronV3RetirementForV4Service.php", "sha256": "8fedd197a8ca43954fd639604b8defce8225f4e3a17ce1113cb5a1d466007422"},
+    {"path": "app/Services/CronV3SetupAssistantService.php", "sha256": "3b6bfdfb0fb474c76dfcae8ccb643c0c1c80a62c230495e31e0980109a8dd4ea"},
+    {"path": "app/Services/V4ReadinessBootstrapService.php", "sha256": "6a6d79cb97c47f00ca31d7a4062fa0805dbcfab045e6fe1b9c05c20acfa0dda6"},
+    {"path": "app/Controllers/SettingsController.php", "sha256": "caa385edb46a898dfffdfe833134d9bff976e853a18626f463554dd4f4f6c5a3"},
+    {"path": "app/Views/settings/cron_shell.php", "sha256": "26773df3da60af2bee72ae1d1a597587ea2d71cef7f3ca558a5187feeb22a659"},
+    {"path": "public/assets/app.js", "sha256": "86e009939b53bf2fb623ae15edd0143645019cee9644b7a6aa8377bd2d76d5eb"},
+    {"path": "app/QueueCore/QueueCoreFeatureFlagService.php", "sha256": "25e785f44f409f60a3cc1a594a39f6aab7ddf8108d6fee7cdf87487bb6bcdf89"},
+    {"path": "app/QueueCore/QueueCoreReadinessReceiptService.php", "sha256": "b572e4489c3755959ac047faba5ab28139874bd072d7e7bb02e944f32275e9ba"},
+    {"path": "app/QueueCore/QueueCoreCanaryService.php", "sha256": "0a6f6e5482f14bfcf7d4232dae07bd68580bf8ce43b4a05660b3908a182a5426"},
+    {"path": "resources/release/managed-runtime-dependencies-2.36.7.json", "sha256": "0e8af635e689d7a401eb74ee9fe8f0d5c083aa5d6e1277a17159c118fe9038c2"}
+  ]
+}

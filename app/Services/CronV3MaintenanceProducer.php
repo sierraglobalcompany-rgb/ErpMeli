@@ -32,8 +32,6 @@ final class CronV3MaintenanceProducer
         foreach ([
             ['type' => 'notification_spool', 'bucket' => gmdate('YmdHi'), 'priority' => 30, 'payload' => ['limit' => 50, 'runtime_seconds' => 3]],
             ['type' => 'notification_normalize', 'bucket' => gmdate('YmdHi'), 'priority' => 35, 'payload' => ['limit' => 50]],
-            ['type' => 'notification_backfill', 'bucket' => gmdate('YmdHi'), 'priority' => 200, 'payload' => ['limit' => 200]],
-            ['type' => 'recurring_schedule', 'bucket' => gmdate('YmdHi'), 'priority' => 220, 'payload' => ['limit' => 20]],
             ['type' => 'operational_maintenance', 'bucket' => gmdate('YmdHi', (int) (floor(time() / 300) * 300)), 'priority' => 65000],
             ['type' => 'monthly_report_maintenance', 'bucket' => gmdate('Ymd'), 'priority' => 65010],
         ] as $job) {

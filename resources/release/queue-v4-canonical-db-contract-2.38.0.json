@@ -1,0 +1,3135 @@
+{
+    "generated_from": "information_schema",
+    "database_engine": "MariaDB",
+    "database_version": "11.8.8-MariaDB-ubu2404",
+    "database_version_family": "11.8.8",
+    "tables": {
+        "schema_migrations": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "version",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(100)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "applied_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp()",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "version",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": []
+        },
+        "app_settings": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "auto_increment",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "setting_key",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(160)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "setting_value",
+                    "DATA_TYPE": "mediumtext",
+                    "COLUMN_TYPE": "mediumtext",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "is_encrypted",
+                    "DATA_TYPE": "tinyint",
+                    "COLUMN_TYPE": "tinyint(1)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "setting_group",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(80)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "'general'",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 6,
+                    "COLUMN_NAME": "created_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp()",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 7,
+                    "COLUMN_NAME": "updated_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp()",
+                    "EXTRA": "on update current_timestamp()",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "idx_app_settings_group",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "setting_group",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_app_settings_key",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "setting_key",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": []
+        },
+        "meli_accounts": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "auto_increment",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "company_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "account_name",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(160)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "meli_user_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "nickname",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(160)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 6,
+                    "COLUMN_NAME": "site_id",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(12)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 7,
+                    "COLUMN_NAME": "country_id",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(12)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 8,
+                    "COLUMN_NAME": "status",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('pendiente','conectado','vencido','error','desconectado')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "'pendiente'",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 9,
+                    "COLUMN_NAME": "last_sync_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 10,
+                    "COLUMN_NAME": "last_error",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(500)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 11,
+                    "COLUMN_NAME": "created_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp()",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 12,
+                    "COLUMN_NAME": "updated_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp()",
+                    "EXTRA": "on update current_timestamp()",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "idx_meli_accounts_company_status",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_meli_accounts_company_status",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "status",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_meli_account_user",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "meli_user_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": [
+                {
+                    "CONSTRAINT_NAME": "fk_meli_accounts_company",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "company_id",
+                    "REFERENCED_TABLE_NAME": "companies",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                }
+            ]
+        },
+        "meli_tokens": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "auto_increment",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "meli_account_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "access_token_encrypted",
+                    "DATA_TYPE": "mediumtext",
+                    "COLUMN_TYPE": "mediumtext",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "refresh_token_encrypted",
+                    "DATA_TYPE": "mediumtext",
+                    "COLUMN_TYPE": "mediumtext",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "expires_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 6,
+                    "COLUMN_NAME": "token_type",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(40)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "'Bearer'",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 7,
+                    "COLUMN_NAME": "scope",
+                    "DATA_TYPE": "text",
+                    "COLUMN_TYPE": "text",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 8,
+                    "COLUMN_NAME": "refresh_version",
+                    "DATA_TYPE": "int",
+                    "COLUMN_TYPE": "int(10) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "1",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 9,
+                    "COLUMN_NAME": "created_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp()",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 10,
+                    "COLUMN_NAME": "updated_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp()",
+                    "EXTRA": "on update current_timestamp()",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_meli_token_account",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "meli_account_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": [
+                {
+                    "CONSTRAINT_NAME": "fk_meli_tokens_account",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "meli_account_id",
+                    "REFERENCED_TABLE_NAME": "meli_accounts",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "CASCADE"
+                }
+            ]
+        },
+        "queue_v4_clean_control": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "control_key",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(32)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "engine_state",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('STOPPED','CERTIFIED','ACTIVE')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "'STOPPED'",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "readiness_state",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('NOT_READY','READY_TO_TEST','TESTING','CERTIFIED','FAILED')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "'NOT_READY'",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "scheduler_enabled",
+                    "DATA_TYPE": "tinyint",
+                    "COLUMN_TYPE": "tinyint(1)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "readiness_passed_accounts",
+                    "DATA_TYPE": "tinyint",
+                    "COLUMN_TYPE": "tinyint(3) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 6,
+                    "COLUMN_NAME": "readiness_error_class",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(100)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 7,
+                    "COLUMN_NAME": "certified_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 8,
+                    "COLUMN_NAME": "activated_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 9,
+                    "COLUMN_NAME": "stopped_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 10,
+                    "COLUMN_NAME": "last_scheduler_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 11,
+                    "COLUMN_NAME": "updated_by",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 12,
+                    "COLUMN_NAME": "created_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 13,
+                    "COLUMN_NAME": "updated_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "on update current_timestamp(3)",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "control_key",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": []
+        },
+        "queue_v4_clean_readiness_runs": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "auto_increment",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "state",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('TESTING','CERTIFIED','FAILED')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "expected_accounts",
+                    "DATA_TYPE": "tinyint",
+                    "COLUMN_TYPE": "tinyint(3) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "3",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "passed_accounts",
+                    "DATA_TYPE": "tinyint",
+                    "COLUMN_TYPE": "tinyint(3) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "failure_class",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(100)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 6,
+                    "COLUMN_NAME": "started_by",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 7,
+                    "COLUMN_NAME": "started_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 8,
+                    "COLUMN_NAME": "finished_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "idx_qv4_readiness_state",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "state",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_readiness_state",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "started_at",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": []
+        },
+        "queue_v4_clean_readiness_accounts": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "readiness_run_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "company_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "meli_account_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "outcome",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('PASS','FAIL')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "failure_class",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(100)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 6,
+                    "COLUMN_NAME": "checked_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "idx_qv4_readiness_tenant",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_readiness_tenant",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "meli_account_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_readiness_tenant",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "checked_at",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "readiness_run_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "meli_account_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": [
+                {
+                    "CONSTRAINT_NAME": "fk_qv4_readiness_run",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "readiness_run_id",
+                    "REFERENCED_TABLE_NAME": "queue_v4_clean_readiness_runs",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                }
+            ]
+        },
+        "queue_v4_clean_jobs": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "auto_increment",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "company_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "meli_account_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "job_type",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('fresh_orders_discovery','order_exact')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "resource_id",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(191)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 6,
+                    "COLUMN_NAME": "idempotency_key",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(191)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 7,
+                    "COLUMN_NAME": "state",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('ready','running','waiting','review','dead','completed')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "'ready'",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 8,
+                    "COLUMN_NAME": "attempt_count",
+                    "DATA_TYPE": "tinyint",
+                    "COLUMN_TYPE": "tinyint(3) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 9,
+                    "COLUMN_NAME": "max_attempts",
+                    "DATA_TYPE": "tinyint",
+                    "COLUMN_TYPE": "tinyint(3) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "3",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 10,
+                    "COLUMN_NAME": "available_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 11,
+                    "COLUMN_NAME": "lease_owner",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(96)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 12,
+                    "COLUMN_NAME": "lease_expires_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 13,
+                    "COLUMN_NAME": "payload_json",
+                    "DATA_TYPE": "longtext",
+                    "COLUMN_TYPE": "longtext",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_bin"
+                },
+                {
+                    "ORDINAL_POSITION": 14,
+                    "COLUMN_NAME": "last_error_class",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(100)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 15,
+                    "COLUMN_NAME": "created_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 16,
+                    "COLUMN_NAME": "updated_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "on update current_timestamp(3)",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 17,
+                    "COLUMN_NAME": "completed_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "idx_qv4_fifo",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "state",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_fifo",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "available_at",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_fifo",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_lease",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "state",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_lease",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "lease_expires_at",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_lease",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_tenant",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_tenant",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "meli_account_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_tenant",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "state",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_tenant",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 4,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_qv4_job_identity",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_qv4_job_identity",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "meli_account_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_qv4_job_identity",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "job_type",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_qv4_job_identity",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 4,
+                    "COLUMN_NAME": "idempotency_key",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": []
+        },
+        "queue_v4_clean_attempts": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "auto_increment",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "job_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "run_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "company_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "meli_account_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 6,
+                    "COLUMN_NAME": "lease_owner",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(96)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 7,
+                    "COLUMN_NAME": "outcome",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('running','completed','waiting','review','dead','lease_expired')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "'running'",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 8,
+                    "COLUMN_NAME": "error_class",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(100)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 9,
+                    "COLUMN_NAME": "started_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 10,
+                    "COLUMN_NAME": "finished_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "idx_qv4_attempt_run",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "run_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_attempt_run",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_attempt_run",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "meli_account_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_attempt_tenant",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_attempt_tenant",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "meli_account_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_attempt_tenant",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "started_at",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_qv4_attempt",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "job_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_qv4_attempt",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "lease_owner",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": [
+                {
+                    "CONSTRAINT_NAME": "fk_qv4_attempt_job",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "job_id",
+                    "REFERENCED_TABLE_NAME": "queue_v4_clean_jobs",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                }
+            ]
+        },
+        "queue_v4_clean_runs": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "auto_increment",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "launcher",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('scheduler','manual','test')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "worker_ref",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(96)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "status",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('running','completed','failed','stopped')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "'running'",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "jobs_claimed",
+                    "DATA_TYPE": "int",
+                    "COLUMN_TYPE": "int(10) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 6,
+                    "COLUMN_NAME": "jobs_completed",
+                    "DATA_TYPE": "int",
+                    "COLUMN_TYPE": "int(10) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 7,
+                    "COLUMN_NAME": "jobs_deferred",
+                    "DATA_TYPE": "int",
+                    "COLUMN_TYPE": "int(10) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 8,
+                    "COLUMN_NAME": "started_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 9,
+                    "COLUMN_NAME": "finished_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "idx_qv4_runs_status",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "status",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_runs_status",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "started_at",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": []
+        },
+        "queue_v4_clean_leases": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "lease_key",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(64)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "owner_ref",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(96)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "acquired_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "heartbeat_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "expires_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "lease_key",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": []
+        },
+        "queue_v4_clean_checkpoints": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "producer_key",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(64)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "company_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "meli_account_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "watermark_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "next_due_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 6,
+                    "COLUMN_NAME": "last_job_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 7,
+                    "COLUMN_NAME": "updated_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "on update current_timestamp(3)",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "idx_qv4_checkpoint_due",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "producer_key",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_checkpoint_due",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "next_due_at",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_qv4_checkpoint_due",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "meli_account_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "producer_key",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "meli_account_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": []
+        },
+        "inventory_warehouses": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "auto_increment",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "company_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "code",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(64)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "name",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(160)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "status",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('active','inactive')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "'active'",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 6,
+                    "COLUMN_NAME": "is_default",
+                    "DATA_TYPE": "tinyint",
+                    "COLUMN_TYPE": "tinyint(1)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 7,
+                    "COLUMN_NAME": "default_slot",
+                    "DATA_TYPE": "tinyint",
+                    "COLUMN_TYPE": "tinyint(4)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "STORED GENERATED",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 8,
+                    "COLUMN_NAME": "created_by",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 9,
+                    "COLUMN_NAME": "created_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 10,
+                    "COLUMN_NAME": "updated_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "on update current_timestamp(3)",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "idx_inventory_warehouse_status",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_warehouse_status",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "status",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_warehouse_status",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "name",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_inventory_warehouse_code",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_inventory_warehouse_code",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "code",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_inventory_warehouse_default",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_inventory_warehouse_default",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "default_slot",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": [
+                {
+                    "CONSTRAINT_NAME": "fk_inventory_warehouse_company",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "company_id",
+                    "REFERENCED_TABLE_NAME": "companies",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                }
+            ]
+        },
+        "inventory_balances": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "company_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "warehouse_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "internal_product_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "on_hand",
+                    "DATA_TYPE": "decimal",
+                    "COLUMN_TYPE": "decimal(20,6)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0.000000",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "reserved",
+                    "DATA_TYPE": "decimal",
+                    "COLUMN_TYPE": "decimal(20,6)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0.000000",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 6,
+                    "COLUMN_NAME": "available",
+                    "DATA_TYPE": "decimal",
+                    "COLUMN_TYPE": "decimal(20,6)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "STORED GENERATED",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 7,
+                    "COLUMN_NAME": "average_unit_cost",
+                    "DATA_TYPE": "decimal",
+                    "COLUMN_TYPE": "decimal(20,6)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0.000000",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 8,
+                    "COLUMN_NAME": "lock_version",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 9,
+                    "COLUMN_NAME": "created_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 10,
+                    "COLUMN_NAME": "updated_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "on update current_timestamp(3)",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "fk_inventory_balance_product",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "internal_product_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "fk_inventory_balance_warehouse",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "warehouse_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_balance_available",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_balance_available",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "warehouse_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_balance_available",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "available",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_balance_product",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_balance_product",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "internal_product_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_balance_product",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "warehouse_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "warehouse_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "internal_product_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": [
+                {
+                    "CONSTRAINT_NAME": "fk_inventory_balance_company",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "company_id",
+                    "REFERENCED_TABLE_NAME": "companies",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                },
+                {
+                    "CONSTRAINT_NAME": "fk_inventory_balance_product",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "internal_product_id",
+                    "REFERENCED_TABLE_NAME": "internal_products",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                },
+                {
+                    "CONSTRAINT_NAME": "fk_inventory_balance_warehouse",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "warehouse_id",
+                    "REFERENCED_TABLE_NAME": "inventory_warehouses",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                }
+            ]
+        },
+        "inventory_movements": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "auto_increment",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "company_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "warehouse_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "internal_product_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "meli_account_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 6,
+                    "COLUMN_NAME": "movement_type",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('opening','receipt','sale_issue','sale_reversal','adjustment_in','adjustment_out','reserve','release')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 7,
+                    "COLUMN_NAME": "on_hand_delta",
+                    "DATA_TYPE": "decimal",
+                    "COLUMN_TYPE": "decimal(20,6)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0.000000",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 8,
+                    "COLUMN_NAME": "reserved_delta",
+                    "DATA_TYPE": "decimal",
+                    "COLUMN_TYPE": "decimal(20,6)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0.000000",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 9,
+                    "COLUMN_NAME": "unit_cost",
+                    "DATA_TYPE": "decimal",
+                    "COLUMN_TYPE": "decimal(20,6)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0.000000",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 10,
+                    "COLUMN_NAME": "total_cost",
+                    "DATA_TYPE": "decimal",
+                    "COLUMN_TYPE": "decimal(20,6)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "0.000000",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 11,
+                    "COLUMN_NAME": "on_hand_after",
+                    "DATA_TYPE": "decimal",
+                    "COLUMN_TYPE": "decimal(20,6)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 12,
+                    "COLUMN_NAME": "reserved_after",
+                    "DATA_TYPE": "decimal",
+                    "COLUMN_TYPE": "decimal(20,6)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 13,
+                    "COLUMN_NAME": "available_after",
+                    "DATA_TYPE": "decimal",
+                    "COLUMN_TYPE": "decimal(20,6)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 14,
+                    "COLUMN_NAME": "average_unit_cost_after",
+                    "DATA_TYPE": "decimal",
+                    "COLUMN_TYPE": "decimal(20,6)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 15,
+                    "COLUMN_NAME": "reference_type",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(64)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 16,
+                    "COLUMN_NAME": "reference_id",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(191)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 17,
+                    "COLUMN_NAME": "idempotency_key",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(191)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 18,
+                    "COLUMN_NAME": "reversal_of_movement_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 19,
+                    "COLUMN_NAME": "actor_user_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 20,
+                    "COLUMN_NAME": "source",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('manual','queue_v4_clean','system')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 21,
+                    "COLUMN_NAME": "reason",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(500)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 22,
+                    "COLUMN_NAME": "created_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "fk_inventory_movement_account",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "meli_account_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "fk_inventory_movement_product",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "internal_product_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "fk_inventory_movement_reversal",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "reversal_of_movement_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "fk_inventory_movement_warehouse",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "warehouse_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_movement_account",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_movement_account",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "meli_account_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_movement_account",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "created_at",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_movement_account",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 4,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_movement_kardex",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_movement_kardex",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "warehouse_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_movement_kardex",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "internal_product_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_movement_kardex",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 4,
+                    "COLUMN_NAME": "created_at",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_movement_kardex",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 5,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_movement_reference",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_movement_reference",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "reference_type",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_movement_reference",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "reference_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_movement_reference",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 4,
+                    "COLUMN_NAME": "movement_type",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_inventory_movement_idempotency",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_inventory_movement_idempotency",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "idempotency_key",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_inventory_movement_reversal",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_inventory_movement_reversal",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "reversal_of_movement_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": [
+                {
+                    "CONSTRAINT_NAME": "fk_inventory_movement_account",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "meli_account_id",
+                    "REFERENCED_TABLE_NAME": "meli_accounts",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                },
+                {
+                    "CONSTRAINT_NAME": "fk_inventory_movement_company",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "company_id",
+                    "REFERENCED_TABLE_NAME": "companies",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                },
+                {
+                    "CONSTRAINT_NAME": "fk_inventory_movement_product",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "internal_product_id",
+                    "REFERENCED_TABLE_NAME": "internal_products",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                },
+                {
+                    "CONSTRAINT_NAME": "fk_inventory_movement_reversal",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "reversal_of_movement_id",
+                    "REFERENCED_TABLE_NAME": "inventory_movements",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                },
+                {
+                    "CONSTRAINT_NAME": "fk_inventory_movement_warehouse",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "warehouse_id",
+                    "REFERENCED_TABLE_NAME": "inventory_warehouses",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                }
+            ]
+        },
+        "inventory_reviews": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columns": [
+                {
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "auto_increment",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 2,
+                    "COLUMN_NAME": "company_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 3,
+                    "COLUMN_NAME": "meli_account_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 4,
+                    "COLUMN_NAME": "meli_order_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 5,
+                    "COLUMN_NAME": "external_order_id",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(80)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 6,
+                    "COLUMN_NAME": "internal_product_id",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 7,
+                    "COLUMN_NAME": "reason_code",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('UNLINKED_PRODUCT','WAREHOUSE_NOT_CONFIGURED','INSUFFICIENT_STOCK','PARTIAL_RETURN_AUTHORITY_REQUIRED')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 8,
+                    "COLUMN_NAME": "state",
+                    "DATA_TYPE": "enum",
+                    "COLUMN_TYPE": "enum('open','resolved','dismissed')",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "'open'",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 9,
+                    "COLUMN_NAME": "required_quantity",
+                    "DATA_TYPE": "decimal",
+                    "COLUMN_TYPE": "decimal(20,6)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 10,
+                    "COLUMN_NAME": "available_quantity",
+                    "DATA_TYPE": "decimal",
+                    "COLUMN_TYPE": "decimal(20,6)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 11,
+                    "COLUMN_NAME": "context_json",
+                    "DATA_TYPE": "longtext",
+                    "COLUMN_TYPE": "longtext",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_bin"
+                },
+                {
+                    "ORDINAL_POSITION": 12,
+                    "COLUMN_NAME": "idempotency_key",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(191)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": null,
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 13,
+                    "COLUMN_NAME": "resolution",
+                    "DATA_TYPE": "varchar",
+                    "COLUMN_TYPE": "varchar(160)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": "utf8mb4",
+                    "COLLATION_NAME": "utf8mb4_unicode_ci"
+                },
+                {
+                    "ORDINAL_POSITION": 14,
+                    "COLUMN_NAME": "resolved_by",
+                    "DATA_TYPE": "bigint",
+                    "COLUMN_TYPE": "bigint(20) unsigned",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 15,
+                    "COLUMN_NAME": "resolved_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "YES",
+                    "COLUMN_DEFAULT": "NULL",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 16,
+                    "COLUMN_NAME": "created_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                },
+                {
+                    "ORDINAL_POSITION": 17,
+                    "COLUMN_NAME": "updated_at",
+                    "DATA_TYPE": "datetime",
+                    "COLUMN_TYPE": "datetime(3)",
+                    "IS_NULLABLE": "NO",
+                    "COLUMN_DEFAULT": "current_timestamp(3)",
+                    "EXTRA": "on update current_timestamp(3)",
+                    "CHARACTER_SET_NAME": null,
+                    "COLLATION_NAME": null
+                }
+            ],
+            "indexes": [
+                {
+                    "INDEX_NAME": "fk_inventory_review_account",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "meli_account_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "fk_inventory_review_order",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "meli_order_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "fk_inventory_review_product",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "internal_product_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_review_order",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_review_order",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "meli_account_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_review_order",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "meli_order_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_review_order",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 4,
+                    "COLUMN_NAME": "state",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_review_queue",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_review_queue",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "state",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_review_queue",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 3,
+                    "COLUMN_NAME": "reason_code",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_review_queue",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 4,
+                    "COLUMN_NAME": "created_at",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "idx_inventory_review_queue",
+                    "NON_UNIQUE": 1,
+                    "SEQ_IN_INDEX": 5,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "PRIMARY",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_inventory_review_idempotency",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 1,
+                    "COLUMN_NAME": "company_id",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                },
+                {
+                    "INDEX_NAME": "uq_inventory_review_idempotency",
+                    "NON_UNIQUE": 0,
+                    "SEQ_IN_INDEX": 2,
+                    "COLUMN_NAME": "idempotency_key",
+                    "SUB_PART": null,
+                    "COLLATION": "A",
+                    "INDEX_TYPE": "BTREE"
+                }
+            ],
+            "foreign_keys": [
+                {
+                    "CONSTRAINT_NAME": "fk_inventory_review_account",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "meli_account_id",
+                    "REFERENCED_TABLE_NAME": "meli_accounts",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                },
+                {
+                    "CONSTRAINT_NAME": "fk_inventory_review_company",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "company_id",
+                    "REFERENCED_TABLE_NAME": "companies",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                },
+                {
+                    "CONSTRAINT_NAME": "fk_inventory_review_order",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "meli_order_id",
+                    "REFERENCED_TABLE_NAME": "meli_orders",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                },
+                {
+                    "CONSTRAINT_NAME": "fk_inventory_review_product",
+                    "ORDINAL_POSITION": 1,
+                    "COLUMN_NAME": "internal_product_id",
+                    "REFERENCED_TABLE_NAME": "internal_products",
+                    "REFERENCED_COLUMN_NAME": "id",
+                    "MATCH_OPTION": "NONE",
+                    "UPDATE_RULE": "RESTRICT",
+                    "DELETE_RULE": "RESTRICT"
+                }
+            ]
+        }
+    }
+}

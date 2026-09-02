@@ -15,6 +15,8 @@ use Throwable;
  */
 final class SalesFiscalPreparationService
 {
+    private const AUTOMATIC_ADMISSION_ENABLED = false;
+
     public function available(): bool
     {
         $schema = new SchemaInspectorService();
@@ -25,6 +27,12 @@ final class SalesFiscalPreparationService
 
     public function create(int $accountId, int $year, int $month, int $companyId, ?int $userId): int
     {
+        if (!self::AUTOMATIC_ADMISSION_ENABLED) {
+            throw new \RuntimeException(
+                'La preparación fiscal automática está retirada. No se creó ningún trabajo.'
+            );
+        }
+
         if (!$this->available()) {
             throw new \RuntimeException('La preparación fiscal todavía no está instalada.');
         }

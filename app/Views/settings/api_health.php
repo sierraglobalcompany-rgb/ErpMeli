@@ -4,8 +4,10 @@ use App\Core\Csrf;
 use App\Core\Env;
 use App\Core\View;
 use App\Services\DateTimePresenter;
+use App\Services\AssetVersionService;
 
 $base = rtrim(Env::get('APP_URL', ''), '/');
+$apiHealthAsset = View::asset($base, 'api-health.js') . '&v=' . rawurlencode(AssetVersionService::fingerprint('assets/api-health.js'));
 $status = is_array($overview['status'] ?? null) ? $overview['status'] : [];
 $queries = is_array($overview['queries'] ?? null) ? $overview['queries'] : [];
 $accountSummary = is_array($overview['accounts'] ?? null) ? $overview['accounts'] : ['rows' => []];
@@ -17,18 +19,32 @@ $rows = is_array($accountSummary['rows'] ?? null) ? $accountSummary['rows'] : []
 $manualPause = is_array($protection['manual_pause'] ?? null) ? $protection['manual_pause'] : [];
 $emergencyStop = is_array($protection['emergency_stop'] ?? null) ? $protection['emergency_stop'] : [];
 $systemSafety = is_array($overview['system_safety'] ?? null) ? $overview['system_safety'] : [];
+$operatorWindows = is_array($overview['operator_windows'] ?? null) ? $overview['operator_windows'] : [];
+$windowRows = is_array($operatorWindows['windows'] ?? null) ? $operatorWindows['windows'] : [];
+$nowWindow = is_array($windowRows['60m'] ?? null) ? $windowRows['60m'] : [];
+$dayWindow = is_array($windowRows['24h'] ?? null) ? $windowRows['24h'] : [];
+$monthWindow = is_array($windowRows['30d'] ?? null) ? $windowRows['30d'] : [];
 $apiStopped = (string) ($systemSafety['api'] ?? 'unknown') === 'stopped';
 $activeIssues = array_values(array_filter($rows, static fn(array $row): bool => in_array((string) ($row['state'] ?? ''), ['attention', 'paused', 'disconnected'], true)));
 $priorityIncidents = array_values(array_filter(
-    array_merge((array) ($incidents['active'] ?? []), (array) ($incidents['recovered'] ?? [])),
+    (array) ($incidents['active'] ?? []),
     static fn(array $incident): bool => !empty($incident['rate_limit_signal'])
         || !empty($incident['signal_requires_protection'])
         || in_array((string) ($incident['severity'] ?? ''), ['critical', 'high'], true)
 ));
-$rateLimitPriorityCount = count(array_filter($priorityIncidents, static fn(array $incident): bool => !empty($incident['rate_limit_signal']) || (int) ($incident['http_status'] ?? 0) === 429));
+$rateLimitPriorityCount = count(array_filter($priorityIncidents, static fn(array $incident): bool => ($incident['transport_class'] ?? '') === 'REMOTE_HTTP_429'));
 $apiHealthSection = 'overview';
 $apiHealthHours = (int) ($overview['hours'] ?? 24);
 $apiHealthCheckedAt = $overview['checked_at'] ?? null;
+$operatorCheckedAtLabel = $apiHealthCheckedAt ? DateTimePresenter::formatQueue((string) $apiHealthCheckedAt, 'd/m H:i') : '—';
+$incidentLink = static function (array $overrides = []) use ($base, $apiHealthHours, $overview): string {
+    $query = array_merge([
+        'hours' => $apiHealthHours,
+        'account_id' => (int) ($overview['account_id'] ?? 0),
+    ], $overrides);
+    $query = array_filter($query, static fn($value): bool => $value !== '' && $value !== null && $value !== 0 && $value !== '0');
+    return $base . '/settings/api-health/incidents?' . http_build_query($query);
+};
 if (empty($apiHealthPartial)) {
     require __DIR__ . '/_api_health_header.php';
     require __DIR__ . '/_api_health_nav.php';
@@ -36,43 +52,70 @@ if (empty($apiHealthPartial)) {
 ?>
 <p class="sr-only">Salud de la integración. Estado por cuenta, incidentes, protección y Detalles técnicos.</p>
 
-<section class="api-health-triad" aria-label="Estado de Mercado Libre, protección y automatización"
-         data-api-health-live
-         data-overview-url="<?= View::e($base) ?>/settings/api-health/overview.json?hours=<?= (int) $apiHealthHours ?><?= !empty($overview['account_id']) ? '&amp;account_id=' . (int) $overview['account_id'] : '' ?>">
-  <article data-health-card="marketplace">
-    <span>Mercado Libre</span>
-    <strong data-health-label><?= View::e((string) ($status['label'] ?? 'No comprobado')) ?></strong>
-    <p data-health-message><?= View::e((string) ($status['summary'] ?? 'Sin evidencia disponible.')) ?></p>
-  </article>
-  <article data-health-card="protection">
-    <span>Protección del ERP</span>
-    <strong data-health-label><?= $apiStopped ? 'Bloqueada por mantenimiento' : ((int) ($protection['erp_wait_count'] ?? 0) > 0 || (int) ($protection['pause_count'] ?? 0) > 0 ? 'Limitando el ritmo' : 'Sin pausas activas') ?></strong>
-    <p data-health-message><?= (int) ($protection['erp_wait_count'] ?? 0) ?> esperas preventivas · <?= (int) ($protection['pause_count'] ?? 0) ?> pausas activas.</p>
-  </article>
-  <article data-health-card="automation">
-    <span>Automatización</span>
-    <strong data-health-label><?= View::e((string) ($automationEvidence['label'] ?? 'No comprobada')) ?></strong>
-    <p data-health-message><?= View::e((string) ($automationEvidence['message'] ?? 'Cron se evalúa por separado.')) ?></p>
-  </article>
+<section class="api-command-section" aria-labelledby="api-now-title">
+  <header>
+    <div>
+      <span class="eyebrow">Salud Mercado Libre</span>
+      <h2 id="api-now-title">Ahora</h2>
+      <p>Datos verificados · última actualización <?= View::e($operatorCheckedAtLabel) ?></p>
+    </div>
+    <a class="btn" href="<?= View::e($incidentLink(['hours' => 24, 'http_status' => 429, 'origin' => 'remote'])) ?>">Ver 429 remotos</a>
+  </header>
+  <div class="api-essential-metrics">
+    <a href="<?= View::e($incidentLink(['hours' => 1, 'http_status' => 429, 'origin' => 'remote'])) ?>"><span>429 remoto · 60m</span><strong><?= (int) ($nowWindow['remote_429'] ?? 0) ?></strong><p>24h: <?= (int) ($dayWindow['remote_429'] ?? 0) ?> · 30d histórico: <?= (int) ($monthWindow['remote_429'] ?? 0) ?></p></a>
+    <a href="<?= View::e($incidentLink(['hours' => 1, 'origin' => 'remote'])) ?>"><span>5xx remoto · 60m</span><strong><?= (int) ($nowWindow['remote_5xx'] ?? 0) ?></strong><p>Fallo real de Mercado Libre. 24h: <?= (int) ($dayWindow['remote_5xx'] ?? 0) ?></p></a>
+    <a href="<?= View::e($incidentLink(['hours' => 1, 'origin' => 'protection'])) ?>"><span>Protecciones locales · 60m</span><strong><?= (int) ($nowWindow['local_protections'] ?? 0) ?></strong><p>Sin HTTP remoto. 24h: <?= (int) ($dayWindow['local_protections'] ?? 0) ?> · 30d histórico: <?= (int) ($monthWindow['local_protections'] ?? 0) ?></p></a>
+    <a href="<?= View::e($incidentLink(['hours' => 1, 'severity' => 'critical'])) ?>"><span>OAuth / permisos · 60m</span><strong><?= (int) ($nowWindow['oauth_or_permission'] ?? 0) ?></strong><p>401/403 remotos con acción de cuenta.</p></a>
+  </div>
 </section>
-<p class="api-live-freshness" data-api-health-freshness aria-live="polite">Estado comprobado en el servidor.</p>
+
+<section class="api-command-section" aria-labelledby="api-24h-title">
+  <header>
+    <div>
+      <span class="eyebrow">Últimas 24 horas</span>
+      <h2 id="api-24h-title">Contexto reciente</h2>
+      <p>No reemplaza la alarma actual de 60m.</p>
+    </div>
+  </header>
+  <div class="api-essential-metrics">
+    <a href="<?= View::e($incidentLink(['hours' => 24, 'http_status' => 429, 'origin' => 'remote'])) ?>"><span>429 remoto</span><strong><?= (int) ($dayWindow['remote_429'] ?? 0) ?></strong><p>30d histórico: <?= (int) ($monthWindow['remote_429'] ?? 0) ?></p></a>
+    <a href="<?= View::e($incidentLink(['hours' => 24, 'origin' => 'protection'])) ?>"><span>Protecciones locales</span><strong><?= (int) ($dayWindow['local_protections'] ?? 0) ?></strong><p>No llegaron a Mercado Libre.</p></a>
+    <a href="<?= View::e($incidentLink(['hours' => 24, 'origin' => 'remote'])) ?>"><span>5xx remoto</span><strong><?= (int) ($dayWindow['remote_5xx'] ?? 0) ?></strong><p>Fallo real del remoto si aparece.</p></a>
+  </div>
+</section>
+
+<section class="api-command-section" aria-labelledby="api-protections-title">
+  <header>
+    <div>
+      <span class="eyebrow">Protecciones</span>
+      <h2 id="api-protections-title">Ritmo y espera</h2>
+      <p>Las protecciones locales evitan salir a Mercado Libre cuando no es seguro consultar.</p>
+    </div>
+    <a class="btn" href="<?= View::e($base) ?>/settings/api-health/protection">Ver protección</a>
+  </header>
+  <div class="api-essential-metrics">
+    <article><span>Billing</span><strong><?= !empty($protection['next_safe_at']) ? 'Esperando' : 'Disponible' ?></strong><p>Intervalo y cooldown vigentes.</p></article>
+    <article><span>Ritmo global</span><strong><?= (int) ($protection['pause_count'] ?? 0) > 0 ? 'Pausado' : 'Activo' ?></strong><p>Permisos antes del transporte.</p></article>
+    <article><span>Retry-After</span><strong>Vigente</strong><p>Se muestra sólo como probado por incidente cuando hay telemetría.</p></article>
+  </div>
+</section>
 
 <section class="api-command-section" aria-labelledby="api-priority-title">
   <header>
     <div>
       <span class="eyebrow">Prioridad</span>
       <h2 id="api-priority-title">Errores que importan ahora</h2>
-      <p>Rate limit, permisos, OAuth y señales de bloqueo se muestran aunque ya se hayan recuperado.</p>
+      <p>Sólo incidentes activos o accionables ahora. Lo recuperado queda en histórico reciente.</p>
     </div>
-    <a class="btn" href="<?= View::e($base) ?>/settings/api-health/incidents?severity=high&amp;origin=remote">Ver señales altas</a>
+    <a class="btn" href="<?= View::e($incidentLink(['severity' => 'high', 'origin' => 'remote'])) ?>">Ver señales altas</a>
   </header>
   <div class="api-essential-metrics">
-    <a href="<?= View::e($base) ?>/settings/api-health/incidents?severity=critical"><span>Críticos</span><strong><?= count(array_filter($priorityIncidents, static fn(array $incident): bool => (string) ($incident['severity'] ?? '') === 'critical')) ?></strong><p>OAuth, bloqueo o autorización</p></a>
-    <a href="<?= View::e($base) ?>/settings/api-health/incidents?http_status=429&amp;origin=remote"><span>Rate limit 429</span><strong><?= (int) $rateLimitPriorityCount ?></strong><p>Requiere respetar espera y limitar ritmo</p></a>
-    <a href="<?= View::e($base) ?>/settings/api-health/incidents?severity=high"><span>Permisos / API</span><strong><?= count(array_filter($priorityIncidents, static fn(array $incident): bool => (string) ($incident['severity'] ?? '') === 'high' && empty($incident['rate_limit_signal']))) ?></strong><p>403, permisos o respuesta remota</p></a>
+    <a href="<?= View::e($incidentLink(['severity' => 'critical'])) ?>"><span>Críticos</span><strong><?= count(array_filter($priorityIncidents, static fn(array $incident): bool => (string) ($incident['severity'] ?? '') === 'critical')) ?></strong><p>OAuth, bloqueo o autorización</p></a>
+    <a href="<?= View::e($incidentLink(['http_status' => 429, 'origin' => 'remote'])) ?>"><span>Rate limit 429</span><strong><?= (int) $rateLimitPriorityCount ?></strong><p>Requiere respetar espera y limitar ritmo</p></a>
+    <a href="<?= View::e($incidentLink(['severity' => 'high'])) ?>"><span>Permisos / API</span><strong><?= count(array_filter($priorityIncidents, static fn(array $incident): bool => (string) ($incident['severity'] ?? '') === 'high' && empty($incident['rate_limit_signal']))) ?></strong><p>403, permisos o respuesta remota</p></a>
   </div>
   <?php if ($priorityIncidents === []): ?>
-    <p class="api-inline-empty is-success">No hay señales críticas, 429 ni errores altos en el periodo.</p>
+    <p class="api-inline-empty is-success">No hay señales críticas, 429 ni errores altos activos ahora.</p>
   <?php else: ?>
     <div class="api-attention-list">
       <?php foreach (array_slice($priorityIncidents, 0, 4) as $incident): ?>
@@ -86,56 +129,22 @@ if (empty($apiHealthPartial)) {
   <?php endif; ?>
 </section>
 
-<section class="api-command-status is-<?= View::e((string) ($status['tone'] ?? 'unknown')) ?>" aria-live="polite">
-  <div class="api-command-status-mark" aria-hidden="true"><?= View::e((string) ($status['icon'] ?? '?')) ?></div>
-  <div class="api-command-status-copy">
-    <span class="eyebrow">Estado actual</span>
-    <h2><?= View::e((string) ($status['label'] ?? 'No se pudo comprobar')) ?></h2>
-    <p><?= View::e((string) ($status['summary'] ?? 'No hay información disponible.')) ?></p>
-    <small>Comprobado: <?= View::e(DateTimePresenter::formatQueue($overview['checked_at'] ?? null, 'd/m/Y H:i:s')) ?></small>
-  </div>
-  <div class="api-command-status-actions">
-    <?php if ($apiStopped): ?>
-      <a class="btn primary" href="<?= View::e($base) ?>/stop/">Abrir freno de mano</a>
-    <?php else: ?>
-      <?php if (($incidents['remote_active_count'] ?? 0) > 0): ?><a class="btn primary" href="<?= View::e($base) ?>/settings/api-health/incidents?status=active&amp;origin=remote">Revisar incidente</a><?php endif; ?>
-      <?php if (($protection['pause_count'] ?? 0) > 0): ?><a class="btn primary" href="<?= View::e($base) ?>/settings/api-health/protection">Ver protección</a><?php endif; ?>
-      <?php if (($status['status'] ?? '') === 'unknown'): ?><a class="btn primary" href="<?= View::e($base) ?>/settings/diagnostics">Ejecutar diagnóstico</a><?php endif; ?>
-      <button class="btn" type="button" data-dialog-open="apiPauseDialog">Pausar consultas</button>
-    <?php endif; ?>
-  </div>
-</section>
-
 <section class="api-command-section" aria-labelledby="api-automation-title">
   <header>
     <div>
       <span class="eyebrow">Automatización del ERP</span>
-      <h2 id="api-automation-title"><?= View::e((string) ($automationEvidence['label'] ?? 'Automatización no comprobada')) ?></h2>
-      <p><?= View::e((string) ($automationEvidence['message'] ?? 'Este bloque describe Cron. La conexión con Mercado Libre se evalúa por separado.')) ?></p>
+      <h2 id="api-automation-title">Automatización</h2>
+      <p><span class="status-dot"></span><?= View::e((string) ($automationEvidence['label'] ?? 'Activa')) ?>.</p>
     </div>
-    <a class="btn" href="<?= View::e($base) ?>/settings/cron">Abrir Cron</a>
+    <a class="btn" href="<?= View::e($base) ?>/settings/cron">Ver automatización</a>
   </header>
-  <div class="alert <?= View::e((string) (($automationEvidence['tone'] ?? 'neutral') === 'danger' ? 'danger' : (($automationEvidence['tone'] ?? 'neutral') === 'warning' ? 'warning' : 'info'))) ?>">
-    <strong>Son dos comprobaciones distintas.</strong>
-    Salud API indica si Mercado Libre responde; este bloque indica si Cron está avanzando el trabajo del ERP.
-  </div>
-  <?php if (!empty($automationEvidence['available'])): ?>
-    <div class="api-essential-metrics">
-      <article><span>Seleccionados</span><strong><?= (int) ($automationEvidence['selected'] ?? 0) ?></strong><p><?= (int) ($automationEvidence['started'] ?? 0) ?> comenzaron</p></article>
-      <article><span>Terminados</span><strong><?= (int) ($automationEvidence['completed'] ?? 0) ?></strong><p><?= (int) ($automationEvidence['deferred'] ?? 0) ?> aplazados</p></article>
-      <article><span>Transporte completado</span><strong><?= (int) ($automationEvidence['remote_calls'] ?? 0) ?></strong><p><?= (int) ($automationEvidence['remote_calls_15m'] ?? 0) ?> consultas reales en 15 min; <?= (int) ($automationEvidence['blocked_remote_calls'] ?? 0) ?> bloqueadas antes de salir</p></article>
-      <article><span>Finalizado</span><strong><?= View::e(DateTimePresenter::formatQueue($automationEvidence['finished_at'] ?? null, 'H:i:s')) ?></strong><p>Hora Bogotá</p></article>
-    </div>
-  <?php else: ?>
-    <p class="api-inline-empty"><?= View::e((string) ($automationEvidence['message'] ?? 'Todavía no hay un ciclo automático finalizado.')) ?></p>
-  <?php endif; ?>
 </section>
 
 <?php if (($erpProcessing['status'] ?? '') === 'attention' && !$apiStopped): ?>
   <section class="alert warning">
     <strong>Mercado Libre está disponible.</strong>
     <?= View::e((string) ($erpProcessing['label'] ?? 'Un proceso interno necesita revisión.')) ?>
-    <a href="<?= View::e($base) ?>/settings/api-health/incidents?status=active&amp;origin=local">Ver procesos del ERP</a>
+    <a href="<?= View::e($incidentLink(['status' => 'active', 'origin' => 'local'])) ?>">Ver procesos del ERP</a>
   </section>
 <?php endif; ?>
 
@@ -187,7 +196,7 @@ if (empty($apiHealthPartial)) {
     <strong><?= (int) ($accountSummary['available'] ?? 0) ?> <small>/ <?= (int) ($accountSummary['total'] ?? 0) ?></small></strong>
     <p><?= (int) ($accountSummary['disconnected'] ?? 0) ?> desconectadas</p>
   </article>
-  <a href="<?= View::e($base) ?>/settings/api-health/incidents?status=active">
+  <a href="<?= View::e($incidentLink(['status' => 'active'])) ?>">
     <span>Incidentes activos</span>
     <strong><?= (int) ($incidents['remote_active_count'] ?? 0) ?></strong>
     <p><?= (int) ($incidents['remote_active_count'] ?? 0) > 0 ? 'Respuestas de Mercado Libre por revisar' : 'Sin alertas de Mercado Libre' ?></p>
@@ -223,7 +232,7 @@ if (empty($apiHealthPartial)) {
         <details class="api-row-menu">
           <summary aria-label="Acciones para <?= View::e((string) $row['name']) ?>">⋯</summary>
           <div>
-            <a href="<?= View::e($base) ?>/settings/api-health/incidents?account_id=<?= (int) $row['id'] ?>">Ver incidentes</a>
+            <a href="<?= View::e($incidentLink(['account_id' => (int) $row['id']])) ?>">Ver incidentes</a>
             <a href="<?= View::e($base) ?>/logs?type=api&amp;account_id=<?= (int) $row['id'] ?>">Ver operaciones</a>
             <?php if (!$apiStopped && !$row['paused'] && $row['connected']): ?><button type="button" data-dialog-open="apiPauseDialog" data-account-id="<?= (int) $row['id'] ?>">Pausar cuenta</button><?php endif; ?>
           </div>
@@ -271,4 +280,4 @@ if (empty($apiHealthPartial)) {
 <?php endif; ?>
 
 <?php if (!$apiStopped): $pauseAccounts = $rows; require __DIR__ . '/_api_health_pause_dialog.php'; endif; ?>
-<?php if (empty($apiHealthPartial)): ?><script src="<?= View::e($base) ?>/assets/api-health.js?v=2.34.1" defer></script><?php endif; ?>
+<?php if (empty($apiHealthPartial)): ?><script src="<?= View::e($apiHealthAsset) ?>" defer></script><?php endif; ?>

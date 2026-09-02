@@ -6,28 +6,48 @@ namespace App\Services;
 
 use App\Core\AppPaths;
 use App\Core\Crypto;
+use App\Core\PrivatePathAuthority;
 use RuntimeException;
 use Throwable;
 
 /** Escrow cifrado por cuenta para una respuesta OAuth conocida aún no persistida. */
 final class QueueOAuthDurableRecoveryStore
 {
-    public function __construct(private readonly ?string $directory = null)
+    private PrivatePathAuthority $pathAuthority;
+    /** @var array{created:bool,removed:bool} */
+    private array $probeStatus = ['created' => false, 'removed' => false];
+
+    public function __construct(private readonly ?string $directory = null, ?PrivatePathAuthority $pathAuthority = null)
     {
+        $this->pathAuthority = $pathAuthority ?? new PrivatePathAuthority();
     }
 
     /** Comprueba durabilidad antes del POST sin leer ni sustituir un escrow pendiente. */
     public function assertStorageReady(): void
     {
         $directory = $this->root();
-        $this->ensureDirectory($directory);
+        $identity = $this->ensureDirectory($directory);
         $probe = $directory . '/.preflight-' . bin2hex(random_bytes(6));
-        $this->atomicWrite($probe, ['version' => 1, 'purpose' => 'preflight']);
-        if (!@unlink($probe)) {
-            throw new RuntimeException('Queue OAuth recovery preflight could not be removed.');
+        $this->probeStatus = ['created' => false, 'removed' => false];
+        try {
+            $this->atomicWrite($probe, ['version' => 1, 'purpose' => 'preflight'], $identity);
+            $this->probeStatus['created'] = true;
+        } finally {
+            if (is_file($probe) && !is_link($probe) && @unlink($probe)) {
+                $this->probeStatus['removed'] = true;
+                $this->syncDirectory($directory);
+            }
         }
-        $this->syncDirectory($directory);
+        if (!$this->probeStatus['removed']) {
+            throw new RuntimeException('Queue OAuth recovery preflight could not be cleaned up.');
+        }
     }
+
+    /** @return array{created:bool,removed:bool} */
+    public function probeStatus(): array { return $this->probeStatus; }
+
+    /** @return array<string,mixed> */
+    public function pathDiagnostics(): array { return $this->pathAuthority->assess($this->root()); }
 
     /**
      * @param array{access_token_encrypted:string,refresh_token_encrypted:string,expires_at:string,scope:string,token_type:string} $token
@@ -61,7 +81,12 @@ final class QueueOAuthDurableRecoveryStore
         ];
         $sealed = Crypto::encrypt(json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
         $identityFence = hash_hmac('sha256', trim($expectedMeliUserId), $sealed);
-        $this->atomicWrite($this->path($accountId), [
+        $identity = $this->ensureDirectory($this->root());
+        $target = $this->path($accountId);
+        if (file_exists($target) || is_link($target)) {
+            throw new RuntimeException('Queue OAuth recovery must be reconciled before another token request.');
+        }
+        $this->atomicWrite($target, [
             'version' => 1,
             'state' => 'pending_db_persist',
             'company_id' => $companyId,
@@ -70,17 +95,21 @@ final class QueueOAuthDurableRecoveryStore
             'previous_refresh_version' => $previousRefreshVersion,
             'target_refresh_version' => $targetVersion,
             'sealed_payload' => $sealed,
-        ]);
+        ], $identity);
     }
 
     /** @return array<string,mixed>|null */
     public function load(int $companyId, int $accountId, string $expectedMeliUserId): ?array
     {
         $path = $this->path($accountId);
-        if (!is_file($path)) {
+        $directoryIdentity = $this->ensureDirectory($this->root());
+        if (!file_exists($path) && !is_link($path)) {
             return null;
         }
-        $document = json_decode((string) file_get_contents($path), true);
+        $fileIdentity = $this->pathAuthority->regularFileIdentity($path, $directoryIdentity);
+        $contents = file_get_contents($path);
+        $this->pathAuthority->assertRegularFileIdentity($path, $directoryIdentity, $fileIdentity);
+        $document = json_decode((string) $contents, true);
         if (!is_array($document) || ($document['state'] ?? '') !== 'pending_db_persist'
             || (int) ($document['company_id'] ?? 0) !== $companyId
             || (int) ($document['meli_account_id'] ?? 0) !== $accountId
@@ -109,15 +138,20 @@ final class QueueOAuthDurableRecoveryStore
     public function clear(int $accountId, int $targetRefreshVersion): void
     {
         $path = $this->path($accountId);
-        if (!is_file($path)) {
+        $directoryIdentity = $this->ensureDirectory($this->root());
+        if (!file_exists($path) && !is_link($path)) {
             return;
         }
-        $document = json_decode((string) file_get_contents($path), true);
+        $fileIdentity = $this->pathAuthority->regularFileIdentity($path, $directoryIdentity);
+        $contents = file_get_contents($path);
+        $this->pathAuthority->assertRegularFileIdentity($path, $directoryIdentity, $fileIdentity);
+        $document = json_decode((string) $contents, true);
         if (!is_array($document)
             || (int) ($document['meli_account_id'] ?? 0) !== $accountId
             || (int) ($document['target_refresh_version'] ?? -1) !== $targetRefreshVersion) {
             throw new RuntimeException('Queue OAuth recovery clear fence was rejected.');
         }
+        $this->pathAuthority->assertRegularFileIdentity($path, $directoryIdentity, $fileIdentity);
         if (!@unlink($path)) {
             throw new RuntimeException('Queue OAuth recovery could not be cleared.');
         }
@@ -135,46 +169,56 @@ final class QueueOAuthDurableRecoveryStore
     }
 
     /** @param array<string,mixed> $payload */
-    private function atomicWrite(string $path, array $payload): void
+    private function atomicWrite(string $path, array $payload, ?array $directoryIdentity = null): void
     {
         $directory = dirname($path);
-        $this->ensureDirectory($directory);
+        $directoryIdentity ??= $this->ensureDirectory($directory);
+        $this->pathAuthority->assertDirectoryIdentity($directory, $directoryIdentity);
+        if (file_exists($path) || is_link($path)) {
+            throw new RuntimeException('Queue OAuth recovery target already exists.');
+        }
         $temporary = $path . '.tmp-' . bin2hex(random_bytes(6));
         $handle = @fopen($temporary, 'xb');
         if (!is_resource($handle)) {
             throw new RuntimeException('Queue OAuth recovery temporary file is unavailable.');
         }
         try {
-            $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
-            if (fwrite($handle, $json) !== strlen($json) || !fflush($handle)) {
-                throw new RuntimeException('Queue OAuth recovery could not be flushed.');
+            try {
+                $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+                if (fwrite($handle, $json) !== strlen($json) || !fflush($handle)) {
+                    throw new RuntimeException('Queue OAuth recovery could not be flushed.');
+                }
+                if (function_exists('fsync') && !fsync($handle)) {
+                    throw new RuntimeException('Queue OAuth recovery could not be synchronized.');
+                }
+            } finally {
+                fclose($handle);
             }
-            if (function_exists('fsync') && !fsync($handle)) {
-                throw new RuntimeException('Queue OAuth recovery could not be synchronized.');
+            if (DIRECTORY_SEPARATOR === '/' && !@chmod($temporary, 0600)) {
+                throw new RuntimeException('Queue OAuth recovery temporary permissions could not be restricted.');
             }
-        } finally {
-            fclose($handle);
+            $this->pathAuthority->regularFileIdentity($temporary, $directoryIdentity);
+            $this->pathAuthority->assertDirectoryIdentity($directory, $directoryIdentity);
+            if (!@rename($temporary, $path)) {
+                throw new RuntimeException('Queue OAuth recovery could not be published atomically.');
+            }
+        } catch (Throwable $error) {
+            if (!is_link($temporary)) {
+                @unlink($temporary);
+            }
+            throw $error;
         }
-        if (DIRECTORY_SEPARATOR === '/' && !@chmod($temporary, 0600)) {
-            @unlink($temporary);
-            throw new RuntimeException('Queue OAuth recovery temporary permissions could not be restricted.');
-        }
-        if (!@rename($temporary, $path)) {
-            @unlink($temporary);
-            throw new RuntimeException('Queue OAuth recovery could not be published atomically.');
-        }
+        $this->pathAuthority->regularFileIdentity($path, $directoryIdentity);
         if (DIRECTORY_SEPARATOR === '/' && (!@chmod($path, 0600) || (((int) @fileperms($path)) & 0077) !== 0)) {
             throw new RuntimeException('Queue OAuth recovery file permissions are not private.');
         }
         $this->syncDirectory($directory);
     }
 
-    private function ensureDirectory(string $directory): void
+    /** @return array{path:string,device:int,inode:int,type:int} */
+    private function ensureDirectory(string $directory): array
     {
-        if (!is_dir($directory) && !@mkdir($directory, 0700, true) && !is_dir($directory)) {
-            throw new RuntimeException('Queue OAuth recovery directory is unavailable.');
-        }
-        $this->assertPrivateLocation($directory);
+        $identity = $this->pathAuthority->ensurePrivateDirectory($directory, 0700);
         if (DIRECTORY_SEPARATOR === '/' && !@chmod($directory, 0700)) {
             throw new RuntimeException('Queue OAuth recovery directory permissions could not be restricted.');
         }
@@ -184,36 +228,7 @@ final class QueueOAuthDurableRecoveryStore
         if (DIRECTORY_SEPARATOR === '/' && ((int) @fileperms($directory) & 0077) !== 0) {
             throw new RuntimeException('Queue OAuth recovery directory permissions are not private.');
         }
-    }
-
-    private function assertPrivateLocation(string $directory): void
-    {
-        $real = realpath($directory);
-        if ($real === false || is_link($directory)) {
-            throw new RuntimeException('Queue OAuth recovery path is not a trusted directory.');
-        }
-        $candidate = str_replace('\\', '/', rtrim($real, '/\\')) . '/';
-        $served = array_filter([
-            $_SERVER['DOCUMENT_ROOT'] ?? null,
-            AppPaths::releaseRoot(),
-        ], 'is_string');
-        foreach ($served as $root) {
-            $servedReal = realpath((string) $root);
-            if ($servedReal === false) {
-                continue;
-            }
-            $servedPath = str_replace('\\', '/', rtrim($servedReal, '/\\')) . '/';
-            if (str_starts_with($candidate, $servedPath)) {
-                throw new RuntimeException('Queue OAuth recovery path must remain outside the served application tree.');
-            }
-        }
-        $cursor = $real;
-        while ($cursor !== dirname($cursor)) {
-            if (is_link($cursor)) {
-                throw new RuntimeException('Queue OAuth recovery path cannot traverse a symbolic link.');
-            }
-            $cursor = dirname($cursor);
-        }
+        return $identity;
     }
 
     /** Linux durability fence. Other supported platforms retain atomic rename semantics. */

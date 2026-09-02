@@ -191,12 +191,12 @@ if (empty($summary['available'])) {
         <thead><tr><th><a href="<?= View::e($sortLink('date')) ?>">Fecha</a></th><th><a href="<?= View::e($sortLink('type')) ?>">Tipo</a></th><th><a href="<?= View::e($sortLink('account')) ?>">Cuenta</a></th><th><a href="<?= View::e($sortLink('http')) ?>">Nivel/HTTP</a></th><th><a href="<?= View::e($sortLink('operation')) ?>">Operación</a></th><th><a href="<?= View::e($sortLink('message')) ?>">Mensaje</a></th><th>Interpretación</th></tr></thead>
         <tbody>
         <?php if ($rows === []): ?><tr><td colspan="7"><div class="empty-state"><strong>No hay eventos para estos filtros</strong></div></td></tr><?php endif; ?>
-        <?php foreach ($rows as $row): $meaning = $presenter->present($row); ?>
+        <?php foreach ($rows as $row): $meaning = $presenter->present($row); $httpLabel = !empty($meaning['reached_remote']) ? (string) ($row['http_status'] ?? 'Interno') : 'Sin HTTP remoto'; ?>
           <tr>
             <td data-label="Fecha"><?= View::e(DateTimePresenter::format($row['created_at'] ?? null)) ?></td>
             <td data-label="Tipo"><?= View::e((string) $meaning['state']) ?></td>
             <td data-label="Cuenta"><?= View::e((string) ($row['account_name'] ?? '—')) ?></td>
-            <td data-label="Nivel/HTTP"><span class="badge <?= View::e((string) $meaning['class']) ?>"><?= View::e((string) ($row['http_status'] ?? 'Interno')) ?></span><small class="risk-label">Riesgo: <?= View::e((string) $meaning['risk']) ?></small></td>
+            <td data-label="Nivel/HTTP"><span class="badge <?= View::e((string) $meaning['class']) ?>"><?= View::e($httpLabel) ?></span><small class="risk-label">Riesgo: <?= View::e((string) $meaning['risk']) ?></small></td>
             <td data-label="Operación"><strong><?= View::e(\App\Services\UiLabelPresenter::apiOperation((string) ($row['method'] ?? ''), (string) ($row['endpoint_path'] ?? ''))) ?></strong><?php if ($view === 'technical'): ?><code><?= View::e((string) ($row['method'] ?? '')) ?> <?= View::e((string) ($row['endpoint_path'] ?? '—')) ?></code><?php endif; ?></td>
             <td data-label="Mensaje"><?= View::e((string) ($row['message'] ?? '—')) ?></td>
             <td data-label="Interpretación"><details class="log-meaning"><summary>¿Qué significa?</summary><div><strong><?= View::e((string) $meaning['title']) ?></strong><p><?= View::e((string) $meaning['meaning']) ?></p><dl><div><dt>Llegó a Mercado Libre</dt><dd><?= !empty($meaning['reached_remote']) ? 'Sí' : 'No' ?></dd></div><div><dt>Posibilidad de bloqueo</dt><dd><?= !empty($meaning['blocking']) ? 'Sí' : 'No' ?></dd></div><div><dt>Acción</dt><dd><?= View::e((string) $meaning['action']) ?></dd></div></dl></div></details></td>

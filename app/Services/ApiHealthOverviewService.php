@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Core\Auth;
 use App\Core\Database;
+use PDO;
 use Throwable;
 
 final class ApiHealthOverviewService
@@ -20,7 +21,7 @@ final class ApiHealthOverviewService
     /** @return array<string,mixed> */
     public function overview(int $hours = 24, ?int $accountId = null): array
     {
-        $hours = in_array($hours, [24, 168, 720], true)
+        $hours = in_array($hours, [1, 24, 168, 720], true)
             ? $hours
             : max(1, min(720, $this->settings->int('api.health.default_period_hours', 24)));
         $accountId = $accountId !== null && $accountId > 0 ? $accountId : null;
@@ -40,6 +41,7 @@ final class ApiHealthOverviewService
         $healthScope = (new ApiHealthAccessScope())->snapshot($accountId);
         $authorizedAccountIds = $healthScope['account_ids'];
         $service = new ApiHealthService();
+        $incidentMaterializer = $service->incidentReadModelFreshness();
         $accounts = $service->accounts();
         if ($accountId !== null) {
             $accounts = array_values(array_filter($accounts, static fn(array $account): bool => (int) ($account['id'] ?? 0) === $accountId));
@@ -104,6 +106,7 @@ final class ApiHealthOverviewService
         // cuentas, incidentes y automatizacion compartan una sola generacion.
         $evidence = [];
         $evidence['automation_evidence'] = $this->automationEvidence($systemSafety, $accountId);
+        $operatorWindows = $this->apiOperatorWindows($accountId);
         // Consultar disponibilidad al final. Una lectura de incidentes o actividad
         // puede fallar después de obtener cuentas/estadísticas; usar el valor
         // temprano presentaba una salud verde junto a secciones incomprobables.
@@ -158,9 +161,11 @@ final class ApiHealthOverviewService
 
         $snapshotState = !$dataAvailable
             ? 'unavailable'
-            : ($accountSummary['total'] === 0 && $totals['sent'] === 0 && $activeIncidents === []
+            : (!$incidentMaterializer['current']
+                ? 'partial'
+                : ($accountSummary['total'] === 0 && $totals['sent'] === 0 && $activeIncidents === []
                 ? 'authoritative_empty'
-                : 'complete');
+                : 'complete'));
         $checkedAt = gmdate('Y-m-d H:i:s');
         $generation = hash('sha256', implode('|', [
             $checkedAt,
@@ -174,7 +179,11 @@ final class ApiHealthOverviewService
             'authoritative' => in_array($snapshotState, ['complete', 'authoritative_empty'], true),
             'data_availability' => [
                 'available' => $dataAvailable,
-                'label' => $dataAvailable ? 'Datos comprobados' : 'No se pudo comprobar',
+                'label' => !$dataAvailable
+                    ? 'No se pudo comprobar'
+                    : ($snapshotState === 'partial'
+                        ? 'Parcial: el materializador está alcanzando los eventos recientes'
+                        : 'Datos comprobados'),
                 'checked_at' => $checkedAt,
                 'generation' => $generation,
             ],
@@ -224,8 +233,12 @@ final class ApiHealthOverviewService
                 'recent_seconds' => $recentSeconds,
                 'stale_seconds' => $staleSeconds,
                 'counts' => $freshnessCounts,
+                'incident_materializer' => $incidentMaterializer + [
+                    'lag' => max(0, $incidentMaterializer['latest_log_id'] - $incidentMaterializer['last_log_id']),
+                ],
             ],
             'recent_activity' => $activity,
+            'operator_windows' => $operatorWindows,
             'erp_processing' => [
                 'status' => $erpAttention ? 'attention' : 'healthy',
                 'label' => $uncertainResults > 0
@@ -243,24 +256,87 @@ final class ApiHealthOverviewService
         ];
     }
 
+    /** @return array<string,mixed> */
+    private function apiOperatorWindows(?int $accountId): array
+    {
+        try {
+            $schema = new SchemaInspectorService();
+            $missing = $schema->missingRequirements([
+                'api_request_logs' => [
+                    'id', 'company_id', 'meli_account_id', 'method', 'endpoint_path', 'http_status',
+                    'outcome_class', 'reached_remote', 'created_at',
+                ],
+            ]);
+            if ($missing !== []) {
+                $this->technicalDataAvailable = false;
+                return ['available' => false, 'source_label' => 'NO CERTIFICADO', 'windows' => []];
+            }
+            $scope = (new ApiHealthAccessScope())->predicate('l', 'api_health_operator_windows', $accountId);
+            $pdo = Database::connectionFresh();
+            $windows = [];
+            foreach (['60m' => 1, '24h' => 24, '30d' => 720] as $label => $hours) {
+                $stmt = $pdo->prepare(
+                    'SELECT
+                        COALESCE(SUM(l.reached_remote=1 AND l.http_status=429),0) remote_429,
+                        COALESCE(SUM(l.reached_remote=1 AND l.http_status>=500),0) remote_5xx,
+                        COALESCE(SUM(l.reached_remote=1 AND l.http_status IN (401,403)),0) oauth_or_permission,
+                        COALESCE(SUM(l.reached_remote=0 AND l.outcome_class="policy_delay"),0) local_protections,
+                        MAX(CASE WHEN l.reached_remote=1 AND l.http_status=429 THEN l.created_at ELSE NULL END) last_remote_429_at,
+                        MAX(l.created_at) latest_telemetry_at
+                     FROM api_request_logs l
+                     WHERE l.created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL :hours HOUR)
+                       AND ' . $scope['sql']
+                );
+                $stmt->execute(['hours' => $hours] + $scope['params']);
+                $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+                $windows[$label] = [
+                    'remote_429' => (int) ($row['remote_429'] ?? 0),
+                    'remote_5xx' => (int) ($row['remote_5xx'] ?? 0),
+                    'oauth_or_permission' => (int) ($row['oauth_or_permission'] ?? 0),
+                    'local_protections' => (int) ($row['local_protections'] ?? 0),
+                    'last_remote_429_at' => $row['last_remote_429_at'] ?: null,
+                    'latest_telemetry_at' => $row['latest_telemetry_at'] ?: null,
+                ];
+            }
+            return [
+                'available' => true,
+                'source_label' => 'CERTIFICADO · api_request_logs directo',
+                'provenance' => '60m es estado actual; 24h es contexto; 30d es histórico.',
+                'windows' => $windows,
+            ];
+        } catch (Throwable) {
+            $this->technicalDataAvailable = false;
+            return ['available' => false, 'source_label' => 'NO CERTIFICADO', 'windows' => []];
+        }
+    }
+
     private function uncertainResults(?int $accountId): int
     {
         try {
-            if (!(new SchemaInspectorService())->hasTable('system_execution_attempts')) {
+            $schema = new SchemaInspectorService();
+            if (!$schema->hasTable('queue_v4_clean_attempts')
+                || !$schema->hasTable('queue_v4_clean_recovery_events')) {
                 return 0;
             }
-            $scope = new BusinessScopeContext();
-            $ids = $accountId !== null ? [(int) $scope->account($accountId)['id']] : $scope->accountIds();
-            if ($ids === []) {
+            $access = (new ApiHealthAccessScope())->snapshot($accountId);
+            $companyIds = array_values(array_map('intval', $access['company_ids']));
+            $accountIds = array_values(array_map('intval', $access['account_ids']));
+            if ($companyIds === [] || $accountIds === []) {
                 return 0;
             }
-            $sql = 'SELECT COUNT(*) FROM system_execution_attempts
-                    WHERE state="uncertain"
-                      AND NOT (reached_remote=1 AND response_status BETWEEN 200 AND 299)
-                      AND meli_account_id IN ('
-                . implode(',', array_fill(0, count($ids), '?')) . ')';
+            $sql = 'SELECT COUNT(*)
+                    FROM queue_v4_clean_attempts a
+                    INNER JOIN queue_v4_clean_jobs j
+                      ON j.id=a.job_id AND j.company_id=a.company_id AND j.meli_account_id=a.meli_account_id
+                    LEFT JOIN queue_v4_clean_recovery_events re
+                      ON re.attempt_id=a.id AND re.job_id=a.job_id
+                     AND re.company_id=a.company_id AND re.meli_account_id=a.meli_account_id
+                    WHERE a.dispatch_state="PHYSICAL_STARTED"
+                      AND a.response_known_at IS NULL AND re.id IS NULL
+                      AND a.company_id IN (' . implode(',', array_fill(0, count($companyIds), '?')) . ')
+                      AND a.meli_account_id IN (' . implode(',', array_fill(0, count($accountIds), '?')) . ')';
             $stmt = Database::connectionFresh()->prepare($sql);
-            $stmt->execute($ids);
+            $stmt->execute(array_merge($companyIds, $accountIds));
             return (int) $stmt->fetchColumn();
         } catch (Throwable) {
             $this->technicalDataAvailable = false;
@@ -287,7 +363,7 @@ final class ApiHealthOverviewService
             'api-health-automation-evidence',
             $cacheKey,
             10,
-            fn(): array => $this->buildAutomationEvidence($accountId)
+            fn(): array => $this->buildQueueV4AutomationEvidence($accountId)
         );
         $value = $cached['value'];
         $value['cache'] = $cached['cache'];
@@ -295,134 +371,53 @@ final class ApiHealthOverviewService
     }
 
     /** @return array<string,mixed> */
-    private function buildAutomationEvidence(?int $accountId = null): array
+    private function buildQueueV4AutomationEvidence(?int $accountId = null): array
     {
         try {
             $access = (new ApiHealthAccessScope())->snapshot($accountId);
-            // Los ciclos históricos anteriores al contrato por tenant no guardan
-            // empresa/cuenta en la cabecera ni en todos sus pasos. Por tanto solo
-            // son una lectura válida para quien tiene alcance explícito de toda la
-            // aplicación. Una cuenta seleccionada o un administrador parcial nunca
-            // debe recibir totales globales disfrazados de métricas filtradas.
-            if ($accountId !== null || !$access['application']) {
-                $evidence = $this->unavailableAutomationEvidence(
-                    $accountId !== null
-                        ? 'La automatización global no puede atribuirse con seguridad a esta cuenta.'
-                        : 'La automatización global solo está disponible con alcance administrativo completo.'
-                );
-                $evidence['scope'] = $accountId !== null ? 'account' : 'authorized_businesses';
-                $evidence['scope_label'] = $accountId !== null
-                    ? 'Cuenta seleccionada; métricas globales protegidas'
-                    : 'Empresas autorizadas; métricas globales protegidas';
-                $evidence['authoritative'] = false;
-                return $evidence;
+            if ($accountId !== null && !in_array($accountId, array_map('intval', $access['account_ids']), true)) {
+                return $this->unavailableAutomationEvidence('La cuenta no pertenece al alcance administrativo actual.');
             }
-            $row = Database::connectionFresh()->query(
-                'SELECT latest.*,recent.remote_calls recent_remote_calls,
-                        recent.completed recent_completed,recent.deferred recent_deferred,
-                        backlog.pending backlog
-                 FROM system_work_queue_runs latest
-                 CROSS JOIN (
-                     SELECT COALESCE(SUM(remote_call_count),0) remote_calls,
-                            COALESCE(SUM(completed_count),0) completed,
-                            COALESCE(SUM(deferred_count),0) deferred
-                       FROM system_work_queue_runs
-                      WHERE origin="scheduled_cli"
-                        AND finished_at>=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 15 MINUTE)
-                 ) recent
-                 CROSS JOIN (
-                     SELECT COALESCE(SUM(last_work_count),0) pending FROM cron_task_state
-                 ) backlog
-                 WHERE latest.origin="scheduled_cli" AND latest.finished_at IS NOT NULL
-                 ORDER BY latest.finished_at DESC,latest.id DESC
-                 LIMIT 1'
-            )->fetch(\PDO::FETCH_ASSOC);
-            if (!is_array($row)) {
-                return $this->unavailableAutomationEvidence('Todavía no hay un ciclo automático finalizado');
-            }
-
-            $backlog = max(0, (int) ($row['backlog'] ?? 0));
-
-            $remoteCalls = max(0, (int) ($row['remote_call_count'] ?? $row['api_calls_used'] ?? 0));
-            $attemptedRemoteCalls = max(0, (int) ($row['attempted_remote_call_count'] ?? $remoteCalls));
-            $blockedRemoteCalls = max(0, (int) ($row['blocked_remote_call_count'] ?? 0));
-            $completed = max(0, (int) ($row['completed_count'] ?? $row['processed_count'] ?? 0));
-            $deferred = max(0, (int) ($row['deferred_count'] ?? 0));
-            $failed = max(0, (int) ($row['failed_count'] ?? $row['error_count'] ?? 0));
-            $finishedAt = isset($row['finished_at']) ? (string) $row['finished_at'] : '';
-            $finishedTimestamp = (new SystemDatabaseUtcClock())->timestamp($finishedAt);
-            $expectedInterval = max(1, min(60, $this->settings->int('cron.main_interval_minutes', 1)));
-            $staleAfter = max(180, ($expectedInterval * 60 * 3));
-            $ageSeconds = $finishedTimestamp > 0 ? max(0, time() - $finishedTimestamp) : null;
-            $isLate = $ageSeconds === null || $ageSeconds > $staleAfter;
-            $hasFailure = $failed > 0 || (string) ($row['status'] ?? '') === 'error';
-            $recentRemote = max(0, (int) ($row['recent_remote_calls'] ?? 0));
-            $recentCompleted = max(0, (int) ($row['recent_completed'] ?? 0));
-            $recentDeferred = max(0, (int) ($row['recent_deferred'] ?? 0));
-            $state = match (true) {
-                $hasFailure => 'attention',
-                $isLate => 'delayed',
-                $recentRemote > 0 => 'progressing',
-                $recentCompleted > 0 => 'local_only',
-                $backlog > 0 && $recentDeferred > 0 => 'deferred',
-                $backlog > 0 => 'stalled',
-                default => 'signal_only',
-            };
-            $label = match ($state) {
-                'attention' => 'Necesita revisión',
-                'delayed' => 'Automatización atrasada',
-                'progressing' => 'Automatización avanzando',
-                'local_only' => 'Avance local; sin transporte remoto',
-                'deferred' => 'Activa, pero aplazando trabajo',
-                'stalled' => 'Activa, pero sin avance comprobado',
-                default => 'Señal activa; sin trabajo pendiente',
-            };
-            $tone = match ($state) {
-                'attention' => 'danger',
-                'delayed', 'deferred', 'stalled' => 'warning',
-                default => 'success',
-            };
-
+            $snapshot = (new \App\QueueV4Clean\QueueV4CleanHealthSnapshotService(
+                Database::connectionFresh()
+            ))->snapshot($accountId, $access['company_ids'], $access['account_ids']);
+            $totals = is_array($snapshot['totals'] ?? null) ? $snapshot['totals'] : [];
+            $runtime = is_array($snapshot['runtime'] ?? null) ? $snapshot['runtime'] : [];
+            $state = (string) ($snapshot['state'] ?? 'attention');
             return [
                 'available' => true,
-                'state' => $state,
-                'tone' => $tone,
-                'label' => $label,
-                'source' => 'latest_finished_scheduled_cli',
-                'scope' => 'global',
-                'scope_label' => 'Automatización global autorizada',
+                'state' => $state === 'healthy' ? 'progressing' : $state,
+                'tone' => $state === 'healthy' ? 'success' : ($state === 'stopped' ? 'neutral' : 'warning'),
+                'label' => (string) ($snapshot['state_label'] ?? 'Queue V4 por comprobar'),
+                'source' => 'queue_v4_clean_authority',
+                'scope' => $accountId !== null ? 'account' : 'authorized_businesses',
+                'scope_label' => $accountId !== null ? 'Cuenta seleccionada' : 'Queue V4 autorizada',
                 'authoritative' => true,
-                'status' => (string) ($row['status'] ?? 'unknown'),
-                'finished_at' => $row['finished_at'] ?? null,
-                'selected' => max(0, (int) ($row['selected_count'] ?? 0)),
-                'started' => max(0, (int) ($row['started_count'] ?? 0)),
-                'completed' => $completed,
-                'deferred' => $deferred,
-                'remote_calls' => $remoteCalls,
-                'attempted_remote_calls' => $attemptedRemoteCalls,
-                'blocked_remote_calls' => $blockedRemoteCalls,
-                'failed' => $failed,
-                'useful_activity' => $completed > 0 || $remoteCalls > 0,
-                'backlog' => $backlog,
-                'remote_calls_15m' => $recentRemote,
-                'completed_15m' => $recentCompleted,
-                'deferred_15m' => $recentDeferred,
-                'age_seconds' => $ageSeconds,
-                'stale_after_seconds' => $staleAfter,
-                'message' => $isLate
-                    ? 'La conexión con Mercado Libre puede estar sana, pero Cron no registra un ciclo reciente. Revise Automatización.'
-                    : ($hasFailure
-                        ? 'Cron recibió señal, pero el último ciclo terminó con asuntos por revisar.'
-                        : match ($state) {
-                            'progressing' => 'Cron confirmó consultas remotas durante los últimos 15 minutos.',
-                            'local_only' => 'Cron completó trabajo local, pero no confirmó consultas remotas durante los últimos 15 minutos.',
-                            'deferred' => 'Cron recibe señal, pero las protecciones están aplazando el trabajo pendiente.',
-                            'stalled' => 'Cron recibe señal y existe backlog, pero no hay avance comprobado en los últimos 15 minutos.',
-                            default => 'Cron recibe señal y no hay trabajo pendiente que completar.',
-                        }),
+                'status' => (string) ($runtime['engine'] ?? 'UNKNOWN'),
+                'finished_at' => $runtime['last_scheduler_at'] ?? null,
+                'selected' => (int) ($totals['ready'] ?? 0),
+                'started' => (int) ($totals['running'] ?? 0),
+                'completed' => (int) ($totals['completed_last_hour'] ?? 0),
+                'deferred' => (int) ($totals['waiting'] ?? 0),
+                'remote_calls' => (int) ($totals['http_last_hour'] ?? 0),
+                'attempted_remote_calls' => (int) ($totals['http_last_hour'] ?? 0),
+                'blocked_remote_calls' => 0,
+                'failed' => (int) ($totals['dead'] ?? 0),
+                'useful_activity' => (int) ($totals['completed_last_hour'] ?? 0) > 0
+                    || (int) ($totals['http_last_hour'] ?? 0) > 0,
+                'backlog' => (int) ($totals['pending'] ?? 0),
+                'remote_calls_15m' => null,
+                'completed_15m' => null,
+                'deferred_15m' => null,
+                'age_seconds' => $runtime['heartbeat_age_seconds'] ?? null,
+                'stale_after_seconds' => 180,
+                'sales_audit' => $snapshot['sales_audit'] ?? [],
+                'oauth' => $snapshot['oauth'] ?? [],
+                'materializer' => $snapshot['materializer'] ?? [],
+                'message' => (string) ($snapshot['state_message'] ?? 'Queue V4 no pudo comprobarse.'),
             ];
         } catch (Throwable) {
-            return $this->unavailableAutomationEvidence('No se pudo comprobar el último ciclo automático');
+            return $this->unavailableAutomationEvidence('No se pudo comprobar Queue V4 Clean.');
         }
     }
 

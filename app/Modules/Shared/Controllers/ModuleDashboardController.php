@@ -26,6 +26,8 @@ abstract class ModuleDashboardController
     {
         Auth::requireRole('admin', 'operator');
         Csrf::validate($_POST['_token'] ?? null);
+        throw new \App\Core\HttpException(410, 'La automatización de módulos está retirada. No se creó ningún trabajo.');
+
         $account = (new BusinessScopeContext())->account($this->accountId());
         (new ModuleJobRunner())->enqueueScoped(
             $this->moduleId(),

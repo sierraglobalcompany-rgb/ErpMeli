@@ -654,13 +654,20 @@ final class SyncController
     {
         Auth::requireRole('admin');
         Csrf::validate($_POST['_token'] ?? null);
+        $requestedEnable = isset($_POST['sync_daily_enabled']);
+        foreach ((array) ($_POST['rules'] ?? []) as $rule) {
+            $requestedEnable = $requestedEnable || (is_array($rule) && !empty($rule['enabled']));
+        }
+        if ($requestedEnable) {
+            Session::flash('info', 'La programación recurrente automática está retirada. No se creó trabajo ni se cambió la configuración.');
+            $this->redirect('/sync/recurring');
+        }
         try {
             $accountIds = (new BusinessScopeContext())->accountIds((int) Auth::id());
             (new RecurringSyncService())->save((array) ($_POST['rules'] ?? []), $accountIds);
             $settings = new \App\Services\AppSettingsService();
             $settings->set('sync.daily_enabled', isset($_POST['sync_daily_enabled']) ? '1' : '0', 'sync');
-            $settings->set('questions.frequency_minutes', (string) max(5, min(240, (int) ($_POST['questions_frequency_minutes'] ?? 30))), 'questions');
-            Session::flash('success', 'Programación automática guardada.');
+            Session::flash('success', 'Las reglas recurrentes quedaron desactivadas. No se creó trabajo nuevo.');
         } catch (\Throwable $e) {
             Session::flash('error', \App\Services\SafeErrorPresenter::message($e));
         }

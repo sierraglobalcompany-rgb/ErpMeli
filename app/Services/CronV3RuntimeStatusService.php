@@ -115,12 +115,7 @@ final class CronV3RuntimeStatusService
     /** @return array<string,string> */
     private function commands(): array
     {
-        $root = str_replace('\\', '/', \App\Core\AppPaths::releaseRoot());
-        return [
-            'remove_v2' => '/usr/bin/php ' . $root . '/jobs/process_sync_queue.php',
-            'v3_local_active' => '/usr/bin/php ' . $root . '/jobs/cron_v3_local.php --runtime=45 --max-items=50',
-            'v3_remote_active' => '/usr/bin/php ' . $root . '/jobs/cron_v3_remote.php --delay=10 --runtime=35 --max-http=12',
-        ];
+        return [];
     }
 
     private function ageSeconds(mixed $value): ?int

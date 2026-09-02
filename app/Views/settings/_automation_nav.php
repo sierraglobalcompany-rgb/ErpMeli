@@ -5,15 +5,15 @@ use App\Core\View;
 $base = rtrim(Env::get('APP_URL', ''), '/');
 $automationTab = $automationTab ?? 'summary';
 $tabs = [
-    'summary' => ['/settings/cron', 'Resumen'],
+    'summary' => ['/settings/cron', 'Automático'],
     'next' => ['/settings/cron/next', 'Próxima ejecución'],
     'queue' => ['/settings/cron/queue', 'Cola completa'],
     'history' => ['/settings/cron/history', 'Historial'],
     'diagnostics' => ['/settings/cron/diagnostics', 'Diagnóstico'],
-    'manual' => ['/settings/manual-processing', 'Procesar ahora'],
+    'manual' => ['/settings/manual-processing', 'Manual'],
 ];
 ?>
-<nav class="section-tabs automation-tabs" aria-label="Centro de Automatización">
+<nav class="section-tabs automation-tabs" aria-label="Procesamiento del ERP">
   <?php foreach ($tabs as $key => [$path, $label]): ?>
     <a href="<?= View::e($base . $path) ?>" <?= $automationTab === $key ? 'aria-current="page" class="active"' : '' ?>><?= View::e($label) ?></a>
   <?php endforeach; ?>

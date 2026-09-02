@@ -82,6 +82,7 @@ $backupCenterUrl = $base . '/settings/backups?return_to=' . rawurlencode($return
   <div>
     <span class="eyebrow">Configuración · mantenimiento local</span>
     <h1>Saneamiento de base de datos</h1>
+    <p><span class="badge neutral">LOCAL_ONLY</span> Avanza sólo en esta pestaña; no depende de Cron ni se ejecuta en segundo plano.</p>
     <p>Archive y retire ruido técnico sin tocar ventas, pagos, cierres ni evidencia fiscal.</p>
   </div>
   <div class="page-actions">

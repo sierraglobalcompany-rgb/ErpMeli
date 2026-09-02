@@ -125,6 +125,7 @@ final class NotificationWorkItemService
             $workCorrelationId,
             $eventId,
         ]);
+        $this->admitCanonicalWork($workId, $accountId);
         return $workId;
     }
 
@@ -592,6 +593,125 @@ final class NotificationWorkItemService
             $diagnosticId = $this->reportWorkError($work, $error, 'processing');
             $this->failOrRetry($work, $owner, $error, $diagnosticId);
             return ['status' => 'error', 'processed' => 0, 'errors' => 1, 'message' => $this->safeMessage($error), 'diagnostic_id' => $diagnosticId];
+        }
+    }
+
+    /** @return array<string,mixed> */
+    public function processQueueV4Exact(
+        int $workId,
+        int $accountId,
+        int $companyId,
+        ?float $deadline = null
+    ): array {
+        $deadline ??= $this->effectiveDeadline(null, 30);
+        if (!$this->canStartResource($deadline)) {
+            return [
+                'status' => 'deferred',
+                'processed' => 0,
+                'deferred' => 1,
+                'stop_reason' => 'lane_deadline',
+                'message' => 'La ventana segura terminó antes de reservar esta notificación.',
+                'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 60),
+            ];
+        }
+        $state = $this->inspectExact($workId, $accountId, $companyId);
+        if (!$state->eligible) {
+            return [
+                'status' => $state->terminal ? 'skipped' : 'deferred',
+                'processed' => 0,
+                'message' => $state->message,
+                'next_eligible_at' => $state->nextEligibleAt,
+            ];
+        }
+        $owner = 'queue-v4-notification-' . $workId . '-' . bin2hex(random_bytes(4));
+        $work = $this->lease($workId, $owner, false);
+        if ($work === null) {
+            return [
+                'status' => 'deferred',
+                'processed' => 0,
+                'message' => 'Otro proceso reservó el recurso antes de este paso.',
+                'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 15),
+            ];
+        }
+        $started = microtime(true);
+        try {
+            $result = $this->processOne($work, true);
+            $this->complete($work, $owner, $result, (int) round((microtime(true) - $started) * 1000));
+            return [
+                'status' => 'complete',
+                'processed' => 1,
+                'message' => (string) $result['message'],
+                'result' => (string) $result['result'],
+            ];
+        } catch (ApiBudgetExhaustedException $waiting) {
+            $diagnosticId = 'WAIT-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(3));
+            $safeAt = (new SystemDatabaseUtcClock())->timestamp((string) ($waiting->nextSafeAt ?? ''));
+            $minutes = $safeAt !== null ? max(1, (int) ceil(($safeAt - time()) / 60)) : 1;
+            $this->defer($work, $owner, $minutes, $waiting instanceof ApiRhythmDeferredException ? 'api_rhythm_deferred' : 'api_budget_exhausted', $waiting->getMessage(), $diagnosticId, 'policy', false);
+            return ['status' => $waiting instanceof ApiRhythmDeferredException ? 'waiting_rhythm' : 'waiting_budget', 'processed' => 0, 'message' => $waiting->getMessage(), 'next_eligible_at' => $waiting->nextSafeAt];
+        } catch (RemoteResultUncertainException $uncertain) {
+            $diagnosticId = $this->reportWorkError($work, $uncertain, 'fencing');
+            $this->markActionRequired($work, $owner, $uncertain, $diagnosticId);
+            return ['status' => 'action_required', 'processed' => 0, 'errors' => 1, 'message' => $this->safeMessage($uncertain), 'diagnostic_id' => $diagnosticId];
+        } catch (ManualRemoteCallLimitException) {
+            $this->defer($work, $owner, 1, 'queue_v4_step_limit', 'La consulta principal continuará en el siguiente ciclo.', 'STEP-' . gmdate('Ymd-His'), 'guard', false);
+            return ['status' => 'deferred', 'processed' => 0, 'message' => 'El recurso continuará después del intervalo.', 'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 60)];
+        } catch (ApiManualPauseException $pause) {
+            $diagnosticId = 'PAUSE-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(3));
+            $this->defer($work, $owner, 5, 'api_manual_pause', $pause->getMessage(), $diagnosticId, 'guard', false);
+            return ['status' => 'deferred', 'processed' => 0, 'message' => 'La protección preventiva aplazó esta consulta.', 'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 300)];
+        } catch (MeliApiException $error) {
+            $diagnosticId = $this->reportWorkError($work, $error, 'api');
+            $this->deferApiError($work, $owner, $error, $diagnosticId);
+            return ['status' => 'deferred', 'processed' => 0, 'message' => $this->safeMessage($error), 'diagnostic_id' => $diagnosticId];
+        } catch (Throwable $error) {
+            $diagnosticId = $this->reportWorkError($work, $error, 'processing');
+            $this->failOrRetry($work, $owner, $error, $diagnosticId);
+            return ['status' => 'error', 'processed' => 0, 'errors' => 1, 'message' => $this->safeMessage($error), 'diagnostic_id' => $diagnosticId];
+        }
+    }
+
+    private function admitCanonicalWork(int $workId, ?int $accountId): void
+    {
+        if ($workId < 1 || $accountId === null || $accountId < 1) {
+            return;
+        }
+        $pdo = Database::connection();
+        $ownsTransaction = !$pdo->inTransaction();
+        if ($ownsTransaction) {
+            $pdo->beginTransaction();
+        }
+        try {
+            $lookup = $pdo->prepare(
+                'SELECT w.id,w.status,a.company_id,w.meli_account_id
+                 FROM meli_notification_work_items w
+                 JOIN meli_accounts a ON a.id=w.meli_account_id
+                 WHERE w.id=? AND w.meli_account_id=? LIMIT 1 FOR UPDATE'
+            );
+            $lookup->execute([$workId, $accountId]);
+            $row = $lookup->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($row) || !in_array((string) ($row['status'] ?? ''), ['pending', 'retry'], true)) {
+                if ($ownsTransaction) {
+                    $pdo->commit();
+                }
+                return;
+            }
+
+            (new CronAdmissionService($pdo))->submit(
+                'notification_work_item',
+                (int) $row['company_id'],
+                (int) $row['meli_account_id'],
+                $workId,
+                'source:' . $workId
+            );
+            if ($ownsTransaction) {
+                $pdo->commit();
+            }
+        } catch (Throwable $error) {
+            if ($ownsTransaction && $pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
         }
     }
 

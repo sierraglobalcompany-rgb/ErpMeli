@@ -7,7 +7,7 @@ $importStatus = is_array($importStatus ?? null) ? $importStatus : null;
 $label = static fn(string $state): string => match ($state) {
     'not_started' => 'Sin preparar',
     'queued' => 'Preparado',
-    'running' => 'Verificando',
+    'running' => 'En ejecución',
     'needs_repair' => 'Faltantes',
     'repairing' => 'Descargando',
     'date_repair_needed' => 'Fechas',
@@ -30,7 +30,7 @@ $label = static fn(string $state): string => match ($state) {
       <div class="sales-import-bar"><i style="width: <?= (int) $importStatus['progress']['percent'] ?>%"></i></div>
     </div>
     <div><span>Verificados</span><strong><?= (int) $importStatus['progress']['verified'] ?>/<?= (int) $importStatus['progress']['total'] ?></strong></div>
-    <div><span>En proceso</span><strong><?= (int) $importStatus['progress']['working'] ?></strong></div>
+    <div><span>Preparados o ejecutándose</span><strong><?= (int) $importStatus['progress']['working'] ?></strong></div>
     <div><span>Atención</span><strong><?= (int) $importStatus['progress']['attention'] ?></strong></div>
   </div>
   <div class="sales-import-months" aria-label="Meses del año">

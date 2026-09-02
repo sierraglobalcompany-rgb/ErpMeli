@@ -1,5 +1,4 @@
 <?php
-use App\Core\Csrf;
 use App\Core\Env;
 use App\Core\View;
 use App\Services\DateTimePresenter;
@@ -7,12 +6,7 @@ $base = rtrim((string) Env::get('APP_URL', ''), '/');
 ?>
 <div class="page-head"><div><h1>Devoluciones / Reclamos</h1><p>Solo lectura. Se relacionan con órdenes si el recurso de la API lo permite.</p></div></div>
 <section class="panel filter-bar">
-  <form method="post" action="<?= View::e($base) ?>/claims/sync" class="inline-form">
-    <input type="hidden" name="_token" value="<?= Csrf::token() ?>">
-    <div class="field"><label>Cuenta Mercado Libre</label><select class="input" name="account_id" required><option value="">Seleccione</option><?php foreach($options['accounts'] as $a): ?><option value="<?= (int)$a['id'] ?>" <?= (int)$filters['account_id']===(int)$a['id']?'selected':'' ?>><?= View::e($a['account_name']) ?></option><?php endforeach; ?></select></div>
-    <button class="btn primary">Sincronizar reclamos abiertos</button>
-    <span class="muted">Usa endpoints post-purchase confirmados. Sin gestionar reclamos.</span>
-  </form>
+  <p class="muted">La búsqueda general de reclamos está retirada porque no tiene consumidor vigente. Los reclamos exactos notificados conservan su ruta segura.</p>
 </section>
 <section class="panel filter-bar">
   <form class="filters" method="get" action="<?= View::e($base) ?>/claims">

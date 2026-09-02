@@ -8,7 +8,7 @@ $pages = max(1, (int) ceil($total / max(1, $perPage)));
 ?>
 <div class="page-head compact-head">
   <div>
-    <p class="eyebrow">PROCESAR AHORA · RESULTADO DEL CÁLCULO</p>
+    <p class="eyebrow">PROCESAMIENTO MANUAL · RESULTADO DEL CÁLCULO</p>
     <h1><?= View::e($definition['label']) ?></h1>
     <p><?= View::e($definition['explanation']) ?></p>
   </div>
@@ -32,7 +32,7 @@ $pages = max(1, (int) ceil($total / max(1, $perPage)));
 <section class="panel manual-exclusion-help">
   <div class="panel-body">
     <strong>¿Por qué no se ejecutan todos desde aquí?</strong>
-    <p><em>Procesar ahora</em> acelera consultas exactas que pueden reservarse y repetirse con seguridad. No salta errores, horarios, locks ni trabajos por etapas: hacerlo podría duplicar consultas o perder un checkpoint.</p>
+    <p><em>Procesamiento manual</em> acelera consultas exactas que pueden reservarse y repetirse con seguridad. No salta errores, horarios, locks ni trabajos por etapas: hacerlo podría duplicar consultas o perder un checkpoint.</p>
   </div>
 </section>
 

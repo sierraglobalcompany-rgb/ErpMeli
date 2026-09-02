@@ -16,6 +16,16 @@ use Throwable;
  */
 final class ApiRhythmPolicyService
 {
+    private const ORDERS_SEARCH_ENDPOINT = 'orders_search';
+    private const ORDERS_SEARCH_WINDOW_SECONDS = 900;
+    private const ORDERS_SEARCH_LOCAL_CEILING = 30;
+    private const BILLING_ENDPOINT = 'billing_orders';
+    private const BILLING_PATH = '/billing/integration/group/ML/order/details';
+    private const BILLING_MIN_INTERVAL_SECONDS = 300;
+    private const BILLING_429_ESCALATION_WINDOW_HOURS = 72;
+    private const BILLING_429_BACKOFF_MIN_MINUTES = 15;
+    private const BILLING_429_BACKOFF_MAX_MINUTES = 120;
+    private const BILLING_PHYSICAL_EVENT_DEDUPE_TOLERANCE_SECONDS = 3.0;
     private static ?bool $schemaAvailable = null;
 
     /** @var array<string,int> */
@@ -35,6 +45,18 @@ final class ApiRhythmPolicyService
     ];
 
     public function __construct(private readonly AppSettingsService $settings = new AppSettingsService()) {}
+
+    /** @return array{interval_seconds:int,scope:string,runtime_source:string,file_sha256:string|null} */
+    public static function billingPacingDiagnosticPolicy(): array
+    {
+        $file = __FILE__;
+        return [
+            'interval_seconds' => self::BILLING_MIN_INTERVAL_SECONDS,
+            'scope' => 'GLOBAL_ERP',
+            'runtime_source' => self::class,
+            'file_sha256' => is_file($file) ? hash_file('sha256', $file) : null,
+        ];
+    }
 
     /** @param array<string,mixed> $meta @return array<string,mixed> */
     public function reserve(?int $accountId, string $method, string $path, array $meta = []): array
@@ -70,6 +92,16 @@ final class ApiRhythmPolicyService
                 $state = $pdo->query(
                     "SELECT * FROM api_rhythm_states WHERE scope_key='global' FOR UPDATE"
                 )->fetch(PDO::FETCH_ASSOC) ?: [];
+
+                $billingBlock = $this->billingBlock($pdo, $endpointKey);
+                if ($billingBlock !== null) {
+                    $pdo->rollBack();
+                    throw new ApiRhythmDeferredException(
+                        (string) $billingBlock['message'],
+                        (string) $billingBlock['next_safe_at'],
+                        (string) $billingBlock['scope']
+                    );
+                }
 
                 // Solo puede existir una reserva global viva. Sin este fence,
                 // dos procesos concurrentes podrían iniciar transporte antes
@@ -190,6 +222,7 @@ final class ApiRhythmPolicyService
                     'effective_interval_ms' => (int) $policy['minimum_interval_ms'],
                     'target_http_per_minute' => (int) $policy['target_http_per_minute'],
                     'current_adaptive_limit' => (int) $policy['current_adaptive_limit'],
+                    'endpoint_key' => $endpointKey,
                     'blocking_scope' => null,
                 ];
             } catch (Throwable $error) {
@@ -458,6 +491,7 @@ final class ApiRhythmPolicyService
         $current = $this->settings->int('api.rhythm.current_adaptive_limit', $ramp[0]);
         $current = max($ramp[0], min($target, $current));
         $minimumInterval = max(1000, min(60000, $this->settings->int('api.rhythm.minimum_interval_ms', 1000)));
+        $billing429Backoff = $this->billing429BackoffMinutes();
         return [
             'mode' => $profile,
             'profile' => $profile,
@@ -474,6 +508,11 @@ final class ApiRhythmPolicyService
             'ramp_p95_http_ms' => max(500, min(60000, $this->settings->int('api.rhythm.ramp_p95_http_ms', 5000))),
             'ramp_require_drainage' => $this->settings->bool('api.rhythm.ramp_require_drainage', true),
             'current_level_started_at' => trim((string) $this->settings->get('api.rhythm.current_level_started_at', '')),
+            'billing_429_backoff_minutes' => $billing429Backoff,
+            'billing_429_backoff_1_minutes' => $billing429Backoff[1],
+            'billing_429_backoff_2_minutes' => $billing429Backoff[2],
+            'billing_429_backoff_3_minutes' => $billing429Backoff[3],
+            'billing_429_backoff_max_minutes' => $billing429Backoff[4],
             // Compatibilidad de lectura con presentadores 2.28.15–2.28.30.
             'calls_per_block' => $target,
             'interval_ms' => $minimumInterval,
@@ -509,6 +548,70 @@ final class ApiRhythmPolicyService
         }
 
         return self::RAMPS[$target] ?? [min(15, $target), $target];
+    }
+
+    /** @return array{1:int,2:int,3:int,4:int} */
+    private function billing429BackoffMinutes(): array
+    {
+        return self::normalizeBilling429BackoffMinutes([
+            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_1_minutes', 15),
+            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_2_minutes', 30),
+            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_3_minutes', 60),
+            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_max_minutes', 120),
+        ]);
+    }
+
+    /**
+     * Canonical form shared by every configuration surface. A lower later
+     * step is raised, never silently turned into a shorter prior protection.
+     *
+     * @param array{0?:mixed,1?:mixed,2?:mixed,3?:mixed} $values
+     * @return array{1:int,2:int,3:int,4:int}
+     */
+    public static function normalizeBilling429BackoffMinutes(array $values): array
+    {
+        $first = self::boundedBilling429BackoffMinutes($values[0] ?? 15);
+        $second = max($first, self::boundedBilling429BackoffMinutes($values[1] ?? 30));
+        $third = max($second, self::boundedBilling429BackoffMinutes($values[2] ?? 60));
+        $maximum = max($third, self::boundedBilling429BackoffMinutes($values[3] ?? 120));
+
+        return [1 => $first, 2 => $second, 3 => $third, 4 => $maximum];
+    }
+
+    private static function boundedBilling429BackoffMinutes(mixed $value): int
+    {
+        return max(15, min(120, (int) $value));
+    }
+
+    private function billing429BackoffMinuteValue(string $key, int $default): int
+    {
+        return max(
+            self::BILLING_429_BACKOFF_MIN_MINUTES,
+            min(self::BILLING_429_BACKOFF_MAX_MINUTES, $this->settings->int($key, $default))
+        );
+    }
+
+    /** @return array<string,mixed> */
+    public function billing429BackoffDiagnostic(?int $currentRetryAfterSeconds = null): array
+    {
+        try {
+            return $this->billing429BackoffState(Database::connectionFresh(), $currentRetryAfterSeconds);
+        } catch (Throwable $e) {
+            return [
+                'status' => 'ERROR',
+                'error_class' => $e::class,
+                'streak' => 0,
+                'level' => 0,
+                'fallback_seconds' => 0,
+                'retry_after_seconds' => 0,
+                'retry_after_source' => 'none',
+                'backoff_seconds' => 0,
+                'backoff_until' => null,
+                'backoff_active' => false,
+                'last_real_at' => null,
+                'last_success_at' => null,
+            ];
+        }
     }
 
     /** @return array<string,mixed> */
@@ -737,6 +840,32 @@ final class ApiRhythmPolicyService
         int $globalLimit,
         int $windowSeconds
     ): ?array {
+        if (hash_equals(self::ORDERS_SEARCH_ENDPOINT, $endpointKey)) {
+            $ordersSearch = $this->rollingCount(
+                $pdo,
+                'endpoint_shared',
+                $endpointKey,
+                self::ORDERS_SEARCH_WINDOW_SECONDS
+            );
+            $ceiling = max(
+                1,
+                min(
+                    self::ORDERS_SEARCH_LOCAL_CEILING,
+                    $this->settings->int(
+                        'api.rhythm.orders_search_requests_per_15m',
+                        self::ORDERS_SEARCH_LOCAL_CEILING
+                    )
+                )
+            );
+            if ($ordersSearch['count'] >= $ceiling) {
+                return $this->rollingDeferred(
+                    $ordersSearch['oldest'],
+                    self::ORDERS_SEARCH_WINDOW_SECONDS,
+                    'rhythm_shared_orders_search_window'
+                );
+            }
+        }
+
         $global = $this->rollingCount($pdo, '', null, $windowSeconds);
         if ($global['count'] >= $globalLimit) {
             return $this->rollingDeferred($global['oldest'], $windowSeconds, 'rhythm_global_window');
@@ -757,23 +886,32 @@ final class ApiRhythmPolicyService
                 'scope' => 'rhythm_penalty_state_unavailable',
             ];
         }
+        $now = microtime(true);
         foreach ($scopeRows as $row) {
+            $scopeKey = (string) $row['scope_key'];
+            $endpointScoped = str_starts_with($scopeKey, 'endpoint:');
             $blockedUntil = $this->timestampMicros($row['blocked_until'] ?? null);
-            if ($blockedUntil !== null && $blockedUntil > microtime(true)) {
+            // Un HTTP 429 puede detener el endpoint que lo recibió, pero no
+            // convertir una reducción adaptativa de cuenta en un apagado de
+            // Fresh, orders u OAuth. Las filas account:* históricas siguen
+            // aportando su límite reducido, nunca una frontera absoluta.
+            if ($endpointScoped && $blockedUntil !== null && $blockedUntil > $now) {
                 return [
                     'message' => 'Mercado Libre solicitó esperar antes de otra consulta para este alcance.',
                     'next_safe_at' => $this->formatTimestamp($blockedUntil),
                     'scope' => 'retry_after',
                 ];
             }
-            $scopeKey = (string) $row['scope_key'];
-            $kind = str_starts_with($scopeKey, 'endpoint:') ? 'endpoint' : 'account';
+            $reducedUntil = $this->timestampMicros($row['reduced_until'] ?? null);
+            if ($reducedUntil === null || $reducedUntil <= $now) {
+                continue;
+            }
+            $kind = $endpointScoped ? 'endpoint_shared' : 'account';
             $count = $this->rollingCount(
                 $pdo,
                 $kind,
-                $kind === 'endpoint' ? $endpointKey : $accountId,
-                $windowSeconds,
-                $kind === 'endpoint' ? $accountId : null
+                $kind === 'endpoint_shared' ? $endpointKey : $accountId,
+                $windowSeconds
             );
             $limit = max(1, min($globalLimit, (int) $row['reduced_limit_per_minute']));
             if ($count['count'] >= $limit) {
@@ -781,6 +919,329 @@ final class ApiRhythmPolicyService
             }
         }
         return null;
+    }
+
+    /**
+     * Contención local y temporal del endpoint Billing. La fila global de
+     * ritmo ya está bloqueada por reserve(), de modo que dos procesos no
+     * pueden observar simultáneamente una frontera física elegible.
+     *
+     * @return array{message:string,next_safe_at:string,scope:string}|null
+     */
+    private function billingBlock(
+        PDO $pdo,
+        string $endpointKey,
+        ?int $currentRetryAfterSeconds = null
+    ): ?array {
+        if (!hash_equals(self::BILLING_ENDPOINT, $endpointKey)) {
+            return null;
+        }
+
+        $logRetryAfterExpr = $this->columnExists($pdo, 'api_request_logs', 'retry_after_seconds')
+            ? 'COALESCE(retry_after_seconds,0)'
+            : '0';
+        $statement = $pdo->prepare(
+            "SELECT UNIX_TIMESTAMP(UTC_TIMESTAMP(3)) now_epoch,
+                    (SELECT UNIX_TIMESTAMP(MAX(dispatched_at))
+                       FROM api_remote_permits
+                      WHERE endpoint_key=? AND dispatched_at IS NOT NULL) last_dispatch_epoch,
+                    (SELECT COUNT(*)
+                       FROM api_request_logs
+                      WHERE endpoint_path=? AND http_status=429 AND reached_remote=1
+                        AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)) log_rate_count,
+                    (SELECT COUNT(*)
+                       FROM api_remote_permits
+                      WHERE endpoint_key=? AND http_status=429 AND dispatched_at IS NOT NULL
+                        AND COALESCE(completed_at,dispatched_at)>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)) permit_rate_count,
+                    (SELECT UNIX_TIMESTAMP(MAX(created_at))
+                       FROM api_request_logs
+                      WHERE endpoint_path=? AND http_status=429 AND reached_remote=1
+                        AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)) last_log_rate_epoch,
+                    (SELECT UNIX_TIMESTAMP(MAX(COALESCE(completed_at,dispatched_at)))
+                       FROM api_remote_permits
+                      WHERE endpoint_key=? AND http_status=429 AND dispatched_at IS NOT NULL
+                        AND COALESCE(completed_at,dispatched_at)>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)) last_permit_rate_epoch,
+                    (SELECT {$logRetryAfterExpr}
+                       FROM api_request_logs
+                      WHERE endpoint_path=? AND http_status=429 AND reached_remote=1
+                        AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)
+                      ORDER BY created_at DESC,id DESC LIMIT 1) last_retry_after,
+                    (SELECT UNIX_TIMESTAMP(blocked_until)
+                       FROM api_rhythm_penalties
+                      WHERE scope_key=? AND blocked_until>UTC_TIMESTAMP(3)
+                      LIMIT 1) persisted_block_epoch"
+        );
+        $statement->execute([
+            self::BILLING_ENDPOINT,
+            self::BILLING_PATH,
+            self::BILLING_ENDPOINT,
+            self::BILLING_PATH,
+            self::BILLING_ENDPOINT,
+            self::BILLING_PATH,
+            $this->endpointPenaltyKey(self::BILLING_ENDPOINT),
+        ]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC) ?: [];
+        $now = (float) ($row['now_epoch'] ?? microtime(true));
+        $next = 0.0;
+        $scope = 'billing_endpoint_interval';
+
+        $lastDispatch = (float) ($row['last_dispatch_epoch'] ?? 0);
+        if ($lastDispatch > 0) {
+            $next = $lastDispatch + self::BILLING_MIN_INTERVAL_SECONDS;
+        }
+
+        $billing429State = $this->billing429BackoffState($pdo, $currentRetryAfterSeconds);
+        $rateNext = 0.0;
+        $rateNextText = (string) ($billing429State['backoff_until'] ?? '');
+        if ($rateNextText !== '') {
+            $rateNext = (float) ($this->timestampMicros($rateNextText) ?? 0.0);
+            if ($rateNext >= $next) {
+                $next = $rateNext;
+                $scope = 'billing_429_backoff';
+            }
+        }
+
+        $persistedBlock = (float) ($row['persisted_block_epoch'] ?? 0);
+        if ($persistedBlock > $next) {
+            $effectivePersistedBlock = $rateNext > 0.0 ? min($persistedBlock, $rateNext) : $persistedBlock;
+            if ($effectivePersistedBlock > $next) {
+                $next = $effectivePersistedBlock;
+                $scope = 'billing_429_backoff';
+            }
+        }
+        if ($next <= $now) {
+            return null;
+        }
+
+        return [
+            'message' => $scope === 'billing_429_backoff'
+                ? 'Billing quedó aplazado por la protección progresiva posterior a HTTP 429.'
+                : 'Billing admite una salida física cada cinco minutos en toda la aplicación.',
+            'next_safe_at' => $this->formatTimestamp($next),
+            'scope' => $scope,
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function billing429BackoffState(PDO $pdo, ?int $currentRetryAfterSeconds = null): array
+    {
+        $logHasRetryAfter = $this->columnExists($pdo, 'api_request_logs', 'retry_after_seconds');
+        $permitHasRetryAfter = $this->columnExists($pdo, 'api_remote_permits', 'retry_after_seconds');
+        $rawEvents = $this->billing429AndSuccessEvents($pdo);
+        $dedupe = $this->dedupeBillingPhysicalEvents($rawEvents);
+        $events = $dedupe['events'];
+        $backoffMinutes = $this->billing429BackoffMinutes();
+        $streak = 0;
+        $last429At = null;
+        $lastSuccessAt = null;
+        $retryAfter = max(0, (int) ($currentRetryAfterSeconds ?? 0));
+        $retryAfterSource = $retryAfter > 0 ? 'current_error' : 'none';
+
+        foreach ($events as $event) {
+            $status = (int) ($event['http_status'] ?? 0);
+            $at = (string) ($event['event_at'] ?? '');
+            if ($at === '') {
+                continue;
+            }
+
+            if ($status >= 200 && $status < 300) {
+                $lastSuccessAt ??= $at;
+                break;
+            }
+
+            if ($status === 429) {
+                $last429At ??= $at;
+                $streak++;
+                $eventRetryAfter = max(0, (int) ($event['retry_after_seconds'] ?? 0));
+                if ($eventRetryAfter > $retryAfter) {
+                    $retryAfter = $eventRetryAfter;
+                    $retryAfterSource = (string) (($event['retry_after_source'] ?? null) ?: ($event['source'] ?? 'persisted_event'));
+                }
+            }
+        }
+
+        foreach ($events as $event) {
+            $status = (int) ($event['http_status'] ?? 0);
+            if ($lastSuccessAt === null && $status >= 200 && $status < 300) {
+                $lastSuccessAt = (string) ($event['event_at'] ?? '');
+            }
+        }
+
+        $level = min(4, $streak);
+        $fallbackSeconds = $level > 0 ? (int) (($backoffMinutes[$level] ?? $backoffMinutes[4]) * 60) : 0;
+        $backoffSeconds = max($fallbackSeconds, $retryAfter);
+        $last429Epoch = $last429At !== null ? $this->timestampMicros($last429At) : null;
+        $backoffUntil = ($last429Epoch !== null && $backoffSeconds > 0)
+            ? $this->formatTimestamp($last429Epoch + $backoffSeconds)
+            : null;
+        $backoffUntilEpoch = $backoffUntil !== null ? $this->timestampMicros($backoffUntil) : null;
+
+        return [
+            'status' => 'OK',
+            'streak' => $streak,
+            'level' => $level,
+            'fallback_seconds' => $fallbackSeconds,
+            'retry_after_seconds' => $retryAfter,
+            'retry_after_source' => $retryAfterSource,
+            'backoff_seconds' => $backoffSeconds,
+            'backoff_until' => $backoffUntil,
+            'backoff_active' => $backoffUntilEpoch !== null && $backoffUntilEpoch > microtime(true),
+            'last_real_at' => $last429At,
+            'last_success_at' => $lastSuccessAt,
+            'raw_event_rows' => count($rawEvents),
+            'unique_physical_events' => count($events),
+            'duplicate_rows_deduped' => (int) $dedupe['duplicate_rows_deduped'],
+            'physical_correlation_key' => (string) $dedupe['physical_correlation_key'],
+            'correlation_key_available' => (bool) $dedupe['correlation_key_available'],
+            'fallback_dedupe_tolerance_ms' => (int) round(self::BILLING_PHYSICAL_EVENT_DEDUPE_TOLERANCE_SECONDS * 1000),
+            'api_request_logs_has_retry_after_seconds' => $logHasRetryAfter,
+            'api_remote_permits_has_retry_after_seconds' => $permitHasRetryAfter,
+            'api_remote_permits_retry_after_fallback' => $permitHasRetryAfter ? 'COLUMN' : 'ZERO_SCHEMA_SAFE',
+        ];
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function billing429AndSuccessEvents(PDO $pdo): array
+    {
+        $logRetryAfterExpr = $this->columnExists($pdo, 'api_request_logs', 'retry_after_seconds')
+            ? 'COALESCE(retry_after_seconds,0)'
+            : '0';
+        $permitRetryAfterExpr = $this->columnExists($pdo, 'api_remote_permits', 'retry_after_seconds')
+            ? 'COALESCE(retry_after_seconds,0)'
+            : '0';
+        $logAccountExpr = $this->columnExists($pdo, 'api_request_logs', 'meli_account_id')
+            ? 'CAST(meli_account_id AS CHAR)'
+            : "''";
+        $permitAccountExpr = $this->columnExists($pdo, 'api_remote_permits', 'meli_account_id')
+            ? 'CAST(meli_account_id AS CHAR)'
+            : "''";
+        $logPhysicalKeyExpr = $this->columnExists($pdo, 'api_request_logs', 'source_work_id')
+            ? "COALESCE(NULLIF(CAST(source_work_id AS CHAR),''),'')"
+            : "''";
+        $permitPhysicalKeyExpr = $this->columnExists($pdo, 'api_remote_permits', 'work_key')
+            ? "COALESCE(NULLIF(CAST(work_key AS CHAR),''),'')"
+            : "''";
+        $sql = "
+            SELECT 'api_request_logs' source,
+                   id,
+                   http_status,
+                   {$logRetryAfterExpr} AS retry_after_seconds,
+                   created_at event_at,
+                   {$logAccountExpr} account_key,
+                   'billing_orders' endpoint_key,
+                   {$logPhysicalKeyExpr} physical_key
+              FROM api_request_logs
+             WHERE endpoint_path=?
+               AND reached_remote=1
+               AND (http_status=429 OR (http_status>=200 AND http_status<300))
+               AND created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)
+            UNION ALL
+            SELECT 'api_remote_permits' source,
+                   id,
+                   http_status,
+                   {$permitRetryAfterExpr} AS retry_after_seconds,
+                   COALESCE(completed_at,dispatched_at) event_at,
+                   {$permitAccountExpr} account_key,
+                   'billing_orders' endpoint_key,
+                   {$permitPhysicalKeyExpr} physical_key
+              FROM api_remote_permits
+             WHERE endpoint_key=?
+               AND dispatched_at IS NOT NULL
+               AND (http_status=429 OR (http_status>=200 AND http_status<300))
+               AND COALESCE(completed_at,dispatched_at)>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL " . self::BILLING_429_ESCALATION_WINDOW_HOURS . " HOUR)
+             ORDER BY event_at DESC,id DESC";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([self::BILLING_PATH, self::BILLING_ENDPOINT]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+
+    /**
+     * @param list<array<string,mixed>> $events
+     * @return array{events:list<array<string,mixed>>,duplicate_rows_deduped:int,physical_correlation_key:string,correlation_key_available:bool}
+     */
+    private function dedupeBillingPhysicalEvents(array $events): array
+    {
+        $unique = [];
+        $duplicates = 0;
+        $hasPhysicalKey = false;
+
+        foreach ($events as $event) {
+            $status = (int) ($event['http_status'] ?? 0);
+            $account = (string) ($event['account_key'] ?? '');
+            $endpoint = (string) ($event['endpoint_key'] ?? self::BILLING_ENDPOINT);
+            $physicalKey = trim((string) ($event['physical_key'] ?? ''));
+            $eventAt = $this->timestampMicros($event['event_at'] ?? null);
+            if ($physicalKey !== '') {
+                $hasPhysicalKey = true;
+            }
+
+            $duplicateIndex = null;
+            foreach ($unique as $idx => $accepted) {
+                if ((int) ($accepted['http_status'] ?? 0) !== $status) {
+                    continue;
+                }
+                if ((string) ($accepted['account_key'] ?? '') !== $account) {
+                    continue;
+                }
+                if ((string) ($accepted['endpoint_key'] ?? self::BILLING_ENDPOINT) !== $endpoint) {
+                    continue;
+                }
+
+                $acceptedPhysicalKey = trim((string) ($accepted['physical_key'] ?? ''));
+                if ($physicalKey !== '' && $acceptedPhysicalKey !== '' && hash_equals($acceptedPhysicalKey, $physicalKey)) {
+                    $duplicateIndex = $idx;
+                    break;
+                }
+
+                $acceptedAt = $this->timestampMicros($accepted['event_at'] ?? null);
+                if ($eventAt !== null && $acceptedAt !== null && abs($eventAt - $acceptedAt) <= self::BILLING_PHYSICAL_EVENT_DEDUPE_TOLERANCE_SECONDS) {
+                    $duplicateIndex = $idx;
+                    break;
+                }
+            }
+
+            if ($duplicateIndex === null) {
+                $event['dedupe_sources'] = [(string) ($event['source'] ?? 'unknown')];
+                $unique[] = $event;
+                continue;
+            }
+
+            $duplicates++;
+            $existing = $unique[$duplicateIndex];
+            $existingRetryAfter = max(0, (int) ($existing['retry_after_seconds'] ?? 0));
+            $eventRetryAfter = max(0, (int) ($event['retry_after_seconds'] ?? 0));
+            if ($eventRetryAfter > $existingRetryAfter) {
+                $unique[$duplicateIndex]['retry_after_seconds'] = $eventRetryAfter;
+                $unique[$duplicateIndex]['retry_after_source'] = (string) ($event['source'] ?? 'duplicate_event');
+            }
+            $sources = $existing['dedupe_sources'] ?? [];
+            $sources = is_array($sources) ? $sources : [];
+            $sources[] = (string) ($event['source'] ?? 'unknown');
+            $unique[$duplicateIndex]['dedupe_sources'] = array_values(array_unique($sources));
+        }
+
+        return [
+            'events' => $unique,
+            'duplicate_rows_deduped' => $duplicates,
+            'physical_correlation_key' => $hasPhysicalKey
+                ? 'source_work_id/api_request_logs <-> work_key/api_remote_permits when present; fallback account+endpoint+status+time_tolerance'
+                : 'account+endpoint+status+time_tolerance',
+            'correlation_key_available' => $hasPhysicalKey,
+        ];
+    }
+
+    private function columnExists(PDO $pdo, string $table, string $column): bool
+    {
+        if (preg_match('/^[A-Za-z0-9_]+$/', $table) !== 1 || preg_match('/^[A-Za-z0-9_]+$/', $column) !== 1) {
+            return false;
+        }
+        try {
+            $stmt = $pdo->prepare("SHOW COLUMNS FROM `{$table}` LIKE ?");
+            $stmt->execute([$column]);
+            return (bool) $stmt->fetch(PDO::FETCH_ASSOC);
+        } catch (Throwable) {
+            return false;
+        }
     }
 
     /** @return array{count:int,oldest:?string} */
@@ -791,10 +1252,9 @@ final class ApiRhythmPolicyService
         if ($kind === 'account') {
             $where .= ' AND meli_account_id=?';
             $params[] = (int) $value;
-        } elseif ($kind === 'endpoint') {
-            $where .= ' AND endpoint_key=? AND meli_account_id=?';
+        } elseif ($kind === 'endpoint_shared') {
+            $where .= ' AND endpoint_key=?';
             $params[] = (string) $value;
-            $params[] = max(0, (int) $accountId);
         }
         $stmt = $pdo->prepare(
             'SELECT COUNT(*) total,MIN(dispatched_at) oldest FROM api_remote_permits WHERE ' . $where
@@ -822,11 +1282,14 @@ final class ApiRhythmPolicyService
         $stmt = $pdo->prepare(
             "SELECT scope_key,reduced_limit_per_minute,blocked_until,reduced_until
              FROM api_rhythm_penalties
-             WHERE scope_key IN (?,?) AND reduced_until>UTC_TIMESTAMP(3)"
+             WHERE scope_key IN (?,?)
+               AND (reduced_until>UTC_TIMESTAMP(3) OR blocked_until>UTC_TIMESTAMP(3))
+             ORDER BY CASE WHEN scope_key=? THEN 0 ELSE 1 END"
         );
         $stmt->execute([
             'account:' . $accountId,
-            $this->endpointPenaltyKey($accountId, $endpointKey),
+            $this->endpointPenaltyKey($endpointKey),
+            $this->endpointPenaltyKey($endpointKey),
         ]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
@@ -852,9 +1315,9 @@ final class ApiRhythmPolicyService
             }
             $current = max(1, (int) ($permit['current_adaptive_limit'] ?? $this->configuration()['current_adaptive_limit']));
             $reduced = max(1, (int) floor($current / 2));
-            $retry = max(1, min(86400, (int) ($retryAfterSeconds ?? 60)));
+            $retry = $this->rateLimitDelaySeconds($permit, $retryAfterSeconds, $endpointKey);
             $stableMinutes = max(15, min(240, $this->settings->int('api.rhythm.ramp_stable_after_429_minutes', 60)));
-            $upsert = $pdo->prepare(
+            $endpointUpsert = $pdo->prepare(
                 "INSERT INTO api_rhythm_penalties
                  (scope_key,reduced_limit_per_minute,blocked_until,reduced_until,reason,updated_at)
                  VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND),
@@ -865,18 +1328,108 @@ final class ApiRhythmPolicyService
                     reduced_until=GREATEST(reduced_until,VALUES(reduced_until)),
                     reason=VALUES(reason),updated_at=VALUES(updated_at)"
             );
-            foreach (['account:' . $accountId, $this->endpointPenaltyKey($accountId, $endpointKey)] as $scopeKey) {
-                $upsert->execute([$scopeKey, $reduced, $retry, $stableMinutes]);
-            }
+            $endpointUpsert->execute([
+                $this->endpointPenaltyKey($endpointKey),
+                $reduced,
+                $retry,
+                $stableMinutes,
+            ]);
+            $accountUpsert = $pdo->prepare(
+                "INSERT INTO api_rhythm_penalties
+                 (scope_key,reduced_limit_per_minute,blocked_until,reduced_until,reason,updated_at)
+                 VALUES (?, ?, UTC_TIMESTAMP(3),
+                         DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? MINUTE),'http_429',UTC_TIMESTAMP(3))
+                 ON DUPLICATE KEY UPDATE
+                    reduced_limit_per_minute=LEAST(reduced_limit_per_minute,VALUES(reduced_limit_per_minute)),
+                    blocked_until=UTC_TIMESTAMP(3),
+                    reduced_until=GREATEST(reduced_until,VALUES(reduced_until)),
+                    reason=VALUES(reason),updated_at=VALUES(updated_at)"
+            );
+            $accountUpsert->execute(['account:' . $accountId, $reduced, $stableMinutes]);
         } catch (Throwable) {
-            // ApiGuardService conserva Retry-After aunque el registro de la
-            // penalización adaptativa no esté disponible.
+            // El request remoto ya quedó contabilizado. La excepción que se
+            // propaga conserva next_safe_at aunque no se pueda persistir la
+            // penalización adaptativa; Guard no es una autoridad 429.
         }
     }
 
-    private function endpointPenaltyKey(int $accountId, string $endpointKey): string
+    private function endpointPenaltyKey(string $endpointKey): string
     {
-        return 'endpoint:' . $accountId . ':' . hash('sha256', $endpointKey);
+        return 'endpoint:shared:' . hash('sha256', $endpointKey);
+    }
+
+    /**
+     * Devuelve la misma autoridad absoluta usada para persistir el breaker
+     * compartido. El jitter es determinista por permiso: evita estampidas sin
+     * volver imposible probar o explicar la postimagen.
+     *
+     * @param array<string,mixed> $permit
+     */
+    public function rateLimitNextSafeAt(array $permit, ?int $retryAfterSeconds): string
+    {
+        $endpointKey = (string) ($permit['endpoint_key'] ?? '');
+        if (hash_equals(self::BILLING_ENDPOINT, $endpointKey)) {
+            $block = $this->billingBlock(
+                Database::connectionFresh(),
+                $endpointKey,
+                $retryAfterSeconds
+            );
+            if ($block !== null) {
+                return (string) $block['next_safe_at'];
+            }
+        }
+        return $this->formatTimestamp(
+            microtime(true) + $this->rateLimitDelaySeconds($permit, $retryAfterSeconds, $endpointKey)
+        );
+    }
+
+    /**
+     * Fallback defensivo para un 429 que llegue sin el permiso original.
+     * Conserva la misma configuración canónica y no introduce otro breaker.
+     */
+    public function conservativeRateLimitNextSafeAt(): string
+    {
+        return $this->formatTimestamp(
+            microtime(true) + $this->rateLimitDelaySeconds([], null)
+        );
+    }
+
+    /** @param array<string,mixed> $permit */
+    private function rateLimitDelaySeconds(
+        array $permit,
+        ?int $retryAfterSeconds,
+        string $endpointKey = ''
+    ): int
+    {
+        $base = max(
+            60,
+            min(86400, $this->settings->int('api.rhythm.shared_429_backoff_seconds', 300))
+        );
+        $jitterMax = max(
+            0,
+            min(300, $this->settings->int('api.rhythm.shared_429_jitter_seconds', 30))
+        );
+        $token = (string) ($permit['permit_token'] ?? 'shared-rate-limit');
+        $jitter = $jitterMax === 0
+            ? 0
+            : (int) (hexdec(substr(hash('sha256', $token), 0, 8)) % ($jitterMax + 1));
+        // Retry-After nunca se reduce. El tope de un año es únicamente una
+        // defensa de rango DATETIME, no el antiguo recorte artificial a 1 h.
+        $delay = min(31536000, max($base, (int) ($retryAfterSeconds ?? 0)) + $jitter);
+        if (hash_equals(self::BILLING_ENDPOINT, $endpointKey)) {
+            $block = $this->billingBlock(
+                Database::connectionFresh(),
+                $endpointKey,
+                $retryAfterSeconds
+            );
+            if ($block !== null) {
+                $blockedUntil = strtotime((string) $block['next_safe_at'] . ' UTC');
+                if ($blockedUntil !== false) {
+                    $delay = max($delay, $blockedUntil - time());
+                }
+            }
+        }
+        return max(1, $delay);
     }
 
     /** @param array<string,mixed> $permit */

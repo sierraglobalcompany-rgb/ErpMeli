@@ -469,7 +469,6 @@ final class RuntimePublicationPolicy
     {
         return match ($path) {
             'jobs/cron_probe.php' => 'cron_probe',
-            'jobs/process_sync_queue.php' => 'process_sync_queue',
             default => 'runtime_' . trim((string) preg_replace('/[^a-z0-9]+/', '_', strtolower($path)), '_'),
         };
     }

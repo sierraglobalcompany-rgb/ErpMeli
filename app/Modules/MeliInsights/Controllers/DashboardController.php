@@ -45,6 +45,8 @@ final class DashboardController
     {
         Auth::requireRole('admin', 'operator');
         Csrf::validate($_POST['_token'] ?? null);
+        throw new \App\Core\HttpException(410, 'La automatización de módulos está retirada. No se creó ningún trabajo.');
+
         $accountId = filter_input(INPUT_POST, 'meli_account_id', FILTER_VALIDATE_INT);
         $page = in_array((string) ($_POST['page'] ?? ''), ['performance', 'pricing', 'moderations', 'capabilities'], true)
             ? (string) $_POST['page']
@@ -71,6 +73,9 @@ final class DashboardController
         Csrf::validate($_POST['_token'] ?? null);
         $jobId = filter_input(INPUT_POST, 'job_id', FILTER_VALIDATE_INT);
         $action = (string) ($_POST['action'] ?? '');
+        if (in_array($action, ['resume', 'retry'], true)) {
+            throw new \App\Core\HttpException(410, 'La reactivación de trabajos modulares está retirada.');
+        }
         $runner = new ModuleJobRunner();
         $accountId = filter_input(INPUT_POST, 'meli_account_id', FILTER_VALIDATE_INT);
         if (!is_int($accountId) || $accountId <= 0) {

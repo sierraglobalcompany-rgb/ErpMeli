@@ -26,7 +26,7 @@ final class CronEntryStateService
                 'INSERT INTO system_cron_entry_states
                  (component_key,release_version,release_build_id,stage,result_state,
                   processed_count,reached_remote,diagnostic_id,observed_at)
-                 VALUES ("process_sync_queue",?,?,?,?,?,?,?,UTC_TIMESTAMP(3))
+                 VALUES ("queue_v4_clean",?,?,?,?,?,?,?,UTC_TIMESTAMP(3))
                  ON DUPLICATE KEY UPDATE
                     release_version=VALUES(release_version),
                     release_build_id=VALUES(release_build_id),

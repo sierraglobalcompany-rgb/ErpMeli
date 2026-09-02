@@ -22,7 +22,7 @@
     "psr-4": { "App\\": "app/" }
   },
   "scripts": {
-    "test": [
+    "test:legacy-archive": [
       "@php -d error_reporting=-1 -d display_errors=1 tests/run.php",
       "@php -d error_reporting=-1 -d display_errors=1 tests/route_contract.php",
       "@php -d error_reporting=-1 -d display_errors=1 tests/query_performance_report_test.php",
@@ -152,10 +152,55 @@
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_webhook_ownership_b2.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_webhook_lifecycle_b21.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/notification_topic_registry_fail_closed_b21.php"
-      ,"@php -d error_reporting=-1 -d display_errors=1 tests/runtime_publication_policy_b21.php"
+      ,"@php -d error_reporting=-1 -d display_errors=1 tests/runtime_publication_policy_2380.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/runtime_package_attestation_b21a.php"
       ,"@php -d error_reporting=-1 -d display_errors=1 tests/managed_runtime_package_2361.php"
     ],
+    "test": "@test:release-23918",
+    "test:release-2399": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2399.php",
+    "test:release-23910": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_23910.php",
+    "test:release-23915": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_23915.php",
+    "test:release-23916": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_23916.php",
+    "test:release-23917": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_23917.php",
+    "test:release-23918": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_23918.php",
+    "test:release-2397": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2397.php",
+    "test:release-2398": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2398.php",
+    "test:release-2396": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2396.php",
+    "test:release-2395": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2395.php",
+    "test:release-2394": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2394.php",
+    "test:release-2392": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2392.php",
+    "test:release-2393": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2393.php",
+    "test:release-2391": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2391.php",
+    "test:release-2390": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2390.php",
+    "test:release-2389": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2389.php",
+    "test:release-2389-db": [
+      "@php -d error_reporting=-1 -d display_errors=1 tests/sales_repair_transport_authority_2389.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_update_transition_2389.php"
+    ],
+    "test:release-2388": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2388.php",
+    "test:release-2388-db": [
+      "@php -d error_reporting=-1 -d display_errors=1 tests/simple_exact_sales_repair_2388.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/sales_audit_oauth_admission_2387.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_update_transition_2388.php"
+    ],
+    "test:release-2387": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2387.php",
+    "test:release-2387-db": [
+      "@php -d error_reporting=-1 -d display_errors=1 tests/sales_audit_oauth_admission_2387.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_transport_sales_health_2385.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_oauth_real_path_2387.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_update_transition_2387.php"
+    ],
+    "test:release-2384": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2384.php",
+    "test:release-2384-db": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_oauth_real_path_2384.php",
+    "test:release-2385": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2385.php",
+    "test:release-2385-db": [
+      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_transport_sales_health_2385.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_update_transition_2385.php"
+    ],
+    "test:release-2386": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2386.php",
+    "test:release-2386-db": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_oauth_real_path_2386.php",
+    "test:release-2383": "@php -d error_reporting=-1 -d display_errors=1 tests/current_release_suite_2383.php",
+    "test:release-2383-db": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_oauth_control_plane_2383.php",
     "test:sales-control": "@php -d error_reporting=-1 -d display_errors=1 tests/sales_control_2211_mysql_integration.php",
     "test:hf12-db": "@php -d error_reporting=-1 -d display_errors=1 tests/emergency_oauth_refresh_real_integration_hf12.php",
     "test:queue-core": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_phase_b1.php",
@@ -164,6 +209,24 @@
     "test:queue-core-webhook-lifecycle-b21": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_webhook_lifecycle_b21.php",
     "test:notification-topics-b21": "@php -d error_reporting=-1 -d display_errors=1 tests/notification_topic_registry_fail_closed_b21.php",
     "test:runtime-attestation-b21a": "@php -d error_reporting=-1 -d display_errors=1 tests/runtime_package_attestation_b21a.php",
+    "test:release-2380": [
+      "@php -d error_reporting=-1 -d display_errors=1 tests/inventory_contract_2380.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_clean_contract_2380.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/runtime_publication_policy_2380.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/updater_authority_2380.php"
+    ],
+    "test:release-2381": [
+      "@php -d error_reporting=-1 -d display_errors=1 tests/inventory_contract_2380.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_clean_contract_2380.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/runtime_publication_policy_2380.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/updater_authority_2381.php"
+    ],
+    "test:release-2382": [
+      "@php -d error_reporting=-1 -d display_errors=1 tests/inventory_contract_2380.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/queue_v4_clean_contract_2380.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/runtime_publication_policy_2380.php",
+      "@php -d error_reporting=-1 -d display_errors=1 tests/updater_authority_2381.php"
+    ],
     "test:queue-core-webhook-b21-db": "@php -d error_reporting=-1 -d display_errors=1 tests/queue_core_webhook_ownership_b2_mysql.php",
     "test:release-db": "@php -d error_reporting=-1 -d display_errors=1 tests/release_gate.php",
     "lint": "php bin/lint.php",

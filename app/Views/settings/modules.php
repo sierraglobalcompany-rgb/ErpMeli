@@ -29,6 +29,7 @@ $stateLabels = [
     <div>
       <h2 id="module-queue-title">Integridad de trabajos modulares</h2>
       <p data-module-queue-recommendation><?= View::e((string) ($queueHealth['recommendation'] ?? 'Comprobando trabajos después de mostrar los módulos…')) ?></p>
+      <p class="muted"><span class="badge neutral">BUFFER_ONLY</span> Los eventos sin trabajo no se reponen automáticamente; revíselos antes de cualquier cohorte manual.</p>
     </div>
     <?php $queueNeedsAttention = (int)($queueHealth['duplicate_groups'] ?? 0) > 0 || (int)($queueHealth['expired_leases'] ?? 0) > 0 || (int)($queueHealth['orphan_events'] ?? 0) > 0; ?>
     <span class="badge <?= !empty($queueHealth['available']) && !$queueNeedsAttention ? 'success' : 'warning' ?>" data-module-queue-badge>
@@ -41,11 +42,7 @@ $stateLabels = [
     <span><strong data-module-queue-value="expired_leases">—</strong> reservas vencidas</span>
     <span><strong data-module-queue-value="orphan_events">—</strong> eventos sin trabajo</span>
   </div>
-    <form method="post" action="<?= View::e($base) ?>/settings/modules/events/reconcile"
-          data-module-reconcile-form hidden>
-      <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
-      <button class="btn btn-secondary" type="submit">Reconciliar eventos locales</button>
-    </form>
+    <p class="muted" data-module-reconcile-form hidden>La reconciliación automática está retirada; no se crearán trabajos nuevos.</p>
 </section>
 <div class="module-admin-grid">
 <?php foreach ($modules as $module): ?>

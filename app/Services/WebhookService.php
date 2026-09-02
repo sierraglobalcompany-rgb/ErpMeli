@@ -241,17 +241,6 @@ final class WebhookService
         }
     }
 
-    public function processPending(int $limit = 100): array
-    {
-        if (\App\QueueCore\QueueCoreOwnershipGuard::v4OwnsWebhook()) {
-            return \App\QueueCore\QueueCoreOwnershipGuard::skippedResult();
-        }
-        if ((new NotificationWorkItemService())->available()) {
-            return (new NotificationWorkItemService())->processDue($limit);
-        }
-        return (new NotificationCoalescerService())->processDue($limit);
-    }
-
     public function recentEvents(array $filters = [], int $limit = 200, int $offset = 0): array
     {
         try {

@@ -674,12 +674,7 @@ final class CronV3CanaryControlService
     /** @return array<string,string> */
     private function hostingerCommands(): array
     {
-        $root = str_replace('\\', '/', $this->releaseRoot());
-        return [
-            'v2_real' => '/usr/bin/php ' . $root . '/jobs/process_sync_queue.php',
-            'v3_local_active' => '/usr/bin/php ' . $root . '/jobs/cron_v3_local.php --runtime=45 --max-items=50',
-            'v3_remote_active' => '/usr/bin/php ' . $root . '/jobs/cron_v3_remote.php --delay=10 --runtime=35 --max-http=12',
-        ];
+        return [];
     }
 
     /** @param list<string> $blocking @return list<array<string,mixed>> */

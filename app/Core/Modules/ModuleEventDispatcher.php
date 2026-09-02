@@ -9,12 +9,20 @@ use Throwable;
 
 final class ModuleEventDispatcher
 {
+    private const JOB_ADMISSION_ENABLED = false;
+
     public function __construct(private readonly ?ModuleRegistry $registry = null)
     {
     }
 
     public function publish(int $eventId, string $topic, ?int $accountId, ?string $resourceType, ?string $resourceId): void
     {
+        if (!self::JOB_ADMISSION_ENABLED) {
+            // El webhook conserva su evidencia en la autoridad central, pero no
+            // crea eventos o trabajos modulares sin consumidor vigente.
+            return;
+        }
+
         $registry = $this->registry ?? new ModuleRegistry();
         foreach ($registry->enabledProviders() as $provider) {
             if (!in_array($topic, $provider->eventTopics(), true)) {

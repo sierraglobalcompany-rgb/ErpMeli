@@ -40,8 +40,11 @@ final class ApiExecutionMetadataContext
     {
         $previous = self::$current;
         $previousCalls = self::$remoteCalls;
+        $previousManualLimit = self::manualPhysicalHttpLimitFrom($previous);
         self::$current = array_replace(self::$current, $metadata);
-        if (in_array((string) ($metadata['source'] ?? ''), ['queue_core', 'manual_campaign', 'cron_v3_remote', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'], true)) {
+        $currentManualLimit = self::manualPhysicalHttpLimit();
+        if (($currentManualLimit > 0 && $previousManualLimit < 1)
+            || ($currentManualLimit < 1 && MeliTransportSourcePolicy::isSingleDispatch((string) ($metadata['source'] ?? '')))) {
             self::$remoteCalls = 0;
         }
         try {
@@ -76,7 +79,18 @@ final class ApiExecutionMetadataContext
 
     public static function claimRemoteCall(): void
     {
-        if (!in_array((string) (self::$current['source'] ?? ''), ['queue_core', 'manual_campaign', 'cron_v3_remote', 'manual_emergency_canary', 'manual_emergency_oauth_refresh'], true)) {
+        $manualMaximum = self::manualPhysicalHttpLimit();
+        if ($manualMaximum > 0) {
+            if (self::$remoteCalls >= $manualMaximum) {
+                throw new ManualRemoteCallLimitException(
+                    'La siguiente consulta continuará después del intervalo configurado.',
+                    self::manualNextSafeAt()
+                );
+            }
+            self::$remoteCalls++;
+            return;
+        }
+        if (!MeliTransportSourcePolicy::isSingleDispatch((string) (self::$current['source'] ?? ''))) {
             return;
         }
         $maximum = 1;
@@ -86,6 +100,23 @@ final class ApiExecutionMetadataContext
             );
         }
         self::$remoteCalls++;
+    }
+
+    private static function manualPhysicalHttpLimit(): int
+    {
+        return self::manualPhysicalHttpLimitFrom(self::$current);
+    }
+
+    /** @param array<string,scalar|null> $metadata */
+    private static function manualPhysicalHttpLimitFrom(array $metadata): int
+    {
+        return max(0, (int) ($metadata['manual_physical_http_burst_limit'] ?? 0));
+    }
+
+    private static function manualNextSafeAt(): ?string
+    {
+        $value = self::$current['manual_next_safe_at'] ?? null;
+        return is_string($value) && trim($value) !== '' ? trim($value) : null;
     }
 
     public static function markRemoteAttempted(): void

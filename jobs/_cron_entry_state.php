@@ -26,7 +26,7 @@ function cron_entry_state_write(
         'failed_before_bootstrap',
     ];
     $payload = [
-        'component' => 'process_sync_queue',
+        'component' => 'queue_v4_clean',
         'version' => preg_replace('/[^A-Za-z0-9_.-]/', '_', $version),
         'build' => preg_replace('/[^A-Za-z0-9_.-]/', '_', $build),
         'stage' => in_array($stage, $allowedStages, true) ? $stage : 'failed_before_bootstrap',

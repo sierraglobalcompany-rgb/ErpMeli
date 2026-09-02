@@ -59,30 +59,12 @@ final class SettingsController
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
         $rhythm = (new \App\Services\ApiRhythmPolicyService())->preview();
-        $snapshot = (new \App\Services\CronV3OperationalSnapshotService())->snapshot();
-        $totals = is_array($snapshot['totals'] ?? null) ? $snapshot['totals'] : [];
-        $backlog = max(0,
-            (int) ($totals['v3_ready'] ?? 0)
-            + (int) ($totals['v3_deferred'] ?? 0)
-            + (int) ($totals['v3_waiting_rate'] ?? 0)
-            + (int) ($totals['v3_waiting_budget'] ?? 0)
-            + (int) ($totals['v3_waiting_api'] ?? 0)
-        );
-        $rhythm['remote_backlog'] = $backlog;
-        $rhythm['backlog_measured_at'] = $snapshot['measured_at'] ?? null;
-        $rhythm['backlog_protocol'] = $snapshot['protocol'] ?? 'unavailable';
-        $rhythm['parked_backlog'] = (int) ($totals['v3_parked'] ?? 0);
-        $rhythm['legacy_visible_backlog'] = (int) ($totals['legacy_pending_visible'] ?? 0);
-        $rhythm['estimated_drain_minutes'] = (float) ($rhythm['effective_rpm'] ?? 0) > 0
-            ? (int) ceil($backlog / (float) $rhythm['effective_rpm'])
-            : null;
-        $increaseGate = $this->cronV3RhythmIncreaseGate();
+        $snapshot = $this->queueV4RhythmSnapshot();
+        $this->applyQueueV4RhythmSnapshot($rhythm, $snapshot);
+        $increaseGate = $this->queueV4RhythmIncreaseGate($snapshot);
         if (empty($increaseGate['allowed'])) {
             $rhythm['increase_blocker'] = $increaseGate['message'];
         }
-        $rhythm['cron_v3_rate_policy'] = (new \App\Services\CronV3RatePolicyService())->current(
-            max(1, min(300, (int) \App\Core\Env::get('CRON_V3_RATE_LIMIT', '10')))
-        );
         $rhythm['recent_rate_limit_incidents'] = $this->recentRateLimitIncidents();
         View::render('settings/api_workload', compact('rhythm'));
     }
@@ -110,13 +92,14 @@ final class SettingsController
             $target = 30;
         }
         $settings = new AppSettingsService();
+        $billingBackoff = $this->billing429BackoffMinutesFromPost();
         $previousProfile = (string) $settings->get('api.rhythm.profile', '');
         $previousTarget = $settings->int('api.rhythm.target_http_per_minute', $target);
         $previousCurrent = $settings->int('api.rhythm.current_adaptive_limit', min(15, $target));
         $previousAdaptive = $settings->bool('api.rhythm.adaptive_enabled', true);
         $adaptiveEnabled = isset($_POST['adaptive_enabled']);
         if ($target > $previousTarget) {
-            $gate = $this->cronV3RhythmIncreaseGate();
+            $gate = $this->queueV4RhythmIncreaseGate();
             if (empty($gate['allowed'])) {
                 Session::flash('error', 'No se subió el ritmo: ' . $gate['message']);
                 $this->redirect('/settings/cron/rhythm');
@@ -127,11 +110,6 @@ final class SettingsController
         $settings->set('api.rhythm.target_http_per_minute', (string) $target, 'api_rhythm');
         $settings->set('api.rhythm.minimum_interval_ms', '1000', 'api_rhythm');
         $settings->set('api.rhythm.rolling_window_seconds', '60', 'api_rhythm');
-        // Cron V3 usa esta misma autoridad persistida. CRON_V3_RATE_LIMIT
-        // queda únicamente como fallback de seguridad si la base no está
-        // disponible durante el arranque CLI.
-        $settings->set('cron_v3.rate_authority', 'api.rhythm', 'cron_v3');
-        $settings->set('cron_v3.remote_rate_limit', (string) $target, 'cron_v3');
         // Al reducir, el nuevo límite entra inmediatamente. Al aumentar se
         // conserva el nivel actual y la rampa exige evidencia antes de subir.
         $current = min($target, $previousCurrent);
@@ -140,6 +118,7 @@ final class SettingsController
         $settings->set('api.rhythm.interval_ms', '1000', 'api_rhythm');
         $settings->set('api.rhythm.block_pause_ms', '0', 'api_rhythm');
         $settings->set('api.rhythm.adaptive_enabled', $adaptiveEnabled ? '1' : '0', 'api_rhythm');
+        $this->persistBilling429Backoff($settings, $billingBackoff);
         if ($profile === 'custom') {
             $steps = $this->sanitizeRampSteps((string) ($_POST['custom_ramp_steps'] ?? ''), $target);
             $settings->set('api.rhythm.ramp_steps', implode(',', $steps), 'api_rhythm');
@@ -166,6 +145,66 @@ final class SettingsController
         $this->redirect('/settings/cron/rhythm');
     }
 
+    /** @return array{1:int,2:int,3:int,4:int} */
+    private function billing429BackoffMinutesFromPost(): array
+    {
+        return $this->normalizePostedBilling429Backoff([
+            $_POST['billing_429_backoff_1_minutes'] ?? 30,
+            $_POST['billing_429_backoff_2_minutes'] ?? 120,
+            $_POST['billing_429_backoff_3_minutes'] ?? 360,
+            $_POST['billing_429_backoff_max_minutes'] ?? 720,
+        ]);
+    }
+
+    /** @param list<mixed> $values @return array{1:int,2:int,3:int,4:int} */
+    private function normalizePostedBilling429Backoff(array $values): array
+    {
+        foreach ($values as $value) {
+            if (!is_numeric($value) || (int) $value < 5 || (int) $value > 720) {
+                throw new \App\Core\HttpException(422, 'Cada pausa Billing 429 debe estar entre 5 y 720 minutos.');
+            }
+        }
+        return \App\Services\ApiRhythmPolicyService::normalizeBilling429BackoffMinutes($values);
+    }
+
+    /** @return array{1:int,2:int,3:int,4:int}|null */
+    private function billing429BackoffMinutesFromGeneralPost(AppSettingsService $settings): ?array
+    {
+        $keys = [
+            'api.rhythm.billing_429_backoff_1_minutes' => 30,
+            'api.rhythm.billing_429_backoff_2_minutes' => 120,
+            'api.rhythm.billing_429_backoff_3_minutes' => 360,
+            'api.rhythm.billing_429_backoff_max_minutes' => 720,
+        ];
+        $submitted = false;
+        $values = [];
+        foreach ($keys as $key => $default) {
+            $postKey = str_replace('.', '_', $key);
+            $submitted = $submitted || array_key_exists($postKey, $_POST);
+            $values[] = $_POST[$postKey] ?? $settings->get($key, (string) $default) ?? (string) $default;
+        }
+        return $submitted ? $this->normalizePostedBilling429Backoff($values) : null;
+    }
+
+    /** @param array{1:int,2:int,3:int,4:int} $billingBackoff */
+    private function persistBilling429Backoff(AppSettingsService $settings, array $billingBackoff): void
+    {
+        $pdo = Database::connection();
+        $pdo->beginTransaction();
+        try {
+            $settings->set('api.rhythm.billing_429_backoff_1_minutes', (string) $billingBackoff[1], 'api_rhythm');
+            $settings->set('api.rhythm.billing_429_backoff_2_minutes', (string) $billingBackoff[2], 'api_rhythm');
+            $settings->set('api.rhythm.billing_429_backoff_3_minutes', (string) $billingBackoff[3], 'api_rhythm');
+            $settings->set('api.rhythm.billing_429_backoff_max_minutes', (string) $billingBackoff[4], 'api_rhythm');
+            $pdo->commit();
+        } catch (\Throwable $error) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
     /** @return list<int> */
     private function sanitizeRampSteps(string $raw, int $target): array
     {
@@ -189,33 +228,27 @@ final class SettingsController
     }
 
     /** @return array{allowed:bool,message:string} */
-    private function cronV3RhythmIncreaseGate(): array
+    private function queueV4RhythmIncreaseGate(?array $snapshot = null): array
     {
         try {
-            $snapshot = (new \App\Services\CronV3OperationalSnapshotService())->snapshot();
+            $snapshot ??= $this->queueV4RhythmSnapshot();
             $totals = is_array($snapshot['totals'] ?? null) ? $snapshot['totals'] : [];
-            $v3 = is_array($snapshot['v3'] ?? null) ? $snapshot['v3'] : [];
-            $v3Totals = is_array($v3['totals'] ?? null) ? $v3['totals'] : [];
-            if ((int) ($totals['waiting_capability_queues'] ?? 0) > 0) {
-                return ['allowed' => false, 'message' => 'hay colas críticas esperando capacidad V3. Primero cierre esas brechas.'];
+            if ((int) ($totals['dead'] ?? 0) > 0) {
+                return ['allowed' => false, 'message' => 'Queue V4 tiene trabajos muertos; resuelva ese diagnóstico antes de subir el ritmo.'];
             }
-            if ((int) ($totals['review_unsupported_queues'] ?? 0) > 0) {
-                return ['allowed' => false, 'message' => 'hay colas no soportadas que deben quedar explícitas antes de subir el ritmo.'];
+            if ((int) ($totals['stale_running'] ?? 0) > 0) {
+                return ['allowed' => false, 'message' => 'Queue V4 tiene leases vencidos; espere estabilidad antes de subir el ritmo.'];
             }
-            if ((int) ($v3Totals['review'] ?? 0) > 0 || (int) ($v3Totals['dead'] ?? 0) > 0) {
-                return ['allowed' => false, 'message' => 'existen trabajos V3 en revisión o muertos.'];
+            if ((string) ($snapshot['state'] ?? '') !== 'healthy') {
+                return ['allowed' => false, 'message' => 'Queue V4 no tiene una señal reciente y certificada para subir el ritmo.'];
             }
-            if ((int) ($v3Totals['expired_leases'] ?? 0) > 0) {
-                return ['allowed' => false, 'message' => 'hay leases vencidos; espere estabilidad antes de subir el ritmo.'];
-            }
-            $drainage = is_array($snapshot['drainage'] ?? null) ? $snapshot['drainage'] : [];
-            if (empty($drainage['can_claim_decreasing'])) {
-                return ['allowed' => false, 'message' => 'el drenaje todavía no demuestra que el backlog ejecutable baje con snapshots completos.'];
+            if ($this->recentRateLimitIncidents() !== []) {
+                return ['allowed' => false, 'message' => 'hay un 429 remoto reciente; respete la ventana de estabilidad antes de subir el ritmo.'];
             }
 
-            return ['allowed' => true, 'message' => 'Cron V3 tiene evidencia suficiente para subir el ritmo.'];
+            return ['allowed' => true, 'message' => 'Queue V4 tiene evidencia suficiente para subir el ritmo.'];
         } catch (\Throwable) {
-            return ['allowed' => false, 'message' => 'no se pudo comprobar la salud V3 con una lectura completa.'];
+            return ['allowed' => false, 'message' => 'no se pudo comprobar la salud de Queue V4 con una lectura completa.'];
         }
     }
 
@@ -225,24 +258,12 @@ final class SettingsController
         $this->releaseReadOnlySession();
         try {
             $preview = (new \App\Services\ApiRhythmPolicyService())->preview();
-            $snapshot = (new \App\Services\CronV3OperationalSnapshotService())->snapshot();
-            $totals = is_array($snapshot['totals'] ?? null) ? $snapshot['totals'] : [];
-            $backlog = max(0,
-                (int) ($totals['v3_ready'] ?? 0)
-                + (int) ($totals['v3_deferred'] ?? 0)
-                + (int) ($totals['v3_waiting_rate'] ?? 0)
-                + (int) ($totals['v3_waiting_budget'] ?? 0)
-                + (int) ($totals['v3_waiting_api'] ?? 0)
-            );
-            $preview['remote_backlog'] = $backlog;
-            $preview['parked_backlog'] = (int) ($totals['v3_parked'] ?? 0);
-            $preview['legacy_visible_backlog'] = (int) ($totals['legacy_pending_visible'] ?? 0);
-            $preview['estimated_drain_minutes'] = (float) ($preview['effective_rpm'] ?? 0) > 0
-                ? (int) ceil($backlog / (float) $preview['effective_rpm'])
-                : null;
-            $preview['cron_v3_rate_policy'] = (new \App\Services\CronV3RatePolicyService())->current(
-                max(1, min(300, (int) \App\Core\Env::get('CRON_V3_RATE_LIMIT', '10')))
-            );
+            $snapshot = $this->queueV4RhythmSnapshot();
+            $this->applyQueueV4RhythmSnapshot($preview, $snapshot);
+            $increaseGate = $this->queueV4RhythmIncreaseGate($snapshot);
+            if (empty($increaseGate['allowed'])) {
+                $preview['increase_blocker'] = $increaseGate['message'];
+            }
             $preview['recent_rate_limit_incidents'] = $this->recentRateLimitIncidents();
             $this->json(['ok' => true, 'preview' => $preview]);
         } catch (\App\Core\HttpException $e) {
@@ -251,6 +272,31 @@ final class SettingsController
             http_response_code(503);
             $this->json(['ok' => false, 'message' => 'No se pudo calcular el ritmo efectivo. No se modificó la configuración.']);
         }
+    }
+
+    /** @return array<string,mixed> */
+    private function queueV4RhythmSnapshot(): array
+    {
+        $access = (new \App\Services\ApiHealthAccessScope())->snapshot();
+        return (new \App\QueueV4Clean\QueueV4CleanHealthSnapshotService(
+            Database::connectionFresh()
+        ))->snapshot(null, $access['company_ids'], $access['account_ids']);
+    }
+
+    /** @param array<string,mixed> $rhythm @param array<string,mixed> $snapshot */
+    private function applyQueueV4RhythmSnapshot(array &$rhythm, array $snapshot): void
+    {
+        $totals = is_array($snapshot['totals'] ?? null) ? $snapshot['totals'] : [];
+        $rhythm['operational_backlog'] = max(0,
+            (int) ($totals['ready'] ?? 0)
+            + (int) ($totals['running'] ?? 0)
+            + (int) ($totals['waiting'] ?? 0)
+        );
+        $rhythm['review_backlog'] = max(0, (int) ($totals['review'] ?? 0));
+        $rhythm['completed_last_hour'] = max(0, (int) ($totals['completed_last_hour'] ?? 0));
+        $rhythm['backlog_measured_at'] = $snapshot['measured_at'] ?? null;
+        $rhythm['backlog_protocol'] = $snapshot['snapshot_state'] ?? 'unavailable';
+        $rhythm['queue_v4_state'] = $snapshot['state'] ?? 'unavailable';
     }
 
     public function index(): void
@@ -296,7 +342,14 @@ final class SettingsController
     {
         $this->requireAdminPermanent();
         Csrf::validate($_POST['_token'] ?? null);
+        if (isset($_POST['questions_sync_enabled']) || isset($_POST['questions_endpoint_confirmed'])) {
+            throw new \App\Core\HttpException(
+                410,
+                'La sincronización general de preguntas está retirada. No se cambió la configuración.'
+            );
+        }
         $settings = new AppSettingsService();
+        $generalBillingBackoff = $this->billing429BackoffMinutesFromGeneralPost($settings);
         foreach ([
             'sync.max_manual_range_days' => 'sync',
             'sync.page_limit' => 'sync',
@@ -333,6 +386,10 @@ final class SettingsController
             'api.logs.raw_retention_days' => 'api_guard',
             'api.guard.jitter_min_ms' => 'api_guard',
             'api.guard.jitter_max_ms' => 'api_guard',
+            'api.rhythm.billing_429_backoff_1_minutes' => 'api_rhythm',
+            'api.rhythm.billing_429_backoff_2_minutes' => 'api_rhythm',
+            'api.rhythm.billing_429_backoff_3_minutes' => 'api_rhythm',
+            'api.rhythm.billing_429_backoff_max_minutes' => 'api_rhythm',
             'questions.page_limit' => 'questions',
             'questions.lookback_hours' => 'questions',
             'notifications.max_events_per_run' => 'notifications',
@@ -350,6 +407,9 @@ final class SettingsController
         ] as $key => $group) {
             $postKey = str_replace('.', '_', $key);
             if (isset($_POST[$postKey])) {
+                if (str_starts_with($key, 'api.rhythm.billing_429_backoff_')) {
+                    continue;
+                }
                 $value = max(0, (int) $_POST[$postKey]);
                 if ($key === 'sync.default_enqueue_delay_minutes' && !in_array($value, [0, 5, 30, 60], true)) {
                     $value = 5;
@@ -375,6 +435,9 @@ final class SettingsController
                 $settings->set($key, (string) $value, $group);
             }
         }
+        if ($generalBillingBackoff !== null) {
+            $this->persistBilling429Backoff($settings, $generalBillingBackoff);
+        }
         if (isset($_POST['sync_chunk_mode'])) {
             $mode = in_array($_POST['sync_chunk_mode'], ['daily', 'weekly', 'parts'], true) ? (string) $_POST['sync_chunk_mode'] : 'daily';
             $settings->set('sync.chunk_mode', $mode, 'sync');
@@ -388,8 +451,8 @@ final class SettingsController
         $settings->set('api.guard.enabled', isset($_POST['api_guard_enabled']) ? '1' : '0', 'api_guard');
         $settings->set('api.budget.enabled', isset($_POST['api_budget_enabled']) ? '1' : '0', 'api_guard');
         $settings->set('api.cron.priority_budget_enabled', isset($_POST['api_cron_priority_budget_enabled']) ? '1' : '0', 'api_guard');
-        $settings->set('questions.sync_enabled', isset($_POST['questions_sync_enabled']) ? '1' : '0', 'questions');
-        $settings->set('questions.endpoint_confirmed', isset($_POST['questions_endpoint_confirmed']) ? '1' : '0', 'questions');
+        $settings->set('questions.sync_enabled', '0', 'questions');
+        $settings->set('questions.endpoint_confirmed', '0', 'questions');
         $settings->set('questions.email_enabled', isset($_POST['questions_email_enabled']) ? '1' : '0', 'questions');
         if (isset($_POST['questions_email_to'])) {
             $settings->set('questions.email_to', trim((string) $_POST['questions_email_to']), 'questions');
@@ -433,6 +496,144 @@ final class SettingsController
         View::render('settings/cron_shell', compact('safety', 'overview'));
     }
 
+    public function queueV4DiagnosticStatus(): void
+    {
+        $this->requireAdminPermanent();
+        $this->releaseReadOnlySession();
+        try {
+            $this->json((new \App\Services\QueueV4DiagnosticBundleService())->status());
+        } catch (\Throwable $error) {
+            http_response_code(500);
+            $this->json([
+                'ok' => false,
+                'error' => 'queue_diagnostic_status_failed',
+                'class' => get_class($error),
+            ]);
+        }
+    }
+
+    public function queueV4DiagnosticDebug(): void
+    {
+        $this->requireAdminPermanent();
+        $this->assertSameOrigin();
+        Csrf::validate($_POST['_token'] ?? null);
+        $minutes = max(0, min(60, (int) ($_POST['minutes'] ?? 0)));
+        if (!in_array($minutes, [0, 15, 30, 60], true)) {
+            $minutes = 0;
+        }
+        (new \App\Services\QueueV4DiagnosticBundleService())->setDebugMinutes($minutes);
+        Session::flash('success', $minutes > 0 ? 'Debug extendido de Queue activado temporalmente.' : 'Debug extendido de Queue apagado.');
+        $this->redirect('/settings/cron#queue-v4-diagnostic');
+    }
+
+    public function queueV4DiagnosticGenerate(): void
+    {
+        $this->requireAdminPermanent();
+        $this->assertSameOrigin();
+        Csrf::validate($_POST['_token'] ?? null);
+        $result = (new \App\Services\QueueV4DiagnosticBundleService())->generateBundle();
+        $bundle = is_array($result['bundle'] ?? null) ? $result['bundle'] : [];
+        $url = (string) ($bundle['signed_url'] ?? '');
+        Session::flash('success', $url !== '' ? 'Paquete diagnóstico generado. El enlace temporal quedó disponible por 30 minutos.' : 'Paquete diagnóstico generado.');
+        $this->redirect('/settings/cron#queue-v4-diagnostic');
+    }
+
+    public function queueV4DiagnosticDownload(): void
+    {
+        $token = (string) ($_GET['token'] ?? '');
+        $download = (new \App\Services\QueueV4DiagnosticBundleService())->resolveDownloadToken($token);
+        if ($download === null) {
+            http_response_code(404);
+            header('Content-Type: text/plain; charset=utf-8');
+            echo 'El enlace diagnóstico no existe o expiró.';
+            return;
+        }
+        header('Content-Type: application/zip');
+        header('Cache-Control: private, no-store, max-age=0');
+        header('X-Content-Type-Options: nosniff');
+        header('X-Queue-Diagnostic-SHA256: ' . $download['sha256']);
+        header('Content-Length: ' . (string) $download['bytes']);
+        header('Content-Disposition: attachment; filename="' . str_replace('"', '', $download['filename']) . '"');
+        readfile($download['path']);
+        exit;
+    }
+
+    public function queueV4CleanStatus(): void
+    {
+        $this->requireAdminPermanent();
+        $this->releaseReadOnlySession();
+        try {
+            $this->json((new \App\QueueV4Clean\QueueV4CleanReadinessService(
+                Database::connectionFresh(),
+            ))->snapshot());
+        } catch (\Throwable) {
+            http_response_code(503);
+            $this->json([
+                'ok' => false,
+                'state' => 'NOT_READY',
+                'message' => 'Queue V4 no está disponible. No se modificó ninguna cola.',
+            ]);
+        }
+    }
+
+    /** Read-only direct transport evidence for the Cron risk card. */
+    public function cronApiRisks(): void
+    {
+        $this->requireAdminPermanent();
+        $this->releaseReadOnlySession();
+        $summary = (new \App\Services\CronApiRiskSummaryService())->snapshot();
+        if (($summary['ok'] ?? false) !== true) {
+            http_response_code(503);
+        }
+        $this->json($summary);
+    }
+
+    public function queueV4CleanReadiness(): void
+    {
+        $this->queueV4CleanMutation('readiness');
+    }
+
+    public function queueV4CleanActivate(): void
+    {
+        $this->queueV4CleanMutation('activate');
+    }
+
+    public function queueV4CleanStop(): void
+    {
+        $this->queueV4CleanMutation('stop');
+    }
+
+    private function queueV4CleanMutation(string $action): void
+    {
+        $this->requireAdminPermanent();
+        $this->assertSameOrigin();
+        Csrf::validate($_POST['_token'] ?? null);
+        (new \App\Services\AdministrativeReauthenticationService())->requirePassword(
+            (string) ($_POST['admin_password'] ?? '')
+        );
+        try {
+            $pdo = Database::connectionFresh();
+            $actorId = (int) Auth::id();
+            $result = match ($action) {
+                'readiness' => (new \App\QueueV4Clean\QueueV4CleanReadinessService($pdo))->certify($actorId),
+                'activate' => (new \App\QueueV4Clean\QueueV4CleanControlService($pdo))->activate($actorId),
+                'stop' => (new \App\QueueV4Clean\QueueV4CleanControlService($pdo))->stop($actorId),
+                default => throw new \RuntimeException('queue_v4_clean_action_invalid'),
+            };
+            $this->json($result);
+        } catch (\Throwable $error) {
+            http_response_code(409);
+            $this->json([
+                'ok' => false,
+                'message' => \App\Services\SafeErrorPresenter::message(
+                    $error,
+                    'Queue V4 bloqueó la operación sin cambiar el motor.',
+                    ['module' => 'queue_v4_clean', 'action' => $action],
+                ),
+            ]);
+        }
+    }
+
     public function cronSection(): void
     {
         $this->requireAdminPermanent();
@@ -469,13 +670,29 @@ final class SettingsController
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
         try {
-            $snapshot = (new \App\Services\CronV3OperationalSnapshotService())->snapshot();
-            $overview = is_array($snapshot['legacy_overview'] ?? null)
-                ? $snapshot['legacy_overview']
-                : (new \App\Services\CronOperationalReadService())->overview();
-            $overview['cron_v3'] = $snapshot['v3'] ?? [];
-            $overview['cron_v3_operational'] = $snapshot;
-            $this->json($overview);
+            $snapshot = $this->queueV4OperationalSnapshot();
+            $runtime = (array) ($snapshot['runtime'] ?? []);
+            $totals = (array) ($snapshot['totals'] ?? []);
+            $this->json([
+                'ok' => true,
+                'snapshot_state' => 'complete',
+                'authoritative' => true,
+                'state' => (string) ($snapshot['state'] ?? 'attention'),
+                'state_label' => (string) ($snapshot['state_label'] ?? 'Queue V4 requiere revisión'),
+                'last_signal_label' => (string) ($runtime['last_scheduler_at'] ?? 'sin señal'),
+                'workload' => [
+                    'pending' => (int) ($totals['ready'] ?? 0) + (int) ($totals['running'] ?? 0) + (int) ($totals['waiting'] ?? 0),
+                    'remote_calls_last_hour' => (int) ($totals['http_last_hour'] ?? 0),
+                    'finalized_last_hour' => (int) ($totals['completed_last_hour'] ?? 0),
+                    'trend_label' => 'Backlog operativo Queue V4; Review se informa por separado.',
+                ],
+                'last_run' => null,
+                'now' => null,
+                'next' => [],
+                'history' => [],
+                'runtime' => $runtime,
+                'legacy_state_consulted' => false,
+            ]);
         } catch (\App\Core\HttpException $e) {
             throw $e;
         } catch (\Throwable) {
@@ -494,11 +711,14 @@ final class SettingsController
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
         try {
-            $snapshot = (new \App\Services\CronV3OperationalSnapshotService())->snapshot();
-            if (($snapshot['snapshot_state'] ?? '') === 'unavailable') {
-                http_response_code(503);
-            }
-            $this->json($snapshot);
+            $snapshot = $this->queueV4OperationalSnapshot();
+            $this->json($snapshot + [
+                'ok' => true,
+                'snapshot_state' => 'complete',
+                'authoritative' => true,
+                'queues' => [],
+                'legacy_state_consulted' => false,
+            ]);
         } catch (\App\Core\HttpException $e) {
             throw $e;
         } catch (\Throwable) {
@@ -517,25 +737,9 @@ final class SettingsController
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
         try {
-            $snapshot = (new \App\Services\CronV3OperationalSnapshotService())->snapshot();
-            $rows = is_array($snapshot['queues'] ?? null) ? $snapshot['queues'] : [];
             $page = max(1, (int) ($_GET['page'] ?? 1));
             $perPage = max(10, min(50, (int) ($_GET['per_page'] ?? 50)));
-            $total = count($rows);
-            $snapshotState = (string) ($snapshot['snapshot_state'] ?? 'unavailable');
-            if ($snapshotState === 'complete' && $total === 0) {
-                $snapshotState = 'authoritative_empty';
-            }
-            $this->json([
-                'ok' => true,
-                'snapshot_state' => $snapshotState,
-                'authoritative' => in_array($snapshotState, ['complete', 'authoritative_empty'], true),
-                'version' => trim((string) @file_get_contents(dirname(__DIR__, 2) . '/VERSION')),
-                'page' => $page,
-                'per_page' => $perPage,
-                'total' => $total,
-                'rows' => array_slice($rows, ($page - 1) * $perPage, $perPage),
-            ]);
+            $this->json((new \App\Services\CronOperationalReadService())->queueTasksPage($page, $perPage));
         } catch (\App\Core\HttpException $e) {
             throw $e;
         } catch (\Throwable) {
@@ -554,118 +758,13 @@ final class SettingsController
         $this->cronTasks();
     }
 
-    public function cronV3Setup(): void
+    /** @return array<string,mixed> */
+    private function queueV4OperationalSnapshot(): array
     {
-        $this->requireAdminPermanent();
-        $this->releaseReadOnlySession();
-        try {
-            $this->json([
-                'ok' => true,
-                'setup' => (new \App\Services\CronV3SetupAssistantService())->snapshot(),
-            ]);
-        } catch (\App\Core\HttpException $e) {
-            throw $e;
-        } catch (\Throwable) {
-            http_response_code(503);
-            $this->json([
-                'ok' => false,
-                'snapshot_state' => 'unavailable',
-                'read_only' => true,
-                'message' => 'No se pudo leer el asistente Cron V3. No se modificó ninguna cola.',
-            ]);
-        }
-    }
-
-    public function prepareCronV3SafeConfig(): void
-    {
-        $this->requireAdminPermanent();
-        $this->assertSameOrigin();
-        Csrf::validate($_POST['_token'] ?? null);
-        $this->cronV3SetupMutation('prepare');
-    }
-
-    public function enableCronV3Shadow(): void
-    {
-        $this->requireAdminPermanent();
-        $this->assertSameOrigin();
-        Csrf::validate($_POST['_token'] ?? null);
-        $this->cronV3SetupMutation('shadow');
-    }
-
-    public function cronV3Canary(): void
-    {
-        $this->requireAdminPermanent();
-        $this->releaseReadOnlySession();
-        try {
-            $this->json([
-                'ok' => true,
-                'canary' => (new \App\Services\CronV3CanaryControlService())->snapshot(),
-            ]);
-        } catch (\App\Core\HttpException $e) {
-            throw $e;
-        } catch (\Throwable) {
-            http_response_code(503);
-            $this->json([
-                'ok' => false,
-                'snapshot_state' => 'unavailable',
-                'read_only' => true,
-                'message' => 'No se pudo leer el canario Cron V3. No se modificó ninguna cola.',
-            ]);
-        }
-    }
-
-    public function cronV3RuntimeStatus(): void
-    {
-        $this->requireAdminPermanent();
-        $this->releaseReadOnlySession();
-        try {
-            $this->json([
-                'ok' => true,
-                'runtime' => (new \App\Services\CronV3RuntimeStatusService())->snapshot(),
-            ]);
-        } catch (\App\Core\HttpException $e) {
-            throw $e;
-        } catch (\Throwable) {
-            http_response_code(503);
-            $this->json([
-                'ok' => false,
-                'snapshot_state' => 'unavailable',
-                'read_only' => true,
-                'message' => 'No se pudo leer el corte operativo V3. No se modificó ninguna cola.',
-            ]);
-        }
-    }
-
-    public function prepareCronV3Canary(): void
-    {
-        $this->requireAdminPermanent();
-        $this->assertSameOrigin();
-        Csrf::validate($_POST['_token'] ?? null);
-        $this->cronV3CanaryMutation('prepare');
-    }
-
-    public function enableCronV3LocalCanary(): void
-    {
-        $this->requireAdminPermanent();
-        $this->assertSameOrigin();
-        Csrf::validate($_POST['_token'] ?? null);
-        $this->cronV3CanaryMutation('local');
-    }
-
-    public function enableCronV3RemoteCanary(): void
-    {
-        $this->requireAdminPermanent();
-        $this->assertSameOrigin();
-        Csrf::validate($_POST['_token'] ?? null);
-        $this->cronV3CanaryMutation('remote');
-    }
-
-    public function rollbackCronV3Canary(): void
-    {
-        $this->requireAdminPermanent();
-        $this->assertSameOrigin();
-        Csrf::validate($_POST['_token'] ?? null);
-        $this->cronV3CanaryMutation('rollback');
+        $access = (new \App\Services\ApiHealthAccessScope())->snapshot();
+        return (new \App\QueueV4Clean\QueueV4CleanHealthSnapshotService(
+            Database::connectionFresh()
+        ))->snapshot(null, (array) $access['company_ids'], (array) $access['account_ids']);
     }
 
     public function cronDoctor(): void
@@ -685,92 +784,6 @@ final class SettingsController
                 'message' => 'No se pudo construir el diagnóstico de Cron. No se modificó ninguna cola.',
             ]);
         }
-    }
-
-    private function cronV3SetupMutation(string $action): void
-    {
-        $wantsJson = str_contains(strtolower((string) ($_SERVER['HTTP_ACCEPT'] ?? '')), 'application/json');
-        try {
-            $service = new \App\Services\CronV3SetupAssistantService();
-            $result = $action === 'shadow'
-                ? $service->enableShadow((int) Auth::id())
-                : $service->prepareSafeConfig((int) Auth::id());
-            if ($wantsJson) {
-                $this->json($result);
-                return;
-            }
-            Session::flash('success', (string) ($result['message'] ?? 'Configuración Cron V3 actualizada.'));
-        } catch (\Throwable $error) {
-            $message = match (true) {
-                $error->getMessage() === 'cron_v3_ml_write_enabled'
-                    => 'No se activó Shadow: ML_WRITE_ENABLED debe permanecer en false.',
-                $error->getMessage() === 'cron_v3_doctor_blocked'
-                    => 'No se activó Shadow: primero debe aprobar Doctor local y remoto.',
-                str_starts_with($error->getMessage(), 'cron_v3_process_env_override:')
-                    => 'No se modificó config.env: una variable del proceso sobrescribe '
-                        . substr($error->getMessage(), strlen('cron_v3_process_env_override:')) . '.',
-                default => \App\Services\SafeErrorPresenter::message(
-                    $error,
-                    'No fue posible preparar Cron V3. No se activó V3 real ni Mercado Libre.',
-                    ['module' => 'cron_v3_setup', 'action' => $action]
-                ),
-            };
-            if ($wantsJson) {
-                http_response_code(409);
-                $this->json(['ok' => false, 'message' => $message]);
-                return;
-            }
-            Session::flash('error', $message);
-        }
-        $this->redirect('/settings/cron');
-    }
-
-    private function cronV3CanaryMutation(string $action): void
-    {
-        $wantsJson = str_contains(strtolower((string) ($_SERVER['HTTP_ACCEPT'] ?? '')), 'application/json');
-        try {
-            $service = new \App\Services\CronV3CanaryControlService();
-            $result = match ($action) {
-                'prepare' => $service->prepare((int) Auth::id()),
-                'local' => $service->enableLocal((int) Auth::id()),
-                'remote' => $service->enableRemote((int) Auth::id()),
-                'rollback' => $service->rollback((int) Auth::id()),
-                default => throw new \RuntimeException('cron_v3_canary_unknown_action'),
-            };
-            if ($wantsJson) {
-                $this->json($result);
-                return;
-            }
-            Session::flash('success', (string) ($result['message'] ?? 'Canario Cron V3 actualizado.'));
-        } catch (\Throwable $error) {
-            $message = match (true) {
-                $error->getMessage() === 'cron_v3_ml_write_enabled'
-                    => 'No se activó el canario: ML_WRITE_ENABLED debe permanecer en false.',
-                $error->getMessage() === 'cron_v3_doctor_blocked'
-                    => 'No se activó el canario: primero debe aprobar Doctor local y remoto.',
-                $error->getMessage() === 'cron_v3_shadow_required'
-                    => 'No se activó el canario: faltan 60 ciclos Shadow limpios.',
-                $error->getMessage() === 'cron_v3_canary_config_required'
-                    => 'Primero prepare el canario V3 desde el panel.',
-                $error->getMessage() === 'cron_v3_canary_local_required'
-                    => 'Primero habilite y observe el canario local financial_recalc.',
-                str_starts_with($error->getMessage(), 'cron_v3_process_env_override:')
-                    => 'No se modificó config.env: una variable del proceso sobrescribe '
-                        . substr($error->getMessage(), strlen('cron_v3_process_env_override:')) . '.',
-                default => \App\Services\SafeErrorPresenter::message(
-                    $error,
-                    'No fue posible cambiar el canario Cron V3. No se activó V3 completo ni Mercado Libre.',
-                    ['module' => 'cron_v3_canary', 'action' => $action]
-                ),
-            };
-            if ($wantsJson) {
-                http_response_code(409);
-                $this->json(['ok' => false, 'message' => $message]);
-                return;
-            }
-            Session::flash('error', $message);
-        }
-        $this->redirect('/settings/cron');
     }
 
     public function cronRun(): void
@@ -1079,7 +1092,7 @@ final class SettingsController
         $this->requireAdminPermanent();
         $userId = (int) Auth::id();
         $previewToken = trim((string) ($_GET['preview'] ?? ''));
-        $scope = trim((string) ($_GET['scope'] ?? 'recommended'));
+        $scope = trim((string) ($_GET['scope'] ?? 'available_queue'));
         $accountId = max(0, (int) ($_GET['account_id'] ?? 0));
         $origin = preg_replace('/[^a-z_]/', '', (string) ($_GET['origin'] ?? 'manual_center')) ?: 'manual_center';
         $originContext = [
@@ -1098,6 +1111,9 @@ final class SettingsController
         $globalPauseSeconds = max(0, ((int) ($rhythmPreview['block_pause_ms'] ?? 20000)) / 1000);
         $blockSize = max(1, min(60, (int) ($_GET['block_size']
             ?? ($settings?->int('manual_campaign.default_block_size', 30) ?? 30))));
+        if ($scope === 'available_queue') {
+            $blockSize = min($blockSize, \App\QueueV4Clean\QueueV4CleanWorker::HARD_MAX_CALLS);
+        }
         $intervalSeconds = max(0, min(300, (float) ($_GET['interval_seconds']
             ?? (($settings?->int('manual_campaign.default_interval_ms', 2000) ?? 2000) / 1000))));
         $blockPauseSeconds = max(0, min(3600, (float) ($_GET['block_pause_seconds']
@@ -1124,6 +1140,9 @@ final class SettingsController
                 $scope = (string) ($configuration['scope'] ?? $scope);
                 $accountId = (int) ($configuration['account_id'] ?? $accountId);
                 $blockSize = (int) ($configuration['block_size'] ?? $blockSize);
+                if ($scope === 'available_queue') {
+                    $blockSize = min($blockSize, \App\QueueV4Clean\QueueV4CleanWorker::HARD_MAX_CALLS);
+                }
                 $intervalSeconds = ((int) ($configuration['interval_ms'] ?? (int) round($intervalSeconds * 1000))) / 1000;
                 $blockPauseSeconds = ((int) ($configuration['block_pause_ms'] ?? (int) round($blockPauseSeconds * 1000))) / 1000;
                 $maxBlocks = (int) ($configuration['max_blocks'] ?? $maxBlocks);
@@ -1135,19 +1154,49 @@ final class SettingsController
                 ));
             }
         }
-        // Una campaña puede pedir un ritmo más lento, nunca superar la autoridad global.
+        // El cálculo manual puede pedir un ritmo más lento, nunca superar la autoridad global.
         $blockSize = min($blockSize, $globalBlockSize);
         $intervalSeconds = max($intervalSeconds, $globalIntervalSeconds);
         $blockPauseSeconds = max($blockPauseSeconds, $globalPauseSeconds);
+        $manualAccountLabel = 'Todas las cuentas autorizadas';
+        if ($accountId > 0) {
+            try {
+                $account = (new BusinessScopeContext())->account($accountId, 0, $userId);
+                $manualAccountLabel = trim((string) ($account['account_name'] ?? '')) ?: 'Cuenta autorizada';
+            } catch (\Throwable) {
+                $manualAccountLabel = 'Cuenta autorizada';
+            }
+        }
+        $availableQueueCount = 0;
+        if ($campaignReady && !$emergencyStop) {
+            try {
+                $scopeContext = new BusinessScopeContext();
+                $authorizedAccountIds = $accountId > 0
+                    ? [(int) $scopeContext->account($accountId, 0, $userId)['id']]
+                    : $scopeContext->accountIds($userId);
+                if ($authorizedAccountIds !== []) {
+                    $availableQueueCount = (new \App\QueueV4Clean\QueueV4CleanRepository(Database::connection()))
+                        ->eligibleCount($authorizedAccountIds, $accountId ?: null);
+                }
+            } catch (\Throwable) {
+                $availableQueueCount = 0;
+            }
+        }
+        $manualResult = Session::get('manual_processing_result');
+        Session::forget('manual_processing_result');
+        $manualAvailableQueueResult = Session::get('manual_available_queue_result');
+        Session::forget('manual_available_queue_result');
         $this->releaseReadOnlySession();
-        $activeSession = $campaignReady ? (new \App\Services\ManualCampaignService())->active($userId) : null;
+        $activeSession = null;
+        $smartDrainReady = false;
+        $smartDrain = ['ok' => false, 'state' => 'RETIRED_BLOCKED', 'session' => null];
         $engine = [
             'ready' => $campaignReady && !$emergencyStop,
             'state' => $emergencyStop ? 'maintenance' : ($campaignReady ? 'directed_cli_ready' : 'installation_incomplete'),
             'message' => $emergencyStop
                 ? 'Mercado Libre está bloqueado por mantenimiento. Las campañas existentes conservan todo su progreso.'
                 : ($campaignReady
-                    ? 'La campaña avanza con el lanzador normal de Hostinger y conserva cada resultado aprobado.'
+                    ? 'Procesar ahora ejecuta una confirmación exacta por vez; la automatización V4 sigue separada.'
                     : 'Complete la actualización para habilitar el procesamiento manual.'),
         ];
         $workerCommand = '';
@@ -1164,10 +1213,16 @@ final class SettingsController
             'maxDurationMinutes',
             'campaignReady',
             'accountId',
+            'manualAccountLabel',
+            'manualResult',
+            'manualAvailableQueueResult',
+            'availableQueueCount',
             'origin',
             'originContext',
             'emergencyStop',
-            'rhythmPreview'
+            'rhythmPreview',
+            'smartDrainReady',
+            'smartDrain'
         ));
     }
 
@@ -1185,12 +1240,16 @@ final class SettingsController
             $accountId = max(0, (int) ($_POST['account_id'] ?? 0));
             $rhythm = (new \App\Services\ApiRhythmPolicyService())->preview($accountId ?: null);
             $requestedBlock = max(1, min(60, (int) ($_POST['block_size'] ?? 30)));
+            $requestedScope = trim((string) ($_POST['scope'] ?? 'available_queue'));
+            if ($requestedScope === 'available_queue') {
+                $requestedBlock = min($requestedBlock, \App\QueueV4Clean\QueueV4CleanWorker::HARD_MAX_CALLS);
+            }
             $requestedInterval = max(0, (int) round(((float) ($_POST['interval_seconds'] ?? 2)) * 1000));
             $requestedPause = max(0, (int) round(((float) ($_POST['block_pause_seconds'] ?? 30)) * 1000));
             $preview = (new \App\Services\ManualCampaignPreviewService())->create(
                 (int) Auth::id(),
                 [
-                    'scope' => trim((string) ($_POST['scope'] ?? 'recommended')),
+                    'scope' => $requestedScope,
                     'account_id' => $accountId,
                     'block_size' => min($requestedBlock, max(1, (int) ($rhythm['calls_per_block'] ?? 40))),
                     'interval_ms' => max($requestedInterval, max(1000, (int) ($rhythm['interval_ms'] ?? 1000))),
@@ -1207,12 +1266,14 @@ final class SettingsController
             );
             $query = http_build_query([
                 'preview' => (string) $preview['preview_token'],
+                'scope' => (string) ($preview['configuration']['scope'] ?? $requestedScope),
                 'origin' => preg_replace('/[^a-z_]/', '', (string) ($_POST['origin'] ?? 'manual_center')) ?: 'manual_center',
                 'account_id' => $accountId ?: null,
                 'year' => max(0, (int) ($_POST['year'] ?? 0)) ?: null,
                 'month' => max(0, (int) ($_POST['month'] ?? 0)) ?: null,
                 'date_from' => trim((string) ($_POST['date_from'] ?? '')) ?: null,
                 'date_to' => trim((string) ($_POST['date_to'] ?? '')) ?: null,
+                'block_size' => min($requestedBlock, max(1, (int) ($rhythm['calls_per_block'] ?? 40))),
             ]);
             $this->redirect('/settings/manual-processing?' . $query . '#resultado-calculo');
         } catch (\Throwable $error) {
@@ -1294,54 +1355,6 @@ final class SettingsController
         ));
     }
 
-    public function manualProcessingSetup(): void
-    {
-        $this->requireAdminPermanent();
-        Session::flash('info', 'Procesar ahora utiliza el lanzador normal del ERP. No necesita instalar nada ni crear una segunda tarea.');
-        $this->redirect('/settings/manual-processing');
-    }
-
-    public function manualProcessingSession(): void
-    {
-        $this->requireAdminPermanent();
-        if (!(new \App\Services\SchemaInspectorService())->hasTable('manual_campaign_steps')) {
-            Session::flash('error', 'Complete la actualización antes de abrir una campaña interactiva.');
-            $this->redirect('/settings/update');
-        }
-        $userId = (int) Auth::id();
-        $this->releaseReadOnlySession();
-        $id = max(0, (int) ($_GET['id'] ?? 0));
-        $session = (new \App\Services\ManualCampaignService())->find($id);
-        if (!$session || (int) ($session['owner_user_id'] ?? 0) !== $userId) {
-            throw new \App\Core\HttpException(404, 'No se encontró la sesión de procesamiento.');
-        }
-        unset($session['owner_user_id']);
-        $safetyStatus = (new \App\Services\SystemSafetyStatusService())->status();
-        $emergencyMaintenance = $safetyStatus['api'] === 'stopped' || $safetyStatus['automation'] === 'stopped';
-        $runtimeStatus = $emergencyMaintenance
-            ? ['has_recent_signal' => false, 'state' => 'maintenance', 'label' => 'Mantenimiento preventivo']
-            : (new \App\Services\AutomationRuntimeStatusService())->status();
-        $session['runtime_status'] = $runtimeStatus;
-        if ($emergencyMaintenance) {
-            $session['engine_live'] = false;
-            $session['display_state'] = 'maintenance';
-            $session['estimated_remaining_seconds'] = null;
-            $session['safe_message'] = 'En mantenimiento. No se iniciarán consultas y no se perdió progreso.';
-            $session['attention'] = null;
-        } elseif (empty($runtimeStatus['has_recent_signal'])) {
-            $session['engine_live'] = false;
-            $session['display_state'] = 'waiting_launcher';
-            $session['estimated_remaining_seconds'] = null;
-            $session['safe_message'] = 'La campaña está guardada. Esperando que Hostinger inicie el ERP.';
-        }
-        $engine = [
-            'ready' => true,
-            'state' => 'directed_cli_ready',
-            'message' => 'La pantalla supervisa; el lanzador CLI ejecuta y recupera el trabajo.',
-        ];
-        View::render('settings/manual_processing_session', compact('session', 'engine', 'runtimeStatus'));
-    }
-
     public function manualProcessingStart(): void
     {
         $this->requireAdminPermanent();
@@ -1353,14 +1366,51 @@ final class SettingsController
             $this->redirect('/settings/manual-processing');
         }
         try {
-            $result = (new \App\Services\ManualSingleStepService())->execute(
+            $limit = max(1, min(60, (int) ($_POST['process_limit'] ?? $_POST['block_size'] ?? 1)));
+            $result = (new \App\Services\ManualSingleStepService())->executeMany(
                 trim((string) ($_POST['preview_token'] ?? '')),
-                (int) Auth::id()
+                (int) Auth::id(),
+                $limit
             );
             $status = (string) ($result['status'] ?? 'completed');
+            if (!empty($result['manual_available_queue'])) {
+                Session::put('manual_available_queue_result', $result);
+                Session::flash(
+                    $status === 'waiting' || $status === 'review' ? 'warning' : 'success',
+                    (string) ($result['message'] ?? 'Cola disponible procesada.')
+                );
+                $this->redirect('/settings/manual-processing?scope=available_queue#resultado-proceso');
+            }
+            $selected = (int) ($result['selected_count'] ?? 1);
+            $resultRows = array_values(array_filter(
+                (array) ($result['results'] ?? []),
+                static fn($row): bool => is_array($row)
+            ));
+            $completed = 0;
+            $waiting = 0;
+            $review = 0;
+            foreach ($resultRows as $row) {
+                $rowState = (string) ($row['status'] ?? '');
+                if ($rowState === 'completed') {
+                    $completed++;
+                } elseif (in_array($rowState, ['waiting', 'retry_wait', 'waiting_oauth', 'pending', 'claimed', 'running'], true)) {
+                    $waiting++;
+                } else {
+                    $review++;
+                }
+            }
+            if ($resultRows === [] && $status === 'completed') {
+                $completed = $selected;
+            }
+            Session::put('manual_processing_result', [
+                'processed' => $selected,
+                'completed' => $completed,
+                'waiting' => $waiting,
+                'review' => $review,
+            ]);
             Session::flash(
                 $status === 'review' ? 'warning' : 'success',
-                (string) ($result['message'] ?? 'Se proceso un unico trabajo.')
+                (string) ($result['message'] ?? ('Se proceso la seleccion exacta: ' . $selected . ' trabajo(s).'))
             );
             $this->redirect('/settings/manual-processing');
         } catch (\Throwable $error) {
@@ -1372,127 +1422,6 @@ final class SettingsController
             $scope = preg_replace('/[^a-z_]/', '', (string) ($_POST['scope'] ?? 'recommended'));
             $this->redirect('/settings/manual-processing?scope=' . ($scope ?: 'recommended'));
         }
-    }
-
-    public function manualProcessingSessionItems(): void
-    {
-        $this->manualProcessingSessionList('items');
-    }
-
-    public function manualProcessingSessionEvents(): void
-    {
-        $this->manualProcessingSessionList('events');
-    }
-
-    public function manualProcessingPause(): void
-    {
-        $this->manualProcessingMutation('pause');
-    }
-
-    public function manualProcessingResume(): void
-    {
-        $this->manualProcessingMutation('resume');
-    }
-
-    public function manualProcessingFinish(): void
-    {
-        $this->manualProcessingMutation('finish');
-    }
-
-    public function manualProcessingHeartbeat(): void
-    {
-        $this->requireAdminPermanent();
-        Csrf::validate($_POST['_token'] ?? null);
-        $this->json(['ok' => true, 'message' => 'Use el control interactivo de la campaña.']);
-    }
-
-    public function manualProcessingInteractiveHeartbeat(): void
-    {
-        $this->requireAdminPermanent();
-        Csrf::validate($_POST['_token'] ?? null);
-        $this->assertSameOrigin();
-        http_response_code(410);
-        $this->json([
-            'ok' => false,
-            'state' => 'retired',
-            'message' => 'La pestaña ya no ejecuta consultas. El lanzador CLI continúa desde el último resultado aprobado.',
-        ]);
-    }
-
-    public function manualProcessingInteractiveStep(): void
-    {
-        $this->requireAdminPermanent();
-        Csrf::validate($_POST['_token'] ?? null);
-        $this->assertSameOrigin();
-        try {
-            $result = (new \App\Services\ManualSingleStepService())->execute(
-                trim((string) ($_POST['preview_token'] ?? '')),
-                (int) Auth::id()
-            );
-            $this->json(['ok' => true, 'state' => (string) ($result['status'] ?? 'completed'), 'result' => $result]);
-        } catch (\Throwable $error) {
-            http_response_code(409);
-            $this->json([
-                'ok' => false,
-                'state' => 'not_processed',
-                'message' => \App\Services\SafeErrorPresenter::message($error, 'No fue posible procesar el trabajo exacto.'),
-            ]);
-        }
-    }
-
-    public function manualProcessingStatus(): void
-    {
-        $this->requireAdminPermanent();
-        $userId = (int) Auth::id();
-        $this->releaseReadOnlySession();
-        $id = max(0, (int) ($_GET['campaign_id'] ?? $_GET['id'] ?? 0));
-        $afterEventId = max(0, (int) ($_GET['after_event_id'] ?? 0));
-        $knownVersion = max(0, (int) ($_GET['known_version'] ?? 0));
-        $session = (new \App\Services\ManualCampaignService())->find($id, $afterEventId);
-        if ($session !== null && (int) ($session['owner_user_id'] ?? 0) !== $userId) {
-            $session = null;
-        }
-        if ($session !== null) {
-            unset($session['owner_user_id']);
-            $safetyStatus = (new \App\Services\SystemSafetyStatusService())->status();
-            $emergencyMaintenance = $safetyStatus['api'] === 'stopped' || $safetyStatus['automation'] === 'stopped';
-            $runtimeStatus = $emergencyMaintenance
-                ? ['has_recent_signal' => false, 'state' => 'maintenance', 'label' => 'Mantenimiento preventivo']
-                : (new \App\Services\AutomationRuntimeStatusService())->status();
-            $session['runtime_status'] = $runtimeStatus;
-            if ($emergencyMaintenance) {
-                $session['engine_live'] = false;
-                $session['display_state'] = 'maintenance';
-                $session['estimated_remaining_seconds'] = null;
-                $session['safe_message'] = 'En mantenimiento. No se iniciarán consultas y no se perdió progreso.';
-                $session['attention'] = null;
-            } elseif (empty($runtimeStatus['has_recent_signal'])) {
-                $session['engine_live'] = false;
-                $session['display_state'] = 'waiting_launcher';
-                $session['estimated_remaining_seconds'] = null;
-                $session['safe_message'] = 'La campaña está guardada. Esperando que Hostinger inicie el ERP.';
-            }
-        }
-        $changed = $session !== null
-            && ($knownVersion < (int) ($session['version_no'] ?? 0)
-                || !empty($session['events']));
-        $this->json([
-            'ok' => $session !== null,
-            'version' => (int) ($session['version_no'] ?? 0),
-            'server_time' => gmdate('c'),
-            'changed' => $changed,
-            'session' => $session,
-            'runtime' => $session['runtime_status'] ?? null,
-        ]);
-    }
-
-    public function manualProcessingCheckEngine(): void
-    {
-        $this->requireAdminPermanent();
-        Csrf::validate($_POST['_token'] ?? null);
-        $this->assertSameOrigin();
-        Session::flash('info', 'El procesamiento manual ya no necesita comprobar un motor externo.');
-        $this->redirect('/settings/manual-processing');
     }
 
     public function recoverKnownNotificationErrors(): void
@@ -1615,41 +1544,17 @@ final class SettingsController
         $this->assertSameOrigin();
         $wantsJson = str_contains((string) ($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json')
             || (($_POST['_json'] ?? '') === '1');
-        $health = new CronHealthService();
-        $run = $health->begin('process_sync_queue', 'manual_web', 5);
-        $id = $run['id'];
         $started = microtime(true);
         try {
-            $databaseOk = (int) Database::connectionFresh()->query('SELECT 1')->fetchColumn() === 1;
-            $storagePath = AppPaths::storage();
-            $storageOk = is_dir($storagePath) && is_writable($storagePath);
-            $jobPath = dirname(__DIR__, 2) . '/jobs/process_sync_queue.php';
-            $jobOk = is_file($jobPath) && is_readable($jobPath);
-            $releaseIntegrity = (new ReleaseIntegrityService())->inspect(true);
-            if (!$databaseOk || !$storageOk || !$jobOk || !$releaseIntegrity['ok']) {
-                throw new \RuntimeException('La prueba rápida detectó un requisito no disponible.');
-            }
-            $summary = [
-                'probe' => true,
-                'database' => $databaseOk,
-                'storage' => $storageOk,
-                'job_file' => $jobOk,
-                'release_integrity' => 'ok',
-                'release_version' => (string) $releaseIntegrity['version'],
-                'release_build_id' => (string) $releaseIntegrity['build_id'],
-                'processed' => 0,
-                'duration_ms' => (int) round((microtime(true) - $started) * 1000),
-            ];
-            $message = 'Prueba rápida correcta: PHP, base de datos, storage y job están disponibles. '
-                . 'Esta prueba no confirma la programación automática; espere dos señales CLI.';
-            $health->finish($id, 'success', $summary, 'Prueba rápida manual desde Configuración.', 0);
+            $summary = (new \App\Services\CronHealthService())->quickReadOnlyPreflight($started);
+            $message = 'Preflight read-only correcto: instalación, Queue V4, heartbeat y OAuth están disponibles. '
+                . 'No se creó trabajo ni se ejecutó Cron.';
             if ($wantsJson) {
                 $this->json([
                     'ok' => true,
                     'message' => $message,
                     'summary' => $summary,
-                    'run_token' => $run['run_token'],
-                    'cron' => $health->status(),
+                    'cron' => (new \App\Services\AutomationRuntimeStatusService())->status(),
                 ]);
                 return;
             }
@@ -1658,9 +1563,8 @@ final class SettingsController
             $diagnostic = \App\Services\SafeErrorPresenter::report(
                 $e,
                 'La prueba local de Cron no pudo completarse.',
-                ['cron_health_id' => $id]
+                ['component' => 'queue_v4_clean', 'operation' => 'read_only_preflight']
             );
-            $health->finish($id, 'error', [], $diagnostic['message'], 1);
             $safeMessage = \App\Services\SafeErrorPresenter::message(
                 $e,
                 'La prueba del cron no pudo completarse.'
@@ -1679,21 +1583,20 @@ final class SettingsController
     {
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
-        $health = new CronHealthService();
         $runtime = (new \App\Services\AutomationRuntimeStatusService())->status();
         // Incluso el diagnóstico administrativo debe usar un alcance explícito.
         // `null` significaría "sin filtro" para servicios heredados.
         $accountIds = (new BusinessScopeContext())->accountIds((int) Auth::id());
         $payload = [
             'ok' => true,
-            'cron' => $health->status(),
+            'cron' => $runtime,
             'runtime' => $runtime,
             'notifications' => [
                 'state' => $runtime['state'],
                 'label' => 'Dentro del lanzador único',
                 'message' => 'Ventas y notificaciones utilizan el mismo lanzador general.',
             ],
-            'probe' => $health->status('cron_probe'),
+            'probe' => ['state' => 'read_only', 'message' => 'La comprobación web usa el preflight de Queue V4.'],
             'processing' => (new \App\Services\NotificationWorkItemService())->summary($accountIds),
             'generated_at' => gmdate('Y-m-d\TH:i:s\Z'),
             'details_included' => false,
@@ -1723,42 +1626,7 @@ final class SettingsController
     /** @return array<string,mixed> */
     private function cronReleaseIntegritySummary(bool $checkDatabase): array
     {
-        $integrity = (new ReleaseIntegrityService())->inspect($checkDatabase);
-        $componentStatus = (new \App\Services\ComponentSchemaContractService())->status('process_sync_queue');
-        if ((string) $componentStatus['state'] !== 'migration_required') {
-            return $integrity;
-        }
-
-        $missing = array_values(array_filter(
-            $componentStatus['missing'],
-            static fn (mixed $value): bool => trim((string) $value) !== ''
-        ));
-        $required = (string) ($missing[0] ?? ($integrity['minimum_migration'] ?? ''));
-        $errors = (array) ($integrity['errors'] ?? []);
-        $alreadyListed = false;
-        foreach ($errors as $error) {
-            if (is_array($error)
-                && (string) ($error['code'] ?? '') === 'migration_pending'
-                && (string) ($error['component'] ?? '') === $required) {
-                $alreadyListed = true;
-                break;
-            }
-        }
-        if (!$alreadyListed) {
-            $errors[] = [
-                'code' => 'migration_pending',
-                'component' => $required !== '' ? $required : 'process_sync_queue',
-            ];
-        }
-
-        $integrity['ok'] = false;
-        $integrity['state'] = 'schema_pending';
-        $integrity['errors'] = $errors;
-        if ($required !== '') {
-            $integrity['minimum_migration'] = $required;
-        }
-
-        return $integrity;
+        return (new ReleaseIntegrityService())->inspect($checkDatabase);
     }
 
     public function logs(): void
@@ -1845,7 +1713,10 @@ final class SettingsController
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
         try {
-            $snapshot = (new \App\Services\CronV3OperationalSnapshotService())->snapshot();
+            $access = (new \App\Services\ApiHealthAccessScope())->snapshot();
+            $snapshot = (new \App\QueueV4Clean\QueueV4CleanHealthSnapshotService(
+                \App\Core\Database::connectionFresh()
+            ))->snapshot(null, $access['company_ids'], $access['account_ids']);
             $state = (string) ($snapshot['snapshot_state'] ?? 'unavailable');
             if ($state === 'unavailable') {
                 http_response_code(503);
@@ -1857,14 +1728,15 @@ final class SettingsController
                 'measured_at' => $snapshot['measured_at'] ?? gmdate('Y-m-d H:i:s'),
                 'mercado_libre' => [
                     'state' => 'separate_api_health',
-                    'message' => 'La disponibilidad remota se conserva en Salud API; este bloque sincroniza automatización/backlog con V3.',
+                    'label' => 'Evidencia remota separada',
+                    'message' => 'La disponibilidad remota se conserva en Salud API; este bloque usa exclusivamente Queue V4.',
                 ],
                 'automation' => [
                     'state' => $snapshot['state'] ?? 'unavailable',
                     'label' => $snapshot['state_label'] ?? 'No se pudo comprobar',
                     'message' => $snapshot['state_message'] ?? '',
                 ],
-                'backlog' => $snapshot['totals'] ?? [],
+                'backlog' => ($snapshot['totals'] ?? []) + ['sales_audit' => $snapshot['sales_audit'] ?? []],
                 'runtime' => $snapshot['runtime'] ?? [],
             ]);
         } catch (\App\Core\HttpException $e) {
@@ -1949,20 +1821,55 @@ final class SettingsController
         $perPage = max(10, min(100, (int) ($_GET['per_page'] ?? 50)));
         $this->releaseReadOnlySession();
         $service = new ApiHealthService();
-        $incidentPage = $service->incidentPage($filters, $perPage, ($page - 1) * $perPage);
-        if (!$service->dataAvailable()) {
-            http_response_code(503);
-            View::render('errors/500', [
-                'errorMessage' => 'No se pudo comprobar el catálogo de incidentes. Recargue la página para intentarlo nuevamente.',
-                'errorReference' => '',
-            ]);
+        try {
+            if (method_exists($service, 'incidentPage')) {
+                $incidentPage = $service->incidentPage($filters, $perPage, ($page - 1) * $perPage);
+            } else {
+                $rows = $service->incidents($filters, $perPage);
+                $incidentPage = [
+                    'rows' => $rows,
+                    'total' => count($rows),
+                    'protocol' => $service->dataAvailable() ? 'partial_legacy_reader' : 'unavailable',
+                ];
+            }
+        } catch (\Throwable) {
+            $incidentPage = ['rows' => [], 'total' => 0, 'protocol' => 'unavailable'];
+        }
+        if (!$service->dataAvailable() || (string) ($incidentPage['protocol'] ?? '') === 'unavailable') {
+            try {
+                $freshness = method_exists($service, 'incidentReadModelFreshness')
+                    ? $service->incidentReadModelFreshness()
+                    : ['current' => false];
+            } catch (\Throwable) {
+                $freshness = ['current' => false];
+            }
+            $incidentUnavailableMessage = !$freshness['current']
+                ? 'El catálogo de incidentes se está actualizando y no está al día. No se mostrará como vacío hasta completar la sincronización local.'
+                : 'No se pudo comprobar el catálogo de incidentes. Recargue la página para intentarlo nuevamente.';
+            $incidents = [];
+            $total = 0;
+            $pages = 1;
+            $incidentReadMode = 'unavailable_summary_only';
+            try {
+                $accounts = $service->accounts();
+            } catch (\Throwable) {
+                $accounts = [];
+            }
+            $remote429WindowSummary = $this->remote429WindowSummary((int) $filters['account_id']);
+            View::render('settings/api_health_incidents', compact('incidents', 'accounts', 'filters', 'page', 'pages', 'perPage', 'total', 'incidentReadMode', 'incidentUnavailableMessage', 'remote429WindowSummary'));
             return;
         }
         $incidents = $incidentPage['rows'];
         $total = $incidentPage['total'];
         $pages = max(1, (int) ceil($total / $perPage));
-        $accounts = $service->accounts();
-        View::render('settings/api_health_incidents', compact('incidents', 'accounts', 'filters', 'page', 'pages', 'perPage', 'total'));
+        try {
+            $accounts = $service->accounts();
+        } catch (\Throwable) {
+            $accounts = [];
+        }
+        $incidentReadMode = (string) ($incidentPage['protocol'] ?? 'complete');
+        $remote429WindowSummary = $this->remote429WindowSummary((int) $filters['account_id']);
+        View::render('settings/api_health_incidents', compact('incidents', 'accounts', 'filters', 'page', 'pages', 'perPage', 'total', 'incidentReadMode', 'remote429WindowSummary'));
     }
 
     public function apiHealthIncidentShow(): void
@@ -2011,16 +1918,17 @@ final class SettingsController
         $perPage = max(10, min(100, (int) ($_GET['per_page'] ?? 50)));
         $service = new ApiHealthService();
         $accountId = (int) $filters['account_id'] > 0 ? (int) $filters['account_id'] : null;
-        $summary = $service->summary((int) $filters['hours'], $accountId);
+        $incidentPage = $service->incidentPage($filters, $perPage, ($page - 1) * $perPage);
+        $incidentsAvailable = $service->dataAvailable();
+        $summary = (new ApiHealthService())->summary((int) $filters['hours'], $accountId);
         if (isset($summary['budget']['windows'])) {
             $summary['budget']['windows'] = [];
         }
-        $incidentPage = $service->incidentPage($filters, $perPage, ($page - 1) * $perPage);
-        if (!$service->dataAvailable()) {
+        if (!$incidentsAvailable) {
             http_response_code(503);
         }
         $this->json([
-            'ok' => $service->dataAvailable(),
+            'ok' => $incidentsAvailable,
             'protocol' => $incidentPage['protocol'],
             'snapshot_state' => $incidentPage['protocol'],
             'authoritative' => in_array($incidentPage['protocol'], ['complete', 'authoritative_empty'], true),
@@ -2310,7 +2218,7 @@ final class SettingsController
         header('Content-Type: text/csv; charset=UTF-8');
         header('Content-Disposition: attachment; filename="api-health-' . date('Ymd-His') . '.csv"');
         $out = fopen('php://output', 'w');
-        fputcsv($out, ['created_at', 'account_name', 'method', 'endpoint_path', 'http_status', 'error_type', 'error_code', 'retry_after_seconds', 'attempt', 'was_blocked', 'outcome_class', 'reached_remote', 'actionable', 'risk_signal', 'incident_key', 'safe_message'], ',', '"', '', "\n");
+        fputcsv($out, ['created_at', 'account_name', 'method', 'endpoint_path', 'http_status', 'error_type', 'error_code', 'retry_after_seconds', 'attempt', 'was_blocked', 'outcome_class', 'transport_class', 'reached_remote', 'actionable', 'risk_signal', 'incident_key', 'safe_message'], ',', '"', '', "\n");
         foreach ($rows as $row) {
             fputcsv($out, [
                 $row['created_at'] ?? '',
@@ -2324,6 +2232,7 @@ final class SettingsController
                 $row['attempt'] ?? '',
                 $row['was_blocked'] ?? '',
                 $row['outcome_class'] ?? '',
+                $row['transport_class'] ?? '',
                 $row['reached_remote'] ?? '',
                 $row['actionable'] ?? '',
                 $row['risk_signal'] ?? '',
@@ -2440,59 +2349,62 @@ final class SettingsController
         }
     }
 
-    private function manualProcessingMutation(string $action): void
-    {
-        $this->requireAdminPermanent();
-        Csrf::validate($_POST['_token'] ?? null);
-        $this->assertSameOrigin();
-        $id = max(0, (int) ($_POST['id'] ?? 0));
-        $service = new \App\Services\ManualCampaignService();
-        $ok = match ($action) {
-            'pause' => $service->pause($id, (int) Auth::id()),
-            'resume' => $service->resume($id, (int) Auth::id()),
-            'finish' => $service->finish($id, (int) Auth::id()),
-            default => false,
-        };
-        Session::flash($ok ? 'success' : 'error', $ok ? 'Estado actualizado.' : 'La sesión ya no admite ese cambio.');
-        $this->redirect('/settings/manual-processing/session?id=' . $id);
-    }
-
-    private function manualProcessingSessionList(string $kind): void
-    {
-        $this->requireAdminPermanent();
-        $id = max(0, (int) ($_GET['id'] ?? 0));
-        $service = new \App\Services\ManualCampaignService();
-        $campaign = $service->find($id);
-        if (!$campaign || (int) ($campaign['owner_user_id'] ?? 0) !== (int) Auth::id()) {
-            throw new \App\Core\HttpException(404, 'No se encontró la campaña solicitada.');
-        }
-        $page = max(1, (int) ($_GET['page'] ?? 1));
-        $perPage = (int) ($_GET['per_page'] ?? 50);
-        if ($kind === 'events') {
-            $listing = $service->eventsPage(
-                $id,
-                trim((string) ($_GET['severity'] ?? '')),
-                $page,
-                $perPage
-            );
-        } else {
-            $listing = $service->itemsPage(
-                $id,
-                trim((string) ($_GET['status'] ?? '')),
-                trim((string) ($_GET['operation'] ?? '')),
-                max(0, (int) ($_GET['account_id'] ?? 0)),
-                $page,
-                $perPage
-            );
-        }
-        unset($campaign['owner_user_id']);
-        View::render('settings/manual_processing_session_list', compact('campaign', 'listing', 'kind'));
-    }
-
     private function apiHealthHours(): int
     {
         $hours = (int) ($_GET['hours'] ?? (new AppSettingsService())->int('api.health.default_period_hours', 24));
-        return in_array($hours, [24, 168, 720], true) ? $hours : 24;
+        return in_array($hours, [1, 24, 168, 720], true) ? $hours : 24;
+    }
+
+    private function remote429WindowSummary(int $accountId = 0): array
+    {
+        $empty = [
+            '60m' => 0,
+            '24h' => 0,
+            '7d' => 0,
+            '30d' => 0,
+            'last_event' => null,
+            'source_label' => 'NO CERTIFICADO',
+        ];
+
+        try {
+            $schema = new \App\Services\SchemaInspectorService();
+            if (!$schema->tableExists('api_request_logs')) {
+                return $empty;
+            }
+
+            $scope = (new \App\Services\ApiHealthAccessScope())->predicate(
+                'l',
+                'remote429_incident_windows',
+                $accountId > 0 ? $accountId : null
+            );
+            $where = $scope['sql']
+                . ' AND COALESCE(l.reached_remote,0)=1'
+                . ' AND l.http_status=429'
+                . ' AND l.created_at >= UTC_TIMESTAMP() - INTERVAL 720 HOUR';
+
+            $stmt = Database::connection()->prepare(
+                'SELECT '
+                . 'SUM(CASE WHEN l.created_at >= UTC_TIMESTAMP() - INTERVAL 1 HOUR THEN 1 ELSE 0 END) AS c_60m, '
+                . 'SUM(CASE WHEN l.created_at >= UTC_TIMESTAMP() - INTERVAL 24 HOUR THEN 1 ELSE 0 END) AS c_24h, '
+                . 'SUM(CASE WHEN l.created_at >= UTC_TIMESTAMP() - INTERVAL 168 HOUR THEN 1 ELSE 0 END) AS c_7d, '
+                . 'COUNT(*) AS c_30d, '
+                . 'MAX(l.created_at) AS last_event '
+                . 'FROM api_request_logs l WHERE ' . $where
+            );
+            $stmt->execute($scope['params']);
+            $row = $stmt->fetch() ?: [];
+
+            return [
+                '60m' => (int) ($row['c_60m'] ?? 0),
+                '24h' => (int) ($row['c_24h'] ?? 0),
+                '7d' => (int) ($row['c_7d'] ?? 0),
+                '30d' => (int) ($row['c_30d'] ?? 0),
+                'last_event' => $row['last_event'] ?? null,
+                'source_label' => 'CERTIFICADO · api_request_logs directo',
+            ];
+        } catch (\Throwable) {
+            return $empty;
+        }
     }
 
     private function assertApiCircuitAuthorized(int $circuitId): void

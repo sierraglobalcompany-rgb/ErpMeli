@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\QueueCore;
 
 use App\Core\Database;
+use App\Services\MeliTransportSourcePolicy;
 use PDO;
 use PDOException;
 use Throwable;
@@ -47,10 +48,16 @@ final class QueueCoreOwnershipGuard
         array $metadata,
         ?PDO $pdo = null,
     ): void {
+        $source = (string) ($metadata['source'] ?? '');
+        if ($source === 'queue_v4_clean_readiness'
+            || $source === MeliTransportSourcePolicy::QUEUE_V4_SALES_REPAIR
+            || MeliTransportSourcePolicy::requiresQueueV4ReadFence($source)
+            || MeliTransportSourcePolicy::requiresCurrentOAuthFence($source)) {
+            return;
+        }
         if (!self::v4OwnsWebhook($pdo)) {
             return;
         }
-        $source = (string) ($metadata['source'] ?? '');
         if ($source === 'queue_core') {
             return;
         }

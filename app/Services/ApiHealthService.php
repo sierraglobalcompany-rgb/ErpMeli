@@ -14,6 +14,13 @@ final class ApiHealthService
 {
     private bool $dataAvailable = true;
     private int $lastIncidentTotal = 0;
+    private string $incidentProtocol = 'complete';
+
+    /** @return array{current:bool,last_log_id:int,latest_log_id:int} */
+    public function incidentReadModelFreshness(): array
+    {
+        return (new ApiIncidentReadModelService())->freshness();
+    }
 
     public function dashboard(): array
     {
@@ -36,6 +43,9 @@ final class ApiHealthService
             (new AuthorizedBusinessScope())->account($accountId);
         }
         if (!$this->supportsOutcomeClassification()) {
+            if (PHP_SAPI !== 'cli') {
+                return $this->unavailableMaterializedSummary();
+            }
             return $this->legacySummary($hours, $accountId);
         }
 
@@ -179,6 +189,9 @@ final class ApiHealthService
         if ($httpStatusFilter > 0) {
             $where[] = 'l.http_status=:http_status_filter';
             $params['http_status_filter'] = $httpStatusFilter;
+            if ($httpStatusFilter === 429) {
+                $where[] = 'l.reached_remote=1';
+            }
         }
         $statusFilter = in_array((string) ($filters['status'] ?? ''), ['active', 'recovered', 'reviewed', 'historical'], true)
             ? (string) $filters['status']
@@ -189,19 +202,44 @@ final class ApiHealthService
         if ($severityFilter === 'critical') {
             $where[] = '(l.outcome_class="blocked_signal" OR l.http_status=401)';
         } elseif ($severityFilter === 'high') {
-            $where[] = 'l.http_status IN (403,429)';
+            $where[] = '((l.http_status=403 AND l.reached_remote=1) OR (l.http_status=429 AND l.reached_remote=1))';
         } elseif ($severityFilter === 'medium') {
             $where[] = 'l.outcome_class="local_failure"';
         } elseif ($severityFilter === 'low') {
             $where[] = 'l.outcome_class="remote_error" AND COALESCE(l.http_status,0) NOT IN (401,403,429)';
         }
 
+        $fallbackAllowed = $this->directFallbackAllowedInCurrentRuntime();
         $materialized = (new ApiIncidentReadModelService())->page($filters, $limit, $offset);
         if (is_array($materialized)) {
             $this->lastIncidentTotal = (int) $materialized['total'];
+            if ((int) $materialized['total'] === 0
+                && $statusFilter === ''
+                && $this->isRemote429Filter($filters)
+                && $fallbackAllowed
+                && $this->directIncidentFallbackSafe($where, $params, $hours)) {
+                return $this->directIncidentFallbackRows($where, $params, $hours, $limit);
+            }
             return array_map(fn(array $row): array => $this->presentIncident($row), $materialized['rows']);
         }
 
+        // A stale catalogue must not look empty. The browser may use a bounded
+        // direct projection only when EXPLAIN certifies an indexed access path.
+        // It is explicitly degraded and never authorizes acknowledgement work.
+        $directDegraded = $fallbackAllowed
+            && $statusFilter === ''
+            && $this->directIncidentFallbackSafe($where, $params, $hours);
+        if ($fallbackAllowed && !$directDegraded) {
+            $this->dataAvailable = false;
+            $this->lastIncidentTotal = 0;
+            return [];
+        }
+        if ($directDegraded) {
+            return $this->directIncidentFallbackRows($where, $params, $hours, $limit);
+        }
+
+        // The bounded CLI path remains available to rebuild/verify the read
+        // model without making the browser wait on raw telemetry aggregation.
         try {
             $schema = new SchemaInspectorService();
             $hasAcknowledgements = $schema->hasTable('api_incident_acknowledgements');
@@ -244,7 +282,7 @@ final class ApiHealthService
                         SUBSTRING_INDEX(GROUP_CONCAT(COALESCE(l.diagnostic_id,"") ORDER BY l.created_at DESC,l.id DESC SEPARATOR "\n"),"\n",1) diagnostic_id,
                         MIN(l.created_at) first_seen_at,
                         MAX(l.created_at) last_seen_at,COUNT(*) repetitions,
-                        MAX(l.reached_remote) reached_remote,MAX(l.actionable) actionable,
+                        CAST(SUBSTRING_INDEX(GROUP_CONCAT(COALESCE(l.reached_remote,0) ORDER BY l.created_at DESC,l.id DESC SEPARATOR ","),",",1) AS UNSIGNED) reached_remote,MAX(l.actionable) actionable,
                         MAX(l.risk_signal) risk_signal,' . $ackSelect . '
                         COUNT(DISTINCT CONCAT(COALESCE(l.scope_kind,"application"),":",COALESCE(l.meli_account_id,l.company_id,0))) account_count,
                         GROUP_CONCAT(DISTINCT CASE
@@ -310,7 +348,7 @@ final class ApiHealthService
         $rows = $this->incidents($filters, $limit, $offset);
         $total = $this->lastIncidentTotal();
         $available = $this->dataAvailable();
-        $truncated = $available && $offset + count($rows) < $total;
+        $truncated = $available && $this->incidentProtocol !== 'degraded_direct' && $offset + count($rows) < $total;
         return [
             'rows' => $rows,
             'total' => $total,
@@ -319,7 +357,9 @@ final class ApiHealthService
             'truncated' => $truncated,
             'protocol' => !$available
                 ? 'unavailable'
-                : ($total === 0 ? 'authoritative_empty' : ($truncated || $offset > 0 ? 'partial' : 'complete')),
+                : ($this->incidentProtocol === 'degraded_direct'
+                    ? 'degraded_direct'
+                    : ($total === 0 ? 'authoritative_empty' : ($truncated || $offset > 0 ? 'partial' : 'complete'))),
         ];
     }
 
@@ -337,6 +377,13 @@ final class ApiHealthService
         }
         $limit = 500;
         $rows = $this->incidents($filters, $limit);
+        if (!$this->dataAvailable()) {
+            return [
+                'active' => [], 'recovered' => [], 'policy' => [],
+                'counts' => ['active' => 0, 'recovered' => 0, 'reviewed' => 0, 'historical' => 0],
+                'truncated' => false,
+            ];
+        }
         $counts = ['active' => 0, 'recovered' => 0, 'reviewed' => 0, 'historical' => 0];
         $active = [];
         $recovered = [];
@@ -374,6 +421,14 @@ final class ApiHealthService
     /** @return array{active:int,recovered:int,reviewed:int,historical:int}|null */
     private function fastIncidentStateCounts(int $hours, ?int $accountId): ?array
     {
+        $materialized = (new ApiIncidentReadModelService())->stateCounts($hours, $accountId);
+        if ($materialized !== null) {
+            return $materialized;
+        }
+        if (PHP_SAPI !== 'cli') {
+            $this->dataAvailable = false;
+            return null;
+        }
         try {
             [$scopeSql, $scopeParams] = $this->telemetryScopeSql('l', 'count_scope', $accountId);
             $schema = new SchemaInspectorService();
@@ -430,6 +485,44 @@ final class ApiHealthService
     {
         $key = strtolower(trim($key));
         if (!preg_match('/^[a-f0-9]{64}$/', $key) || !$this->supportsOutcomeClassification()) {
+            return null;
+        }
+        $materialized = (new ApiIncidentReadModelService())->byKey($key);
+        if (is_array($materialized)) {
+            if ($materialized === []) {
+                return null;
+            }
+            $incident = $this->presentIncident($materialized[0]);
+            $incident['accounts'] = array_map(static fn(array $row): array => [
+                'meli_account_id' => $row['meli_account_id'] ?? null,
+                'company_id' => $row['company_id'] ?? null,
+                'scope_kind' => $row['scope_kind'] ?? 'application',
+                'scope_key' => $row['scope_key'] ?? 'application',
+                'account_name' => $row['account_names'] ?? 'Aplicación',
+                'acknowledged_all' => (int) ($row['acknowledged_all'] ?? 0),
+                'repetitions' => (int) ($row['repetitions'] ?? 0),
+                'first_seen_at' => $row['first_seen_at'] ?? null,
+                'last_seen_at' => $row['last_seen_at'] ?? null,
+            ], $materialized);
+            $incident['samples'] = array_map(static fn(array $row): array => [
+                'created_at' => $row['last_seen_at'] ?? null,
+                'account_name' => $row['account_names'] ?? 'Aplicación',
+                'method' => $row['method'] ?? null,
+                'endpoint_path' => $row['endpoint_path'] ?? null,
+                'http_status' => $row['http_status'] ?? null,
+                'error_type' => $row['error_type'] ?? null,
+                'error_code' => $row['error_code'] ?? null,
+                'safe_message' => $row['safe_message'] ?? null,
+                'diagnostic_id' => $row['diagnostic_id'] ?? null,
+                'request_id' => null,
+            ], $materialized);
+            $incident['acknowledgement'] = (int) ($materialized[0]['acknowledged_all'] ?? 0) === 1
+                ? $this->incidentAcknowledgement($key)
+                : null;
+            return $incident;
+        }
+        if (PHP_SAPI !== 'cli') {
+            $this->dataAvailable = false;
             return null;
         }
         $incidents = $this->incidentsByKey($key);
@@ -547,6 +640,18 @@ final class ApiHealthService
         if (!$this->supportsOutcomeClassification()) {
             return [];
         }
+        if (PHP_SAPI !== 'cli') {
+            try {
+                $access = (new ApiHealthAccessScope())->snapshot($accountId);
+                $snapshot = (new \App\QueueV4Clean\QueueV4CleanHealthSnapshotService(
+                    Database::connectionFresh()
+                ))->snapshot($accountId, $access['company_ids'], $access['account_ids'], $hours);
+                return array_slice((array) ($snapshot['recent_activity'] ?? []), 0, max(1, min(20, $limit)));
+            } catch (Throwable) {
+                $this->dataAvailable = false;
+                return [];
+            }
+        }
         try {
             if ($accountId !== null && $accountId > 0) {
                 (new BusinessScopeContext())->account($accountId);
@@ -598,6 +703,13 @@ final class ApiHealthService
             $stmt->execute();
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
             foreach ($rows as &$row) {
+                if ($classified) {
+                    $row['transport_class'] = $this->transportClass(
+                        (int) ($row['reached_remote'] ?? 0) === 1,
+                        (int) ($row['http_status'] ?? 0),
+                        (string) ($row['outcome_class'] ?? '')
+                    );
+                }
                 $row = Logger::redact($row);
                 $presented = (new ApiHealthSafeMessageService())->present(
                     (string) ($row['safe_message'] ?? ''),
@@ -621,6 +733,18 @@ final class ApiHealthService
     /** @return list<array<string,mixed>> */
     private function stats(int $hours, ?int $accountId = null): array
     {
+        if (PHP_SAPI !== 'cli') {
+            try {
+                $access = (new ApiHealthAccessScope())->snapshot($accountId);
+                $snapshot = (new \App\QueueV4Clean\QueueV4CleanHealthSnapshotService(
+                    Database::connectionFresh()
+                ))->snapshot($accountId, $access['company_ids'], $access['account_ids'], $hours);
+                return (array) ($snapshot['account_stats'] ?? []);
+            } catch (Throwable) {
+                $this->dataAvailable = false;
+                return [];
+            }
+        }
         try {
             $activeWindowMinutes = $this->activeWindowMinutes();
             [$scopeSql, $scopeParams] = $this->telemetryScopeSql('l', 'stats_scope', $accountId);
@@ -690,6 +814,14 @@ final class ApiHealthService
     /** @return array<string,int> */
     private function activeSignals(?int $accountId = null): array
     {
+        if (PHP_SAPI !== 'cli') {
+            $signals = (new ApiIncidentReadModelService())->signalCounts($accountId);
+            if ($signals === null) {
+                $this->dataAvailable = false;
+                return [];
+            }
+            return $signals;
+        }
         try {
             $activeWindowMinutes = $this->activeWindowMinutes();
             [$scopeSql, $scopeParams] = $this->telemetryScopeSql('api_request_logs', 'signal_scope', $accountId);
@@ -715,6 +847,137 @@ final class ApiHealthService
     private function activeWindowMinutes(): int
     {
         return max(5, min(120, (new AppSettingsService())->int('api.health.active_window_minutes', 15)));
+    }
+
+    /**
+     * The degraded browser path is deliberately narrower than CLI rebuilds.
+     * EXPLAIN is part of the gate: no indexed plan, no raw-log page.
+     *
+     * @param list<string> $where
+     * @param array<string,mixed> $params
+     */
+    private function directIncidentFallbackSafe(array $where, array $params, int $hours): bool
+    {
+        try {
+            $statement = Database::connectionFresh()->prepare(
+                'EXPLAIN SELECT l.id
+                 FROM ' . $this->directIncidentLogSourceSql() . '
+                 WHERE ' . implode(' AND ', $where) . '
+                 ORDER BY l.created_at DESC,l.id DESC
+                 LIMIT 500'
+            );
+            $statement->bindValue(':hours', max(1, min(720, $hours)), PDO::PARAM_INT);
+            foreach ($params as $key => $value) {
+                $statement->bindValue(':' . $key, $value, is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR);
+            }
+            $statement->execute();
+            $plan = $statement->fetchAll(PDO::FETCH_ASSOC);
+            if ($plan === []) {
+                return false;
+            }
+            foreach ($plan as $row) {
+                $type = strtolower((string) ($row['type'] ?? ''));
+                $key = trim((string) ($row['key'] ?? ''));
+                $rows = max(0, (int) ($row['rows'] ?? 0));
+                $extra = strtolower((string) ($row['Extra'] ?? ''));
+                $safeIndexedLookup = in_array($type, ['const', 'eq_ref', 'ref', 'range'], true);
+                $safeBoundedIndexScan = $type === 'index'
+                    && $rows > 0
+                    && $rows <= 250000
+                    && !str_contains($extra, 'using temporary');
+                if ($key === '' || (!$safeIndexedLookup && !$safeBoundedIndexScan)) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    private function directFallbackAllowedInCurrentRuntime(): bool
+    {
+        return PHP_SAPI !== 'cli' || getenv('ERP_API_HEALTH_DIRECT_FALLBACK_FOR_TESTS') === '1';
+    }
+
+    /** @param array<string,mixed> $filters */
+    private function isRemote429Filter(array $filters): bool
+    {
+        if (max(0, (int) ($filters['http_status'] ?? 0)) !== 429) {
+            return false;
+        }
+
+        $origin = trim((string) ($filters['origin'] ?? ''));
+        return $origin === '' || $origin === 'remote';
+    }
+
+    /**
+     * @param list<string> $where
+     * @param array<string,mixed> $params
+     * @return list<array<string,mixed>>
+     */
+    private function directIncidentFallbackRows(array $where, array $params, int $hours, int $limit): array
+    {
+        $this->incidentProtocol = 'degraded_direct';
+        $limit = min(50, max(1, $limit));
+        try {
+            $rows = $this->directIncidentRows($where, $params, $hours, $limit);
+            $this->lastIncidentTotal = count($rows);
+            return array_map(fn(array $row): array => $this->presentIncident($row), $rows);
+        } catch (Throwable) {
+            $this->dataAvailable = false;
+            $this->lastIncidentTotal = 0;
+            return [];
+        }
+    }
+
+    /**
+     * @param list<string> $where
+     * @param array<string,mixed> $params
+     * @return list<array<string,mixed>>
+     */
+    private function directIncidentRows(array $where, array $params, int $hours, int $limit): array
+    {
+        $statement = Database::connectionFresh()->prepare(
+            'SELECT l.incident_key,l.outcome_class,l.method,l.endpoint_path,l.http_status,l.error_type,l.error_code,
+                    l.safe_message,l.diagnostic_id,l.created_at first_seen_at,l.created_at last_seen_at,
+                    1 repetitions,l.reached_remote,l.actionable,l.risk_signal,
+                    NULL acknowledged_at,0 acknowledged_all,1 account_count,
+                    CASE WHEN l.meli_account_id IS NOT NULL THEN COALESCE(a.account_name,"Cuenta")
+                         WHEN l.scope_kind="company" THEN CONCAT("Empresa: ",COALESCE(c.name,"sin nombre"))
+                         ELSE "Aplicación" END account_names
+             FROM (
+                SELECT l.id,l.incident_key,l.outcome_class,l.method,l.endpoint_path,l.http_status,l.error_type,
+                       l.error_code,l.safe_message,l.diagnostic_id,l.created_at,l.reached_remote,l.actionable,
+                       l.risk_signal,l.scope_kind,l.company_id,l.meli_account_id
+                FROM ' . $this->directIncidentLogSourceSql() . '
+                WHERE ' . implode(' AND ', $where) . '
+                ORDER BY l.created_at DESC,l.id DESC
+                LIMIT 500
+             ) l
+             LEFT JOIN meli_accounts a ON a.company_id=l.company_id AND a.id=l.meli_account_id
+             LEFT JOIN companies c ON c.id=l.company_id
+             ORDER BY l.created_at DESC,l.id DESC
+             LIMIT :limit'
+        );
+        $statement->bindValue(':hours', max(1, min(720, $hours)), PDO::PARAM_INT);
+        foreach ($params as $key => $value) {
+            $statement->bindValue(':' . $key, $value, is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR);
+        }
+        $statement->bindValue(':limit', max(1, min(50, $limit)), PDO::PARAM_INT);
+        $statement->execute();
+        return $statement->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    private function directIncidentLogSourceSql(): string
+    {
+        try {
+            if ((new InformationSchemaGateway(Database::connectionFresh()))->hasIndex('api_request_logs', 'idx_api_logs_incident')) {
+                return 'api_request_logs l FORCE INDEX (idx_api_logs_incident)';
+            }
+        } catch (Throwable) {
+        }
+        return 'api_request_logs l';
     }
 
     /** @return list<array<string,mixed>> */
@@ -752,7 +1015,7 @@ final class ApiHealthService
                         SUBSTRING_INDEX(GROUP_CONCAT(COALESCE(l.diagnostic_id,"") ORDER BY l.created_at DESC,l.id DESC SEPARATOR "\n"),"\n",1) diagnostic_id,
                         MIN(l.created_at) first_seen_at,
                         MAX(l.created_at) last_seen_at,COUNT(*) repetitions,
-                        MAX(l.reached_remote) reached_remote,MAX(l.actionable) actionable,
+                        CAST(SUBSTRING_INDEX(GROUP_CONCAT(COALESCE(l.reached_remote,0) ORDER BY l.created_at DESC,l.id DESC SEPARATOR ","),",",1) AS UNSIGNED) reached_remote,MAX(l.actionable) actionable,
                         MAX(l.risk_signal) risk_signal,' . $ackSelect . '
                         COUNT(DISTINCT CONCAT(COALESCE(l.scope_kind,"application"),":",COALESCE(l.meli_account_id,l.company_id,0))) account_count,
                         GROUP_CONCAT(DISTINCT CASE
@@ -867,18 +1130,20 @@ final class ApiHealthService
         $lower = mb_strtolower($message);
         $reachedRemote = (int) ($row['reached_remote'] ?? 0) === 1;
 
-        $isRateLimit = $reachedRemote && $httpStatus === 429;
+        $transportClass = $this->transportClass($reachedRemote, $httpStatus, $outcome);
+        $isRateLimit = $transportClass === 'REMOTE_HTTP_429';
         $isPermissionOrAuth = $reachedRemote && in_array($httpStatus, [401, 403], true);
         $isServerError = $reachedRemote && $httpStatus >= 500;
-        $hasRiskSignal = (int) ($row['risk_signal'] ?? 0) === 1;
+        $hasRiskSignal = (int) ($row['risk_signal'] ?? 0) === 1
+            && ($reachedRemote || $outcome === 'blocked_signal');
         $signalRequiresProtection = $isRateLimit || $isPermissionOrAuth || $outcome === 'blocked_signal' || $hasRiskSignal;
         $signalLabel = match (true) {
             $isRateLimit => 'Rate limit de Mercado Libre',
             $outcome === 'blocked_signal' => 'Señal de bloqueo o autorización',
-            $httpStatus === 401 => 'OAuth/autorización inválida',
-            $httpStatus === 403 => 'Permiso o alcance no disponible',
+            $isPermissionOrAuth && $httpStatus === 401 => 'OAuth/autorización inválida',
+            $isPermissionOrAuth && $httpStatus === 403 => 'Permiso o alcance no disponible',
             $isServerError => 'Falla temporal de Mercado Libre',
-            $outcome === 'policy_delay' => 'Protección preventiva del ERP',
+            $outcome === 'policy_delay' => 'Pausa preventiva local · sin HTTP remoto',
             $outcome === 'local_failure' => 'Fallo interno del ERP',
             $httpStatus === 404 => 'Recurso no encontrado',
             default => $reachedRemote ? 'Respuesta remota con error' : 'Evento interno',
@@ -888,26 +1153,26 @@ final class ApiHealthService
             str_contains($lower, 'already an active transaction') => 'Conflicto interno al renovar autorización',
             $outcome === 'policy_delay' => 'Consulta aplazada por protección preventiva',
             $outcome === 'blocked_signal' => 'Señal de bloqueo o autorización',
-            $httpStatus === 429 => 'Rate limit de Mercado Libre',
-            $httpStatus === 403 => 'Permiso no disponible para esta operación',
-            $httpStatus === 401 => 'Autorización de cuenta no válida',
-            $httpStatus >= 500 => 'Falla temporal de Mercado Libre',
+            $isRateLimit => 'Rate limit de Mercado Libre',
+            $isPermissionOrAuth && $httpStatus === 403 => 'Permiso no disponible para esta operación',
+            $isPermissionOrAuth && $httpStatus === 401 => 'Autorización de cuenta no válida',
+            $isServerError => 'Falla temporal de Mercado Libre',
             $outcome === 'local_failure' => 'Problema interno antes de consultar Mercado Libre',
             default => 'Respuesta con problema de Mercado Libre',
         };
         $severity = match (true) {
-            $outcome === 'blocked_signal' || $httpStatus === 401 => 'critical',
-            $httpStatus === 429 || $httpStatus === 403 => 'high',
+            $outcome === 'blocked_signal' || ($isPermissionOrAuth && $httpStatus === 401) => 'critical',
+            $isRateLimit || ($isPermissionOrAuth && $httpStatus === 403) => 'high',
             $outcome === 'local_failure' => 'medium',
             default => 'low',
         };
         $recommendation = match (true) {
             str_contains($lower, 'already an active transaction') => 'No pause las cuentas. La solicitud no llegó a Mercado Libre; continúe observando si vuelve a aparecer.',
             $outcome === 'policy_delay' => 'Espere la hora segura indicada; el trabajo continuará mediante cron.',
-            $httpStatus === 429 => 'Respete Retry-After o la próxima hora segura. Baje o mantenga limitado el ritmo efectivo de la cuenta/endpoint y no fuerce reintentos.',
-            $httpStatus === 403 => 'Revise permisos de la cuenta y la capacidad de la operación.',
-            $httpStatus === 401 => 'Revise la conexión OAuth de la cuenta afectada.',
-            $httpStatus >= 500 => 'Permita que el cron reintente con espera progresiva.',
+            $isRateLimit => 'Respete Retry-After o la próxima hora segura. Baje o mantenga limitado el ritmo efectivo de la cuenta/endpoint y no fuerce reintentos.',
+            $isPermissionOrAuth && $httpStatus === 403 => 'Revise permisos de la cuenta y la capacidad de la operación.',
+            $isPermissionOrAuth && $httpStatus === 401 => 'Revise la conexión OAuth de la cuenta afectada.',
+            $isServerError => 'Permita que el cron reintente con espera progresiva.',
             $outcome === 'local_failure' => 'Revise el diagnóstico interno del ERP; no es necesario pausar Mercado Libre.',
             default => 'Revise la operación y el diagnóstico técnico antes de reintentar.',
         };
@@ -927,6 +1192,12 @@ final class ApiHealthService
             'blocking_risk' => $active && $hasRiskSignal,
             'signal_requires_protection' => $signalRequiresProtection,
             'rate_limit_signal' => $isRateLimit,
+            'transport_class' => $transportClass,
+            'transport_label' => match ($transportClass) {
+                'REMOTE_HTTP_429' => 'Mercado Libre respondió HTTP 429',
+                'LOCAL_RATE_LIMITED_PRETRANSPORT' => 'Pausa preventiva local · sin HTTP remoto',
+                default => $reachedRemote ? 'Respuesta remota' : 'Sin transporte remoto',
+            },
             'signal_label' => $signalLabel,
             'risk_explanation' => $signalRequiresProtection
                 ? ($active
@@ -939,6 +1210,17 @@ final class ApiHealthService
             'safe_message' => $this->sanitize($message),
             'error_type' => $errorType,
         ]);
+    }
+
+    private function transportClass(bool $reachedRemote, int $httpStatus, string $outcome): string
+    {
+        if ($reachedRemote && $httpStatus === 429) {
+            return 'REMOTE_HTTP_429';
+        }
+        if (!$reachedRemote && $outcome === 'policy_delay') {
+            return 'LOCAL_RATE_LIMITED_PRETRANSPORT';
+        }
+        return 'OTHER';
     }
 
     private function supportsOutcomeClassification(): bool
@@ -1006,6 +1288,37 @@ final class ApiHealthService
             'problem_endpoints' => [],
             'budget' => $this->scopedBudgetSummary($accountId),
             'classified' => false,
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function unavailableMaterializedSummary(): array
+    {
+        $this->dataAvailable = false;
+        return [
+            'risk' => 'unknown',
+            'data_available' => false,
+            'requests' => 0,
+            'errors' => 0,
+            'attempts' => 0,
+            'sent' => 0,
+            'successful' => 0,
+            'raw_successful' => 0,
+            'corrected_successful' => 0,
+            'remote_errors' => 0,
+            'local_failures' => 0,
+            'policy_delays' => 0,
+            'expected_absence' => 0,
+            'active_incident_count' => 0,
+            'recovered_incident_count' => 0,
+            'open_circuits' => [],
+            'stats' => [],
+            'incidents' => [],
+            'problem_endpoints' => [],
+            'budget' => ['available' => false],
+            'classified' => false,
+            'snapshot_state' => 'unavailable',
+            'safe_message' => 'El modelo materializado de Salud API no está disponible. No se consultaron logs crudos.',
         ];
     }
 

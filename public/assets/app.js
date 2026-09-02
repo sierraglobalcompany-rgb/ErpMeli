@@ -511,909 +511,295 @@
   }
 })();
 
-// Centro de Automatización 2.28.10: polling ligero, sin crear ni modificar trabajo.
 (() => {
-  const root = document.querySelector('[data-cron-control]');
+  const root = document.querySelector('[data-queue-v4-clean]');
   if (!root) return;
-  const baseUrl = root.dataset.operationalUrl
-    ? root.dataset.operationalUrl.replace(/\/settings\/cron\/operational-snapshot\.json.*$/, '')
-    : '';
-  let stopped = false;
-  let overviewInFlight = false;
-  let taskInFlight = false;
-  let setupInFlight = false;
-  let timer = null;
-  let lastOverview = null;
-  let lastTasks = [];
-  let lastSetup = null;
-  let overviewController = null;
-  let operationalController = null;
-  let taskController = null;
-  let setupController = null;
-  let canaryController = null;
-  let runtimeController = null;
-  let overviewFailures = 0;
-  let operationalFailures = 0;
-  let taskFailures = 0;
-  let setupFailures = 0;
-  let canaryFailures = 0;
-  let runtimeFailures = 0;
-  let canaryInFlight = false;
-  let runtimeInFlight = false;
-  let lastCanary = null;
-  let lastRuntime = null;
-  let operationalInFlight = false;
-
-  const fetchJson = async (url, previousController) => {
-    previousController?.abort();
+  const statusTimeoutMs = 8000;
+  const password = root.querySelector('[data-qv4-password]');
+  const feedback = root.querySelector('[data-qv4-feedback]');
+  let snapshot = null;
+  const actions = [...root.querySelectorAll('[data-qv4-action]')];
+  const labels = {
+    NOT_READY: 'No preparado', READY_TO_TEST: 'Listo para comprobar', TESTING: 'Comprobando',
+    CERTIFIED: 'Certificado', FAILED: 'Falló la comprobación'
+  };
+  const safe = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
+  const syncButtons = () => {
+    const hasPassword = Boolean(password?.value);
+    actions.forEach((form) => {
+      const action = form.dataset.qv4Action;
+      const button = form.querySelector('button');
+      const enabled = action === 'readiness'
+        ? snapshot?.state === 'READY_TO_TEST'
+        : action === 'activate'
+          ? snapshot?.state === 'CERTIFIED'
+            && ['CERTIFIED', 'STOPPED'].includes(snapshot?.engine)
+            && (snapshot?.issues || []).length === 0
+          : snapshot?.engine === 'ACTIVE';
+      if (button) button.disabled = !(hasPassword && enabled);
+    });
+  };
+  const render = (data) => {
+    snapshot = data;
+    root.querySelector('[data-qv4-state]').textContent = labels[data.state] || data.state || 'No preparado';
+    root.querySelector('[data-qv4-message]').textContent = (data.issues || []).length
+      ? `Bloqueado: ${(data.issues || []).join(', ')}.`
+      : 'Automatización activa y sin atención crítica inmediata.';
+    root.querySelector('[data-qv4-engine]').textContent = data.engine || 'STOPPED';
+    root.querySelector('[data-qv4-oauth]').textContent = `${Number(data.accounts_oauth || 0)}/3`;
+    root.querySelector('[data-qv4-readiness]').textContent = `${Number(data.readiness_get_passed || 0)}/3`;
+    root.querySelector('[data-qv4-scheduler]').textContent = data.scheduler === 'active' ? 'Activo' : 'Inactivo';
+    const heartbeat = root.querySelector('[data-qv4-heartbeat]');
+    if (heartbeat) heartbeat.textContent = data.last_scheduler_heartbeat || 'Sin evidencia';
+    const physical = root.querySelector('[data-qv4-physical]');
+    if (physical) physical.textContent = data.physical_cron_observed === 'YES' ? 'Verificado' : 'No certificado';
+    const recentWork = data.recent_work || data.worker_summary || {};
+    const completed = Number(recentWork.completed || recentWork.completed_last_hour || 0);
+    const deferred = Number(recentWork.deferred || 0);
+    const claimed = Number(recentWork.claimed || completed + deferred);
+    const ratio = claimed > 0 ? `${Math.round((completed / claimed) * 100)}%` : '—';
+    const workValues = { completed, deferred, ratio };
+    Object.entries(workValues).forEach(([key, value]) => {
+      const node = root.querySelector(`[data-qv4-work="${key}"]`);
+      if (node) node.textContent = String(value);
+    });
+    const review = data.review_forensics || {};
+    const reviewValues = {
+      recoverable: review.recoverable_count || 0,
+      functional: review.functional_count || 0,
+      ambiguous: review.ambiguous_count || 0,
+      oldest: review.oldest || '—',
+      unknown_reason: review.review_with_unknown_reason || 0,
+      no_path: review.review_with_no_resolution_path || 0,
+      dominant: review.dominant_review_class
+        ? `${review.dominant_review_class} (${review.dominant_review_class_percent || 0}%)`
+        : '—',
+      human: (review.requires_human_counts && review.requires_human_counts.YES) || 0
+    };
+    Object.entries(reviewValues).forEach(([key, value]) => {
+      const node = root.querySelector(`[data-qv4-review="${key}"]`);
+      if (node) node.textContent = String(value);
+    });
+    const reviewActions = root.querySelector('[data-qv4-review-actions]');
+    if (reviewActions) {
+      const counts = review.review_class_counts || {};
+      const paths = review.current_review_actions || {};
+      const ages = review.review_age_matrix || {};
+      const classes = Object.keys(counts).sort((a, b) => Number(counts[b] || 0) - Number(counts[a] || 0));
+      reviewActions.innerHTML = classes.length
+        ? classes.map((name) => {
+            const path = paths[name] || {};
+            const age = ages[name] || {};
+            const ageText = ['<1h', '1-6h', '6-24h', '1-7d', '7-30d', '>30d']
+              .map((bucket) => `${bucket}: ${Number(age[bucket] || 0)}`)
+              .join(' · ');
+            const actions = Array.isArray(path.available_operator_actions)
+              ? path.available_operator_actions.join(' · ')
+              : 'Inspección humana';
+            return `<tr><td><span class="status-badge is-warning">${safe(name)}</span></td><td>${Number(counts[name] || 0)}</td><td><small>${safe(ageText)}</small></td><td><small>${safe(actions)}</small></td></tr>`;
+          }).join('')
+        : '<tr><td colspan="4"><div class="empty">No hay filas en Review.</div></td></tr>';
+    }
+    Object.entries(data.queue || {}).forEach(([key, value]) => {
+      const node = root.querySelector(`[data-qv4-count="${key}"]`);
+      if (node) node.textContent = String(value);
+    });
+    const oauthOperations = root.querySelector('[data-qv4-oauth-operations]');
+    if (oauthOperations) {
+      const rows = Array.isArray(data.oauth_control_plane) ? data.oauth_control_plane : [];
+      oauthOperations.innerHTML = rows.length
+        ? rows.map((row) => {
+            const state = row.automatic_refresh_state || 'IDLE';
+            const detail = state === 'RECONNECT_REQUIRED'
+              ? 'Requiere reconexión administrativa; no habrá reintento automático.'
+              : `Vence: ${safe(row.expires_at || '—')} · Próximo: ${safe(row.next_attempt_at || '—')}`;
+            return `<article><span>${safe(row.account_name || `Cuenta ${row.meli_account_id}`)}</span><strong>${safe(state)}</strong><p>${detail}</p></article>`;
+          }).join('')
+        : '<article><span>Autoridad</span><strong>Sin cuentas certificadas</strong><p>No se programó renovación.</p></article>';
+    }
+    root.querySelector('[data-qv4-legacy]').textContent = data.legacy_state_consulted ? 'Error: legado consultado' : 'Legado no consultado';
+    syncButtons();
+  };
+  const refresh = async () => {
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(() => controller.abort(), statusTimeoutMs);
     try {
-      const response = await fetch(url, {
+      const response = await fetch(root.dataset.statusUrl, {
         credentials: 'same-origin',
-        cache: 'no-store',
         headers: { Accept: 'application/json' },
         signal: controller.signal
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || payload.ok === false || payload.snapshot_state === 'unavailable') {
-        throw new Error(payload.message || 'unavailable');
+      if (response.status === 504) throw new Error('El backend Queue V4 agotó el tiempo de respuesta.');
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.toLowerCase().includes('application/json')) {
+        throw new Error('Queue V4 devolvió una respuesta no válida.');
       }
-      return { controller, payload };
+      const data = await response.json().catch(() => { throw new Error('Queue V4 devolvió JSON inválido.'); });
+      if (!response.ok || data.ok === false) throw new Error(data.message || 'Queue V4 no disponible.');
+      render(data);
+      feedback.textContent = 'Estado actualizado sin mutaciones.';
+    } catch (error) {
+      snapshot = null;
+      syncButtons();
+      feedback.textContent = error?.name === 'AbortError'
+        ? 'El backend Queue V4 agotó el tiempo de respuesta.'
+        : (error?.message || 'No se pudo leer Queue V4.');
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+  password?.addEventListener('input', syncButtons);
+  actions.forEach((form) => form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('button');
+    if (!button || button.disabled) return;
+    form.querySelector('[name="admin_password"]').value = password.value;
+    const previous = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Procesando…';
+    try {
+      const response = await fetch(form.action, {
+        method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' }, body: new FormData(form)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) throw new Error(data.message || 'Operación bloqueada.');
+      password.value = '';
+      feedback.textContent = data.state ? `Queue V4: ${data.state}.` : 'Operación completada.';
+      await refresh();
+    } catch (error) {
+      feedback.textContent = error?.message || 'La operación se bloqueó sin cambiar el motor.';
+    } finally {
+      button.textContent = previous;
+      syncButtons();
+    }
+  }));
+  refresh();
+})();
+
+// Riesgos API de Cron: evidencia directa, acotada y sin depender del catálogo materializado.
+(() => {
+  const root = document.querySelector('[data-cron-api-risks]');
+  if (!root) return;
+  const timeoutMs = 8000;
+  const metric = (name) => root.querySelector(`[data-cron-api-risk="${name}"]`);
+  const source = root.querySelector('[data-cron-api-risks-source]');
+  const meta = root.querySelector('[data-cron-api-risks-meta]');
+  const top = root.querySelector('[data-cron-api-risks-top]');
+  const recent = root.querySelector('[data-cron-api-risks-recent]');
+  const detail = root.querySelector('[data-cron-api-risks-detail]');
+  const remoteLink = root.querySelector('[data-cron-api-risks-remote]');
+  const localLink = root.querySelector('[data-cron-api-risks-local]');
+  const technicalLink = root.querySelector('[data-cron-api-risks-technical]');
+  const appBase = (root.dataset.appBase || '').replace(/\/$/, '');
+  const context = (name) => root.querySelector(`[data-cron-api-risk-context="${name}"]`);
+  // The API returns app-relative routes. Preserve the configured deployment
+  // prefix (for example /erp-meli) instead of resolving them at host root.
+  const appHref = (path) => {
+    if (typeof path !== 'string' || !path.startsWith('/settings/')) return null;
+    return `${appBase}${path}`;
+  };
+  const setAppHref = (element, path) => {
+    const href = appHref(path);
+    if (element && href) element.href = href;
+  };
+  const names = {
+    REMOTE_HTTP_429: 'Mercado Libre respondió HTTP 429',
+    LOCAL_RATE_LIMITED_PRETRANSPORT: 'Pausa preventiva local · sin HTTP remoto',
+    OAUTH_CRITICAL: 'OAuth o permisos remotos',
+    REMOTE_HTTP_5XX: 'Fallo HTTP 5xx remoto',
+    REMOTE_UNCERTAIN: 'Resultado remoto incierto'
+  };
+  const clear = (node) => { while (node?.firstChild) node.removeChild(node.firstChild); };
+  const append = (node, value, emphasis = false) => {
+    if (!node) return;
+    const item = document.createElement('li');
+    const strong = document.createElement('strong');
+    strong.textContent = value;
+    if (emphasis) item.appendChild(strong); else item.textContent = value;
+    node.appendChild(item);
+  };
+  const metaItem = (label, value) => {
+    const item = document.createElement('span');
+    const strong = document.createElement('strong');
+    strong.textContent = `${label}: `;
+    item.appendChild(strong);
+    item.appendChild(document.createTextNode(value));
+    meta.appendChild(item);
+  };
+  const render = (payload) => {
+    root.setAttribute('aria-busy', 'false');
+    const windows = payload.windows || {};
+    const nowTotals = windows['60m'] || payload.totals || {};
+    const dayTotals = windows['24h'] || {};
+    const monthTotals = windows['30d'] || payload.totals || {};
+    ['remote_http_429', 'local_rate_limited_pretransport', 'oauth_critical', 'http_5xx', 'remote_uncertain']
+      .forEach((key) => {
+        const node = metric(key);
+        if (node) node.textContent = String(Number(nowTotals[key] || 0));
+        const note = context(key);
+        if (note) {
+          note.textContent = key === 'local_rate_limited_pretransport'
+            ? `${Number(dayTotals[key] || 0)} en 24h · ${Number(monthTotals[key] || 0)} en 30d histórico. Protección local antes de salir a Mercado Libre.`
+            : `${Number(dayTotals[key] || 0)} en 24h · ${Number(monthTotals[key] || 0)} en 30d histórico.`;
+        }
+      });
+    if (payload.ok !== true) {
+      source.textContent = payload.message || 'NO_CERTIFICADO: no se pudo leer la telemetría directa.';
+      clear(top); clear(recent);
+      append(top, 'NO_CERTIFICADO');
+      append(recent, 'NO_CERTIFICADO');
+      return;
+    }
+    source.textContent = `CERTIFICADO · ${payload.source_label || 'Telemetría directa'} · ahora=60m · consultada ${payload.measured_at || 'ahora'}.`;
+    setAppHref(detail, payload.links?.remote_429);
+    setAppHref(remoteLink, payload.links?.remote_429);
+    setAppHref(localLink, payload.links?.local_pretransport);
+    setAppHref(technicalLink, payload.links?.technical);
+    clear(meta);
+    const materializer = payload.materializer || {};
+    metaItem('Incidentes', materializer.current ? 'catálogo al día' : `catálogo atrasado (${Number(materializer.lag || 0)} eventos)`);
+    const worker = payload.worker || {};
+    if (worker.available) {
+      metaItem('Worker', `${Number(worker.dead || 0)} Dead · ${Number(worker.stale_leases || 0)} leases vencidos · heartbeat ${worker.heartbeat_age_seconds ?? '—'} s`);
+    } else {
+      metaItem('Worker', 'NO_CERTIFICADO');
+    }
+    const billing = payload.billing || {};
+    metaItem('Billing', billing.available
+      ? (billing.state === 'ACTIVE' ? `bloqueado hasta ${billing.next_safe_at || 'hora segura'}` : 'sin breaker activo')
+      : 'NO_CERTIFICADO');
+    clear(top);
+    const topRows = Array.isArray(payload.top) ? payload.top : [];
+    if (topRows.length === 0) append(top, 'Sin señales de riesgo en el histórico 30d.');
+    topRows.forEach((row) => append(top, `${row.account_alias || 'Aplicación'} · ${row.endpoint || 'endpoint no certificado'} · ${Number(row.repetitions || 0)} eventos · último ${row.last_seen_at || '—'}`));
+    clear(recent);
+    const recentRows = Array.isArray(payload.recent) ? payload.recent : [];
+    if (recentRows.length === 0) append(recent, 'Sin señales de riesgo recientes.');
+    recentRows.forEach((row) => append(recent, `${names[row.signal] || row.signal || 'Evento'} · ${row.account_alias || 'Aplicación'} · ${row.method || 'GET'} ${row.endpoint || 'endpoint no certificado'}${row.http_status ? ` · HTTP ${row.http_status}` : ''} · ${row.observed_at || '—'}`));
+  };
+  const refresh = async () => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(root.dataset.risksUrl, {
+        credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' }, signal: controller.signal
+      });
+      const payload = await response.json().catch(() => ({}));
+      render(payload);
+      if (!response.ok && source) source.textContent = payload.message || 'NO_CERTIFICADO: el resumen no respondió correctamente.';
+    } catch (error) {
+      root.setAttribute('aria-busy', 'false');
+      if (source) source.textContent = error?.name === 'AbortError'
+        ? 'NO_CERTIFICADO: la consulta de riesgos tardó más de 8 s.'
+        : 'NO_CERTIFICADO: no se pudo leer Riesgos API.';
+      clear(top); clear(recent);
+      append(top, 'NO_CERTIFICADO');
+      append(recent, 'NO_CERTIFICADO');
     } finally {
       window.clearTimeout(timeout);
     }
   };
-
-  const append = (parent, tag, value, className) => {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    node.textContent = value;
-    parent.appendChild(node);
-    return node;
-  };
-
-  const mergeDefined = (previous, incoming) => {
-    const merged = { ...(previous || {}) };
-    Object.entries(incoming || {}).forEach(([key, value]) => {
-      if (value !== undefined && value !== null) merged[key] = value;
-    });
-    return merged;
-  };
-
-  const isRuntimeOperational = (payload) => {
-    const runtime = payload?.runtime || payload || {};
-    return String(runtime.state || '') === 'operational'
-      || String(payload?.state || '').startsWith('operational')
-      || String(runtime.cutover?.state || '') === 'operational_active';
-  };
-
-  const hideLegacyV3PanelsWhenOperational = () => {
-    const operationalMode = isRuntimeOperational(lastRuntime);
-    root.querySelectorAll('[data-cron-v3-setup], [data-cron-v3-canary]').forEach((panel) => {
-      panel.hidden = operationalMode;
-      panel.setAttribute('aria-hidden', operationalMode ? 'true' : 'false');
-    });
-    return operationalMode;
-  };
-
-  const renderOverview = (payload) => {
-    if (!payload || payload.ok === false) return;
-    const snapshotState = payload.snapshot_state || 'complete';
-    if (!['complete', 'partial'].includes(snapshotState)) return;
-    if (snapshotState === 'complete') {
-      lastOverview = { ...payload };
-    } else {
-      const previousWorkload = lastOverview?.workload || {};
-      const partialPayload = { ...payload };
-      if (payload.section_availability?.history === false) delete partialPayload.history;
-      if (payload.section_availability?.selector === false) delete partialPayload.next;
-      lastOverview = mergeDefined(lastOverview, partialPayload);
-      lastOverview.workload = mergeDefined(previousWorkload, payload.workload || {});
-    }
-    const state = root.querySelector('[data-cron-state]');
-    const signal = root.querySelector('[data-cron-signal]');
-    if (state && lastOverview.state_label) state.textContent = lastOverview.state_label;
-    if (signal && lastOverview.last_signal_label) signal.textContent = `Última señal: ${lastOverview.last_signal_label} hora Bogotá`;
-    const workload = lastOverview.workload || {};
-    const launcher = root.querySelector('[data-cron-launcher]');
-    const remoteHour = root.querySelector('[data-cron-remote-hour]');
-    const finalizedHour = root.querySelector('[data-cron-finalized-hour]');
-    const backlog = root.querySelector('[data-cron-backlog]');
-    const trend = root.querySelector('[data-cron-trend]');
-    if (launcher && lastOverview.state_label) launcher.textContent = lastOverview.state_label;
-    if (remoteHour && workload.remote_calls_last_hour !== undefined) remoteHour.textContent = workload.remote_calls_last_hour === null
-      ? 'No se pudo medir'
-      : `${new Intl.NumberFormat('es-CO').format(Number(workload.remote_calls_last_hour))} transportes iniciados`;
-    if (finalizedHour && workload.finalized_last_hour !== undefined) finalizedHour.textContent = workload.finalized_last_hour === null
-      ? 'No se pudo medir'
-      : `${new Intl.NumberFormat('es-CO').format(Number(workload.finalized_last_hour))} recursos`;
-    if (backlog && workload.pending !== undefined) backlog.textContent = `${new Intl.NumberFormat('es-CO').format(Number(workload.pending || 0))} pendientes`;
-    if (trend && workload.trend_label) trend.textContent = workload.trend_label;
-
-    const now = root.querySelector('[data-cron-now]');
-    if (now) {
-      now.replaceChildren();
-      if (lastOverview.now) {
-        append(now, 'strong', lastOverview.now.label || 'Trabajo en curso');
-        append(now, 'p', `Inicio: ${lastOverview.now.started_label || 'por comprobar'} · Consulta remota: ${Number(lastOverview.now.remote_calls || 0) > 0 ? 'sí' : 'todavía no'}`);
-      } else {
-        append(now, 'strong', 'Esperando la próxima señal');
-        append(now, 'p', 'No hay un trabajo con lease y heartbeat vigentes en este instante.');
-      }
-    }
-
-    const last = root.querySelector('[data-cron-last]');
-    if (last && lastOverview.last_run) {
-      const run = lastOverview.last_run;
-      last.replaceChildren();
-      append(last, 'strong', `${run.selected || 0} funciones reclamadas · ${run.started || 0} funciones iniciadas`);
-      append(last, 'p', `${run.completed || 0} recursos finalizados · ${run.deferred || 0} recursos aplazados`);
-      append(last, 'p', `${run.attempted_remote_calls ?? run.remote_calls ?? 0} intentos HTTP · ${run.remote_calls || 0} transportes iniciados · ${run.blocked_remote_calls || 0} bloqueados antes de salir`);
-      if (Number(run.not_started || 0) > 0) append(last, 'p', `${run.not_started} ${Number(run.not_started) === 1 ? 'siguiente función no cupo' : 'funciones planeadas no cupieron'} en la ventana segura.`, 'text-warning');
-    }
-
-    const next = root.querySelector('[data-cron-next]');
-    if (next && Array.isArray(lastOverview.next)) {
-      next.replaceChildren();
-      (lastOverview.next.length ? lastOverview.next : [{ label: 'Por comprobar', next_label: 'Se actualizará sin crear trabajos.' }]).forEach((task) => {
-        const li = document.createElement('li');
-        append(li, 'strong', task.label || 'Trabajo');
-        append(li, 'span', task.next_label || 'Siguiente ciclo');
-        next.appendChild(li);
-      });
-    }
-
-    const history = root.querySelector('[data-cron-history]');
-    if (history && Array.isArray(lastOverview.history)) {
-      history.replaceChildren();
-      if (!lastOverview.history.length) {
-        append(history, 'p', 'Todavía no hay ciclos cerrados para mostrar.', 'api-inline-empty');
-      } else {
-        lastOverview.history.forEach((run) => {
-          const article = document.createElement('article');
-          const heading = document.createElement('div');
-          append(heading, 'strong', run.finished_label || 'Ciclo');
-          append(heading, 'span', run.status || '');
-          article.appendChild(heading);
-          append(article, 'p', `${run.selected || 0} funciones reclamadas · ${run.started || 0} iniciadas · ${run.completed || 0} recursos finalizados`);
-          append(article, 'p', `${run.remote_calls || 0} transportes HTTP iniciados · ${run.deferred || 0} aplazados · ${Number(Number(run.duration_ms || 0) / 1000).toLocaleString('es-CO', { maximumFractionDigits: 1 })} s`);
-          history.appendChild(article);
-        });
-      }
-    }
-
-    renderCronV3(lastOverview.cron_v3);
-    if (lastOverview.cron_v3_operational) {
-      renderCapabilities(lastOverview.cron_v3_operational);
-      renderRuntime({ runtime: lastOverview.cron_v3_operational.runtime });
-    }
-  };
-
-  const renderOperationalSnapshot = (payload) => {
-    if (!payload || payload.ok === false) return;
-
-    const operationalMode = isRuntimeOperational(payload);
-    if (payload.runtime) {
-      lastRuntime = mergeDefined(lastRuntime, payload.runtime);
-    }
-    if (operationalMode) {
-      lastRuntime = mergeDefined(lastRuntime, {
-        state: 'operational',
-        state_label: payload.runtime?.state_label || payload.state_label || 'V3 operativo',
-        v3: payload.runtime?.v3 || payload.v3 || lastRuntime?.v3,
-        cutover: payload.runtime?.cutover || lastRuntime?.cutover,
-        v2: payload.runtime?.v2 || lastRuntime?.v2,
-      });
-    }
-    hideLegacyV3PanelsWhenOperational();
-
-    renderCronV3(payload.v3);
-    renderRuntime({ runtime: payload.runtime });
-    renderCapabilities(payload);
-    renderRateLimitSignals(payload.api_rate_limit_signals);
-    renderTasks({
-      ok: true,
-      snapshot_state: payload.snapshot_state || payload.protocol || 'partial',
-      rows: Array.isArray(payload.queues) ? payload.queues : [],
-    });
-
-    const state = root.querySelector('[data-cron-state]');
-    const signal = root.querySelector('[data-cron-signal]');
-    const launcher = root.querySelector('[data-cron-launcher]');
-    const launcherDetail = root.querySelector('[data-cron-launcher-detail]');
-    const remoteHour = root.querySelector('[data-cron-remote-hour]');
-    const finalizedHour = root.querySelector('[data-cron-finalized-hour]');
-    const backlog = root.querySelector('[data-cron-backlog]');
-    const trend = root.querySelector('[data-cron-trend]');
-    const totals = payload.totals || {};
-    if (state) state.textContent = payload.state_label || payload.runtime?.state_label || 'V3 por comprobar';
-    const localSignal = payload.v3?.lanes?.local?.last_signal_label || payload.runtime?.v3?.lanes?.local?.last_signal_label;
-    const remoteSignal = payload.v3?.lanes?.remote?.last_signal_label || payload.runtime?.v3?.lanes?.remote?.last_signal_label;
-    if (signal) {
-      signal.textContent = localSignal || remoteSignal
-        ? `V3 local ${localSignal || 'sin señal'} · V3 remoto ${remoteSignal || 'sin señal'}`
-        : (payload.state_message || 'Snapshot operativo V3 sin señal comprobable.');
-    }
-    if (launcher) launcher.textContent = payload.runtime?.state_label || payload.state_label || 'V3 por comprobar';
-    if (launcherDetail) {
-      launcherDetail.textContent = localSignal || remoteSignal
-        ? `Señal V3 local ${localSignal || 'sin señal'} · remoto ${remoteSignal || 'sin señal'}`
-        : 'Snapshot V3 disponible; señales en verificación.';
-    }
-    if (remoteHour) remoteHour.textContent = `${new Intl.NumberFormat('es-CO').format(Number(totals.v3_http_last_hour || 0))} transportes iniciados`;
-    if (finalizedHour) finalizedHour.textContent = `${new Intl.NumberFormat('es-CO').format(Number(totals.v3_completed_last_hour || 0))} recursos`;
-    if (backlog) backlog.textContent = `${new Intl.NumberFormat('es-CO').format(Number(totals.legacy_pending_visible || 0))} pendientes visibles`;
-    if (trend) {
-      trend.textContent = payload.drainage?.explanation
-        || 'Drenaje V3 medido por snapshot operativo; legacy solo respalda backlog visible.';
-    }
-
-    const now = root.querySelector('[data-cron-human-now]');
-    if (now) {
-      now.textContent = payload.state_message || 'V3 es la fuente operativa principal.';
-    }
-    const updated = root.querySelector('[data-cron-overview-updated]');
-    if (updated) {
-      updated.textContent = `Snapshot V3 actualizado ${payload.measured_at || 'ahora'} UTC · lectura sin mutaciones`;
-    }
-  };
-
-  const renderRateLimitSignals = (signals) => {
-    const panel = root.querySelector('[data-cron-rate-limit-signals]');
-    if (!panel) return;
-    const rows = Array.isArray(signals) ? signals : [];
-    const list = panel.querySelector('[data-cron-rate-limit-list]');
-    const summary = panel.querySelector('[data-cron-rate-limit-summary]');
-    panel.hidden = rows.length === 0;
-    if (summary) {
-      summary.textContent = rows.length
-        ? `${rows.length} señal(es) 429 en las últimas 24 horas. Cron debe respetar Retry-After y mantener limitada la cuenta/endpoint afectado.`
-        : 'Sin señales 429 recientes.';
-    }
-    if (!list) return;
-    list.replaceChildren();
-    rows.slice(0, 5).forEach((incident) => {
-      const key = String(incident.incident_key || '');
-      const link = document.createElement('a');
-      link.href = `${baseUrl}/settings/api-health/incidents/show?key=${encodeURIComponent(key)}`;
-      const title = append(link, 'strong', `${incident.account_names || 'Aplicación'} · ${incident.operation_label || 'Operación API'}`);
-      title.setAttribute('data-kind', 'rate-limit');
-      append(link, 'span', `${Number(incident.repetitions || 0).toLocaleString('es-CO')} repeticiones · activo ahora: ${incident.active_now ? 'Sí' : 'No'} · última vez: ${incident.last_seen_at || 'por comprobar'}`);
-      append(link, 'b', 'Revisar protección');
-      list.appendChild(link);
-    });
-  };
-
-  const renderCapabilities = (payload) => {
-    const panel = root.querySelector('[data-cron-v3-capabilities]');
-    const rows = Array.isArray(payload?.capabilities) ? payload.capabilities : [];
-    if (!panel) return;
-    const state = panel.querySelector('[data-cron-v3-capability-state]');
-    const waiting = rows.filter((row) => row.capability_state === 'waiting_capability').length;
-    const unsupported = rows.filter((row) => row.capability_state === 'review_unsupported').length;
-    if (state) {
-      state.className = `status-badge ${waiting || unsupported ? 'is-warning' : 'is-success'}`;
-      state.textContent = waiting || unsupported
-        ? `${waiting + unsupported} brechas visibles`
-        : 'Sin brechas';
-    }
-    const body = panel.querySelector('[data-cron-v3-capability-rows]');
-    if (body) {
-      body.replaceChildren();
-      if (!rows.length) {
-        const tr = document.createElement('tr');
-        const td = append(tr, 'td', 'No se pudo comprobar la matriz V3.');
-        td.colSpan = 5;
-        body.appendChild(tr);
-      } else {
-        rows.forEach((row) => {
-          const tr = document.createElement('tr');
-          const name = append(tr, 'td', row.label || row.queue_key || 'Función');
-          name.dataset.label = 'Función';
-          const status = append(tr, 'td', '');
-          status.dataset.label = 'Estado V3';
-          const cssState = row.capability_state === 'v3_active' || row.capability_state === 'v3_local_only'
-            ? 'ready'
-            : (row.capability_state === 'review_unsupported' ? 'action_required' : 'waiting_capability');
-          append(status, 'span', row.human_state || row.capability_state || 'Por comprobar', `status-badge is-${cssState}`);
-          const lane = append(tr, 'td', row.lane || 'Por comprobar');
-          lane.dataset.label = 'Carril';
-          const types = append(tr, 'td', Array.isArray(row.work_types) ? row.work_types.join(', ') : 'Sin tipos');
-          types.dataset.label = 'Tipos exactos';
-          const reason = append(tr, 'td', row.reason || 'Sin causa publicada');
-          reason.dataset.label = 'Causa';
-          body.appendChild(tr);
-        });
-      }
-    }
-    const updated = panel.querySelector('[data-cron-v3-capability-updated]');
-    if (updated) updated.textContent = `Matriz actualizada ${payload?.measured_at || 'ahora'} UTC · lectura sin mutaciones`;
-  };
-
-  const renderSetup = (payload) => {
-    const panel = root.querySelector('[data-cron-v3-setup]');
-    const setup = payload?.setup || payload;
-    if (!panel || !setup) return;
-    if (hideLegacyV3PanelsWhenOperational()) return;
-    lastSetup = mergeDefined(lastSetup, setup);
-    const stateMap = {
-      needs_safe_config: ['is-warning', 'Preparar config'],
-      doctor_blocked: ['is-warning', 'Doctor pendiente'],
-      ready_for_shadow: ['is-success', 'Listo para Shadow'],
-      shadow_running: ['is-success', 'Shadow en marcha'],
-      shadow_complete: ['is-success', 'Shadow aprobado'],
-      canary_controlled: ['is-success', 'Canario controlado']
-    };
-    const [stateClass, stateLabel] = stateMap[lastSetup.state] || ['is-unavailable', 'Por comprobar'];
-    const state = panel.querySelector('[data-cron-v3-setup-state]');
-    if (state) {
-      state.className = `status-badge ${stateClass}`;
-      state.textContent = stateLabel;
-    }
-    const now = panel.querySelector('[data-cron-v3-setup-now]');
-    if (now) {
-      if (lastSetup.state === 'canary_controlled') {
-        now.textContent = `Shadow aprobado · ${lastSetup.shadow?.cycles || 0}/60 ciclos. El canario real se controla en la tarjeta siguiente.`;
-      } else if (lastSetup.blocking?.length) {
-        now.textContent = lastSetup.blocking[0];
-      } else if (lastSetup.shadow_enabled) {
-        now.textContent = `Shadow V3 habilitado · ${lastSetup.shadow?.cycles || 0}/60 ciclos verificados.`;
-      } else if (lastSetup.safe_config_applied) {
-        now.textContent = 'Configuración segura aplicada. Puede activar Shadow cuando Doctor apruebe.';
-      } else {
-        now.textContent = 'Listo para preparar config.env seguro desde el ERP.';
-      }
-    }
-    const steps = panel.querySelector('[data-cron-v3-setup-steps]');
-    if (steps && Array.isArray(lastSetup.steps)) {
-      steps.replaceChildren();
-      lastSetup.steps.forEach((step) => {
-        const li = document.createElement('li');
-        append(li, 'strong', step.label || step.key || 'Paso');
-        append(li, 'span', step.done ? 'Listo' : 'Pendiente');
-        if (step.done) li.classList.add('is-complete');
-        steps.appendChild(li);
-      });
-    }
-    const commands = panel.querySelector('[data-cron-v3-commands]');
-    if (commands && lastSetup.commands) {
-      const labels = {
-        v2_real: 'V2 real actual',
-        v3_local_shadow: 'V3 local shadow',
-        v3_remote_shadow: 'V3 remoto shadow'
-      };
-      commands.replaceChildren();
-      Object.entries(labels).forEach(([key, label]) => {
-        const article = document.createElement('article');
-        append(article, 'span', label);
-        append(article, 'code', lastSetup.commands[key] || 'No disponible');
-        commands.appendChild(article);
-      });
-    }
-    const updated = panel.querySelector('[data-cron-v3-setup-updated]');
-    if (updated) {
-      updated.textContent = lastSetup.state === 'canary_controlled'
-        ? 'Asistente actualizado · el canario real se controla en la tarjeta siguiente'
-        : 'Asistente actualizado · V3 real sigue apagado';
-    }
-    panel.querySelectorAll('[data-cron-v3-setup-action]').forEach((form) => {
-      const action = form.action || '';
-      const button = form.querySelector('button[type="submit"]');
-      if (!button) return;
-      if (action.includes('/prepare-safe-config')) {
-        button.disabled = Boolean(lastSetup.safe_config_applied);
-      }
-      if (action.includes('/enable-shadow')) {
-        button.disabled = Boolean(lastSetup.shadow?.complete || lastSetup.active_enabled || lastSetup.blocking?.length);
-      }
-    });
-    if (lastOverview?.cron_v3) renderCronV3(lastOverview.cron_v3);
-  };
-
-  const renderCanary = (payload) => {
-    const panel = root.querySelector('[data-cron-v3-canary]');
-    const canary = payload?.canary || payload;
-    if (!panel || !canary) return;
-    if (hideLegacyV3PanelsWhenOperational()) return;
-    lastCanary = mergeDefined(lastCanary, canary);
-    const stateMap = {
-      blocked: ['is-warning', 'Bloqueado'],
-      ready_for_prepare: ['is-success', 'Listo para preparar'],
-      ready_for_local: ['is-success', 'Listo para local'],
-      ready_for_remote: ['is-success', 'Listo para remoto'],
-      remote_canary_running: ['is-success', 'Canario remoto activo']
-    };
-    const [stateClass, stateLabel] = stateMap[lastCanary.state] || ['is-unavailable', 'Por comprobar'];
-    const state = panel.querySelector('[data-cron-v3-canary-state]');
-    if (state) {
-      state.className = `status-badge ${stateClass}`;
-      const healthyRemote = lastCanary.state === 'remote_canary_running'
-        && lastCanary.canary_health?.state === 'healthy'
-        && Number(lastCanary.metrics?.http_calls || 0) > 0
-        && Number(lastCanary.metrics?.resources_finalized || 0) > 0;
-      state.textContent = healthyRemote ? 'Canario remoto activo · sano' : stateLabel;
-    }
-    const now = panel.querySelector('[data-cron-v3-canary-now]');
-    if (now) {
-      if (lastCanary.blocking?.length) {
-        now.textContent = lastCanary.blocking[0];
-      } else if (lastCanary.state === 'remote_canary_running') {
-        const httpCalls = Number(lastCanary.metrics?.http_calls || 0).toLocaleString('es-CO');
-        const finalized = Number(lastCanary.metrics?.resources_finalized || 0).toLocaleString('es-CO');
-        const cutover = lastCanary.certified_cutover;
-        const cutoverLabel = cutover?.state === 'certified_active'
-          ? 'Familias certificadas ya pasaron a V3'
-          : (cutover?.state === 'ready_to_cutover' ? 'Cron aplicará el corte certificado automáticamente' : 'V3 completo sigue bloqueado');
-        now.textContent = `Canario remoto sano · ${httpCalls} HTTP reales · ${finalized} recursos finalizados. ${cutoverLabel}.`;
-      } else if (lastCanary.state === 'ready_for_remote') {
-        now.textContent = 'Canario local habilitado. Puede pasar al remoto cuando lo decida.';
-      } else if (lastCanary.state === 'ready_for_local') {
-        now.textContent = 'Canario preparado. Cambie el comando local V3 en Hostinger cuando lo indique esta tarjeta.';
-      } else {
-        const shadowLabel = lastCanary.shadow?.approved ? 'Shadow aprobado por evidencia' : `Shadow pendiente · ${lastCanary.shadow?.cycles || 0}/60 ciclos`;
-        now.textContent = `${shadowLabel}. V3 real sigue apagado hasta preparar.`;
-      }
-    }
-    const steps = panel.querySelector('[data-cron-v3-canary-steps]');
-    if (steps && Array.isArray(lastCanary.steps)) {
-      steps.replaceChildren();
-      lastCanary.steps.forEach((step) => {
-        const li = document.createElement('li');
-        append(li, 'strong', step.label || step.key || 'Paso');
-        append(li, 'span', step.done ? 'Listo' : 'Pendiente');
-        if (step.done) li.classList.add('is-complete');
-        steps.appendChild(li);
-      });
-    }
-    const metrics = lastCanary.metrics || {};
-    const cycles = panel.querySelector('[data-canary-metric="cycles"]');
-    if (cycles) cycles.textContent = `${Number(metrics.cycles?.local || 0).toLocaleString('es-CO')} local · ${Number(metrics.cycles?.remote || 0).toLocaleString('es-CO')} remoto`;
-    const http = panel.querySelector('[data-canary-metric="http_calls"]');
-    if (http) http.textContent = Number(metrics.http_calls || 0).toLocaleString('es-CO');
-    const finalized = panel.querySelector('[data-canary-metric="resources_finalized"]');
-    if (finalized) finalized.textContent = Number(metrics.resources_finalized || 0).toLocaleString('es-CO');
-    const safety = panel.querySelector('[data-canary-metric="safety"]');
-    if (safety) safety.textContent = `${Number(metrics.errors || 0).toLocaleString('es-CO')} / ${Number(metrics.rate_429 || 0).toLocaleString('es-CO')} / ${Number(metrics.lease_lost || 0).toLocaleString('es-CO')}`;
-    const commands = panel.querySelector('[data-cron-v3-canary-commands]');
-    if (commands && lastCanary.commands) {
-      const labels = {
-        v2_real: 'V2 real actual',
-        v3_local_active: 'V3 local activo',
-        v3_remote_active: 'V3 remoto activo'
-      };
-      commands.replaceChildren();
-      Object.entries(labels).forEach(([key, label]) => {
-        const article = document.createElement('article');
-        append(article, 'span', label);
-        append(article, 'code', lastCanary.commands[key] || 'No disponible');
-        commands.appendChild(article);
-      });
-    }
-    const updated = panel.querySelector('[data-cron-v3-canary-updated]');
-    if (updated) {
-      const cutover = lastCanary.certified_cutover;
-      updated.textContent = cutover?.state === 'certified_active'
-        ? 'Canario actualizado · V3 drena familias certificadas; V3 completo sigue bloqueado'
-        : (lastCanary.state === 'remote_canary_running'
-          ? 'Canario actualizado · corte certificado pendiente/automático; V3 completo sigue bloqueado'
-          : 'Canario actualizado · V3 completo sigue bloqueado');
-    }
-    panel.querySelectorAll('[data-cron-v3-canary-action]').forEach((form) => {
-      const action = form.action || '';
-      const button = form.querySelector('button[type="submit"]');
-      if (!button) return;
-      const blocked = Boolean(lastCanary.blocking?.length);
-      let enabled = false;
-      if (action.endsWith('/prepare')) {
-        enabled = !blocked && lastCanary.state === 'ready_for_prepare';
-      } else if (action.endsWith('/enable-local')) {
-        enabled = !blocked && lastCanary.state === 'ready_for_local';
-      } else if (action.endsWith('/enable-remote')) {
-        enabled = !blocked && lastCanary.state === 'ready_for_remote';
-      } else if (action.endsWith('/rollback')) {
-        enabled = Boolean(lastCanary.active_enabled || lastCanary.ownership?.financial_recalc?.enabled || lastCanary.ownership?.pack_exact?.enabled || lastCanary.ownership?.shipment_exact?.enabled);
-      }
-      button.disabled = !enabled;
-      button.setAttribute('aria-disabled', String(!enabled));
-      form.classList.toggle('is-current-action', enabled && !action.endsWith('/rollback'));
-    });
-  };
-
-  const renderRuntime = (payload) => {
-    const panel = root.querySelector('[data-cron-v3-runtime]');
-    const runtime = payload?.runtime || payload;
-    if (!panel || !runtime) return;
-    lastRuntime = mergeDefined(lastRuntime, runtime);
-    hideLegacyV3PanelsWhenOperational();
-    const stateMap = {
-      operational: ['is-success', 'V3 operativo'],
-      hostinger_still_v2: ['is-warning', 'Hostinger todavía llama V2'],
-      v3_no_signal: ['is-warning', 'Hostinger no está llamando V3'],
-      cutover_incomplete: ['is-warning', 'Corte V3 incompleto'],
-      blocked: ['is-danger', 'V3 bloqueado'],
-      not_operational: ['is-unavailable', 'V3 no operativo']
-    };
-    const [stateClass, stateLabel] = stateMap[lastRuntime.state] || ['is-unavailable', lastRuntime.state_label || 'Por comprobar'];
-    const state = panel.querySelector('[data-cron-v3-runtime-state]');
-    if (state) {
-      state.className = `status-badge ${stateClass}`;
-      state.textContent = lastRuntime.state_label || stateLabel;
-    }
-    const now = panel.querySelector('[data-cron-v3-runtime-now]');
-    if (now) {
-      if (Array.isArray(lastRuntime.blocking) && lastRuntime.blocking.length) {
-        now.textContent = lastRuntime.blocking[0];
-      } else if (lastRuntime.state === 'operational') {
-        now.textContent = 'V3 está operativo. V2 queda apagado por corte y responderá skip si Hostinger lo llama.';
-      } else if (lastRuntime.state === 'hostinger_still_v2') {
-        now.textContent = 'V2 todavía recibe señal. El ERP lo bloquea con skip, pero conviene pausar esa tarea en Hostinger.';
-      } else if (lastRuntime.state === 'v3_no_signal') {
-        now.textContent = 'No hay señal fresca de V3. Revise que las dos tareas V3 activas estén en Hostinger.';
-      } else {
-        now.textContent = lastRuntime.state_label || 'Revisando corte V3.';
-      }
-    }
-    const next = panel.querySelector('[data-cron-v3-runtime-next]');
-    if (next) {
-      next.textContent = lastRuntime.state === 'operational'
-        ? 'Seguir drenando con V3 local/remoto; V2 no procesa.'
-        : 'Mostrar causa exacta y comandos de Hostinger.';
-    }
-    const hostinger = panel.querySelector('[data-cron-v3-runtime-hostinger]');
-    if (hostinger) {
-      hostinger.textContent = lastRuntime.state === 'operational'
-        ? 'Debe conservar solo las dos tareas V3 activas.'
-        : 'Use los comandos V3 activos mostrados abajo.';
-    }
-    const lanes = lastRuntime.v3?.lanes || {};
-    const setMetric = (key, value) => {
-      const node = panel.querySelector(`[data-runtime-metric="${key}"]`);
-      if (node) node.textContent = value;
-    };
-    setMetric('local_signal', lanes.local?.last_signal_label || 'Sin señal');
-    setMetric('remote_signal', lanes.remote?.last_signal_label || 'Sin señal');
-    setMetric('v2_signal', lastRuntime.v2?.fresh ? 'Llamado reciente · debe saltarse' : (lastRuntime.v2?.label || 'Sin señal'));
-    const missing = Array.isArray(lastRuntime.cutover?.missing_transferable) ? lastRuntime.cutover.missing_transferable.length : 0;
-    setMetric('ownership', lastRuntime.cutover?.state === 'operational_active'
-      ? 'Transferido/bloqueado explícitamente'
-      : `${missing} pendientes de ownership`);
-    const commands = panel.querySelector('[data-cron-v3-runtime-commands]');
-    if (commands && lastRuntime.commands) {
-      const labels = {
-        remove_v2: 'Eliminar o pausar V2',
-        v3_local_active: 'V3 local activo',
-        v3_remote_active: 'V3 remoto activo'
-      };
-      commands.replaceChildren();
-      Object.entries(labels).forEach(([key, label]) => {
-        const article = document.createElement('article');
-        append(article, 'span', label);
-        append(article, 'code', lastRuntime.commands[key] || 'No disponible');
-        commands.appendChild(article);
-      });
-    }
-    const updated = panel.querySelector('[data-cron-v3-runtime-updated]');
-    if (updated) {
-      updated.textContent = `Corte actualizado ${lastRuntime.observed_at || 'ahora'} UTC · lectura sin mutaciones`;
-    }
-  };
-
-  const renderCronV3 = (snapshot) => {
-    const panel = root.querySelector('[data-cron-v3]');
-    if (!panel || !snapshot) return;
-    const allowedStates = ['healthy', 'attention', 'stale', 'disabled', 'unavailable'];
-    const stateName = allowedStates.includes(snapshot.state) ? snapshot.state : 'unavailable';
-    const state = panel.querySelector('[data-cron-v3-state]');
-    if (state) {
-      state.className = `status-badge is-${stateName}`;
-      state.textContent = snapshot.state_label || 'Cron V3 no disponible';
-    }
-    const message = panel.querySelector('[data-cron-v3-message]');
-    if (message) message.textContent = snapshot.state_message || 'No se pudo verificar Cron V3.';
-    ['local', 'remote'].forEach((lane) => {
-      const row = panel.querySelector(`[data-cron-v3-lane="${lane}"]`);
-      const values = snapshot.lanes?.[lane] || {};
-      const setupLane = lastSetup?.shadow?.lanes?.[lane];
-      if (!row) return;
-      row.querySelectorAll('[data-cron-v3-metric]').forEach((cell) => {
-        const key = cell.dataset.cronV3Metric;
-        const value = values[key] ?? (key === 'last_signal_label' && setupLane ? `${setupLane.mode || 'shadow'} · ciclo ${setupLane.generation || 0}` : undefined);
-        if (['oldest_age_label', 'last_signal_label'].includes(key)) {
-          cell.textContent = value || (key === 'last_signal_label' ? 'Sin señal' : 'Sin trabajo activo');
-        } else {
-          cell.textContent = new Intl.NumberFormat('es-CO').format(Number(value || 0));
-        }
-      });
-    });
-    const updated = panel.querySelector('[data-cron-v3-updated]');
-    if (updated) updated.textContent = `Actualizado ${snapshot.observed_at || 'ahora'} UTC · lectura sin mutaciones`;
-  };
-
-  const renderTasks = (payload) => {
-    const incoming = Array.isArray(payload?.rows) ? payload.rows : [];
-    const snapshotState = payload?.snapshot_state || 'complete';
-    if (snapshotState === 'authoritative_empty' || (snapshotState === 'complete' && incoming.length === 0)) {
-      lastTasks = [];
-    } else if (snapshotState === 'complete') {
-      lastTasks = incoming;
-    } else if (snapshotState === 'partial' && incoming.length) {
-      const byKey = new Map(lastTasks.map((row) => [String(row.key || ''), row]));
-      incoming.forEach((row) => {
-        const key = String(row.key || '');
-        byKey.set(key, mergeDefined(byKey.get(key), row));
-      });
-      lastTasks = Array.from(byKey.values());
-    }
-    const body = root.querySelector('[data-cron-tasks]');
-    if (!body) return;
-    body.replaceChildren();
-    if (!lastTasks.length) {
-      const tr = document.createElement('tr');
-      const td = document.createElement('td');
-      td.colSpan = 7;
-      td.textContent = snapshotState === 'authoritative_empty' || snapshotState === 'complete'
-        ? 'Todas las colas se comprobaron y no hay trabajo pendiente.'
-        : 'El listado no se pudo comprobar. Se reintentará sin crear tareas.';
-      tr.appendChild(td);
-      body.appendChild(tr);
-      return;
-    }
-    lastTasks.forEach((task) => {
-      const tr = document.createElement('tr');
-      const name = document.createElement('td');
-      name.dataset.label = 'Función';
-      if (task.url) {
-        const link = document.createElement('a');
-        link.href = task.url;
-        link.textContent = task.label || task.key || 'Trabajo';
-        name.appendChild(link);
-      } else {
-        append(name, 'strong', task.label || task.key || 'Trabajo');
-      }
-      if (task.detail_message) append(name, 'small', task.detail_message);
-      if (task.batch_summary_label) append(name, 'small', task.batch_summary_label, 'cron-batch-summary');
-      if (task.v3_human_state) append(name, 'small', `V3: ${task.v3_human_state}`, 'cron-batch-summary');
-      if (task.v3_reason && !['v3_active', 'v3_local_only'].includes(task.capability_state || '')) {
-        append(name, 'small', task.v3_reason, 'text-warning');
-      }
-      tr.appendChild(name);
-      const pending = append(tr, 'td', task.pending_label || `${new Intl.NumberFormat('es-CO').format(Number(task.pending || 0))} recursos por atender`);
-      pending.dataset.label = 'Pendientes';
-      if (task.observed_label) append(pending, 'small', `Medido: ${task.observed_label} hora Bogotá`);
-      const finalized = append(tr, 'td', task.finalized_last_hour === null || task.finalized_last_hour === undefined
-        ? 'No se pudo medir'
-        : new Intl.NumberFormat('es-CO').format(Number(task.finalized_last_hour)));
-      finalized.dataset.label = 'Finalizados/h';
-      const remote = append(tr, 'td', task.remote
-        ? (task.remote_calls_last_hour === null || task.remote_calls_last_hour === undefined
-          ? 'No se pudo medir'
-          : new Intl.NumberFormat('es-CO').format(Number(task.remote_calls_last_hour)))
-        : 'Trabajo local');
-      remote.dataset.label = 'Salidas HTTP/h';
-      const state = append(tr, 'td', '');
-      state.dataset.label = 'Estado';
-      append(state, 'span', task.state_label || 'Por comprobar', `status-badge is-${task.state || 'unknown'}`);
-      if (Number(task.attention_count || 0) > 0) {
-        append(state, 'small', `${new Intl.NumberFormat('es-CO').format(Number(task.attention_count))} requieren revisión; los demás continúan`);
-      }
-      const next = append(tr, 'td', task.next_label || 'Por comprobar');
-      next.dataset.label = 'Próxima oportunidad';
-      if (task.last_action_label) append(next, 'small', `Última acción útil: ${task.last_action_label}`);
-      const eta = append(tr, 'td', task.eta_label || 'Todavía no se puede estimar');
-      eta.dataset.label = 'ETA';
-      body.appendChild(tr);
-    });
-  };
-
-  const fetchOverview = async () => {
-    if (overviewInFlight || stopped) return;
-    overviewInFlight = true;
-    try {
-      const result = await fetchJson(root.dataset.overviewUrl, overviewController);
-      overviewController = result.controller;
-      renderOverview(result.payload);
-      overviewFailures = 0;
-      const updated = root.querySelector('[data-cron-overview-updated]');
-      if (updated) updated.textContent = 'Resumen actualizado ahora · lectura sin mutaciones';
-    } catch (_) {
-      overviewFailures = Math.min(4, overviewFailures + 1);
-      const updated = root.querySelector('[data-cron-overview-updated]');
-      if (updated) updated.textContent = 'No se pudo actualizar. Se conserva el último estado visible.';
-    } finally {
-      overviewInFlight = false;
-    }
-  };
-
-  const fetchOperational = async () => {
-    if (operationalInFlight || stopped || !root.dataset.operationalUrl) return false;
-    operationalInFlight = true;
-    try {
-      const result = await fetchJson(root.dataset.operationalUrl, operationalController);
-      operationalController = result.controller;
-      renderOperationalSnapshot(result.payload);
-      operationalFailures = 0;
-      return true;
-    } catch (_) {
-      operationalFailures = Math.min(4, operationalFailures + 1);
-      const updated = root.querySelector('[data-cron-overview-updated]');
-      if (updated) updated.textContent = 'No se pudo leer la verdad operativa V3. Se conserva el último estado visible.';
-      return false;
-    } finally {
-      operationalInFlight = false;
-    }
-  };
-
-  const fetchTasks = async () => {
-    if (taskInFlight || stopped) return;
-    taskInFlight = true;
-    try {
-      const result = await fetchJson(root.dataset.tasksUrl, taskController);
-      taskController = result.controller;
-      renderTasks(result.payload);
-      taskFailures = 0;
-      const updated = root.querySelector('[data-cron-tasks-updated]');
-      if (updated) updated.textContent = 'Actualizado ahora · no se crearon tareas';
-    } catch (_) {
-      taskFailures = Math.min(4, taskFailures + 1);
-      const updated = root.querySelector('[data-cron-tasks-updated]');
-      if (updated) updated.textContent = 'El listado no respondió. Reintentaremos automáticamente.';
-    } finally {
-      taskInFlight = false;
-    }
-  };
-
-  const fetchSetup = async () => {
-    if (setupInFlight || stopped || !root.dataset.v3SetupUrl) return;
-    setupInFlight = true;
-    try {
-      const result = await fetchJson(root.dataset.v3SetupUrl, setupController);
-      setupController = result.controller;
-      renderSetup(result.payload);
-      setupFailures = 0;
-    } catch (_) {
-      setupFailures = Math.min(4, setupFailures + 1);
-      const updated = root.querySelector('[data-cron-v3-setup-updated]');
-      if (updated) updated.textContent = 'El asistente no respondió. No se modificó nada.';
-    } finally {
-      setupInFlight = false;
-    }
-  };
-
-  const fetchCanary = async () => {
-    if (canaryInFlight || stopped || !root.dataset.v3CanaryUrl) return;
-    canaryInFlight = true;
-    try {
-      const result = await fetchJson(root.dataset.v3CanaryUrl, canaryController);
-      canaryController = result.controller;
-      renderCanary(result.payload);
-      canaryFailures = 0;
-    } catch (_) {
-      canaryFailures = Math.min(4, canaryFailures + 1);
-      const updated = root.querySelector('[data-cron-v3-canary-updated]');
-      if (updated) updated.textContent = 'El canario no respondió. No se modificó nada.';
-    } finally {
-      canaryInFlight = false;
-    }
-  };
-
-  const fetchRuntime = async () => {
-    if (runtimeInFlight || stopped || !root.dataset.v3RuntimeUrl) return;
-    runtimeInFlight = true;
-    try {
-      const result = await fetchJson(root.dataset.v3RuntimeUrl, runtimeController);
-      runtimeController = result.controller;
-      renderRuntime(result.payload);
-      runtimeFailures = 0;
-    } catch (_) {
-      runtimeFailures = Math.min(4, runtimeFailures + 1);
-      const updated = root.querySelector('[data-cron-v3-runtime-updated]');
-      if (updated) updated.textContent = 'El corte operativo no respondió. No se modificó nada.';
-    } finally {
-      runtimeInFlight = false;
-    }
-  };
-
-  root.querySelectorAll('[data-cron-v3-setup-action]').forEach((form) => {
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const button = form.querySelector('button[type="submit"]');
-      const previous = button?.textContent || '';
-      if (button) {
-        button.disabled = true;
-        button.textContent = 'Aplicando…';
-      }
-      try {
-        const response = await fetch(form.action, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { Accept: 'application/json' },
-          body: new FormData(form)
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.ok === false) throw new Error(payload.message || 'No se pudo aplicar.');
-        await fetchSetup();
-      } catch (error) {
-        const updated = root.querySelector('[data-cron-v3-setup-updated]');
-        if (updated) updated.textContent = error?.message || 'No se pudo aplicar. No se activó V3 real.';
-      } finally {
-        if (button) {
-          button.disabled = false;
-          button.textContent = previous;
-        }
-      }
-    });
-  });
-
-  root.querySelectorAll('[data-cron-v3-canary-action]').forEach((form) => {
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const button = form.querySelector('button[type="submit"]');
-      const previous = button?.textContent || '';
-      if (button) {
-        button.disabled = true;
-        button.textContent = 'Aplicando…';
-      }
-      try {
-        const response = await fetch(form.action, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { Accept: 'application/json' },
-          body: new FormData(form)
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.ok === false) throw new Error(payload.message || 'No se pudo aplicar.');
-        await fetchSetup();
-        await fetchCanary();
-      } catch (error) {
-        const updated = root.querySelector('[data-cron-v3-canary-updated]');
-        if (updated) updated.textContent = error?.message || 'No se pudo aplicar. V3 completo no se activó.';
-      } finally {
-        if (button) {
-          button.disabled = false;
-          button.textContent = previous;
-        }
-      }
-    });
-  });
-
-  const tick = async () => {
-    const operationalOk = await fetchOperational();
-    // Legacy fallback remains sequential when the V3 snapshot is unavailable:
-    /* await fetchOverview();
-    await fetchTasks(); */
-    // await fetchOverview();
-    //     await fetchTasks();
-    if (!operationalOk) {
-      await fetchOverview();
-      await fetchTasks();
-    }
-    const operationalMode = isRuntimeOperational(lastRuntime);
-    if (!operationalMode) {
-      await fetchSetup();
-      await fetchCanary();
-    }
-    await fetchRuntime();
-    clearTimeout(timer);
-    const normalDelay = document.hidden ? 30000 : 10000;
-    const failures = Math.max(operationalFailures, overviewFailures, taskFailures, setupFailures, canaryFailures, runtimeFailures);
-    timer = window.setTimeout(tick, Math.min(60000, normalDelay * Math.max(1, 2 ** failures)));
-  };
-  document.addEventListener('visibilitychange', () => {
-    clearTimeout(timer);
-    timer = window.setTimeout(tick, document.hidden ? 30000 : 250);
-  });
-  window.addEventListener('pagehide', () => {
-    stopped = true;
-    clearTimeout(timer);
-    overviewController?.abort();
-    operationalController?.abort();
-    taskController?.abort();
-    setupController?.abort();
-    canaryController?.abort();
-    runtimeController?.abort();
-  }, { once: true });
-  tick();
+  refresh();
 })();
 
 // Configuración de ritmo: confirma en lenguaje humano el techo elegido.

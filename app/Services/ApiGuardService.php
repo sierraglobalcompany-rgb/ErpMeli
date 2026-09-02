@@ -181,6 +181,13 @@ final class ApiGuardService
         $path = $this->normalizePath($path);
         $type = (string) ($classification['type'] ?? '');
 
+        // HTTP 429 es capacidad conocida y recuperable. Su única autoridad
+        // operativa es ApiRhythmPolicyService con alcance aplicación+endpoint;
+        // Guard conserva telemetría, pero no abre otro circuito por cuenta.
+        if ($status === 429 || $type === 'rate_limited') {
+            return;
+        }
+
         if (!empty($classification['is_app_blocked_signal']) || $type === 'app_blocked') {
             $messageLower = strtolower($message);
             $cooldownSetting = str_contains($messageLower, 'unauthorized_scopes')
@@ -191,14 +198,13 @@ final class ApiGuardService
             return;
         }
 
-        if (!in_array($status, [400, 401, 403, 429], true) && $status < 500) {
+        if (!in_array($status, [400, 401, 403], true) && $status < 500) {
             return;
         }
 
         $window = max(1, $this->settings->int('api.guard.window_minutes', 10));
         $max = match ($status) {
             400 => max(1, $this->settings->int($type === 'bad_request' ? 'api.guard.max_unknown_400_per_window' : 'api.guard.max_400_per_window', 5)),
-            429 => max(1, $this->settings->int('api.guard.max_429_per_window', 3)),
             403 => max(1, $this->settings->int('api.guard.max_403_per_window', 1)),
             401 => max(1, $this->settings->int('api.guard.max_401_per_window', 2)),
             default => max(1, $this->settings->int('api.guard.max_5xx_per_window', 3)),
@@ -230,7 +236,6 @@ final class ApiGuardService
         }
         $reason = match ($status) {
             400 => 'bad_request_400_repeated',
-            429 => 'rate_limit_429',
             403 => $type === 'missing_permission' ? 'missing_permission_403' : 'forbidden_403',
             401 => 'unauthorized_401',
             default => 'server_error_5xx',
@@ -423,7 +428,7 @@ final class ApiGuardService
     public function retryDelaySeconds(int $attempt, int $status, ?int $retryAfter): int
     {
         if ($retryAfter && $retryAfter > 0) {
-            return min(300, max(1, $retryAfter));
+            return min(31536000, max(1, $retryAfter));
         }
         $base = $status === 429 ? 2 : 1;
         $delay = min(120, $base * (2 ** max(0, $attempt - 1)));

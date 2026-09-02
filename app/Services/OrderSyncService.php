@@ -145,6 +145,72 @@ final class OrderSyncService
         return $this->persistOrder($order, false, $beforePersist, false);
     }
 
+    /**
+     * Entrada exacta del motor greenfield. No publica trabajo legacy ni
+     * consulta Queue Core; persiste únicamente la orden solicitada.
+     *
+     * @param array<string,mixed> $meta
+     */
+    public function syncOrderByIdForQueueV4Clean(
+        int|string $externalOrderId,
+        array $meta = [],
+        ?callable $beforePersist = null,
+    ): int {
+        $meta = array_replace([
+            'job_type' => 'order_exact',
+            'source' => 'queue_v4_clean',
+            'bulk' => false,
+        ], $meta);
+        $order = $this->api->get(
+            '/orders/' . rawurlencode((string) $externalOrderId),
+            [],
+            $meta,
+        );
+        $orderId = $this->persistOrder($order, false, $beforePersist, false, false);
+        $companyId = (int) ($meta['company_id'] ?? 0);
+        $accountId = (int) ($meta['account_id'] ?? $this->accountId);
+        if ($companyId < 1 || $accountId !== $this->accountId) {
+            throw new \RuntimeException('Queue V4 no entregó una autoridad tenant válida para inventario.');
+        }
+        $this->projectInventoryForQueueV4Clean($companyId, $accountId, $orderId);
+        return $orderId;
+    }
+
+    /**
+     * Persiste una orden ya recibida desde `/orders/search` dentro de Queue V4.
+     *
+     * Mantiene la misma semántica local de `syncRange()` —upsert de orden,
+     * items y pagos embebidos— sin crear fanout legacy ni consultar
+     * `/orders/{id}`. La proyección de inventario sigue siendo local y
+     * tenant-scoped.
+     *
+     * @param array<string,mixed> $order
+     */
+    public function persistSearchSnapshotForQueueV4Clean(
+        array $order,
+        int $companyId,
+        ?callable $beforePersist = null,
+    ): int {
+        if ($companyId < 1) {
+            throw new \RuntimeException('Queue V4 no entregó una empresa válida para persistir la orden.');
+        }
+        $tenant = Database::connection()->prepare(
+            'SELECT 1 FROM meli_accounts WHERE company_id=? AND id=? LIMIT 1'
+        );
+        $tenant->execute([$companyId, $this->accountId]);
+        if ($tenant->fetchColumn() === false) {
+            throw new \RuntimeException('Queue V4 no entregó una autoridad tenant válida para persistir la orden.');
+        }
+        $orderId = $this->persistOrder($order, false, $beforePersist, false, false);
+        $this->projectInventoryForQueueV4Clean($companyId, $this->accountId, $orderId);
+        return $orderId;
+    }
+
+    private function projectInventoryForQueueV4Clean(int $companyId, int $accountId, int $orderId): void
+    {
+        (new OrderInventoryService(Database::connection()))->project($companyId, $accountId, $orderId);
+    }
+
     /** Un paso web exacto: persiste la orden y no crea trabajo posterior. */
     public function syncOrderByIdForManual(
         int|string $externalOrderId,array $meta=[],?callable $beforePersist=null
@@ -949,12 +1015,109 @@ final class OrderSyncService
         $pdo->prepare('INSERT IGNORE INTO meli_pack_orders (meli_pack_id,meli_order_id) VALUES (?,?)')
             ->execute([$packId, $orderId]);
         if ($columnsAvailable) {
+            $this->refreshLocalPackIntegrity($pdo, $packId, $this->accountId);
+        }
+    }
+
+    private function refreshLocalPackIntegrity(PDO $pdo, int $packId, int $accountId): void
+    {
+        $pack = $pdo->prepare(
+            'SELECT id,external_pack_id,expected_orders_json
+             FROM meli_packs
+             WHERE id=? AND meli_account_id=?
+             LIMIT 1
+             FOR UPDATE'
+        );
+        $pack->execute([$packId, $accountId]);
+        $row = $pack->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return;
+        }
+
+        $externalPackId = trim((string) ($row['external_pack_id'] ?? ''));
+        if ($externalPackId === '') {
+            return;
+        }
+
+        $linked = $pdo->prepare(
+            'SELECT DISTINCT o.external_order_id
+             FROM meli_pack_orders po
+             INNER JOIN meli_orders o
+                ON o.id=po.meli_order_id
+               AND o.meli_account_id=?
+               AND o.external_pack_id=?
+             WHERE po.meli_pack_id=?
+             ORDER BY o.external_order_id'
+        );
+        $linked->execute([$accountId, $externalPackId, $packId]);
+        $linkedIds = [];
+        foreach ($linked->fetchAll(PDO::FETCH_COLUMN) as $externalOrderId) {
+            $value = trim((string) $externalOrderId);
+            if ($value !== '') {
+                $linkedIds[$value] = $value;
+            }
+        }
+        $linkedIds = array_values($linkedIds);
+        sort($linkedIds, SORT_STRING);
+        $linkedCount = count($linkedIds);
+
+        $expected = null;
+        $expectedRaw = trim((string) ($row['expected_orders_json'] ?? ''));
+        if ($expectedRaw !== '') {
+            try {
+                $decoded = json_decode($expectedRaw, true, 64, JSON_THROW_ON_ERROR);
+                if (is_array($decoded)) {
+                    $expected = [];
+                    foreach ($decoded as $externalOrderId) {
+                        if (!is_scalar($externalOrderId)) {
+                            $expected = null;
+                            break;
+                        }
+                        $value = trim((string) $externalOrderId);
+                        if ($value === '') {
+                            $expected = null;
+                            break;
+                        }
+                        $expected[$value] = $value;
+                    }
+                    if ($expected !== null) {
+                        $expected = array_values($expected);
+                        sort($expected, SORT_STRING);
+                    }
+                }
+            } catch (Throwable) {
+                $expected = null;
+            }
+        }
+
+        if ($expected === null || $expected === []) {
             $pdo->prepare(
                 'UPDATE meli_packs
-                 SET linked_orders_count=(SELECT COUNT(*) FROM meli_pack_orders WHERE meli_pack_id=?)
-                 WHERE id=?'
-            )->execute([$packId, $packId]);
+                 SET linked_orders_count=?
+                 WHERE id=? AND meli_account_id=?'
+            )->execute([$linkedCount, $packId, $accountId]);
+            return;
         }
+
+        $status = $expected === $linkedIds ? 'complete' : 'partial';
+        $pdo->prepare(
+            'UPDATE meli_packs
+             SET linked_orders_count=?,
+                 integrity_status=?,
+                 integrity_message=?,
+                 orders_fingerprint=?,
+                 verified_at=UTC_TIMESTAMP()
+             WHERE id=? AND meli_account_id=?'
+        )->execute([
+            $linkedCount,
+            $status,
+            $status === 'complete'
+                ? 'Todas las órdenes esperadas están enlazadas.'
+                : 'Faltan órdenes del paquete por recuperar.',
+            hash('sha256', implode('|', $expected)),
+            $packId,
+            $accountId,
+        ]);
     }
 
     /**

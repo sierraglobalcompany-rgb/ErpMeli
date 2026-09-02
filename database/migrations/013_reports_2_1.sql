@@ -1,0 +1,80 @@
+CREATE TABLE IF NOT EXISTS date_report_runs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    company_id BIGINT UNSIGNED NULL,
+    meli_account_id BIGINT UNSIGNED NULL,
+    date_from DATE NOT NULL,
+    date_to DATE NOT NULL,
+    include_returns TINYINT(1) NOT NULL DEFAULT 0,
+    filters_json JSON NULL,
+    total_orders INT UNSIGNED NOT NULL DEFAULT 0,
+    total_units DECIMAL(18,4) NOT NULL DEFAULT 0,
+    total_internal_units DECIMAL(18,4) NOT NULL DEFAULT 0,
+    gross_sales DECIMAL(18,2) NOT NULL DEFAULT 0,
+    product_revenue DECIMAL(18,2) NOT NULL DEFAULT 0,
+    shipping_revenue DECIMAL(18,2) NOT NULL DEFAULT 0,
+    marketplace_fees DECIMAL(18,2) NOT NULL DEFAULT 0,
+    discounts DECIMAL(18,2) NOT NULL DEFAULT 0,
+    refunds DECIMAL(18,2) NOT NULL DEFAULT 0,
+    estimated_net DECIMAL(18,2) NOT NULL DEFAULT 0,
+    total_cost DECIMAL(18,2) NOT NULL DEFAULT 0,
+    estimated_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
+    margin_percent DECIMAL(8,4) NOT NULL DEFAULT 0,
+    created_by BIGINT UNSIGNED NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_date_report_range (date_from, date_to),
+    CONSTRAINT fk_date_reports_company FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
+    CONSTRAINT fk_date_reports_account FOREIGN KEY (meli_account_id) REFERENCES meli_accounts(id) ON DELETE SET NULL,
+    CONSTRAINT fk_date_reports_user FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS date_report_items (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    date_report_run_id BIGINT UNSIGNED NOT NULL,
+    internal_product_id BIGINT UNSIGNED NULL,
+    meli_account_id BIGINT UNSIGNED NOT NULL,
+    external_item_id VARCHAR(40) NOT NULL,
+    external_variation_id BIGINT UNSIGNED NULL,
+    seller_sku VARCHAR(120) NULL,
+    product_title VARCHAR(255) NOT NULL,
+    orders_count INT UNSIGNED NOT NULL DEFAULT 0,
+    units_sold DECIMAL(18,4) NOT NULL DEFAULT 0,
+    internal_units DECIMAL(18,4) NOT NULL DEFAULT 0,
+    conversion_factor DECIMAL(12,4) NOT NULL DEFAULT 1,
+    product_revenue DECIMAL(18,2) NOT NULL DEFAULT 0,
+    shipping_revenue DECIMAL(18,2) NOT NULL DEFAULT 0,
+    marketplace_fees DECIMAL(18,2) NOT NULL DEFAULT 0,
+    discounts DECIMAL(18,2) NOT NULL DEFAULT 0,
+    refunds DECIMAL(18,2) NOT NULL DEFAULT 0,
+    estimated_net DECIMAL(18,2) NOT NULL DEFAULT 0,
+    unit_cost DECIMAL(18,2) NOT NULL DEFAULT 0,
+    total_cost DECIMAL(18,2) NOT NULL DEFAULT 0,
+    estimated_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
+    margin_percent DECIMAL(8,4) NOT NULL DEFAULT 0,
+    suggested_purchase_value DECIMAL(18,2) NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_date_items_run (date_report_run_id),
+    KEY idx_date_items_internal (internal_product_id),
+    CONSTRAINT fk_date_items_run FOREIGN KEY (date_report_run_id) REFERENCES date_report_runs(id) ON DELETE CASCADE,
+    CONSTRAINT fk_date_items_internal FOREIGN KEY (internal_product_id) REFERENCES internal_products(id) ON DELETE SET NULL,
+    CONSTRAINT fk_date_items_account FOREIGN KEY (meli_account_id) REFERENCES meli_accounts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS date_report_orders (
+    date_report_run_id BIGINT UNSIGNED NOT NULL,
+    meli_order_id BIGINT UNSIGNED NOT NULL,
+    classification ENUM('valid','cancelled','returned','claim','adjustment') NOT NULL DEFAULT 'valid',
+    PRIMARY KEY (date_report_run_id, meli_order_id),
+    CONSTRAINT fk_date_report_orders_run FOREIGN KEY (date_report_run_id) REFERENCES date_report_runs(id) ON DELETE CASCADE,
+    CONSTRAINT fk_date_report_orders_order FOREIGN KEY (meli_order_id) REFERENCES meli_orders(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS date_report_exports (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    date_report_run_id BIGINT UNSIGNED NOT NULL,
+    export_type ENUM('csv','excel_html','print') NOT NULL,
+    file_path VARCHAR(500) NULL,
+    created_by BIGINT UNSIGNED NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_date_exports_run FOREIGN KEY (date_report_run_id) REFERENCES date_report_runs(id) ON DELETE CASCADE,
+    CONSTRAINT fk_date_exports_user FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

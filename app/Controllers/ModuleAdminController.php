@@ -9,7 +9,6 @@ use App\Core\Csrf;
 use App\Core\Database;
 use App\Core\Env;
 use App\Core\Modules\ModuleHealthService;
-use App\Core\Modules\ModuleJobRunner;
 use App\Core\Modules\ModuleMigrationRunner;
 use App\Core\Modules\ModuleQueueHealthService;
 use App\Core\Modules\ModuleRegistry;
@@ -52,18 +51,7 @@ final class ModuleAdminController
     {
         $this->requireAdmin();
         Csrf::validate($_POST['_token'] ?? null);
-        if (!(new ModuleRuntimeReadinessService())->ready(true)) {
-            Session::flash('error', 'Complete primero la actualización central antes de reconciliar eventos modulares.');
-            $this->redirect();
-        }
-        $count = (new ModuleJobRunner())->reconcilePendingEvents(100);
-        (new ReadModelCacheService())->clear();
-        Session::flash(
-            'success',
-            $count > 0
-                ? "Se reconciliaron {$count} eventos locales sin consultar Mercado Libre."
-                : 'No había eventos pendientes sin trabajo.'
-        );
+        Session::flash('info', 'La reconciliación automática de módulos está retirada. No se creó ningún trabajo.');
         $this->redirect();
     }
 

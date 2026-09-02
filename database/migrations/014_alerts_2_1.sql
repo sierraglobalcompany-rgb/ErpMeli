@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS operational_alerts (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    meli_account_id BIGINT UNSIGNED NULL,
+    company_id BIGINT UNSIGNED NULL,
+    alert_type ENUM('producto_sin_vinculo','sin_sku','sin_costo','margen_negativo','404_repetido','429','webhook_pendiente','token_vencido','sync_fallida') NOT NULL,
+    severity ENUM('info','warning','critical') NOT NULL DEFAULT 'warning',
+    title VARCHAR(190) NOT NULL,
+    message VARCHAR(700) NOT NULL,
+    entity_type VARCHAR(80) NULL,
+    entity_id BIGINT UNSIGNED NULL,
+    status ENUM('open','acknowledged','resolved','ignored') NOT NULL DEFAULT 'open',
+    first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME NULL,
+    metadata_json JSON NULL,
+    UNIQUE KEY uq_operational_alert (meli_account_id, alert_type, entity_type, entity_id, status),
+    KEY idx_operational_alerts_status (status, severity, last_seen_at),
+    CONSTRAINT fk_alerts_account FOREIGN KEY (meli_account_id) REFERENCES meli_accounts(id) ON DELETE SET NULL,
+    CONSTRAINT fk_alerts_company FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

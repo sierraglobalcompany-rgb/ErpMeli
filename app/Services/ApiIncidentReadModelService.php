@@ -10,6 +10,21 @@ use Throwable;
 
 final class ApiIncidentReadModelService
 {
+    /** @return array{current:bool,last_log_id:int,latest_log_id:int} */
+    public function freshness(): array
+    {
+        try {
+            $pdo = Database::connectionFresh();
+            $state = (int) $pdo->query(
+                'SELECT last_log_id FROM api_incident_materializer_state WHERE singleton_id=1'
+            )->fetchColumn();
+            $latest = (int) $pdo->query('SELECT COALESCE(MAX(id),0) FROM api_request_logs')->fetchColumn();
+            return ['current' => $state >= $latest, 'last_log_id' => $state, 'latest_log_id' => $latest];
+        } catch (Throwable) {
+            return ['current' => false, 'last_log_id' => 0, 'latest_log_id' => 0];
+        }
+    }
+
     /** @param array<string,mixed> $filters @return array{rows:list<array<string,mixed>>,total:int}|null */
     public function page(array $filters, int $limit, int $offset): ?array
     {
@@ -19,9 +34,7 @@ final class ApiIncidentReadModelService
         }
         try {
             $pdo = Database::connectionFresh();
-            $state = (int) $pdo->query('SELECT last_log_id FROM api_incident_materializer_state WHERE singleton_id=1')->fetchColumn();
-            $latest = (int) $pdo->query('SELECT COALESCE(MAX(id),0) FROM api_request_logs')->fetchColumn();
-            if ($state < $latest) {
+            if (!self::isCurrent($pdo)) {
                 return null;
             }
             $accountId = max(0, (int) ($filters['account_id'] ?? 0));
@@ -51,12 +64,15 @@ final class ApiIncidentReadModelService
             if ($httpStatus > 0) {
                 $where[] = 'g.http_status=:http_status_filter';
                 $params['http_status_filter'] = $httpStatus;
+                if ($httpStatus === 429) {
+                    $where[] = 'g.reached_remote=1';
+                }
             }
             $severity = (string) ($filters['severity'] ?? '');
             if ($severity === 'critical') {
                 $where[] = '(g.outcome_class="blocked_signal" OR g.http_status=401)';
             } elseif ($severity === 'high') {
-                $where[] = 'g.http_status IN (403,429)';
+                $where[] = '((g.http_status=403 AND g.reached_remote=1) OR (g.http_status=429 AND g.reached_remote=1))';
             } elseif ($severity === 'medium') {
                 $where[] = 'g.outcome_class="local_failure"';
             } elseif ($severity === 'low') {
@@ -77,7 +93,8 @@ final class ApiIncidentReadModelService
             $from = ' FROM api_incident_groups g
                       LEFT JOIN api_incident_acknowledgements ack
                         ON ack.incident_key=g.incident_key AND ack.scope_key=g.scope_key
-                      LEFT JOIN meli_accounts a ON a.id=g.meli_account_id
+                      LEFT JOIN meli_accounts a
+                        ON a.company_id=g.company_id AND a.id=g.meli_account_id
                       LEFT JOIN companies c ON c.id=g.company_id
                       WHERE ' . implode(' AND ', $where);
             $count = $pdo->prepare('SELECT COUNT(*)' . $from);
@@ -105,5 +122,115 @@ final class ApiIncidentReadModelService
         } catch (Throwable) {
             return null;
         }
+    }
+
+    /** @return list<array<string,mixed>>|null */
+    public function byKey(string $key): ?array
+    {
+        try {
+            $pdo = Database::connectionFresh();
+            if (!self::isCurrent($pdo)) {
+                return null;
+            }
+            $scope = (new ApiHealthAccessScope())->predicate('g', 'incident_key_group');
+            $statement = $pdo->prepare(
+                'SELECT g.*,ack.acknowledged_at,
+                        IF(ack.acknowledged_through_at IS NOT NULL AND ack.acknowledged_through_at>=g.last_seen_at,1,0) acknowledged_all,
+                        1 account_count,
+                        CASE WHEN g.meli_account_id IS NOT NULL THEN COALESCE(a.account_name,"Cuenta")
+                             WHEN g.scope_kind="company" THEN CONCAT("Empresa: ",COALESCE(c.name,"sin nombre"))
+                             ELSE "Aplicación" END account_names
+                 FROM api_incident_groups g
+                 LEFT JOIN api_incident_acknowledgements ack
+                   ON ack.incident_key=g.incident_key AND ack.scope_key=g.scope_key
+                 LEFT JOIN meli_accounts a
+                   ON a.company_id=g.company_id AND a.id=g.meli_account_id
+                 LEFT JOIN companies c ON c.id=g.company_id
+                 WHERE g.incident_key=:incident_key AND ' . $scope['sql'] . '
+                 ORDER BY g.last_seen_at DESC,g.id DESC'
+            );
+            $statement->execute(['incident_key' => $key] + $scope['params']);
+            return $statement->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    /** @return array{active:int,recovered:int,reviewed:int,historical:int}|null */
+    public function stateCounts(int $hours, ?int $accountId): ?array
+    {
+        try {
+            $pdo = Database::connectionFresh();
+            if (!self::isCurrent($pdo)) {
+                return null;
+            }
+            $scope = (new ApiHealthAccessScope())->predicate('g', 'incident_count_group', $accountId);
+            $activeMinutes = max(5, min(1440, (new AppSettingsService())->int('api_health.active_window_minutes', 120)));
+            $ack = '(ack.acknowledged_through_at IS NOT NULL AND ack.acknowledged_through_at>=g.last_seen_at)';
+            $statement = $pdo->prepare(
+                'SELECT
+                   COALESCE(SUM(NOT ' . $ack . ' AND g.outcome_class<>"policy_delay"
+                     AND g.last_seen_at>=DATE_SUB(UTC_TIMESTAMP(),INTERVAL ' . $activeMinutes . ' MINUTE)),0) active,
+                   COALESCE(SUM(NOT ' . $ack . ' AND g.outcome_class<>"policy_delay"
+                     AND g.last_seen_at<DATE_SUB(UTC_TIMESTAMP(),INTERVAL ' . $activeMinutes . ' MINUTE)
+                     AND g.last_seen_at>=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 7 DAY)),0) recovered,
+                   COALESCE(SUM(' . $ack . ' AND g.outcome_class<>"policy_delay"),0) reviewed,
+                   COALESCE(SUM(NOT ' . $ack . ' AND g.outcome_class<>"policy_delay"
+                     AND g.last_seen_at<DATE_SUB(UTC_TIMESTAMP(),INTERVAL 7 DAY)),0) historical
+                 FROM api_incident_groups g
+                 LEFT JOIN api_incident_acknowledgements ack
+                   ON ack.incident_key=g.incident_key AND ack.scope_key=g.scope_key
+                 WHERE g.last_seen_at>=DATE_SUB(UTC_TIMESTAMP(),INTERVAL :hours HOUR)
+                   AND ' . $scope['sql']
+            );
+            $statement->execute(['hours' => max(1, min(720, $hours))] + $scope['params']);
+            $row = $statement->fetch(PDO::FETCH_ASSOC);
+            return is_array($row) ? [
+                'active' => (int) $row['active'],
+                'recovered' => (int) $row['recovered'],
+                'reviewed' => (int) $row['reviewed'],
+                'historical' => (int) $row['historical'],
+            ] : null;
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    /** @return array{blocked_signals:int,bad_requests:int,unauthorized:int,forbidden:int,rate_limited:int}|null */
+    public function signalCounts(?int $accountId): ?array
+    {
+        try {
+            $pdo = Database::connectionFresh();
+            if (!self::isCurrent($pdo)) {
+                return null;
+            }
+            $scope = (new ApiHealthAccessScope())->predicate('g', 'incident_signal_group', $accountId);
+            $minutes = max(5, min(120, (new AppSettingsService())->int('api.health.active_window_minutes', 15)));
+            $statement = $pdo->prepare(
+                'SELECT
+                   COALESCE(SUM(g.outcome_class="blocked_signal"),0) blocked_signals,
+                   COALESCE(SUM(g.reached_remote=1 AND g.http_status=400),0) bad_requests,
+                   COALESCE(SUM(g.reached_remote=1 AND g.http_status=401),0) unauthorized,
+                   COALESCE(SUM(g.reached_remote=1 AND g.http_status=403),0) forbidden,
+                   COALESCE(SUM(g.reached_remote=1 AND g.http_status=429),0) rate_limited
+                 FROM api_incident_groups g
+                 WHERE g.last_seen_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL ' . $minutes . ' MINUTE)
+                   AND ' . $scope['sql']
+            );
+            $statement->execute($scope['params']);
+            $row = $statement->fetch(PDO::FETCH_ASSOC);
+            return is_array($row) ? array_map('intval', $row) : null;
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    private static function isCurrent(PDO $pdo): bool
+    {
+        $state = (int) $pdo->query(
+            'SELECT last_log_id FROM api_incident_materializer_state WHERE singleton_id=1'
+        )->fetchColumn();
+        $latest = (int) $pdo->query('SELECT COALESCE(MAX(id),0) FROM api_request_logs')->fetchColumn();
+        return $state >= $latest;
     }
 }

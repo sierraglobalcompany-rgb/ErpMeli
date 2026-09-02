@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\QueueCore;
 
 use App\Core\Database;
-use App\Core\Env;
 use Throwable;
 
 final class QueueEngineControlCli
@@ -14,10 +13,18 @@ final class QueueEngineControlCli
     public function run(array $argv): array
     {
         try {
-            Database::useProfile('cli');
-            $service = new QueueEngineControlService(Database::connectionFresh());
             $desired = $this->option($argv, 'set');
             $readiness = $this->option($argv, 'readiness');
+            if ($readiness !== null || ($desired !== null && $desired !== 'disabled')) {
+                return [
+                    'ok' => false,
+                    'status' => 'legacy_engine_activation_retired',
+                    'remote' => false,
+                    'http' => 0,
+                ];
+            }
+            Database::useProfile('cli');
+            $service = new QueueEngineControlService(Database::connectionFresh());
             if ($desired === null && $readiness === null) {
                 return ['ok' => true, 'status' => 'read_only'] + $service->snapshot();
             }
@@ -25,12 +32,7 @@ final class QueueEngineControlCli
             if ($expected === null) {
                 return ['ok' => false, 'status' => 'expected_generation_required'] + $service->snapshot();
             }
-            if (($desired !== null && $desired !== 'disabled') && Env::bool('ML_WRITE_ENABLED', false)) {
-                return ['ok' => false, 'status' => 'blocked_ml_write_enabled'] + $service->snapshot();
-            }
-            $result = $readiness !== null
-                ? $service->compareAndSwapReadiness($readiness, $expected, 'queue_engine_control_cli')
-                : $service->compareAndSwap((string) $desired, $expected, 'queue_engine_control_cli');
+            $result = $service->compareAndSwap('disabled', $expected, 'queue_engine_control_cli');
             return ['status' => $result['ok'] ? 'changed' : 'not_changed'] + $result;
         } catch (Throwable) {
             return ['ok' => false, 'status' => 'control_unavailable'];

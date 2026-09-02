@@ -14,7 +14,7 @@ final class CronRunNarrativeService
     public function latest(): array
     {
         try {
-            $health = (new CronHealthService())->latestAutomaticAnyBuild('process_sync_queue');
+            $health = (new CronHealthService())->latestAutomaticAnyBuild();
             if (!is_array($health)) {
                 return [
                     'available' => false,

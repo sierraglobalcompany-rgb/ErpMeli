@@ -9,7 +9,7 @@ namespace App\Services;
  *
  * Las extensiones antiguas pueden seguir comprobando este contrato, pero la
  * ejecución pertenece exclusivamente a ManualCampaignAdapter::processExact()
- * desde ResumableCampaignWorkerService (CLI).
+ * desde el flujo manual exacto vigente.
  */
 interface InteractiveCampaignAdapter extends ManualCampaignAdapter
 {

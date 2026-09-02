@@ -122,6 +122,53 @@ final class OrderEnrichmentService
         return $this->processSelected(1,$deadline,$jobId,false);
     }
 
+    /** @return array{status:string,processed:int,completed:int,errors:int,deferred:int,stop_reason:string} */
+    public function processQueueV4PackExact(int $jobId, int $accountId, int $companyId, ?float $deadline = null): array
+    {
+        if (!$this->packSourceBelongsToTenant($jobId, $accountId, $companyId)) {
+            return ['status' => 'error', 'processed' => 0, 'completed' => 0, 'errors' => 1, 'deferred' => 0, 'stop_reason' => 'invalid_source'];
+        }
+        if ($this->completePackSourceIfExpectedKnown($jobId, $accountId, $companyId)) {
+            return ['status' => 'complete', 'processed' => 0, 'completed' => 1, 'errors' => 0, 'deferred' => 0, 'stop_reason' => 'already_known_local'];
+        }
+
+        $summary = $this->processExact($jobId, $deadline);
+        $status = ((int) ($summary['completed'] ?? 0)) > 0
+            ? 'complete'
+            : (((int) ($summary['errors'] ?? 0)) > 0 ? 'error' : 'waiting');
+
+        return ['status' => $status] + $summary;
+    }
+
+    public function completePackSourceIfExpectedKnown(int $jobId, int $accountId, int $companyId): bool
+    {
+        $pack = $this->packForSource($jobId, $accountId, $companyId);
+        if ($pack === null || !$this->packExpectedKnown($pack)) {
+            return false;
+        }
+        $statement = Database::connectionFresh()->prepare(
+            'UPDATE order_resource_enrichment_jobs j
+             JOIN meli_accounts a ON a.id=j.meli_account_id
+             SET j.status="complete",
+                 j.completed_at=COALESCE(j.completed_at,UTC_TIMESTAMP()),
+                 j.last_processed_at=UTC_TIMESTAMP(),
+                 j.lock_token=NULL,
+                 j.locked_at=NULL,
+                 j.heartbeat_at=NULL,
+                 j.last_error_message=NULL,
+                 j.last_error_diagnostic_id=NULL,
+                 j.last_error_code=NULL,
+                 j.failure_class=NULL,
+                 j.reached_remote=0
+             WHERE j.id=? AND j.meli_account_id=? AND j.resource_type="pack"
+               AND a.company_id=?
+               AND j.status IN ("pending","retry","running")'
+        );
+        $statement->execute([$jobId, $accountId, $companyId]);
+
+        return $statement->rowCount() > 0;
+    }
+
     /** @return array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} */
     private function processSelected(?int $limit, ?float $deadline, ?int $jobId, bool $allowContinuation=true): array
     {
@@ -165,6 +212,7 @@ final class OrderEnrichmentService
                         (int) $job['id'],
                         (string) $job['external_resource_id']
                     );
+                    $this->admitMissingPackChildOrders($job);
                 }
                 $this->complete($job);
                 $summary['completed']++;
@@ -179,6 +227,11 @@ final class OrderEnrichmentService
                     $summary['errors']++;
                 }
                 if ($error instanceof RemoteResultUncertainException) {
+                    if ($this->isPackSafeGetRemoteUncertain($job, $error)) {
+                        $summary['status'] = 'waiting';
+                        $summary['stop_reason'] = 'remote_uncertain_safe_get';
+                        continue;
+                    }
                     $summary['stop_reason'] = 'action_required';
                     break;
                 }
@@ -365,12 +418,21 @@ final class OrderEnrichmentService
         $consumeAttempt = true;
         $reportError = true;
 
-        if ($error instanceof RemoteResultUncertainException) {
+        if ($error instanceof RemoteResultUncertainException && $this->isPackSafeGetRemoteUncertain($job, $error)) {
+            $class = 'remote_result_uncertain_safe_get';
+            $code = 'remote_result_uncertain_safe_get';
+            $reachedRemote = true;
+            $retry = true;
+            $nextAt = time() + 60;
+            $consumeAttempt = false;
+            $reportError = false;
+            $safeMessage = 'Resultado remoto incierto en GET idempotente de pack. Se reintentará en una ventana segura.';
+        } elseif ($error instanceof RemoteResultUncertainException) {
             $class = 'remote_result_uncertain';
             $code = 'remote_result_uncertain';
             $reachedRemote = true;
             $retry = false;
-            $safeMessage = 'Mercado Libre respondió, pero el permiso local venció. Revise antes de reintentar.';
+            $safeMessage = 'Mercado Libre respondió, pero el resultado remoto no es confirmable. Revise antes de reintentar.';
         } elseif ($error instanceof CronDeadlineDeferredException) {
             $class = 'waiting_deadline';
             $code = 'cron_deadline_deferred';
@@ -447,6 +509,15 @@ final class OrderEnrichmentService
             'consume_attempt' => $consumeAttempt,
             'report_error' => $reportError,
         ];
+    }
+
+    /**
+     * @param array<string,mixed> $job
+     */
+    private function isPackSafeGetRemoteUncertain(array $job, Throwable $error): bool
+    {
+        return $error instanceof RemoteResultUncertainException
+            && (string) ($job['resource_type'] ?? '') === 'pack';
     }
 
     private function refreshOrderState(int $orderId, int $accountId, int $companyId): void
@@ -556,6 +627,134 @@ final class OrderEnrichmentService
             'external_pack_id' => $externalPackId,
             'job_id' => $jobId,
         ]);
+    }
+
+    /** @param array<string,mixed> $job */
+    private function admitMissingPackChildOrders(array $job): void
+    {
+        $accountId = (int) ($job['meli_account_id'] ?? 0);
+        $companyId = (int) ($job['company_id'] ?? 0);
+        $externalPackId = trim((string) ($job['external_resource_id'] ?? ''));
+        if ($accountId < 1 || $companyId < 1 || $externalPackId === '') {
+            return;
+        }
+        $pack = $this->packForSource((int) $job['id'], $accountId, $companyId);
+        if ($pack === null) {
+            return;
+        }
+        $expected = $this->expectedOrderIds($pack);
+        if ($expected === []) {
+            return;
+        }
+        $pdo = Database::connection();
+        $existing = $pdo->prepare(
+            'SELECT external_order_id FROM meli_orders
+             WHERE meli_account_id=? AND external_order_id IN (' . implode(',', array_fill(0, count($expected), '?')) . ')'
+        );
+        $existing->execute(array_merge([$accountId], $expected));
+        $present = [];
+        foreach ($existing->fetchAll(PDO::FETCH_COLUMN) as $externalOrderId) {
+            $present[(string) $externalOrderId] = true;
+        }
+
+        $admission = new CronAdmissionService($pdo);
+        foreach ($expected as $externalOrderId) {
+            if (isset($present[$externalOrderId])) {
+                continue;
+            }
+            $admission->submitOrderExact(
+                $companyId,
+                $accountId,
+                $externalOrderId,
+                'order:' . $externalOrderId,
+                [
+                    'source' => 'pack_exact_child',
+                    'pack_source_id' => (int) $job['id'],
+                    'pack_id' => $externalPackId,
+                ],
+            );
+        }
+    }
+
+    /** @return array<string,mixed>|null */
+    private function packForSource(int $jobId, int $accountId, int $companyId): ?array
+    {
+        if ($jobId < 1 || $accountId < 1 || $companyId < 1) {
+            return null;
+        }
+        $statement = Database::connection()->prepare(
+            'SELECT p.*
+             FROM order_resource_enrichment_jobs j
+             JOIN meli_accounts a ON a.id=j.meli_account_id
+             JOIN meli_packs p ON p.meli_account_id=j.meli_account_id AND p.external_pack_id=j.external_resource_id
+             WHERE j.id=? AND j.meli_account_id=? AND a.company_id=? AND j.resource_type="pack"
+             LIMIT 1'
+        );
+        $statement->execute([$jobId, $accountId, $companyId]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+
+        return is_array($row) ? $row : null;
+    }
+
+    private function packSourceBelongsToTenant(int $jobId, int $accountId, int $companyId): bool
+    {
+        $statement = Database::connection()->prepare(
+            'SELECT 1
+             FROM order_resource_enrichment_jobs j
+             JOIN meli_accounts a ON a.id=j.meli_account_id
+             WHERE j.id=? AND j.meli_account_id=? AND a.company_id=? AND j.resource_type="pack"
+             LIMIT 1'
+        );
+        $statement->execute([$jobId, $accountId, $companyId]);
+
+        return $statement->fetchColumn() !== false;
+    }
+
+    /** @param array<string,mixed> $pack */
+    private function packExpectedKnown(array $pack): bool
+    {
+        if ((string) ($pack['integrity_status'] ?? '') === 'complete') {
+            return true;
+        }
+        if ((int) ($pack['expected_orders_count'] ?? 0) > 0) {
+            return true;
+        }
+
+        return $this->expectedOrderIds($pack) !== [];
+    }
+
+    /**
+     * @param array<string,mixed> $pack
+     * @return list<string>
+     */
+    private function expectedOrderIds(array $pack): array
+    {
+        $raw = trim((string) ($pack['expected_orders_json'] ?? ''));
+        if ($raw === '') {
+            return [];
+        }
+        try {
+            $decoded = json_decode($raw, true, 64, JSON_THROW_ON_ERROR);
+        } catch (Throwable) {
+            return [];
+        }
+        if (!is_array($decoded)) {
+            return [];
+        }
+        $ids = [];
+        foreach ($decoded as $externalOrderId) {
+            if (!is_scalar($externalOrderId)) {
+                continue;
+            }
+            $value = trim((string) $externalOrderId);
+            if ($value !== '' && ctype_digit($value)) {
+                $ids[$value] = $value;
+            }
+        }
+        $ids = array_values($ids);
+        sort($ids, SORT_STRING);
+
+        return $ids;
     }
 
     private function orderBelongsToAccountCompany(int $accountId, int $orderId): bool

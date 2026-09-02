@@ -10,9 +10,7 @@ use App\Core\Env;
 use App\Core\Session;
 use App\Core\View;
 use App\Core\Database;
-use App\Services\AuthorizedBusinessScope;
 use App\Services\ClaimSyncService;
-use App\Services\CronV3ProducerService;
 
 final class ClaimController
 {
@@ -41,24 +39,11 @@ final class ClaimController
             Session::flash('error', 'Los usuarios temporales no pueden sincronizar reclamos.');
             $this->redirect('/claims');
         }
-        try {
-            $accountId = max(0, (int) ($_POST['account_id'] ?? 0));
-            $account = (new AuthorizedBusinessScope())->account($accountId);
-            $queued = (new CronV3ProducerService())->claimsSearchPage(
-                (int) $account['company_id'],
-                $accountId,
-                'claims-manual:' . gmdate('Y-m-d H:i')
-            );
-            if ($queued) {
-                Session::flash('success', 'La primera página de reclamos quedó en Cron V3. Esta petición no consultó Mercado Libre.');
-                $this->redirect('/claims?account_id=' . $accountId);
-            }
-            Session::flash('info', 'La revisión de reclamos se preparará como trabajo CLI. Esta página no consultó Mercado Libre.');
-            $this->redirect('/settings/manual-processing?scope=sales&account_id=' . $accountId . '&origin=claims');
-        } catch (\Throwable $e) {
-            Session::flash('error', \App\Services\SafeErrorPresenter::message($e, 'No fue posible preparar la revisión de reclamos.'));
-        }
-        $this->redirect('/claims');
+        Session::flash(
+            'info',
+            'La sincronización general de reclamos está retirada porque no tiene consumidor vigente. No se creó trabajo ni se consultó Mercado Libre.'
+        );
+        $this->redirect('/claims?account_id=' . max(0, (int) ($_POST['account_id'] ?? 0)));
     }
 
     private function allClaims(array $filters): array

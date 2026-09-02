@@ -552,11 +552,7 @@ final class CronV3DoctorService
             CronV3HandlerRegistry::class,
             CronV3WorkTypeRegistry::class,
         ];
-        $root = dirname(__DIR__, 2);
-        $files = [
-            'jobs/cron_v3_local.php' => is_file($root . '/jobs/cron_v3_local.php'),
-            'jobs/cron_v3_remote.php' => is_file($root . '/jobs/cron_v3_remote.php'),
-        ];
+        $files = [];
         $classes = [];
         $missing = [];
         foreach ($classNames as $className) {
@@ -565,12 +561,6 @@ final class CronV3DoctorService
                 $missing[] = $className;
             }
         }
-        foreach ($files as $file => $present) {
-            if (!$present) {
-                $missing[] = $file;
-            }
-        }
-
         $types = new CronV3WorkTypeRegistry();
         $handlers = new CronV3HandlerRegistry($types);
         CronV3DefaultHandlers::register($handlers);

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Core\Database;
+use App\QueueV4Clean\QueueV4CleanRepository;
+use App\QueueV4Clean\QueueV4CleanWorker;
 use PDO;
 use RuntimeException;
 use Throwable;
@@ -23,6 +25,9 @@ final class ManualCampaignPreviewService
         $configuration = $this->normalize($configuration);
         $hash = hash('sha256', json_encode($configuration, JSON_UNESCAPED_SLASHES));
         $pdo = Database::connectionFresh();
+        if ($configuration['scope'] === 'available_queue') {
+            return $this->createAvailableQueuePreview($pdo, $userId, $configuration, $hash);
+        }
         $cacheSeconds = max(5, min(120, (new AppSettingsService())->int('manual_campaign.preview_cache_seconds', 20)));
         $existing = $pdo->prepare(
             'SELECT preview_token FROM manual_campaign_previews
@@ -130,13 +135,16 @@ final class ManualCampaignPreviewService
                 $rows[] = $row;
             }
         }
+        $expiresAt = (string) $record['expires_at'];
+        $expiresAtTimestamp = strtotime($expiresAt . ' UTC');
         return array_replace(is_array($summary) ? $summary : [], [
             'rows' => $rows,
             'preview_token' => $token,
             'preview_id' => (int) $record['id'],
             'configuration' => is_array($configuration) ? $configuration : [],
             'calculated_at' => (string) $record['created_at'],
-            'expires_at' => (string) $record['expires_at'],
+            'expires_at' => $expiresAt,
+            'expires_in_seconds' => $expiresAtTimestamp === false ? 0 : max(0, $expiresAtTimestamp - time()),
         ]);
     }
 
@@ -195,13 +203,97 @@ final class ManualCampaignPreviewService
         ];
     }
 
+    /**
+     * @param array<string,mixed> $configuration
+     * @return array<string,mixed>
+     */
+    private function createAvailableQueuePreview(PDO $pdo, int $userId, array $configuration, string $hash): array
+    {
+        $scope = new BusinessScopeContext();
+        $accountId = (int) $configuration['account_id'];
+        $allowedAccountIds = $accountId > 0
+            ? [(int) $scope->account($accountId, 0, $userId)['id']]
+            : $scope->accountIds($userId);
+
+        $ttl = max(60, min(3600, (new AppSettingsService())->int('manual_campaign.preview_ttl_seconds', 600)));
+        $repository = new QueueV4CleanRepository($pdo);
+        $preview = [
+            'eligible_jobs' => $repository->eligibleCount($allowedAccountIds, $accountId > 0 ? $accountId : null),
+            'rows' => $repository->previewEligible(
+                min(QueueV4CleanWorker::HARD_MAX_CALLS, (int) $configuration['block_size']),
+                $allowedAccountIds,
+                $accountId > 0 ? $accountId : null
+            ),
+            'excluded_jobs' => [],
+            'excluded_summary' => [],
+            'manual_queue_preview_matches_auto_eligibility' => 'PASS',
+            'auto_eligibility_match' => 'PASS',
+            'f1_future_finance_excluded' => 'PASS',
+            'f1b_pack_incomplete_excluded' => 'PASS',
+            'waiting_excluded' => 'PASS',
+            'review_excluded' => 'PASS',
+        ];
+        $preview['scope_label'] = 'Cola disponible';
+        $preview['expires_in_seconds'] = $ttl;
+        $token = bin2hex(random_bytes(20));
+        $summary = $preview;
+        unset($summary['rows']);
+
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare(
+                'INSERT INTO manual_campaign_previews
+                 (preview_token,created_by_user_id,scope_key,meli_account_id,configuration_hash,
+                  configuration_json,summary_json,expires_at)
+                 VALUES (?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ' . $ttl . ' SECOND))'
+            )->execute([
+                $token,
+                $userId,
+                $configuration['scope'],
+                $configuration['account_id'] ?: null,
+                $hash,
+                json_encode($configuration, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                json_encode($summary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            ]);
+            $previewId = (int) $pdo->lastInsertId();
+            $item = $pdo->prepare(
+                'INSERT INTO manual_campaign_preview_items
+                 (manual_campaign_preview_id,queue_key,source_id,meli_account_id,source_state,item_payload_json,position_no)
+                 VALUES (?,?,?,?,?,?,?)'
+            );
+            $position = 0;
+            foreach ((array) ($preview['rows'] ?? []) as $row) {
+                $position++;
+                $item->execute([
+                    $previewId,
+                    (string) ($row['queue_key'] ?? 'available_queue'),
+                    (string) ($row['source_id'] ?? ''),
+                    !empty($row['meli_account_id']) ? (int) $row['meli_account_id'] : null,
+                    (string) ($row['source_state'] ?? 'ready'),
+                    json_encode($this->safeRow($row), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    $position,
+                ]);
+            }
+            $pdo->commit();
+        } catch (Throwable $error) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
+        }
+
+        return $this->load($token, $userId);
+    }
+
     /** @param array<string,mixed> $row @return array<string,mixed> */
     private function safeRow(array $row): array
     {
         $allowed = [
-            'queue_key','source_id','meli_account_id','account_name','human_label','content_summary',
+            'queue_key','source_id','meli_account_id','account_name','human_label','label','content_summary',
             'estimated_api_calls','estimated_seconds','item_count','operation_key','uses_api',
             'requested_interval_ms','effective_interval_ms','block_size','block_pause_ms','source_state',
+            'queue_job_id','company_id','job_type','capability','resource_id','resource_label',
+            'source_alias','status_label','state_label','available_at','last_error_class',
         ];
         return array_intersect_key($row, array_flip($allowed));
     }

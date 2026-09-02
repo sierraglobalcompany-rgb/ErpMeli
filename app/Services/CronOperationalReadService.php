@@ -128,6 +128,48 @@ final class CronOperationalReadService
         return $rows;
     }
 
+    /** @return array<string,mixed> */
+    public function queueTasksPage(int $page = 1, int $perPage = 50): array
+    {
+        (new CronOperationalAccessScope())->assertGlobal();
+        $page = max(1, $page);
+        $perPage = max(10, min(50, $perPage));
+        $scope = (new ApiHealthAccessScope())->snapshot();
+        $companyIds = array_values(array_filter(array_map('intval', (array) ($scope['company_ids'] ?? []))));
+        $accountIds = array_values(array_filter(array_map('intval', (array) ($scope['account_ids'] ?? []))));
+        if ($companyIds === [] || $accountIds === []) {
+            throw new \RuntimeException('queue_v4_scope_unavailable');
+        }
+        $companyTokens = implode(',', array_fill(0, count($companyIds), '?'));
+        $accountTokens = implode(',', array_fill(0, count($accountIds), '?'));
+        $params = array_merge($companyIds, $accountIds);
+        $pdo = Database::connectionFresh();
+        $predicate = 'company_id IN (' . $companyTokens . ') AND meli_account_id IN (' . $accountTokens . ')';
+        $count = $pdo->prepare('SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE ' . $predicate);
+        $count->execute($params);
+        $total = (int) $count->fetchColumn();
+        $rows = $pdo->prepare(
+            'SELECT job_type,state,available_at,completed_at,attempts,company_id,meli_account_id,
+                    CASE WHEN job_type="domain_exact" THEN JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability")) ELSE NULL END capability
+             FROM queue_v4_clean_jobs
+             WHERE ' . $predicate . '
+             ORDER BY available_at ASC,id ASC LIMIT ' . $perPage . ' OFFSET ' . (($page - 1) * $perPage)
+        );
+        $rows->execute($params);
+
+        return [
+            'ok' => true,
+            'snapshot_state' => $total === 0 ? 'authoritative_empty' : 'complete',
+            'authoritative' => true,
+            'version' => trim((string) @file_get_contents(dirname(__DIR__, 2) . '/VERSION')),
+            'page' => $page,
+            'per_page' => $perPage,
+            'total' => $total,
+            'rows' => $rows->fetchAll(PDO::FETCH_ASSOC),
+            'legacy_state_consulted' => false,
+        ];
+    }
+
     /** @param array<string,mixed> $snapshot @return array<string,mixed> */
     private function overviewFromOperationalSnapshot(array $snapshot): array
     {
@@ -457,7 +499,7 @@ final class CronOperationalReadService
                 'url' => $key === 'notification_spool'
                     ? null
                     : ($key === 'manual_campaign' && $campaign !== null
-                    ? InternalUrl::to('/settings/manual-processing/session?id=' . (int) $campaign['id'])
+                    ? InternalUrl::to('/settings/manual-processing')
                     : InternalUrl::to('/settings/cron/queue?' . http_build_query(['queue_key' => $key, 'group' => 'all']))),
                 'detail_message' => $key === 'notification_spool'
                     ? 'Entrada temporal en archivos; no existe una lista de filas navegable todavía.'

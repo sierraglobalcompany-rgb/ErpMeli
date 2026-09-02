@@ -1,0 +1,174 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\QueueV4Clean;
+
+use App\Core\Env;
+use App\QueueCore\QueueExecutionLease;
+use App\QueueCore\QueueExecutionLeaseService;
+use App\Services\CronDeadlineContext;
+use App\Services\EmergencyControlService;
+use App\Services\SalesAuditExactRepairService;
+use PDO;
+
+final class QueueV4CleanScheduler
+{
+    public function __construct(private readonly PDO $pdo)
+    {
+    }
+
+    /** @return array<string,mixed> */
+    public function run(int $maxCalls = QueueV4CleanWorker::DEFAULT_MAX_CALLS, int $runtimeSeconds = 45): array
+    {
+        QueueV4CleanOAuthStageContext::reset();
+        $startedAt = microtime(true);
+        $deadline = $startedAt + max(5, min(45, $runtimeSeconds));
+        $repository = new QueueV4CleanRepository($this->pdo);
+        $control = $repository->control();
+        if ((string) $control['engine_state'] !== 'ACTIVE'
+            || (int) $control['scheduler_enabled'] !== 1
+            || (new EmergencyControlService())->automationStopped()
+            || Env::bool('ML_WRITE_ENABLED', false)) {
+            return [
+                'ok' => true,
+                'status' => 'stopped',
+                'processed' => 0,
+                'control_unit' => 'PHYSICAL_API_CALL',
+                'max_calls' => max(1, min(QueueV4CleanWorker::HARD_MAX_CALLS, $maxCalls)),
+            ];
+        }
+        $owner = bin2hex(random_bytes(16));
+        $lease = $this->pdo->prepare(
+            "UPDATE queue_v4_clean_leases
+             SET owner_ref=?,acquired_at=UTC_TIMESTAMP(3),heartbeat_at=UTC_TIMESTAMP(3),
+                 expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 60 SECOND)
+             WHERE lease_key='scheduler' AND (owner_ref IS NULL OR expires_at<UTC_TIMESTAMP(3))"
+        );
+        $lease->execute([$owner]);
+        if ($lease->rowCount() !== 1) {
+            return [
+                'ok' => true,
+                'status' => 'busy',
+                'processed' => 0,
+                'control_unit' => 'PHYSICAL_API_CALL',
+                'max_calls' => max(1, min(QueueV4CleanWorker::HARD_MAX_CALLS, $maxCalls)),
+            ];
+        }
+        $drainLeases = new QueueExecutionLeaseService($this->pdo);
+        $drainAuthority = $drainLeases->acquire('cron_v4', $owner, 60);
+        if (!$drainAuthority instanceof QueueExecutionLease) {
+            $release = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_leases
+                 SET owner_ref=NULL,acquired_at=NULL,heartbeat_at=NULL,expires_at=NULL
+                 WHERE lease_key='scheduler' AND owner_ref=?"
+            );
+            $release->execute([$owner]);
+            return [
+                'ok' => true,
+                'status' => 'busy_drainer',
+                'processed' => 0,
+                'claimed_total' => 0,
+                'control_unit' => 'PHYSICAL_API_CALL',
+                'max_calls' => max(1, min(QueueV4CleanWorker::HARD_MAX_CALLS, $maxCalls)),
+            ];
+        }
+        $maxCalls = max(1, min(QueueV4CleanWorker::HARD_MAX_CALLS, $maxCalls));
+        QueueV4CleanCycleBudget::start($maxCalls);
+        try {
+            $oauth = (new QueueV4CleanOAuthSupervisor(
+                $this->pdo,
+                new QueueV4CleanOAuthOperationRepository($this->pdo),
+            ))->run($owner);
+            if (($oauth['abort_scheduler'] ?? false) === true) {
+                return [
+                    'ok' => false,
+                    'status' => (string) ($oauth['status'] ?? 'oauth_control_plane_blocked'),
+                    'oauth' => $oauth,
+                    'producer' => ['skipped' => true],
+                    'worker' => ['skipped' => true],
+                    'control_unit' => 'PHYSICAL_API_CALL',
+                    'max_calls' => $maxCalls,
+                    'http_budget' => QueueV4CleanCycleBudget::snapshot(),
+                ];
+            }
+            // OAuth provenance must not leak into later producer/worker
+            // diagnostics in the same long-lived PHP process.
+            QueueV4CleanOAuthStageContext::reset();
+            $recovery = (new QueueV4CleanUncertainReadRecoveryService($this->pdo))->recoverOne();
+            $salesAudit = (new QueueV4CleanSalesAuditStage())->run($deadline);
+            if (($salesAudit['abort_scheduler'] ?? false) === true) {
+                return [
+                    'ok' => false,
+                    'status' => 'sales_audit_invariant_blocked',
+                    'oauth' => $oauth,
+                    'recovery' => $recovery,
+                    'sales_audit' => $salesAudit,
+                    'producer' => ['skipped' => true],
+                    'worker' => ['skipped' => true],
+                    'claimed_total' => (int) ($oauth['claimed'] ?? 0) + (int) ($salesAudit['claimed'] ?? 0),
+                    'control_unit' => 'PHYSICAL_API_CALL',
+                    'max_calls' => $maxCalls,
+                    'http_budget' => QueueV4CleanCycleBudget::snapshot(),
+                ];
+            }
+            $oauthClaimed = (int) ($oauth['claimed'] ?? 0);
+            $salesClaimed = (int) ($salesAudit['claimed'] ?? 0);
+            $producer = (new QueueV4CleanProducer($this->pdo, $repository))->produce();
+            // This bounded local-only step must run before the worker can use
+            // the remaining wall clock. Otherwise a busy remote queue can
+            // leave the browser incident catalogue permanently stale.
+            $maintenance = microtime(true) < $deadline - 1.0
+                ? (new QueueV4CleanMaintenanceService())->run(200)
+                : ['materialized' => 0, 'retained' => 0, 'warnings' => 0, 'deferred' => true];
+            $availableWorkerCalls = QueueV4CleanCycleBudget::remaining();
+            $remaining = min(45, (int) floor($deadline - microtime(true)));
+            // Reserve a small local-only window for the incident read model.
+            // HTTP/business work remains bounded by the shared cycle budget.
+            $workerRuntime = $remaining >= 8 ? $remaining - 3 : $remaining;
+            $worker = $remaining >= 5 && $availableWorkerCalls > 0
+                ? (new QueueV4CleanWorker($this->pdo, $repository))->run('scheduler', $availableWorkerCalls, $workerRuntime)
+                : ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
+            $workerClaimed = (int) ($worker['claimed'] ?? 0);
+            $salesRepair = QueueV4CleanCycleBudget::remaining() > 0 && CronDeadlineContext::canAcceptWork(3)
+                ? (new SalesAuditExactRepairService())->processDue(1)
+                : ['processed' => 0, 'jobs' => 0, 'status' => 'deferred'];
+            $repairClaimed = (int) ($salesRepair['jobs'] ?? 0);
+            $claimedTotal = $oauthClaimed + $salesClaimed + $workerClaimed + $repairClaimed;
+            if ($repairClaimed > 1 || QueueV4CleanCycleBudget::snapshot()['used'] > $maxCalls) {
+                throw new \RuntimeException('queue_v4_clean_functional_capacity_exceeded');
+            }
+            $this->pdo->exec(
+                "UPDATE queue_v4_clean_control SET last_scheduler_at=UTC_TIMESTAMP(3) WHERE control_key='primary'"
+            );
+            return [
+                'ok' => true,
+                'status' => 'completed',
+                'oauth' => $oauth,
+                'recovery' => $recovery,
+                'maintenance' => $maintenance,
+                'sales_audit' => $salesAudit,
+                'sales_repair' => $salesRepair,
+                'producer' => $producer,
+                'worker' => $worker,
+                'claimed_total' => $claimedTotal,
+                'control_unit' => 'PHYSICAL_API_CALL',
+                'max_calls' => $maxCalls,
+                'physical_http_calls' => (int) (QueueV4CleanCycleBudget::snapshot()['used'] ?? 0),
+                'http_budget' => QueueV4CleanCycleBudget::snapshot(),
+            ];
+        } finally {
+            if (isset($drainLeases, $drainAuthority)
+                && $drainAuthority instanceof QueueExecutionLease) {
+                $drainLeases->release($drainAuthority);
+            }
+            $release = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_leases
+                 SET owner_ref=NULL,acquired_at=NULL,heartbeat_at=NULL,expires_at=NULL
+                 WHERE lease_key='scheduler' AND owner_ref=?"
+            );
+            $release->execute([$owner]);
+            QueueV4CleanCycleBudget::clear();
+        }
+    }
+}

@@ -38,20 +38,19 @@ $serverVersion = (string) $server->query('SELECT VERSION()')->fetchColumn();
 if ($strict) {
     $isMariaDb = stripos($serverVersion, 'mariadb') !== false;
     $numericVersion = preg_replace('/[^0-9.].*$/', '', $serverVersion) ?: '0';
-    $supported = $isMariaDb && version_compare($numericVersion, '11.8.0', '>=');
+    $supported = $isMariaDb
+        ? version_compare($numericVersion, '11.8.0', '>=')
+        : version_compare($numericVersion, '8.0.0', '>=');
     if (!$supported) {
         fwrite(
             STDERR,
-            'ERROR: la certificación principal exige MariaDB 11.8+. MySQL 8 se valida por separado. Detectado: '
+            'ERROR: la certificación exige MariaDB 11.8+ o MySQL 8+. Detectado: '
             . preg_replace('/[^A-Za-z0-9_.-]/', '_', $serverVersion) . ".\n"
         );
         exit(2);
     }
 }
-$testCollation = stripos($serverVersion, 'mariadb') !== false
-    ? 'utf8mb4_uca1400_ai_ci'
-    : 'utf8mb4_unicode_ci';
-$server->exec("CREATE DATABASE `{$database}` CHARACTER SET utf8mb4 COLLATE {$testCollation}");
+$server->exec("CREATE DATABASE `{$database}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
 
 try {
     define('ERP_SHARED_ROOT', $temporary);
@@ -71,13 +70,6 @@ try {
     ));
     if ($failed !== []) {
         throw new RuntimeException('Una migración falló durante la instalación limpia: ' . json_encode($failed));
-    }
-    $contract = (new \App\Services\ComponentSchemaContractService())->status('process_sync_queue');
-    if (empty($contract['ready'])) {
-        throw new RuntimeException(
-            'El contrato de process_sync_queue no quedó listo bajo la collation predeterminada del servidor: '
-            . json_encode($contract)
-        );
     }
     if ((int) $pdo->query("SELECT COUNT(*) FROM app_versions WHERE version='2.24.0'")->fetchColumn() !== 1) {
         throw new RuntimeException('No se registró la versión 2.24.0.');

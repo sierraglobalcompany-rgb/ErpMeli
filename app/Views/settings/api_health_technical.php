@@ -28,7 +28,7 @@ require __DIR__ . '/_api_health_nav.php';
   <header><div><span class="eyebrow">Administración avanzada</span><h2>Detalles técnicos</h2><p>Ventanas, operaciones, límites y códigos HTTP. Esta información no determina por sí sola el riesgo.</p></div></header>
   <div class="api-technical-kpis">
     <div><span>Presupuesto general</span><strong><?= (int) ($budget['global_limit'] ?? 300) ?> / 15 min</strong></div>
-    <div><span>Por cuenta</span><strong><?= (int) ($budget['account_limit'] ?? 120) ?> / 15 min</strong></div>
+    <div><span>Por cuenta</span><strong><?= (int) ($budget['account_limit'] ?? 90) ?> / 15 min</strong></div>
     <div><span>Por operación</span><strong><?= (int) ($budget['endpoint_limit'] ?? 50) ?> / 15 min</strong></div>
     <div><span>Máximo por pantalla</span><strong><?= (int) ($budget['web_limit'] ?? 10) ?></strong></div>
   </div>

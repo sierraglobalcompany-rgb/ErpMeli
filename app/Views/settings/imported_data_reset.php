@@ -42,6 +42,7 @@ if ($status === 'completed') {
   <div>
     <span class="eyebrow">Configuración · operación destructiva local</span>
     <h1>Restablecer datos importados de Mercado Libre</h1>
+    <p><span class="badge neutral">LOCAL_ONLY</span> Requiere decisión y confirmación explícitas; nunca se programa en Cron.</p>
     <p>Retira copias locales que pueden volver a descargarse. No modifica nada en Mercado Libre.</p>
   </div>
   <div class="page-actions">
@@ -78,13 +79,13 @@ if ($status === 'completed') {
           <?= number_format((int) ($campaign['total_items'] ?? 0), 0, ',', '.') ?> trabajos ·
           <?= number_format((int) ($campaign['total_units'] ?? 0), 0, ',', '.') ?> unidades
         </span>
-        <a class="btn" href="<?= View::e($base . '/settings/manual-processing/session?id=' . (int) ($campaign['id'] ?? 0)) ?>">
-          Decidir: conservar o devolver pendientes
+        <a class="btn" href="<?= View::e($base . '/settings/manual-processing') ?>">
+          Abrir procesamiento manual exacto
         </a>
       </li>
     <?php endforeach; ?>
   </ul>
-  <p><strong>Conservar:</strong> no autorice este restablecimiento. <strong>Devolver o abandonar:</strong> abra la campaña, finalícela y devuelva sus pendientes de forma explícita.</p>
+  <p><strong>Conservar:</strong> no autorice este restablecimiento. <strong>Resolver:</strong> use el flujo manual exacto; las sesiones/campañas antiguas ya no son el camino operativo.</p>
 </section>
 <?php endif; ?>
 
@@ -257,7 +258,7 @@ if ($status === 'completed') {
         <p>Soporte ejecuta una tarea puntual en el servidor: procesa un lote, guarda su avance y termina. No depende de tareas automáticas adicionales.</p>
         <details>
           <summary>Comando puntual para soporte</summary>
-          <code>php jobs/process_sync_queue.php</code>
+          <code>Herramienta offline autorizada por soporte; no usar el Cron automático ni lanzadores heredados.</code>
         </details>
       </div>
       <?php if (in_array($status, ['authorized','running','pausing'], true)): ?>

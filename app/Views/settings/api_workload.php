@@ -62,12 +62,12 @@ $allowedRpm = isset($rhythm['allowed_rpm'])
 $observed15 = isset($rhythm['observed_http_15m']) ? max(0, (float) $rhythm['observed_http_15m']) : null;
 $observed60 = isset($rhythm['observed_http_60m']) ? max(0, (float) $rhythm['observed_http_60m']) : null;
 $resourcesPerHttp = isset($rhythm['resources_per_http']) ? max(0, (float) $rhythm['resources_per_http']) : null;
-$remoteBacklog = isset($rhythm['remote_backlog']) ? max(0, (int) $rhythm['remote_backlog']) : null;
-$parkedBacklog = isset($rhythm['parked_backlog']) ? max(0, (int) $rhythm['parked_backlog']) : null;
-$legacyVisibleBacklog = isset($rhythm['legacy_visible_backlog']) ? max(0, (int) $rhythm['legacy_visible_backlog']) : null;
+$operationalBacklog = isset($rhythm['operational_backlog']) ? max(0, (int) $rhythm['operational_backlog']) : null;
+$reviewBacklog = isset($rhythm['review_backlog']) ? max(0, (int) $rhythm['review_backlog']) : null;
+$completedLastHour = isset($rhythm['completed_last_hour']) ? max(0, (int) $rhythm['completed_last_hour']) : null;
 $rateLimitIncidents = array_values(array_filter(
     is_array($rhythm['recent_rate_limit_incidents'] ?? null) ? $rhythm['recent_rate_limit_incidents'] : [],
-    static fn(array $incident): bool => !empty($incident['rate_limit_signal']) || (int) ($incident['http_status'] ?? 0) === 429
+    static fn(array $incident): bool => ($incident['transport_class'] ?? '') === 'REMOTE_HTTP_429'
 ));
 $limitingScope = trim((string) ($rhythm['limiting_scope'] ?? ''));
 $increaseBlocker = trim((string) ($rhythm['increase_blocker'] ?? ''));
@@ -75,6 +75,11 @@ $safeToIncrease = $increaseBlocker === '' && $allowedRpm !== null && $observed60
 $fmtRate = static fn(?float $value): string => $value === null
     ? 'Por medir'
     : number_format($value, 1, ',', '.') . ' HTTP/min';
+$billing429Backoff = is_array($rhythm['billing_429_backoff_minutes'] ?? null) ? $rhythm['billing_429_backoff_minutes'] : [];
+$billing429First = max(5, min(720, (int) ($billing429Backoff[1] ?? $rhythm['billing_429_backoff_1_minutes'] ?? 30)));
+$billing429Second = max($billing429First, max(5, min(720, (int) ($billing429Backoff[2] ?? $rhythm['billing_429_backoff_2_minutes'] ?? 120))));
+$billing429Third = max($billing429Second, max(5, min(720, (int) ($billing429Backoff[3] ?? $rhythm['billing_429_backoff_3_minutes'] ?? 360))));
+$billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff[4] ?? $rhythm['billing_429_backoff_max_minutes'] ?? 720))));
 ?>
 <div class="page-head cron-page-head">
   <div>
@@ -130,9 +135,9 @@ $fmtRate = static fn(?float $value): string => $value === null
     <p>Solo incluye respuestas con conteo certificado. Combina tipos de recurso y no equivale a recursos finalizados.</p>
   </article>
   <article>
-    <span>Fila remota lista</span>
-    <strong><?= $remoteBacklog === null ? 'Por comprobar' : number_format($remoteBacklog, 0, ',', '.') . ' ejecutables' ?></strong>
-    <p>Trabajo parqueado: <?= $parkedBacklog !== null ? number_format($parkedBacklog, 0, ',', '.') : 'por comprobar' ?> · <?= $legacyVisibleBacklog !== null ? number_format($legacyVisibleBacklog, 0, ',', '.') . ' visibles legacy.' : 'La estimación dependerá del rendimiento observado.' ?></p>
+    <span>Backlog operativo Queue V4</span>
+    <strong><?= $operationalBacklog === null ? 'Por comprobar' : number_format($operationalBacklog, 0, ',', '.') . ' trabajos' ?></strong>
+    <p>En revisión: <?= $reviewBacklog !== null ? number_format($reviewBacklog, 0, ',', '.') : 'por comprobar' ?> · Cron no drena la revisión automáticamente. Completados última hora: <?= $completedLastHour !== null ? number_format($completedLastHour, 0, ',', '.') : 'por comprobar' ?>.</p>
   </article>
   <article>
     <span>Intervalo mínimo</span>
@@ -232,6 +237,42 @@ $fmtRate = static fn(?float $value): string => $value === null
         </article>
       </div>
       <label class="check"><input type="checkbox" name="ramp_require_drainage" <?= !array_key_exists('ramp_require_drainage', $rhythm) || !empty($rhythm['ramp_require_drainage']) ? 'checked' : '' ?>> Exigir que el backlog ejecutable baje antes de subir la rampa</label>
+    </section>
+    <section class="rhythm-custom-panel" aria-label="Protección ante errores peligrosos de Mercado Libre">
+      <div class="rhythm-panel-head">
+        <div>
+          <span class="eyebrow">BILLING 429</span>
+          <h3>Protección ante errores peligrosos de Mercado Libre</h3>
+          <p>Estas pausas sólo aplican a Billing 429 remoto real. No ejecutan recovery, no prueban Billing y no cambian el ritmo del Cron.</p>
+        </div>
+        <a class="btn" href="<?= View::e($base) ?>/settings/api-health/protection">Ver salud API</a>
+      </div>
+      <div class="rhythm-wizard-grid">
+        <article class="rhythm-wizard-card">
+          <span class="step-pill">1</span>
+          <h4>1er Billing 429</h4>
+          <label><span>Pausa</span><span class="input-with-unit"><input type="number" name="billing_429_backoff_1_minutes" min="5" max="720" value="<?= $billing429First ?>"><em>min</em></span><small>Default KISS: 30 min.</small></label>
+        </article>
+        <article class="rhythm-wizard-card">
+          <span class="step-pill">2</span>
+          <h4>2do Billing 429</h4>
+          <label><span>Pausa</span><span class="input-with-unit"><input type="number" name="billing_429_backoff_2_minutes" min="5" max="720" value="<?= $billing429Second ?>"><em>min</em></span><small>Default KISS: 120 min.</small></label>
+        </article>
+        <article class="rhythm-wizard-card">
+          <span class="step-pill">3</span>
+          <h4>3er Billing 429</h4>
+          <label><span>Pausa</span><span class="input-with-unit"><input type="number" name="billing_429_backoff_3_minutes" min="5" max="720" value="<?= $billing429Third ?>"><em>min</em></span><small>Default KISS: 360 min.</small></label>
+        </article>
+        <article class="rhythm-wizard-card">
+          <span class="step-pill">4+</span>
+          <h4>4+ Billing 429</h4>
+          <label><span>Pausa máxima</span><span class="input-with-unit"><input type="number" name="billing_429_backoff_max_minutes" min="5" max="720" value="<?= $billing429Max ?>"><em>min</em></span><small>Default KISS: 720 min = 12 horas.</small></label>
+        </article>
+      </div>
+      <div class="alert info">
+        <strong>No reduce Retry-After enviado por Mercado Libre.</strong>
+        Sólo aplica a Billing 429 remoto real; las demoras locales preventivas se reportan aparte como <code>LOCAL_RATE_LIMITED_PRETRANSPORT</code>.
+      </div>
     </section>
     <div class="alert info"><strong>La cifra no significa “datos por minuto”.</strong> Solo cuenta cuando comienza el transporte HTTP. Seleccionar, inspeccionar o aplazar un trabajo no consume el límite.</div>
     <div class="page-actions rhythm-save-actions">

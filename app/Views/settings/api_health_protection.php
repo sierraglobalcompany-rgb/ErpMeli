@@ -24,7 +24,7 @@ foreach ($windows as $window) {
     if ($key <= 0) {
         continue;
     }
-    $limit = max(1, (int) ($window['request_limit'] ?? $budget['account_limit'] ?? 120));
+    $limit = max(1, (int) ($window['request_limit'] ?? $budget['account_limit'] ?? 90));
     $used = (int) ($window['request_count'] ?? 0);
     if (!isset($accountCapacity[$key]) || $used > $accountCapacity[$key]['used']) {
         $accountCapacity[$key] = [

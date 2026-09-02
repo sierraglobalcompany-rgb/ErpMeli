@@ -80,6 +80,7 @@ $progressActivity = is_array($progress['activity'] ?? null) ? $progress['activit
   <div>
     <span class="eyebrow">Configuración · protección local</span>
     <h1>Copias y recuperación</h1>
+    <p><span class="badge neutral">LOCAL_ONLY</span> Operación interactiva local; no usa Cron ni llama a Mercado Libre.</p>
     <p>Cree copias completas cifradas sin consultar ni modificar Mercado Libre.</p>
   </div>
   <div class="page-actions"><a class="btn primary" href="<?= View::e($base) ?>/settings/backups/restore">Restaurar una copia</a><a class="btn" href="<?= View::e($base) ?>/settings">Volver a Configuración</a></div>

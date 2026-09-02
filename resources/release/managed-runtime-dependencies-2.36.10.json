@@ -1,0 +1,296 @@
+{
+  "schema_version": 1,
+  "authority_id": "queue-core-b2.1-runtime-dependencies",
+  "runtime_manifest_paths_sha256": "3bc0b9110de9f2bac77b0d31c3d534f2f969a2bbd398f5268636658e595d8e12",
+  "coverage_base_commit": "f91cd534d271b964db1ad9e682260475eca96820",
+  "blocked_rc_snapshot": {
+    "commit": "4ecd154f0a219a07d6ce0dc152be59037e9ef98b",
+    "expected_changed_paths": 142,
+    "sorted_path_set_sha256": "ce7723b2948880512ff727a1152f953238463a2a7112995406169a4dec649bcb",
+    "expected_class_counts": {
+      "MIGRATION_DEPLOY_REQUIRED": 14,
+      "RELEASE_BUILD_INPUT": 4,
+      "RUNTIME_REQUIRED": 113,
+      "TEST_ONLY": 11
+    }
+  },
+  "classifications": {
+    "RUNTIME_REQUIRED": "Debe estar en el artefacto y bajo integridad del runtime manifest.",
+    "RUNTIME_OPTIONAL_FAIL_CLOSED": "Dato o capacidad opcional cuya ausencia debe cerrar la función afectada de forma segura.",
+    "MIGRATION_DEPLOY_REQUIRED": "Migración requerida para desplegar el runtime; debe estar en artefacto y manifest.",
+    "RELEASE_BUILD_INPUT": "Autoridad o entrada usada para construir, verificar o publicar la release.",
+    "TEST_ONLY": "Fixture o gate de QA; se excluye del artefacto productivo.",
+    "DEVELOPMENT_TOOL": "Herramienta local de desarrollo sin dependencia productiva.",
+    "DOCUMENTATION": "Documentación no cargada por el runtime.",
+    "FRONTEND_STATIC": "Activo estático servido por el frontend y requerido en el artefacto.",
+    "OTHER_EXPLICIT": "Clasificación excepcional documentada que no puede inferirse por extensión o carpeta."
+  },
+  "classification_rules": [
+    {
+      "id": "runtime-notification-topics",
+      "classification": "RUNTIME_REQUIRED",
+      "kind": "exact",
+      "values": [
+        "resources/mercadolibre-api/generated/notification-topics.json"
+      ]
+    },
+    {
+      "id": "runtime-release-authorities",
+      "classification": "RUNTIME_REQUIRED",
+      "kind": "regex",
+      "value": "#^resources/release/[A-Za-z0-9._-]+\\.json$#D"
+    },
+    {
+      "id": "runtime-php",
+      "classification": "RUNTIME_REQUIRED",
+      "kind": "regex",
+      "value": "#^(?:app|jobs)/.+\\.php$#D"
+    },
+    {
+      "id": "deploy-migrations",
+      "classification": "MIGRATION_DEPLOY_REQUIRED",
+      "kind": "regex",
+      "value": "#^database/migrations/.+\\.sql$#D"
+    },
+    {
+      "id": "release-build-authorities",
+      "classification": "RELEASE_BUILD_INPUT",
+      "kind": "exact",
+      "values": [
+        ".gitattributes",
+        ".gitignore",
+        "VERSION",
+        "bin/build_runtime_manifest_b21.php",
+        "bin/build_managed_runtime_release.php",
+        "bin/build_update_package.php",
+        "bin/queue_core_dependency_check.php",
+        "composer.json",
+        "resources/runtime-manifest.json"
+      ]
+    },
+    {
+      "id": "tests",
+      "classification": "TEST_ONLY",
+      "kind": "regex",
+      "value": "#^tests/.+\\.php$#D"
+    },
+    {
+      "id": "documentation",
+      "classification": "DOCUMENTATION",
+      "kind": "regex",
+      "value": "#^docs/.+$#D"
+    }
+  ],
+  "runtime_dependencies": [
+    {
+      "id": "managed-runtime-dependency-registry",
+      "path": "resources/release/managed-runtime-dependencies-2.36.10.json",
+      "classification": "RUNTIME_REQUIRED",
+      "required_in_runtime_manifest": true,
+      "consumers": [
+        {
+          "source_path": "app/Services/ManagedRuntimePublicationPolicy.php",
+          "symbol": "App\\Services\\ManagedRuntimePublicationPolicy::installedManifestIssues",
+          "path_literal": "resources/release/managed-runtime-dependencies-2.36.10.json"
+        }
+      ],
+      "provenance": {
+        "kind": "static_tracked_release_authority",
+        "generator": "B2.1A release dependency classification"
+      },
+      "missing_effect": "Runtime manifest completeness and readiness fail closed."
+    },
+    {
+      "id": "frozen-updater-dependency-registry",
+      "path": "resources/release/queue-core-runtime-dependencies.json",
+      "classification": "RUNTIME_REQUIRED",
+      "required_in_runtime_manifest": true,
+      "consumers": [
+        {
+          "source_path": "app/Services/RuntimePublicationPolicy.php",
+          "symbol": "App\\Services\\RuntimePublicationPolicy::installedManifestIssues",
+          "path_literal": "resources/release/queue-core-runtime-dependencies.json"
+        }
+      ],
+      "provenance": {
+        "kind": "frozen_updater_authority",
+        "base_commit": "0cb5ddab368d033e15bdb040b53bb8592248246c"
+      },
+      "missing_effect": "The frozen updater release integrity policy fails closed."
+    },
+    {
+      "id": "notification-topics",
+      "path": "resources/mercadolibre-api/generated/notification-topics.json",
+      "classification": "RUNTIME_REQUIRED",
+      "required_in_runtime_manifest": true,
+      "consumers": [
+        {
+          "source_path": "app/Services/MeliNotificationTopicRegistry.php",
+          "symbol": "App\\Services\\MeliNotificationTopicRegistry::rules",
+          "path_literal": "resources/mercadolibre-api/generated/notification-topics.json"
+        }
+      ],
+      "provenance": {
+        "kind": "static_tracked_authority",
+        "introduced_by_commit": "ab85a6be73260ab4d6b9d76c78e6626a43ccb567",
+        "authority": "The tracked JSON is the canonical Mercado Libre notification topic normalization contract; no reproducible generator exists.",
+        "reproducible_generator": null,
+        "last_contract_change": "2026-08-09"
+      },
+      "missing_effect": "The registry loads zero rules; valid notifications become unknown_topic or quarantine."
+    },
+    {
+      "id": "runtime-manifest",
+      "path": "resources/runtime-manifest.json",
+      "classification": "RELEASE_BUILD_INPUT",
+      "required_in_runtime_manifest": false,
+      "consumers": [
+        {
+          "source_path": "app/Services/ReleaseIntegrityService.php",
+          "symbol": "App\\Services\\ReleaseIntegrityService",
+          "path_literal": "resources/runtime-manifest.json"
+        },
+        {
+          "source_path": "app/Services/QueueCoreDeploymentGateService.php",
+          "symbol": "App\\Services\\QueueCoreDeploymentGateService::runtimeManifestCheck",
+          "path_literal": "resources/runtime-manifest.json"
+        }
+      ],
+      "provenance": {
+        "kind": "generated_release_authority",
+        "generator": "bin/build_runtime_manifest_b21.php"
+      }
+    },
+    {
+      "id": "version-authority",
+      "path": "VERSION",
+      "classification": "RELEASE_BUILD_INPUT",
+      "required_in_runtime_manifest": false,
+      "consumers": [
+        {
+          "source_path": "app/Services/AppVersionService.php",
+          "symbol": "App\\Services\\AppVersionService::fileVersion",
+          "path_literal": "VERSION"
+        }
+      ],
+      "provenance": {
+        "kind": "release_authority",
+        "generator": "release publication"
+      }
+    }
+  ],
+  "static_scan": {
+    "source_scope": "changed_runtime_php_plus_declared_consumers",
+    "loader_operations": [
+      "file_get_contents",
+      "fopen",
+      "gzopen",
+      "glob",
+      "scandir",
+      "include",
+      "include_once",
+      "require",
+      "require_once"
+    ],
+    "dynamic_path_policies": [
+      {
+        "id": "version-file-authority",
+        "source_regex": "#^app/Services/AppVersionService\\.php$#D",
+        "operations": ["file_get_contents"],
+        "bounded_by": "Exact VERSION file at release root.",
+        "data_kind": "release_authority"
+      },
+      {
+        "id": "v4-readiness-version-authority",
+        "source_regex": "#^app/Services/V4ReadinessBootstrapService\\.php$#D",
+        "operations": ["file_get_contents"],
+        "bounded_by": "Exact VERSION file at the immutable release root; config authority is delegated to CronV3SetupAssistantService.",
+        "data_kind": "release_authority"
+      },
+      {
+        "id": "cron-safe-config-authority",
+        "source_regex": "#^app/Services/CronV3SetupAssistantService\\.php$#D",
+        "operations": ["file_get_contents"],
+        "bounded_by": "Exact AppPaths shared/config.env selected before the authenticated administrative mutation.",
+        "data_kind": "protected_runtime_configuration"
+      },
+      {
+        "id": "release-integrity-authorities",
+        "source_regex": "#^app/Services/ReleaseIntegrityService\\.php$#D",
+        "operations": ["file_get_contents", "fopen", "glob"],
+        "bounded_by": "Release root VERSION, runtime-manifest components and resources/modules/*/module.json.",
+        "data_kind": "release_authority"
+      },
+      {
+        "id": "release-evidence-backup-input",
+        "source_regex": "#^app/QueueCore/QueueCoreReleaseEvidenceService\\.php$#D",
+        "operations": ["fopen", "gzopen"],
+        "bounded_by": "Pinned administrator-supplied backup path, checksum and release evidence contract.",
+        "data_kind": "external_backup_input"
+      },
+      {
+        "id": "emergency-control-local-authorities",
+        "source_regex": "#^app/Services/EmergencyControlService\\.php$#D",
+        "operations": ["file_get_contents", "fopen", "glob"],
+        "bounded_by": "Release migrations plus AppPaths/private emergency-control state.",
+        "data_kind": "private_runtime_state"
+      },
+      {
+        "id": "deployment-manifest-components",
+        "source_regex": "#^app/Services/QueueCoreDeploymentGateService\\.php$#D",
+        "operations": ["file_get_contents"],
+        "bounded_by": "Release root, VERSION, runtime-manifest and component paths declared by that manifest.",
+        "data_kind": "release_authority"
+      },
+      {
+        "id": "oauth-durable-private-state",
+        "source_regex": "#^app/Services/QueueOAuthDurableRecoveryStore\\.php$#D",
+        "operations": ["file_get_contents", "fopen"],
+        "bounded_by": "Encrypted application-private OAuth recovery store.",
+        "data_kind": "private_runtime_state"
+      },
+      {
+        "id": "webhook-private-spool",
+        "source_regex": "#^app/Services/WebhookSpoolService\\.php$#D",
+        "operations": ["file_get_contents", "fopen", "glob"],
+        "bounded_by": "AppPaths webhook spool/quarantine/archive directories and fixed filename patterns.",
+        "data_kind": "private_runtime_state"
+      },
+      {
+        "id": "queue-job-entrypoint-loaders",
+        "source_regex": "#^jobs/(?:cron_v4|process_sync_queue|queue_core_.+|queue_engine_control)\\.php$#D",
+        "operations": ["file_get_contents", "require", "require_once"],
+        "bounded_by": "Release root bootstrap, fixed jobs helpers and runtime-manifest.",
+        "data_kind": "packaged_runtime_code"
+      },
+      {
+        "id": "exports-view-tabs",
+        "source_regex": "#^app/Views/exports/index\\.php$#D",
+        "operations": ["require"],
+        "bounded_by": "Exact packaged runtime view app/Views/reports/_tabs.php.",
+        "data_kind": "packaged_runtime_view"
+      },
+      {
+        "id": "runtime-publication-installed-registry",
+        "source_regex": "#^app/Services/ManagedRuntimePublicationPolicy\\.php$#D",
+        "operations": ["file_get_contents"],
+        "bounded_by": "Exact resources/release/managed-runtime-dependencies-2.36.10.json authority under the installed release root.",
+        "data_kind": "release_authority"
+      },
+      {
+        "id": "frozen-updater-publication-installed-registry",
+        "source_regex": "#^app/Services/RuntimePublicationPolicy\\.php$#D",
+        "operations": ["file_get_contents"],
+        "bounded_by": "Exact resources/release/queue-core-runtime-dependencies.json authority; implementation remains byte-identical to 2.36.0.",
+        "data_kind": "frozen_updater_release_authority"
+      },
+      {
+        "id": "notification-topic-generated-contract",
+        "source_regex": "#^app/Services/MeliNotificationTopicRegistry\\.php$#D",
+        "operations": ["file_get_contents"],
+        "bounded_by": "Exact generated contract declared by runtime_dependencies.notification-topics.",
+        "data_kind": "packaged_runtime_contract"
+      }
+    ]
+  }
+}

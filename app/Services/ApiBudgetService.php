@@ -44,7 +44,9 @@ final class ApiBudgetService
             if (array_sum(self::$webRequestCounters) + 1 > $webLimit) {
                 $message = 'Presupuesto API ML agotado para esta petición web. El trabajo debe continuar por cola/cron para evitar bloqueo.';
                 $this->recordEstimate($accountId, $jobType, 'web_request', 1, 0, 'blocked', $message);
-                throw new ApiBudgetExhaustedException($message);
+                throw new ApiBudgetExhaustedException($message, null, [
+                    ['scope' => 'app', 'scope_key' => 'web_request'],
+                ]);
             }
             self::$webRequestCounters[$jobType] = (self::$webRequestCounters[$jobType] ?? 0) + 1;
             $webCounterReserved = true;
@@ -113,7 +115,7 @@ final class ApiBudgetService
                 $nextSafeAt = $this->nextSafeAt($blocked, $windowStart, $windowSeconds);
                 $message = 'Presupuesto API ML agotado. Próxima hora segura aproximada: ' . ($nextSafeAt ?: 'pendiente de cooldown') . '.';
                 $this->recordEstimate($accountId, $jobType, $endpointPath, 1, 0, 'blocked', $message);
-                throw new ApiBudgetExhaustedException($message, $nextSafeAt);
+                throw new ApiBudgetExhaustedException($message, $nextSafeAt, $blocked);
             }
 
             foreach ($scopes as $scope) {
@@ -230,7 +232,9 @@ final class ApiBudgetService
             }
         }
         $cooldownUntil = null;
-        if ($retryAfter !== null && $retryAfter > 0) {
+        // 429/Retry-After pertenece a la autoridad compartida de Rhythm.
+        // Budget conserva contadores preventivos, no otro cooldown efectivo.
+        if ($status !== 429 && $retryAfter !== null && $retryAfter > 0) {
             $cooldownUntil = gmdate('Y-m-d H:i:s', time() + $retryAfter);
         }
         try {
@@ -275,14 +279,16 @@ final class ApiBudgetService
         $limits = [
             ['scope' => 'app', 'key' => 'app:*', 'limit' => $this->effectiveLimit(
                 $this->settings->int('api.budget.global_requests_per_15m', 300),
-                $jobType
+                $jobType,
+                $this->oauthGlobalReserve()
             )],
             ['scope' => 'job_type', 'key' => 'job:' . $jobType, 'limit' => $this->settings->int('api.budget.job_type_requests_per_15m', 80)],
         ];
         if ($accountId !== null && $accountId > 0) {
             $limits[] = ['scope' => 'account', 'key' => 'account:' . $accountId, 'limit' => $this->effectiveLimit(
                 $this->settings->int('api.budget.account_requests_per_15m', 120),
-                $jobType
+                $jobType,
+                $this->oauthAccountReserve()
             )];
         }
         $blocked = [];
@@ -428,7 +434,8 @@ final class ApiBudgetService
         $scopes = [
             ['scope' => 'app', 'scope_key' => 'app:*', 'limit' => $this->effectiveLimit(
                 max(1, $this->settings->int('api.budget.global_requests_per_15m', 300)),
-                $jobType
+                $jobType,
+                $this->oauthGlobalReserve()
             ), 'count' => 0, 'cooldown_until' => null],
             ['scope' => 'endpoint', 'scope_key' => 'endpoint:' . $endpointPath, 'limit' => max(1, $this->settings->int('api.budget.endpoint_requests_per_15m', 50)), 'count' => 0, 'cooldown_until' => null],
             ['scope' => 'job_type', 'scope_key' => 'job:' . $jobType, 'limit' => max(1, $this->settings->int('api.budget.job_type_requests_per_15m', 80)), 'count' => 0, 'cooldown_until' => null],
@@ -436,7 +443,8 @@ final class ApiBudgetService
         if ($accountId !== null && $accountId > 0) {
             $scopes[] = ['scope' => 'account', 'scope_key' => 'account:' . $accountId, 'limit' => $this->effectiveLimit(
                 max(1, $this->settings->int('api.budget.account_requests_per_15m', 120)),
-                $jobType
+                $jobType,
+                $this->oauthAccountReserve()
             ), 'count' => 0, 'cooldown_until' => null];
         }
         return $scopes;
@@ -447,14 +455,31 @@ final class ApiBudgetService
      * notificados por webhook. Las tareas no urgentes se detienen antes de
      * consumir esa reserva; orders_event_sync puede utilizar el límite total.
      */
-    private function effectiveLimit(int $limit, string $jobType): int
+    private function effectiveLimit(int $limit, string $jobType, int $oauthReserve): int
     {
         $limit = max(1, $limit);
-        if ($jobType === 'orders_event_sync') {
+        if ($oauthReserve < 0 || $limit <= $oauthReserve) {
+            throw new ApiBudgetInfrastructureException('La reserva OAuth configurada excede la capacidad preventiva.');
+        }
+        if ($jobType === 'oauth') {
             return $limit;
         }
+        $afterOAuthReserve = max(0, $limit - $oauthReserve);
+        if ($jobType === 'orders_event_sync') {
+            return max(1, $afterOAuthReserve);
+        }
         $reserve = max(0, min(80, $this->settings->int('notifications.api_budget_reserve_percent', 25)));
-        return max(1, (int) floor($limit * (100 - $reserve) / 100));
+        return max(1, min($afterOAuthReserve, (int) floor($limit * (100 - $reserve) / 100)));
+    }
+
+    private function oauthGlobalReserve(): int
+    {
+        return max(3, min(30, $this->settings->int('oauth.auto_refresh_global_reserve_per_15m', 3)));
+    }
+
+    private function oauthAccountReserve(): int
+    {
+        return max(1, min(10, $this->settings->int('oauth.auto_refresh_account_reserve_per_15m', 1)));
     }
 
     private function currentWindowRow(string $scopeKey, string $windowStart, int $windowSeconds): array

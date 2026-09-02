@@ -1,0 +1,16 @@
+path,symbol_or_table,line_count,current_role,classification,recommended_action
+app/QueueV4Clean/*,QueueV4Clean*,55,current V4 producer/repository/scheduler/worker/fences,INFRASTRUCTURE_OK,keep as current adapter/drainer implementation
+app/QueueCore/*,queue_core_execution_leases / QueueExecutionLeaseService,18,current global execution lease and fencing authority,INFRASTRUCTURE_OK,wrap behind DrainAuthorityContract
+app/Work/Adapters/*,queue_v4_clean_jobs / QueueExecutionLeaseService,13,new canonical adapter boundary,ADAPTER_ALLOWED,allowed physical boundary for K1B
+jobs/queue_v4_clean.php,QueueV4CleanScheduler / --max-jobs / --max-calls,7,current Hostinger CLI entrypoint,LEGACY_COMPAT_ALLOWED,keep --max-calls canonical and --max-jobs compatibility
+app/Services/CronAdmissionService.php,queue_v4_clean_jobs / domain_exact,3,legacy business admission facade,MUST_HIDE_BEHIND_CONTRACT,partially completed by delegating admission to QueueV4CanonicalWorkStore; residual pointer SQL remains documented debt
+app/Controllers/SettingsController.php,QueueV4CleanRepository / QueueV4CleanWorker,4,manual operator UI facade,LEGACY_COMPAT_ALLOWED,keep until UI read/process facade is extracted
+app/Views/settings/manual_processing.php,QueueV4CleanWorker,2,operator capacity label/limit,LEGACY_COMPAT_ALLOWED,keep UI compatibility
+app/Views/settings/cron.php;app/Views/settings/cron_shell.php,--max-calls / --max-jobs,2,operator documentation UI,LEGACY_COMPAT_ALLOWED,keep visible current Cron command
+app/Services/QueueV4DiagnosticBundleService.php,queue_v4_clean_jobs and Queue V4 symbols,59,diagnostic bundle service,DOC_OR_TEST_ONLY,allowed because it reports current runtime evidence
+app/Services/ApiHealthOverviewService.php,queue_v4_clean_jobs,1,operator read model,DOC_OR_TEST_ONLY,allowed read-only diagnostic reference
+app/Services/SyncCenterService.php;app/Services/SyncQueueService.php,batch/sync_batch_chunks,18,legacy sync subsystem unrelated to Queue V4 drainer authority,LEGACY_COMPAT_ALLOWED,not K1B scope
+app/Services/ManualSingleStepService.php;app/Services/ManualCampaignPreviewService.php,batch/job labels,14,manual one-step UI compatibility,LEGACY_COMPAT_ALLOWED,not K1B scope
+resources/runtime-manifest.json,QueueV4Clean* paths,4,runtime metadata,DOC_OR_TEST_ONLY,metadata only
+resources/release/*.json,queue_v4_clean_jobs / updater authority,100,release metadata history,DOC_OR_TEST_ONLY,ignore historical documentation for runtime coupling
+tests/*,Queue V4 symbols / batch labels,14,test evidence,DOC_OR_TEST_ONLY,allowed tests

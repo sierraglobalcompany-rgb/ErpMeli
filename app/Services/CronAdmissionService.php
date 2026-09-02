@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Work\Adapters\QueueV4CanonicalWorkStore;
+use App\Work\WorkContractVersion;
+use App\Work\WorkEnvelope;
+use DateTimeImmutable;
 use PDO;
 use RuntimeException;
 
@@ -68,8 +72,6 @@ final class CronAdmissionService
             return $this->receipt(false, null, false, 'SOURCE_NOT_ELIGIBLE');
         }
         $sourceFutureAt = $this->sourceFutureAvailabilityAt($capability, $sourceRow);
-        $initialState = $sourceFutureAt !== null ? 'waiting' : 'ready';
-        $initialAvailableAt = $sourceFutureAt ?? gmdate('Y-m-d H:i:s');
         $storedKey = 'domain:' . $capability . ':' . trim($idempotencyKey);
         if (strlen($storedKey) > 190) {
             throw new RuntimeException('cron_admission_idempotency_key_too_long');
@@ -86,30 +88,28 @@ final class CronAdmissionService
             throw new RuntimeException('cron_admission_payload_too_large');
         }
 
-        $insert = $this->pdo->prepare(
-            'INSERT INTO queue_v4_clean_jobs
-             (company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,max_attempts,state,available_at)
-             VALUES (?,?,?,?,?,?,3,?,?)
-             ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)'
+        $receipt = (new QueueV4CanonicalWorkStore($this->pdo))->admit(
+            new WorkEnvelope(
+                WorkContractVersion::CURRENT,
+                $companyId,
+                $accountId,
+                $capability,
+                (string) $sourceId,
+                trim($idempotencyKey),
+                $payload,
+                new DateTimeImmutable(($sourceFutureAt ?? gmdate('Y-m-d H:i:s')) . ' UTC'),
+                null,
+                3,
+            )
         );
-        $insert->execute([
-            $companyId,
-            $accountId,
-            'domain_exact',
-            (string) $sourceId,
-            $storedKey,
-            $json,
-            $initialState,
-            $initialAvailableAt,
-        ]);
-        $inserted = $insert->rowCount() === 1;
 
+        $jobId = (int) $receipt->workId;
         $job = $this->pdo->prepare(
-            'SELECT id,state,resource_id,available_at FROM queue_v4_clean_jobs
-             WHERE company_id=? AND meli_account_id=? AND job_type="domain_exact" AND idempotency_key=?
+            'SELECT state,resource_id,available_at FROM queue_v4_clean_jobs
+             WHERE id=? AND company_id=? AND meli_account_id=? AND job_type="domain_exact"
              LIMIT 1'
         );
-        $job->execute([$companyId, $accountId, $storedKey]);
+        $job->execute([$jobId, $companyId, $accountId]);
         $row = $job->fetch(PDO::FETCH_ASSOC);
         if (!is_array($row)) {
             throw new RuntimeException('cron_admission_receipt_missing');
@@ -117,16 +117,15 @@ final class CronAdmissionService
         if (!hash_equals((string) $sourceId, (string) $row['resource_id'])) {
             throw new RuntimeException('cron_admission_idempotency_conflict');
         }
-        $jobId = (int) $row['id'];
-        if (!$inserted && $sourceFutureAt !== null) {
+        if ($receipt->deduplicated && $sourceFutureAt !== null) {
             $this->alignPointerAvailability($capability, $jobId, $companyId, $accountId, $sourceId, $sourceFutureAt);
-            $job->execute([$companyId, $accountId, $storedKey]);
+            $job->execute([$jobId, $companyId, $accountId]);
             $row = $job->fetch(PDO::FETCH_ASSOC);
             if (!is_array($row)) {
                 throw new RuntimeException('cron_admission_receipt_missing');
             }
         }
-        if ($inserted) {
+        if (!$receipt->deduplicated) {
             return $this->receipt(true, $jobId, false, 'ACCEPTED');
         }
 
@@ -190,34 +189,27 @@ final class CronAdmissionService
                 throw new RuntimeException('cron_admission_order_exact_payload_too_large');
             }
 
-            $insert = $this->pdo->prepare(
-                'INSERT INTO queue_v4_clean_jobs
-                 (company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,max_attempts)
-                 VALUES (?,?,?,?,?,?,3)
-                 ON DUPLICATE KEY UPDATE
-                   id=LAST_INSERT_ID(id),
-                   completed_at=IF(state IN ("completed","review"),NULL,completed_at),
-                   available_at=IF(state IN ("completed","review"),UTC_TIMESTAMP(3),available_at),
-                   attempt_count=IF(state IN ("completed","review"),0,attempt_count),
-                   last_error_class=IF(state IN ("completed","review"),NULL,last_error_class),
-                   state=IF(state IN ("completed","review"),"ready",state)'
+            $receipt = (new QueueV4CanonicalWorkStore($this->pdo))->admit(
+                new WorkEnvelope(
+                    WorkContractVersion::CURRENT,
+                    $companyId,
+                    $accountId,
+                    'order_exact',
+                    $externalOrderId,
+                    $idempotencyKey,
+                    $document,
+                    null,
+                    null,
+                    3,
+                )
             );
-            $insert->execute([
-                $companyId,
-                $accountId,
-                'order_exact',
-                $externalOrderId,
-                $idempotencyKey,
-                $json,
-            ]);
-            $inserted = $insert->rowCount() === 1;
 
             $job = $this->pdo->prepare(
                 'SELECT id,state,resource_id FROM queue_v4_clean_jobs
-                 WHERE company_id=? AND meli_account_id=? AND job_type="order_exact" AND idempotency_key=?
+                 WHERE id=? AND company_id=? AND meli_account_id=? AND job_type="order_exact"
                  LIMIT 1'
             );
-            $job->execute([$companyId, $accountId, $idempotencyKey]);
+            $job->execute([(int) $receipt->workId, $companyId, $accountId]);
             $row = $job->fetch(PDO::FETCH_ASSOC);
             if (!is_array($row)) {
                 throw new RuntimeException('cron_admission_order_exact_receipt_missing');
@@ -230,7 +222,7 @@ final class CronAdmissionService
             }
             $jobId = (int) $row['id'];
 
-            return $inserted
+            return !$receipt->deduplicated
                 ? $this->receipt(true, $jobId, false, 'ACCEPTED')
                 : match ((string) $row['state']) {
                     'ready', 'running', 'waiting' => $this->receipt(true, $jobId, true, 'ALREADY_QUEUED'),

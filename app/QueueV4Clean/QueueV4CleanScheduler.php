@@ -5,11 +5,11 @@ declare(strict_types=1);
 namespace App\QueueV4Clean;
 
 use App\Core\Env;
-use App\QueueCore\QueueExecutionLease;
-use App\QueueCore\QueueExecutionLeaseService;
 use App\Services\CronDeadlineContext;
 use App\Services\EmergencyControlService;
 use App\Services\SalesAuditExactRepairService;
+use App\Work\Adapters\QueueCoreDrainAuthority;
+use App\Work\DrainAuthorityToken;
 use PDO;
 
 final class QueueV4CleanScheduler
@@ -55,9 +55,9 @@ final class QueueV4CleanScheduler
                 'max_calls' => max(1, min(QueueV4CleanWorker::HARD_MAX_CALLS, $maxCalls)),
             ];
         }
-        $drainLeases = new QueueExecutionLeaseService($this->pdo);
+        $drainLeases = new QueueCoreDrainAuthority($this->pdo);
         $drainAuthority = $drainLeases->acquire('cron_v4', $owner, 60);
-        if (!$drainAuthority instanceof QueueExecutionLease) {
+        if (!$drainAuthority instanceof DrainAuthorityToken) {
             $release = $this->pdo->prepare(
                 "UPDATE queue_v4_clean_leases
                  SET owner_ref=NULL,acquired_at=NULL,heartbeat_at=NULL,expires_at=NULL
@@ -159,7 +159,7 @@ final class QueueV4CleanScheduler
             ];
         } finally {
             if (isset($drainLeases, $drainAuthority)
-                && $drainAuthority instanceof QueueExecutionLease) {
+                && $drainAuthority instanceof DrainAuthorityToken) {
                 $drainLeases->release($drainAuthority);
             }
             $release = $this->pdo->prepare(

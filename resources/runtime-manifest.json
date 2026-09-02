@@ -1206,8 +1206,8 @@
     },
     "runtime_app_queuev4clean_queuev4cleanscheduler_php": {
       "path": "app/QueueV4Clean/QueueV4CleanScheduler.php",
-      "sha256": "1612bf7762bdc60eb7ec0c6e12daf1d962e9d6452fb8ca11b8afaedcba89eee2",
-      "sha256_lf": "52a685f12784bfa3d54cd06e544233337c2423c52d8d7a8e60f6487595c8ab41",
+      "sha256": "627aa37696d48ed067d6562611ccbbfcde2725094bc508c46988a969f7ff7b57",
+      "sha256_lf": "627aa37696d48ed067d6562611ccbbfcde2725094bc508c46988a969f7ff7b57",
       "text": true
     },
     "runtime_app_queuev4clean_queuev4cleantransportcontext_php": {
@@ -1668,8 +1668,8 @@
     },
     "runtime_app_services_cronadmissionservice_php": {
       "path": "app/Services/CronAdmissionService.php",
-      "sha256": "8c068f7327e2b7c90695b135fe39325da12d87e515eecbb4daf918a311994ca1",
-      "sha256_lf": "1b88e59dc10aa3038318866f2c9e0316ae730b0431cb98f039f315c7610f50a1",
+      "sha256": "991ecbc3baeb1b1699554dd719f55ced890cd655ae676cdccd0430b4677b87e1",
+      "sha256_lf": "991ecbc3baeb1b1699554dd719f55ced890cd655ae676cdccd0430b4677b87e1",
       "text": true
     },
     "runtime_app_services_cronapirisksummaryservice_php": {
@@ -5660,6 +5660,102 @@
       "path": "app/Services/QueueV4DiagnosticBundleService.php",
       "sha256": "3ee3e8092475cca6dfa4e63cfb115c68a5dc5e9c17022558d9f26e06ce0786a7",
       "sha256_lf": "ffcf97eb201155bc04dcf7d7b797eee3970c81bcbec4820730f18822fe5a561f",
+      "text": true
+    },
+    "runtime_app_work_workcontractversion_php": {
+      "path": "app/Work/WorkContractVersion.php",
+      "sha256": "0de3182aa89a6bfd43890b71134bc8b26181379c8fb8d00ec8d03ec2e1e03d70",
+      "sha256_lf": "0de3182aa89a6bfd43890b71134bc8b26181379c8fb8d00ec8d03ec2e1e03d70",
+      "text": true
+    },
+    "runtime_app_work_workenvelope_php": {
+      "path": "app/Work/WorkEnvelope.php",
+      "sha256": "9d6efb43258e9468850d5df2b0d27166361f13efb68c0da00729ea45af1fb60c",
+      "sha256_lf": "9d6efb43258e9468850d5df2b0d27166361f13efb68c0da00729ea45af1fb60c",
+      "text": true
+    },
+    "runtime_app_work_workadmissionreceipt_php": {
+      "path": "app/Work/WorkAdmissionReceipt.php",
+      "sha256": "9213e834766ee2ce82dbf36c97cadfd3700ce3400f121a84224aaf07d65f6054",
+      "sha256_lf": "9213e834766ee2ce82dbf36c97cadfd3700ce3400f121a84224aaf07d65f6054",
+      "text": true
+    },
+    "runtime_app_work_drainresult_php": {
+      "path": "app/Work/DrainResult.php",
+      "sha256": "237058ba7417161d0c419713fa05c3faaab6fd0267dd4918399bf0985302010d",
+      "sha256_lf": "237058ba7417161d0c419713fa05c3faaab6fd0267dd4918399bf0985302010d",
+      "text": true
+    },
+    "runtime_app_work_workexecutionresult_php": {
+      "path": "app/Work/WorkExecutionResult.php",
+      "sha256": "870aa3b90202a4ab0563522289310ad3af2165129a8535ac0c1ac7880ec63416",
+      "sha256_lf": "870aa3b90202a4ab0563522289310ad3af2165129a8535ac0c1ac7880ec63416",
+      "text": true
+    },
+    "runtime_app_work_drainauthoritytoken_php": {
+      "path": "app/Work/DrainAuthorityToken.php",
+      "sha256": "6728555d3328951f9816a5432575bf733f7eb05520d96801830d3617273a6a69",
+      "sha256_lf": "6728555d3328951f9816a5432575bf733f7eb05520d96801830d3617273a6a69",
+      "text": true
+    },
+    "runtime_app_work_contracts_workadmissioncontract_php": {
+      "path": "app/Work/Contracts/WorkAdmissionContract.php",
+      "sha256": "a3f2a9d686ce23404296def5f2f6ee989828cf910d56ad279ab18b75480a7215",
+      "sha256_lf": "a3f2a9d686ce23404296def5f2f6ee989828cf910d56ad279ab18b75480a7215",
+      "text": true
+    },
+    "runtime_app_work_contracts_canonicalworkstore_php": {
+      "path": "app/Work/Contracts/CanonicalWorkStore.php",
+      "sha256": "4cd4227d855bca5531f002b4f5156a81dfcc1a76bf2ce5549a443e0661d3f53c",
+      "sha256_lf": "4cd4227d855bca5531f002b4f5156a81dfcc1a76bf2ce5549a443e0661d3f53c",
+      "text": true
+    },
+    "runtime_app_work_contracts_drainauthoritycontract_php": {
+      "path": "app/Work/Contracts/DrainAuthorityContract.php",
+      "sha256": "91e0bdbc8e31006ec4602a5b6b9b0211233cfcb90a30da90270973f65eb7d575",
+      "sha256_lf": "91e0bdbc8e31006ec4602a5b6b9b0211233cfcb90a30da90270973f65eb7d575",
+      "text": true
+    },
+    "runtime_app_work_contracts_drainercontract_php": {
+      "path": "app/Work/Contracts/DrainerContract.php",
+      "sha256": "d30cb4fd8af76594643cfd58b7e8b303f125ed677ddae9f40c97769c4788b24e",
+      "sha256_lf": "d30cb4fd8af76594643cfd58b7e8b303f125ed677ddae9f40c97769c4788b24e",
+      "text": true
+    },
+    "runtime_app_work_adapters_queuecoredrainauthority_php": {
+      "path": "app/Work/Adapters/QueueCoreDrainAuthority.php",
+      "sha256": "64dc9386877dc827599dfae03ab22b235619f802a9c50d314346fa0132243826",
+      "sha256_lf": "64dc9386877dc827599dfae03ab22b235619f802a9c50d314346fa0132243826",
+      "text": true
+    },
+    "runtime_app_work_adapters_queuev4canonicalworkstore_php": {
+      "path": "app/Work/Adapters/QueueV4CanonicalWorkStore.php",
+      "sha256": "237514faab1a2972da9f810942d952fa390bdd1e224136328e5aad6dfcc9f1e6",
+      "sha256_lf": "237514faab1a2972da9f810942d952fa390bdd1e224136328e5aad6dfcc9f1e6",
+      "text": true
+    },
+    "runtime_app_work_adapters_queuev4currentdrainer_php": {
+      "path": "app/Work/Adapters/QueueV4CurrentDrainer.php",
+      "sha256": "a41e4eb49b533d89cb54b73a3e00aba7440d97f57be9654987c3181a84185aa8",
+      "sha256_lf": "a41e4eb49b533d89cb54b73a3e00aba7440d97f57be9654987c3181a84185aa8",
+      "text": true
+    },
+    "runtime_docs_architecture_k1b_v4_coupling_audit_csv": {
+      "path": "docs/architecture/K1B_V4_COUPLING_AUDIT.csv",
+      "sha256": "4e936e613d8c169bad04f61174a12f067a91801edd4f24cd6bb079c2ae692e9b",
+      "sha256_lf": "4e936e613d8c169bad04f61174a12f067a91801edd4f24cd6bb079c2ae692e9b",
+      "text": true
+    },
+    "runtime_docs_architecture_k1b_canonical_work_contract_md": {
+      "path": "docs/architecture/k1b-canonical-work-contract.md",
+      "sha256": "13fcd62c0305871a8220c5508964584aa67379fac275919329f8f76bf41c1e44",
+      "sha256_lf": "13fcd62c0305871a8220c5508964584aa67379fac275919329f8f76bf41c1e44",
+      "text": true
+    },
+    "runtime_docs_releases_k1b_github_only_md": {
+      "path": "docs/releases/k1b-github-only.md",
+      "sha256": "90edb8f9f192dbe9d1c26249b895c732b95902966d710c5535dd28fe950c8e77",
+      "sha256_lf": "90edb8f9f192dbe9d1c26249b895c732b95902966d710c5535dd28fe950c8e77",
       "text": true
     }
   }

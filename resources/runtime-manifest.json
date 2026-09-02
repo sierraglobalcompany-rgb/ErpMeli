@@ -10,7 +10,7 @@
     "package_file_count": 959,
     "component_count": 958,
     "paths_sha256": "8dd746a7f0fb9ca71e8f9ed7aebde7a8795e87ee62bf6518019f7ef3675b5cbf",
-    "dependency_registry_sha256": "0708f9cbff73819dedabe85d31b08437102f8cd62dfba79a8b8a77768f89bac1",
+    "dependency_registry_sha256": "519eff0b61ffd02594357da17dbf0ffb66c0a747458be9e978fff88c5eae2321",
     "raw_git_blobs": true,
     "protected_external_state_excluded": true,
     "build_only_excluded": true
@@ -5364,8 +5364,8 @@
     },
     "runtime_resources_release_managed_runtime_dependencies_2_40_1_json": {
       "path": "resources/release/managed-runtime-dependencies-2.40.1.json",
-      "sha256": "0708f9cbff73819dedabe85d31b08437102f8cd62dfba79a8b8a77768f89bac1",
-      "sha256_lf": "0708f9cbff73819dedabe85d31b08437102f8cd62dfba79a8b8a77768f89bac1",
+      "sha256": "519eff0b61ffd02594357da17dbf0ffb66c0a747458be9e978fff88c5eae2321",
+      "sha256_lf": "519eff0b61ffd02594357da17dbf0ffb66c0a747458be9e978fff88c5eae2321",
       "text": true
     },
     "runtime_resources_release_production_legacy_quarantine_2_36_1_json": {

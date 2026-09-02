@@ -219,7 +219,7 @@ final class ManualSingleStepService
             return [
                 'status' => $review > 0 ? 'review' : 'completed',
                 'message' => sprintf(
-                    'Cola disponible: llamadas API solicitadas %d, llamadas usadas %d, trabajos procesados %d, completados %d, esperando %d, revisión/error %d, no procesados %d.',
+                    'Pendientes disponibles: llamadas API solicitadas %d, llamadas usadas %d, elementos atendidos %d, completados %d, esperando %d, revisión/error %d, no procesados %d.',
                     $requested,
                     $apiCallsUsed,
                     $claimed,

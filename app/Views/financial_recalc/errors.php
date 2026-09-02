@@ -8,7 +8,7 @@ $base = rtrim(Env::get('APP_URL', ''), '/');
 ?>
 <div class="page-head">
   <div>
-    <a class="link" href="<?= View::e($base) ?>/financial-recalc">← Volver a cola financiera</a>
+    <a class="link" href="<?= View::e($base) ?>/financial-recalc">← Volver a procesamiento financiero</a>
     <h1>Errores de recálculo financiero</h1>
     <p>Detalle seguro de órdenes que no pudieron recalcularse.</p>
   </div>
@@ -16,7 +16,7 @@ $base = rtrim(Env::get('APP_URL', ''), '/');
 
 <section class="panel table-panel">
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>Job</th><th>Cuenta</th><th>Orden</th><th>Error</th><th>Procesado</th><th>Acciones</th></tr></thead>
+    <thead><tr><th>Recálculo</th><th>Cuenta</th><th>Orden</th><th>Error</th><th>Procesado</th><th>Acciones</th></tr></thead>
     <tbody>
     <?php if (!$errors): ?><tr><td colspan="6"><div class="empty">No hay errores financieros registrados.</div></td></tr><?php endif; ?>
     <?php foreach ($errors as $error): ?><tr>

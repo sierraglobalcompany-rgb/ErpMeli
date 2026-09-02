@@ -58,7 +58,7 @@ $nowLocal = (new DateTimeImmutable('now', new DateTimeZone(DateTimePresenter::ti
 
 <?php if ($accountId > 0): ?>
 <section class="panel sync-monitor" data-sync-schedule-monitor data-schedule-url="<?= View::e($base) ?>/sync/schedule.json?account_id=<?= (int)$accountId ?>" data-refresh="<?= (int)$settings->monitorRefreshSeconds() ?>">
-  <header class="panel-head"><h2>Monitor general de cola</h2><a class="link" href="<?= View::e($base) ?>/sync/schedule?account_id=<?= (int)$accountId ?>">Ver agenda completa</a></header>
+  <header class="panel-head"><h2>Monitor general de sincronización</h2><a class="link" href="<?= View::e($base) ?>/sync/schedule?account_id=<?= (int)$accountId ?>">Ver agenda completa</a></header>
   <div class="panel-body">
     <div class="progress-wrap"><div class="progress-bar"><span data-schedule-progress-bar style="width:<?= (float)($globalStatus['percent'] ?? 0) ?>%"></span></div><strong data-schedule-progress-text><?= number_format((float)($globalStatus['percent'] ?? 0),1,',','.') ?>%</strong></div>
     <div class="mini-grid mt-2">
@@ -73,7 +73,7 @@ $nowLocal = (new DateTimeImmutable('now', new DateTimeZone(DateTimePresenter::ti
       <span><strong>Hora local ERP:</strong> <?= View::e($nowLocal) ?></span>
       <span><strong>Cron:</strong> <?= View::e($cron['label'] ?? 'Sin señales') ?></span>
       <span><strong>Próxima ejecución:</strong> <?= View::e($next ? DateTimePresenter::formatQueue($next['next_run_at']) : 'Sin bloques') ?></span>
-      <span><strong>Bloques por cron:</strong> <?= (int)$settings->queueMaxChunksPerRun() ?></span>
+      <span><strong>Ventanas por ciclo:</strong> <?= (int)$settings->queueMaxChunksPerRun() ?></span>
       <span><strong>Continuación:</strong> <?= (int)$settings->continuationDelayMinutes() ?> min</span>
     </div>
     <?php if (!empty($globalStatus['latest_error'])): $err = $globalStatus['latest_error']; ?>
@@ -84,7 +84,7 @@ $nowLocal = (new DateTimeImmutable('now', new DateTimeZone(DateTimePresenter::ti
           isset($err['diagnostic_id']) ? (string) $err['diagnostic_id'] : null
       )) ?>
       <?php if (!empty($err['error_recommendation'])): ?><br><span><?= View::e((string)$err['error_recommendation']) ?></span><?php endif; ?>
-      <br><small>El resto de la cola conserva su estado. Revise este recurso antes de reintentarlo.</small>
+      <br><small>El resto de los pendientes conserva su estado. Revise este recurso antes de reintentarlo.</small>
     </div>
     <?php endif; ?>
     <div class="page-actions mt-2">
@@ -111,8 +111,8 @@ $nowLocal = (new DateTimeImmutable('now', new DateTimeZone(DateTimePresenter::ti
 
 <section class="panel sync-monitor mt-2" data-financial-recalc-monitor data-financial-status-url="<?= View::e($base) ?>/financial-recalc/status.json?account_id=<?= (int)$accountId ?>">
   <header class="panel-head">
-    <h2>Cola financiera</h2>
-    <a class="link" href="<?= View::e($base) ?>/financial-recalc?account_id=<?= (int)$accountId ?>">Ver cola financiera completa</a>
+    <h2>Procesamiento financiero</h2>
+    <a class="link" href="<?= View::e($base) ?>/financial-recalc?account_id=<?= (int)$accountId ?>">Ver procesamiento financiero completo</a>
   </header>
   <div class="panel-body">
     <?php $financialPercent = (float)($financialQueue['percent'] ?? 0); ?>
@@ -124,7 +124,7 @@ $nowLocal = (new DateTimeImmutable('now', new DateTimeZone(DateTimePresenter::ti
       <div class="mini-card"><span>Pendientes</span><strong data-financial-active><?= (int)($financialQueue['active_items'] ?? 0) ?></strong></div>
       <div class="mini-card"><span>Con error</span><strong data-financial-errors><?= (int)($financialQueue['failed_items'] ?? 0) ?></strong></div>
     </div>
-    <div class="alert info mt-2">Esta cola es distinta a la sincronización de órdenes. Aquí se recalculan datos financieros locales de órdenes ya descargadas.</div>
+    <div class="alert info mt-2">Este flujo es distinto a la sincronización de órdenes. Aquí se recalculan datos financieros locales de órdenes ya descargadas.</div>
     <div class="page-actions mt-2">
       <a class="btn primary" href="<?= View::e($base) ?>/settings/manual-processing?scope=finance">Procesar finanzas ahora</a>
       <a class="btn" href="<?= View::e($base) ?>/financial-recalc/errors?account_id=<?= (int)$accountId ?>">Ver errores</a>
@@ -172,7 +172,7 @@ $nowLocal = (new DateTimeImmutable('now', new DateTimeZone(DateTimePresenter::ti
 <section class="panel table-panel mt-2">
   <header class="panel-head"><h2>Ejecuciones recientes</h2></header>
   <div class="table-scroll"><table class="data-table"><thead><tr><th>Rango</th><th>Estado</th><th>Procesadas</th><th>Offset</th><th>Inicio</th><th>Error</th></tr></thead><tbody>
-    <?php if (!$runs): ?><tr><td colspan="6"><div class="empty">Aún no hay ejecuciones de cola para esta cuenta.</div></td></tr><?php endif; ?>
+    <?php if (!$runs): ?><tr><td colspan="6"><div class="empty">Aún no hay ejecuciones de sincronización para esta cuenta.</div></td></tr><?php endif; ?>
     <?php foreach ($runs as $run): ?><tr><td><?= View::e(substr($run['date_from'],0,10) . ' a ' . substr($run['date_to'],0,10)) ?></td><td><?= View::e($statusLabel((string) $run['status'])) ?></td><td><?= (int)$run['processed_count'] ?></td><td><?= (int)$run['cursor_offset_before'] ?> → <?= (int)$run['cursor_offset_after'] ?></td><td><?= View::e(DateTimePresenter::formatQueue($run['started_at'])) ?></td><td><?= View::e(!empty($run['error_message']) ? UiLabelPresenter::safeOperationMessage((string) $run['error_message'], isset($run['diagnostic_id']) ? (string) $run['diagnostic_id'] : null) : '—') ?></td></tr><?php endforeach; ?>
   </tbody></table></div>
 </section>

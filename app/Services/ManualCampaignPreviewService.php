@@ -233,7 +233,7 @@ final class ManualCampaignPreviewService
             'waiting_excluded' => 'PASS',
             'review_excluded' => 'PASS',
         ];
-        $preview['scope_label'] = 'Cola disponible';
+        $preview['scope_label'] = 'Pendientes disponibles ahora';
         $preview['expires_in_seconds'] = $ttl;
         $token = bin2hex(random_bytes(20));
         $summary = $preview;

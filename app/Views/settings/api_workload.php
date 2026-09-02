@@ -85,7 +85,7 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
   <div>
     <span class="eyebrow">AUTOMATIZACIÓN · RITMO</span>
     <h1>Velocidad de salidas HTTP</h1>
-    <p>Elija un techo global. El ERP subirá gradualmente y respetará siempre las protecciones de cada cuenta y endpoint.</p>
+    <p>Elija un techo global de llamadas API físicas. El ERP subirá gradualmente y respetará siempre las protecciones de cada cuenta y endpoint.</p>
   </div>
   <a class="btn" href="<?= View::e($base) ?>/settings/cron">Volver a Cron</a>
 </div>
@@ -135,8 +135,8 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
     <p>Solo incluye respuestas con conteo certificado. Combina tipos de recurso y no equivale a recursos finalizados.</p>
   </article>
   <article>
-    <span>Backlog operativo Queue V4</span>
-    <strong><?= $operationalBacklog === null ? 'Por comprobar' : number_format($operationalBacklog, 0, ',', '.') . ' trabajos' ?></strong>
+    <span>Pendientes operativos</span>
+    <strong><?= $operationalBacklog === null ? 'Por comprobar' : number_format($operationalBacklog, 0, ',', '.') . ' pendientes' ?></strong>
     <p>En revisión: <?= $reviewBacklog !== null ? number_format($reviewBacklog, 0, ',', '.') : 'por comprobar' ?> · Cron no drena la revisión automáticamente. Completados última hora: <?= $completedLastHour !== null ? number_format($completedLastHour, 0, ',', '.') : 'por comprobar' ?>.</p>
   </article>
   <article>

@@ -68,11 +68,11 @@ $label = static fn (string $value): string => match ($value) {
     <h2><?= $automatic ? 'Sincronización automática funcionando' : View::e($health['label'] ?? 'Requiere atención') ?></h2>
     <p>
       <?php if ($automatic): ?>
-        Mercado Libre avisa los cambios y el ERP actualiza cada recurso por una cola segura, sin volver a descargar bloques completos.
+        Mercado Libre avisa los cambios y el ERP actualiza cada recurso desde el turno seguro, sin volver a descargar periodos completos.
       <?php elseif (empty($health['worker_last_heartbeat_at'])): ?>
         El receptor puede guardar eventos, pero todavía no hay señales del lanzador único. Configure una sola tarea automática para todo el ERP.
       <?php else: ?>
-        La cola conserva los eventos. Revise los trabajos detenidos mientras se recupera la automatización.
+        El turno seguro conserva los eventos. Revise los pendientes detenidos mientras se recupera la automatización.
       <?php endif; ?>
     </p>
   </div>
@@ -86,7 +86,7 @@ $label = static fn (string $value): string => match ($value) {
   <section class="metrics notification-metrics">
     <article class="metric-card"><div><div class="metric-label">Reclamos</div><div class="metric-value"><?= (int) ($summary['claims'] ?? 0) ?></div><div class="metric-change">Pueden requerir respuesta en Mercado Libre</div></div></article>
     <article class="metric-card"><div><div class="metric-label">Preguntas</div><div class="metric-value"><?= (int) ($summary['questions'] ?? 0) ?></div><div class="metric-change">Solo lectura en el ERP</div></div></article>
-    <article class="metric-card"><div><div class="metric-label">Trabajos con problema</div><div class="metric-value"><?= count($attention) ?></div><div class="metric-change">Pausados, vencidos o con error</div></div></article>
+    <article class="metric-card"><div><div class="metric-label">Pendientes con problema</div><div class="metric-value"><?= count($attention) ?></div><div class="metric-change">Pausados, vencidos o con error</div></div></article>
     <article class="metric-card"><div><div class="metric-label">Dentro del tiempo objetivo</div><div class="metric-value"><?= ($health['sla_percent'] ?? null) === null ? '—' : (int) $health['sla_percent'] . ' %' ?></div><div class="metric-change"><?= View::e($health['sla_label'] ?? 'Objetivo ' . (int) ($health['target_sla_seconds'] ?? 120) . ' segundos') ?></div></div></article>
   </section>
 
@@ -124,7 +124,7 @@ $label = static fn (string $value): string => match ($value) {
 
   <?php if ($attention): ?>
     <section class="panel notification-list">
-      <header class="panel-head"><div><h2>Trabajos detenidos o vencidos</h2><p>No se perdieron: pueden continuar desde su checkpoint.</p></div></header>
+      <header class="panel-head"><div><h2>Pendientes detenidos o vencidos</h2><p>No se perdieron: pueden continuar desde su checkpoint.</p></div></header>
       <?php foreach ($attention as $work): ?>
         <article class="notification-row">
           <span class="notification-kind warning"><?= View::e($label((string) $work['resource_type'])) ?></span>
@@ -156,7 +156,7 @@ $label = static fn (string $value): string => match ($value) {
       <div><h2>Actividad reciente</h2><p>Resultados normales del procesamiento automático; no son alertas.</p></div>
     </header>
     <?php if (!$activity): ?>
-      <div class="empty">Todavía no hay recursos procesados por la cola Webhook‑First.</div>
+      <div class="empty">Todavía no hay recursos atendidos por el flujo Webhook‑First.</div>
     <?php endif; ?>
     <?php foreach ($activity as $item): ?>
       <article class="notification-row is-read">
@@ -174,7 +174,7 @@ $label = static fn (string $value): string => match ($value) {
   <section class="metrics notification-metrics">
     <article class="metric-card"><div><div class="metric-label">Receptor</div><div class="metric-value"><span class="badge green">Disponible</span></div><div class="metric-change">Recibidos hoy: <?= (int) ($health['received_today'] ?? 0) ?></div></div></article>
     <article class="metric-card"><div><div class="metric-label">Lanzador único</div><div class="metric-value"><span class="badge <?= $automatic ? 'green' : 'red' ?>"><?= $automatic ? 'Automático' : 'Sin confirmar' ?></span></div><div class="metric-change"><?= !empty($health['worker_last_heartbeat_at']) ? 'Última señal: ' . View::e($health['worker_last_heartbeat_at']) : 'Sin señales recientes' ?></div></div></article>
-    <article class="metric-card"><div><div class="metric-label">Cola única</div><div class="metric-value"><?= $pending ?></div><div class="metric-change">Eventos repetidos agrupados: <?= (int) ($health['deduplicated_events'] ?? 0) ?></div></div></article>
+    <article class="metric-card"><div><div class="metric-label">Turno seguro</div><div class="metric-value"><?= $pending ?></div><div class="metric-change">Eventos repetidos agrupados: <?= (int) ($health['deduplicated_events'] ?? 0) ?></div></div></article>
     <article class="metric-card"><div><div class="metric-label">Spool de emergencia</div><div class="metric-value"><?= (int) ($health['spool_pending'] ?? 0) ?></div><div class="metric-change">Eventos esperando reingreso a MySQL</div></div></article>
   </section>
 
@@ -186,7 +186,7 @@ $label = static fn (string $value): string => match ($value) {
       </div>
     </header>
     <div class="notification-health-grid">
-      <div><span>Trabajo más antiguo</span><strong><?= View::e($oldest ?: 'Sin pendientes') ?></strong></div>
+      <div><span>Pendiente más antiguo</span><strong><?= View::e($oldest ?: 'Sin pendientes') ?></strong></div>
       <div><span>Procesados hoy</span><strong><?= (int) ($health['processed_today'] ?? 0) ?></strong></div>
       <div><span>Errores reales</span><strong><?= (int) ($health['errors'] ?? 0) ?></strong></div>
       <div><span>Informativos ignorados</span><strong><?= (int) ($health['ignored'] ?? 0) ?></strong></div>
@@ -199,19 +199,19 @@ $label = static fn (string $value): string => match ($value) {
     </div>
     <?php if (!$automatic): ?>
       <div class="alert warning">
-        Las notificaciones se procesan mediante Queue V4 <code><?= View::e($notificationCronCommand ?? 'php jobs/queue_v4_clean.php --runtime=45 --max-calls=2') ?></code>. No configure una segunda tarea.
+        Las notificaciones se atienden mediante la automatización única <code><?= View::e($notificationCronCommand ?? 'php jobs/queue_v4_clean.php --runtime=45 --max-calls=2') ?></code>. No configure una segunda tarea.
       </div>
     <?php endif; ?>
     <div class="notification-actions">
       <a class="btn primary" href="<?= View::e($base) ?>/settings/manual-processing?scope=sales&amp;origin=notifications">Abrir Procesar ahora</a>
-      <span class="form-help">El control antiguo «Procesar siguiente lote» fue retirado: esta pantalla ya no ejecuta una cola completa.</span>
+      <span class="form-help">El control antiguo de procesamiento completo fue retirado: esta pantalla ya no ejecuta todo el turno automático.</span>
       <form method="post" action="<?= View::e($base) ?>/notifications/work/pause" data-confirm="Los eventos seguirán guardándose, pero no se consultarán hasta reanudar.">
         <input type="hidden" name="_token" value="<?= Csrf::token() ?>">
-        <button type="submit" class="btn">Pausar cola</button>
+        <button type="submit" class="btn">Pausar atención automática</button>
       </form>
       <form method="post" action="<?= View::e($base) ?>/notifications/work/resume">
         <input type="hidden" name="_token" value="<?= Csrf::token() ?>">
-        <button type="submit" class="btn">Reanudar cola</button>
+        <button type="submit" class="btn">Reanudar atención automática</button>
       </form>
     </div>
   </section>
@@ -221,7 +221,7 @@ $label = static fn (string $value): string => match ($value) {
       <header class="panel-head">
         <div>
           <h2>Recuperación del historial</h2>
-          <p>Primero clasifica localmente y agrupa recursos. Solo después, con su aprobación, encola lo que falta.</p>
+          <p>Primero clasifica localmente y agrupa recursos. Solo después, con su aprobación, incorpora lo que falta al flujo seguro.</p>
         </div>
         <span class="muted">La admisión automática está retirada; el historial existente permanece visible.</span>
       </header>
@@ -231,7 +231,7 @@ $label = static fn (string $value): string => match ($value) {
           <div>
             <strong>Recuperación #<?= (int) $run['id'] ?></strong>
             <span class="badge <?= in_array($run['status'], ['complete', 'ready'], true) ? 'green' : ($run['status'] === 'error' ? 'red' : 'amber') ?>"><?= View::e(UiLabelPresenter::status($run['status'] ?? null)) ?></span>
-            <p>Analizados <?= (int) $run['analyzed_count'] ?> de <?= (int) $run['source_total'] ?> · Ya satisfechos <?= (int) $run['satisfied_local_count'] ?> · Encolados <?= (int) $run['queued_count'] ?> · Informativos <?= (int) $run['ignored_count'] ?></p>
+            <p>Analizados <?= (int) $run['analyzed_count'] ?> de <?= (int) $run['source_total'] ?> · Ya satisfechos <?= (int) $run['satisfied_local_count'] ?> · Incorporados <?= (int) $run['queued_count'] ?> · Informativos <?= (int) $run['ignored_count'] ?></p>
           </div>
           <div class="row-actions"><span class="muted">Sólo lectura</span></div>
         </article>

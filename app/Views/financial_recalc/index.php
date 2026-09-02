@@ -13,7 +13,7 @@ if ($progressive) {
     ?>
     <section class="async-section" data-async-section="financial-recalc" data-url="<?= View::e($sectionUrl) ?>" aria-live="polite" aria-busy="true">
       <div data-async-skeleton class="panel async-skeleton is-visible">
-        <div class="page-head"><div><h1>Cola financiera</h1><p>El módulo ya abrió. Estamos agrupando recursos, avance y errores sin bloquear la navegación.</p></div></div>
+        <div class="page-head"><div><h1>Procesamiento financiero</h1><p>El módulo ya abrió. Estamos agrupando recursos, avance y errores sin bloquear la navegación.</p></div></div>
         <div class="skeleton-table"><span></span><span></span><span></span><span></span></div>
       </div>
       <div data-async-status class="async-section-status" hidden></div>
@@ -30,7 +30,7 @@ $percent = (float) ($summary['percent'] ?? 0);
 <div class="page-head">
   <div>
     <a class="link" href="<?= View::e($base) ?>/sync?account_id=<?= (int) $accountId ?>">← Volver a sincronizaciones</a>
-    <h1>Cola financiera</h1>
+    <h1>Procesamiento financiero</h1>
     <p>Recálculos de conciliación financiera. Usa datos locales y completa billing automáticamente solo cuando faltan datos.</p>
   </div>
   <div class="page-actions">
@@ -40,7 +40,7 @@ $percent = (float) ($summary['percent'] ?? 0);
 </div>
 
 <section class="panel sync-monitor" data-financial-recalc-monitor data-financial-status-url="<?= View::e($base) ?>/financial-recalc/status.json?account_id=<?= (int) $accountId ?>">
-  <header class="panel-head"><div><h2>Estado del recálculo</h2><p><strong>Qué pasa:</strong> los números agrupan recursos financieros, aunque internamente existan varios jobs pequeños.</p></div></header>
+  <header class="panel-head"><div><h2>Estado del recálculo</h2><p><strong>Qué pasa:</strong> los números agrupan recursos financieros, aunque internamente existan varios pasos técnicos pequeños.</p></div></header>
   <div class="panel-body">
     <div class="progress-wrap"><div class="progress-bar"><span data-financial-progress-bar style="width:<?= $percent ?>%"></span></div><strong data-financial-progress-text><?= number_format($percent, 1, ',', '.') ?>%</strong></div>
     <div class="mini-grid mt-2">
@@ -55,7 +55,7 @@ $percent = (float) ($summary['percent'] ?? 0);
       <div class="mini-card"><span>Parciales</span><strong><?= (int) ($summary['partial_items'] ?? 0) ?></strong></div>
     </div>
     <div class="operation-next-step mt-2">
-      <div><strong>Qué hará Queue V4</strong><p>Procesará sólo recursos financieros elegibles. Una espera preventiva no es un error ni garantiza una hora de ejecución.</p></div>
+      <div><strong>Qué hará la automatización</strong><p>Atenderá sólo recursos financieros elegibles. Una espera preventiva no es un error ni garantiza una hora de ejecución.</p></div>
       <div class="page-actions">
       <a class="btn primary" href="<?= View::e($base) ?>/settings/manual-processing?scope=finance&amp;origin=financial<?= $accountId > 0 ? '&amp;account_id=' . (int) $accountId : '' ?>">Procesar finanzas ahora</a>
       <a class="btn" href="<?= View::e($base) ?>/financial-recalc/errors?account_id=<?= (int) $accountId ?>">Revisar recursos con error</a>
@@ -66,11 +66,11 @@ $percent = (float) ($summary['percent'] ?? 0);
 </section>
 
 <section class="panel table-panel mt-2">
-  <header class="panel-head"><h2>Jobs financieros recientes</h2></header>
+  <header class="panel-head"><h2>Recálculos financieros recientes</h2></header>
   <div class="table-scroll"><table class="data-table">
     <thead><tr><th>#</th><th>Estado</th><th>Fase</th><th>Cuenta</th><th>Rango</th><th>Modo</th><th>Origen</th><th>Avance</th><th>DB</th><th>Creado</th><th>Acciones</th></tr></thead>
     <tbody>
-    <?php if (!$jobs): ?><tr><td colspan="11"><div class="empty">No hay jobs financieros todavía.</div></td></tr><?php endif; ?>
+    <?php if (!$jobs): ?><tr><td colspan="11"><div class="empty">No hay recálculos financieros todavía.</div></td></tr><?php endif; ?>
     <?php foreach ($jobs as $job): ?><tr>
       <td>#<?= (int) $job['id'] ?></td>
       <td><span class="badge <?= View::e($statusClass((string) $job['status'])) ?>"><?= View::e($statusLabel((string) $job['status'])) ?></span></td>

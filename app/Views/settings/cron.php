@@ -42,7 +42,7 @@ $databaseSession = $databaseSession ?? [];
 $probeLatest = $probeCron['latest_manual'] ?? $probeCron['latest'] ?? null;
 $resultLabel = static fn (?string $state): string => match ($state) {
     'success' => 'Completada',
-    'empty' => 'Finalizada sin trabajo pendiente',
+    'empty' => 'Finalizada sin pendientes',
     'error' => 'Error',
     'interrupted' => 'Interrumpida',
     'running' => 'Ejecutándose',
@@ -52,7 +52,7 @@ $automationTab = 'summary';
 require __DIR__ . '/_automation_nav.php';
 ?>
 <?php if (empty($embedded)): ?>
-<div class="page-head"><div><span class="eyebrow">Procesamiento automático</span><h1>Trabajo programado</h1><p>Compruebe cuándo trabajó, qué procesará y si necesita intervención.</p></div><div class="page-actions"><a class="btn" href="<?= View::e($base) ?>/settings/api-workload">Capacidad y ritmo</a><a class="btn" href="<?= View::e($base) ?>/settings/cron/next">Ver próxima ejecución</a></div></div>
+<div class="page-head"><div><span class="eyebrow">Centro de automatización</span><h1>Procesamiento automático</h1><p>Compruebe cuándo corrió, qué pendientes atenderá y si necesita intervención.</p></div><div class="page-actions"><a class="btn" href="<?= View::e($base) ?>/settings/api-workload">Capacidad y ritmo</a><a class="btn" href="<?= View::e($base) ?>/settings/cron/next">Ver próxima ejecución</a></div></div>
 <?php endif; ?>
 
 <section class="human-status-hero <?= $problem ? 'is-warning' : ($healthy ? 'is-success' : '') ?>"
@@ -61,7 +61,7 @@ require __DIR__ . '/_automation_nav.php';
   <div class="human-status-mark" aria-hidden="true"><?= $problem ? '!' : ($healthy ? '✓' : '…') ?></div>
   <div>
     <span class="eyebrow">Procesamiento general</span>
-    <h2 data-cron-health-label><?= View::e((string) ($runtimeStatus['label'] ?? ($bootstrapStopped ? 'Procesamiento detenido antes de abrir las colas' : ($cron['label'] ?? 'Sin información')))) ?></h2>
+    <h2 data-cron-health-label><?= View::e((string) ($runtimeStatus['label'] ?? ($bootstrapStopped ? 'Procesamiento detenido antes de abrir pendientes' : ($cron['label'] ?? 'Sin información')))) ?></h2>
     <p data-cron-health-message><?= View::e(!empty($runtimeStatus['message']) ? (string) $runtimeStatus['message'] : ($bootstrapStopped
         ? 'Hostinger sí ejecutó el lanzador. El ERP se detuvo durante la comprobación de la instalación y no confirmó consultas hacia Mercado Libre.'
         : (string) ($cron['message'] ?? 'No hay información reciente del cron.'))) ?></p>
@@ -71,10 +71,10 @@ require __DIR__ . '/_automation_nav.php';
         etapa: <?= View::e(match ((string) ($bootstrapAttempt['stage'] ?? '')) {
             'invoked' => 'Invocada',
             'validating_installation' => 'Validando instalación',
-            'preparing_queues' => 'Preparando colas',
+      'preparing_queues' => 'Preparando pendientes',
             'processing' => 'Procesando',
             'finished' => 'Finalizada',
-            'stopped_before_queues' => 'Detenida antes de las colas',
+      'stopped_before_queues' => 'Detenida antes de pendientes',
             default => 'Sin identificar',
         }) ?>
       </p>
@@ -119,7 +119,7 @@ require __DIR__ . '/_automation_nav.php';
       <h2 id="release-integrity-title"><?= $integrityOk ? 'Instalación íntegra' : ($integrityState === 'schema_pending' ? 'Migración de integridad pendiente' : 'Instalación mezclada') ?></h2>
       <p>
         <?php if ($integrityOk): ?>
-          Los archivos, Queue V4 y el esquema pertenecen a la misma release.
+          Los archivos, la automatización y el esquema pertenecen a la misma release.
         <?php elseif ($integrityState === 'schema_pending'): ?>
           Los archivos coinciden, pero debe completar la migración requerida antes de ejecutar el lanzador único.
         <?php else: ?>
@@ -171,13 +171,13 @@ require __DIR__ . '/_automation_nav.php';
   <article class="metric-card compact"><div><div class="metric-label">Última ejecución automática</div><div class="metric-value"><?= $latest ? View::e(DateTimePresenter::formatQueue($latest['finished_at'] ?: $latest['started_at'], 'd/m H:i')) : 'Sin registro' ?></div><div class="metric-change"><?= $latest ? 'CLI · ' . View::e($resultLabel((string) ($latest['result_state'] ?? $latest['status']))) : 'Las pruebas web no cuentan' ?></div></div></article>
   <article class="metric-card compact"><div><div class="metric-label">Frecuencia observada</div><div class="metric-value"><?= !empty($cron['observed_interval_seconds']) ? View::e((string) max(1, (int) round((int) $cron['observed_interval_seconds'] / 60))) . ' min' : 'Por medir' ?></div><div class="metric-change"><?= (int) ($cron['automatic_streak'] ?? 0) ?> / <?= (int) ($cron['required_streak'] ?? 2) ?> señales verificadas</div></div></article>
   <article class="metric-card compact"><div><div class="metric-label">Próxima señal esperada</div><div class="metric-value"><?= !empty($cron['next_expected_at']) ? View::e(DateTimePresenter::formatQueue($cron['next_expected_at'], 'd/m H:i')) : 'Por confirmar' ?></div><div class="metric-change">Según la frecuencia real observada</div></div></article>
-  <article class="metric-card compact"><div><div class="metric-label">Resultado de trabajo</div><div class="metric-value"><?= !empty($cron['is_empty']) ? 'Cola vacía' : ((int) ($latest['orders_count'] ?? 0) . ' órdenes') ?></div><div class="metric-change"><?= (int) ($latest['processed_chunks'] ?? 0) ?> bloques · <?= count($overdue ?? []) ?> vencidos</div></div></article>
+  <article class="metric-card compact"><div><div class="metric-label">Resultado del ciclo</div><div class="metric-value"><?= !empty($cron['is_empty']) ? 'Sin pendientes listos' : ((int) ($latest['orders_count'] ?? 0) . ' órdenes') ?></div><div class="metric-change"><?= (int) ($latest['processed_chunks'] ?? 0) ?> etapas técnicas · <?= count($overdue ?? []) ?> vencidos</div></div></article>
 </section>
 
 <?php if (!empty($automationSummary['available'])): ?>
 <section class="metrics automation-overview-metrics">
-  <article class="metric-card compact"><div><div class="metric-label">Trabajos pendientes</div><div class="metric-value"><?= (int) ($automationSummary['pending'] ?? 0) ?></div><div class="metric-change"><a href="<?= View::e($base) ?>/settings/cron/queue">Ver cola completa</a></div></div></article>
-  <article class="metric-card compact"><div><div class="metric-label">Trabajo más antiguo</div><div class="metric-value"><?= !empty($automationSummary['oldest']) ? View::e(DateTimePresenter::formatQueue($automationSummary['oldest'],'d/m H:i')) : 'Sin pendientes' ?></div><div class="metric-change">Prioridad y antigüedad</div></div></article>
+  <article class="metric-card compact"><div><div class="metric-label">Pendientes disponibles</div><div class="metric-value"><?= (int) ($automationSummary['pending'] ?? 0) ?></div><div class="metric-change"><a href="<?= View::e($base) ?>/settings/cron/queue">Ver pendientes</a></div></div></article>
+  <article class="metric-card compact"><div><div class="metric-label">Pendiente más antiguo</div><div class="metric-value"><?= !empty($automationSummary['oldest']) ? View::e(DateTimePresenter::formatQueue($automationSummary['oldest'],'d/m H:i')) : 'Sin pendientes' ?></div><div class="metric-change">Prioridad y antigüedad</div></div></article>
   <article class="metric-card compact"><div><div class="metric-label">Esperando presupuesto</div><div class="metric-value"><?= (int) ($automationSummary['waiting_budget'] ?? 0) ?></div><div class="metric-change">Conservan su posición</div></div></article>
   <article class="metric-card compact"><div><div class="metric-label">Errores activos</div><div class="metric-value"><?= (int) ($automationSummary['errors'] ?? 0) ?></div><div class="metric-change"><a href="<?= View::e($base) ?>/settings/cron/attention">Abrir soluciones guiadas</a></div></div></article>
 </section>

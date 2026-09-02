@@ -35,7 +35,7 @@ $cronHealthy = (string) ($cron['state'] ?? '') === 'ok';
   <article class="status-card">
     <span class="status-card-label">Capacidad API</span>
     <strong><?= View::e(AutomationHumanLanguageService::callCapacityLabel()) ?></strong>
-    <p>La unidad visible es la llamada física a Mercado Libre, no lotes ni trabajos internos.</p>
+    <p>La unidad visible es la llamada física a Mercado Libre; los detalles internos quedan en diagnóstico técnico.</p>
     <a href="<?= View::e($base) ?>/settings/api-workload">Ver ritmo</a>
   </article>
   <article class="status-card">

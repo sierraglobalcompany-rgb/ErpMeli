@@ -1,6 +1,7 @@
 route,method,controller_action,primary_surface,k1c_classification,operator_copy_policy
 /settings,GET,SettingsController::index,settings-home,OPERATOR_PRIMARY,"Human landing: Automation, API capacity, Manual, ML health, System"
 /settings/cron,GET,SettingsController::cron,automation-center,OPERATOR_PRIMARY,"Call-centric status; capacity is physical API calls"
+app/Views/settings/cron_shell.php,EMBEDDED_VIEW,SettingsController::cron,automation-center-shell,EMBEDDED_VIEW,"Included by /settings/cron; not a direct public route"
 /settings/cron/queue-v4.json,GET,SettingsController::queueV4CleanStatus,automation-center-json,OPERATOR_SUPPORT,"Machine status for center; no operator-facing batch authority"
 /settings/cron/api-risks.json,GET,SettingsController::cronApiRisks,automation-center-json,OPERATOR_SUPPORT,"Human API health summary"
 /settings/cron/next,GET,SettingsController::automationNext,next-run-preview,OPERATOR_PRIMARY,"Preview only; no claims or mutations"

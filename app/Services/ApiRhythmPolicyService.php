@@ -18,14 +18,15 @@ final class ApiRhythmPolicyService
 {
     private const ORDERS_SEARCH_ENDPOINT = 'orders_search';
     private const ORDERS_SEARCH_WINDOW_SECONDS = 900;
-    private const ORDERS_SEARCH_LOCAL_CEILING = 30;
+    private const ORDERS_SEARCH_LOCAL_CEILING = 3;
     private const BILLING_ENDPOINT = 'billing_orders';
     private const BILLING_PATH = '/billing/integration/group/ML/order/details';
     private const BILLING_MIN_INTERVAL_SECONDS = 300;
     private const BILLING_429_ESCALATION_WINDOW_HOURS = 72;
-    private const BILLING_429_BACKOFF_MIN_MINUTES = 15;
-    private const BILLING_429_BACKOFF_MAX_MINUTES = 120;
+    private const BILLING_429_BACKOFF_MIN_MINUTES = 5;
+    private const BILLING_429_BACKOFF_MAX_MINUTES = 720;
     private const BILLING_PHYSICAL_EVENT_DEDUPE_TOLERANCE_SECONDS = 3.0;
+    private const SHARED_429_FALLBACK_SECONDS = 1800;
     private static ?bool $schemaAvailable = null;
 
     /** @var array<string,int> */
@@ -352,6 +353,21 @@ final class ApiRhythmPolicyService
         ?int $retryAfterSeconds = null
     ): bool
     {
+        if ($httpStatus === 429) {
+            try {
+                if ($this->completeRateLimitedKnownResult($permit, $retryAfterSeconds)) {
+                    $this->recordRateLimitPenalty($permit, $httpStatus, $retryAfterSeconds);
+                    return true;
+                }
+            } catch (Throwable) {
+                // La respuesta 429 ya es conocida. Se intenta abajo conservar
+                // al menos la pausa global compartida sin volver incierto el HTTP.
+            }
+
+            $this->recordRateLimitPenalty($permit, $httpStatus, $retryAfterSeconds);
+            return false;
+        }
+
         try {
             if ($this->completed($permit, $httpStatus)) {
                 $this->recordRateLimitPenalty($permit, $httpStatus, $retryAfterSeconds);
@@ -392,6 +408,19 @@ final class ApiRhythmPolicyService
             'http_status' => $httpStatus,
         ]);
         return false;
+    }
+
+    /**
+     * Fallback para 429 conocidos que llegaron a un caller sin permiso durable
+     * suficiente. No crea otro motor; escribe sobre la autoridad global existente.
+     */
+    public function openSharedRateLimitPause(?int $retryAfterSeconds = null): string
+    {
+        $delay = $this->rateLimitDelaySeconds([], $retryAfterSeconds);
+        $nextSafeAt = $this->formatTimestamp(microtime(true) + $delay);
+        $this->persistSharedRateLimitPause($delay, 'remote_429_global_pause');
+
+        return $nextSafeAt;
     }
 
     /** @param array<string,mixed> $permit */
@@ -554,10 +583,10 @@ final class ApiRhythmPolicyService
     private function billing429BackoffMinutes(): array
     {
         return self::normalizeBilling429BackoffMinutes([
-            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_1_minutes', 15),
-            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_2_minutes', 30),
-            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_3_minutes', 60),
-            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_max_minutes', 120),
+            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_1_minutes', 30),
+            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_2_minutes', 120),
+            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_3_minutes', 360),
+            $this->billing429BackoffMinuteValue('api.rhythm.billing_429_backoff_max_minutes', 720),
         ]);
     }
 
@@ -570,17 +599,17 @@ final class ApiRhythmPolicyService
      */
     public static function normalizeBilling429BackoffMinutes(array $values): array
     {
-        $first = self::boundedBilling429BackoffMinutes($values[0] ?? 15);
-        $second = max($first, self::boundedBilling429BackoffMinutes($values[1] ?? 30));
-        $third = max($second, self::boundedBilling429BackoffMinutes($values[2] ?? 60));
-        $maximum = max($third, self::boundedBilling429BackoffMinutes($values[3] ?? 120));
+        $first = self::boundedBilling429BackoffMinutes($values[0] ?? 30);
+        $second = max($first, self::boundedBilling429BackoffMinutes($values[1] ?? 120));
+        $third = max($second, self::boundedBilling429BackoffMinutes($values[2] ?? 360));
+        $maximum = max($third, self::boundedBilling429BackoffMinutes($values[3] ?? 720));
 
         return [1 => $first, 2 => $second, 3 => $third, 4 => $maximum];
     }
 
     private static function boundedBilling429BackoffMinutes(mixed $value): int
     {
-        return max(15, min(120, (int) $value));
+        return max(self::BILLING_429_BACKOFF_MIN_MINUTES, min(self::BILLING_429_BACKOFF_MAX_MINUTES, (int) $value));
     }
 
     private function billing429BackoffMinuteValue(string $key, int $default): int
@@ -1295,6 +1324,142 @@ final class ApiRhythmPolicyService
     }
 
     /** @param array<string,mixed> $permit */
+    private function completeRateLimitedKnownResult(array $permit, ?int $retryAfterSeconds): bool
+    {
+        if (empty($permit['enabled']) || empty($permit['permit_token'])) {
+            $this->openSharedRateLimitPause($retryAfterSeconds);
+            return true;
+        }
+
+        $delay = $this->rateLimitDelaySeconds(
+            $permit,
+            $retryAfterSeconds,
+            (string) ($permit['endpoint_key'] ?? '')
+        );
+        $pdo = Database::connectionFresh();
+        $pdo->beginTransaction();
+        try {
+            $pdo->exec(
+                "INSERT IGNORE INTO api_rhythm_states
+                 (scope_key,generation,calls_in_block,updated_at)
+                 VALUES ('global',1,0,UTC_TIMESTAMP(3))"
+            );
+            $state = $pdo->query(
+                "SELECT generation FROM api_rhythm_states WHERE scope_key='global' FOR UPDATE"
+            )->fetch(PDO::FETCH_ASSOC) ?: [];
+            $rowStmt = $pdo->prepare(
+                'SELECT id,status,generation FROM api_remote_permits
+                 WHERE permit_token=? AND owner_token=? AND generation=? FOR UPDATE'
+            );
+            $rowStmt->execute([
+                (string) $permit['permit_token'],
+                (string) ($permit['owner_token'] ?? ''),
+                (int) ($permit['generation'] ?? 0),
+            ]);
+            $row = $rowStmt->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($row) || (string) ($row['status'] ?? '') !== 'dispatched'
+                || (int) ($state['generation'] ?? 0) !== (int) ($row['generation'] ?? -1)) {
+                $pdo->rollBack();
+                $this->persistSharedRateLimitPause($delay, 'remote_429_global_pause');
+                return false;
+            }
+
+            $permitUpdate = $pdo->prepare(
+                'UPDATE api_remote_permits
+                 SET status="completed",http_status=429,completed_at=UTC_TIMESTAMP(3),
+                     blocking_scope="remote_429_global_pause",updated_at=UTC_TIMESTAMP(3)
+                 WHERE id=? AND status="dispatched" AND generation=?'
+            );
+            $permitUpdate->execute([(int) $row['id'], (int) $row['generation']]);
+            if ($permitUpdate->rowCount() !== 1) {
+                $pdo->rollBack();
+                $this->persistSharedRateLimitPause($delay, 'remote_429_global_pause');
+                return false;
+            }
+
+            $stateUpdate = $pdo->prepare(
+                "UPDATE api_rhythm_states
+                 SET block_pause_until=CASE
+                         WHEN block_pause_until IS NULL
+                              OR block_pause_until<DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND)
+                         THEN DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND)
+                         ELSE block_pause_until
+                     END,
+                     generation=generation+1,
+                     updated_at=UTC_TIMESTAMP(3)
+                 WHERE scope_key='global' AND generation=?"
+            );
+            $stateUpdate->execute([$delay, $delay, (int) $row['generation']]);
+            if ($stateUpdate->rowCount() !== 1) {
+                $pdo->rollBack();
+                $this->persistSharedRateLimitPause($delay, 'remote_429_global_pause');
+                return false;
+            }
+
+            $expire = $pdo->prepare(
+                'UPDATE api_remote_permits
+                 SET status="expired",blocking_scope="remote_429_global_pause",updated_at=UTC_TIMESTAMP(3)
+                 WHERE id<>? AND status IN ("reserved","dispatched")'
+            );
+            $expire->execute([(int) $row['id']]);
+            $pdo->commit();
+            return true;
+        } catch (Throwable $error) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
+    private function persistSharedRateLimitPause(int $delaySeconds, string $scope): void
+    {
+        if (!$this->schemaReady()) {
+            return;
+        }
+
+        $delaySeconds = max(1, min(31536000, $delaySeconds));
+        $pdo = Database::connectionFresh();
+        $pdo->beginTransaction();
+        try {
+            $pdo->exec(
+                "INSERT IGNORE INTO api_rhythm_states
+                 (scope_key,generation,calls_in_block,updated_at)
+                 VALUES ('global',1,0,UTC_TIMESTAMP(3))"
+            );
+            $row = $pdo->query(
+                "SELECT generation FROM api_rhythm_states WHERE scope_key='global' FOR UPDATE"
+            )->fetch(PDO::FETCH_ASSOC) ?: [];
+            $generation = (int) ($row['generation'] ?? 1);
+            $stateUpdate = $pdo->prepare(
+                "UPDATE api_rhythm_states
+                 SET block_pause_until=CASE
+                         WHEN block_pause_until IS NULL
+                              OR block_pause_until<DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND)
+                         THEN DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND)
+                         ELSE block_pause_until
+                     END,
+                     generation=generation+1,
+                     updated_at=UTC_TIMESTAMP(3)
+                 WHERE scope_key='global' AND generation=?"
+            );
+            $stateUpdate->execute([$delaySeconds, $delaySeconds, $generation]);
+            $permitUpdate = $pdo->prepare(
+                'UPDATE api_remote_permits
+                 SET status="expired",blocking_scope=?,updated_at=UTC_TIMESTAMP(3)
+                 WHERE status IN ("reserved","dispatched")'
+            );
+            $permitUpdate->execute([$scope]);
+            $pdo->commit();
+        } catch (Throwable $error) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
+    /** @param array<string,mixed> $permit */
     private function recordRateLimitPenalty(array $permit, ?int $httpStatus, ?int $retryAfterSeconds): void
     {
         if ($httpStatus !== 429 || empty($permit['enabled'])) {
@@ -1402,12 +1567,12 @@ final class ApiRhythmPolicyService
     ): int
     {
         $base = max(
-            60,
-            min(86400, $this->settings->int('api.rhythm.shared_429_backoff_seconds', 300))
+            300,
+            min(86400, $this->settings->int('api.rhythm.shared_429_backoff_seconds', self::SHARED_429_FALLBACK_SECONDS))
         );
         $jitterMax = max(
             0,
-            min(300, $this->settings->int('api.rhythm.shared_429_jitter_seconds', 30))
+            min(300, $this->settings->int('api.rhythm.shared_429_jitter_seconds', 0))
         );
         $token = (string) ($permit['permit_token'] ?? 'shared-rate-limit');
         $jitter = $jitterMax === 0

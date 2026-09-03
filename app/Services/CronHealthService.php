@@ -424,10 +424,11 @@ final class CronHealthService
     public function recommendedCommand(): string
     {
         $root = AppPaths::installationRoot();
+        $maxCalls = (new AutomationCallBudgetService())->resolve(null, null)['max_calls'];
         if (AppPaths::managed() && is_file($root . '/launcher/cron.php')) {
-            return 'php ' . $root . '/launcher/cron.php queue_v4_clean.php --runtime=45 --max-calls=2';
+            return 'php ' . $root . '/launcher/cron.php queue_v4_clean.php --runtime=45 --max-calls=' . $maxCalls;
         }
-        return 'php ' . $root . '/jobs/queue_v4_clean.php --runtime=45 --max-calls=2';
+        return 'php ' . $root . '/jobs/queue_v4_clean.php --runtime=45 --max-calls=' . $maxCalls;
     }
 
     /** @return array<string,mixed> */

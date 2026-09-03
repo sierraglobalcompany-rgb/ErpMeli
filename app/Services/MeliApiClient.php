@@ -697,13 +697,22 @@ final class MeliApiClient implements MeliReadClientInterface
                 $budget->recordResult($this->accountId, $method, $path, $status ?: null, $retryAfter, $meta, $classification);
             }
             $rhythm->finalizeKnownResult($rhythmPermit, $status ?: null, $retryAfter);
+            $nextSafeAtForAlert = $status === 429 ? $rhythm->rateLimitNextSafeAt($rhythmPermit, $retryAfter) : null;
+            $this->notifyCriticalApiIncident(
+                $method,
+                $path,
+                $status,
+                $retryAfter,
+                $requestId,
+                $meta,
+                $safeMessage,
+                $nextSafeAtForAlert
+            );
             if (MeliTransportSourcePolicy::usesQueueRateLimitDeferral($source) && $status === 429) {
                 throw new ApiRhythmDeferredException(
                     'La cola respetará la autoridad durable del bloqueo remoto.',
-                    $rhythm->rateLimitNextSafeAt($rhythmPermit, $retryAfter),
-                    hash_equals('/billing/integration/group/ML/order/details', $path)
-                        ? 'billing_429_backoff'
-                        : 'retry_after',
+                    $nextSafeAtForAlert ?? $rhythm->rateLimitNextSafeAt($rhythmPermit, $retryAfter),
+                    'remote_429_global_pause',
                     true
                 );
             }
@@ -740,13 +749,51 @@ final class MeliApiClient implements MeliReadClientInterface
                 throw new ApiRhythmDeferredException(
                     'La cola respetará la próxima oportunidad indicada por la protección remota.',
                     $nextSafeAt,
-                    $status === 429 ? 'retry_after' : 'remote_backoff',
+                    $status === 429 ? 'remote_429_global_pause' : 'remote_backoff',
                     true
                 );
             }
             throw new MeliApiException($safeMessage, $status ?: null, $requestId, $safeDecoded);
         }
         throw new MeliApiException('Error de API no recuperable.', null, $requestId);
+    }
+
+    /** @param array<string,mixed> $meta */
+    private function notifyCriticalApiIncident(
+        string $method,
+        string $path,
+        int $status,
+        ?int $retryAfter,
+        string $requestId,
+        array $meta,
+        string $safeMessage,
+        ?string $nextSafeAt
+    ): void {
+        if (!($status === 429 || in_array($status, [401, 403], true) || $status >= 500)) {
+            return;
+        }
+        try {
+            (new CriticalApiAlertEmailService())->notifyApiIncident([
+                'meli_account_id' => $this->accountId,
+                'method' => $method,
+                'endpoint_path' => $path,
+                'endpoint_key' => $meta['endpoint_key'] ?? $path,
+                'http_status' => $status,
+                'retry_after' => $retryAfter,
+                'request_id' => $requestId,
+                'execution_source' => $meta['execution_source'] ?? '',
+                'job_type' => $meta['source_work_type'] ?? '',
+                'source_work_id' => $meta['source_work_id'] ?? '',
+                'next_safe_at' => $nextSafeAt,
+                'safe_message' => $safeMessage,
+            ]);
+        } catch (Throwable $error) {
+            Logger::write('warning', 'Alerta crítica API no bloqueó el worker.', [
+                'request_id' => $requestId,
+                'status' => $status,
+                'error' => get_class($error),
+            ]);
+        }
     }
 
     private function emergencyOAuthRefreshErrorCode(int $status, string $curlError): string

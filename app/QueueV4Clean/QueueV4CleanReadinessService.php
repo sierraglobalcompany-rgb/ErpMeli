@@ -7,6 +7,7 @@ namespace App\QueueV4Clean;
 use App\Core\Crypto;
 use App\Core\Env;
 use App\Services\ApiExecutionMetadataContext;
+use App\Services\AutomationCallBudgetService;
 use App\Services\AppVersionService;
 use App\Services\EmergencyControlService;
 use App\Services\InstalledVersionMarkerService;
@@ -38,6 +39,7 @@ final class QueueV4CleanReadinessService
     {
         $repository = new QueueV4CleanRepository($this->pdo);
         $control = $repository->control();
+        $budget = (new AutomationCallBudgetService())->resolve(null, null);
         $observability = $repository->operationalObservability();
         $review = (new QueueV4CleanReviewService($this->pdo))->summary();
         $oauth = (new QueueV4CleanOAuthOperationRepository($this->pdo))->observability();
@@ -58,6 +60,10 @@ final class QueueV4CleanReadinessService
             'last_scheduler_heartbeat' => $observability['last_scheduler_heartbeat'],
             'physical_cron_observed' => $observability['physical_cron_observed'],
             'engine' => (string) $control['engine_state'],
+            'control_unit' => $budget['control_unit'],
+            'max_calls' => $budget['max_calls'],
+            'max_calls_source' => $budget['max_calls_source'],
+            'configured_max_calls' => $budget['configured_max_calls'],
             'review_forensics' => $review,
             'oauth_control_plane' => $oauth,
             'issues' => $checks['issues'],

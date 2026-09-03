@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Core\AppPaths;
 use App\Core\Database;
 use App\Core\Env;
+use App\Services\AutomationCallBudgetService;
 use DateTimeImmutable;
 use DateTimeZone;
 use PDO;
@@ -662,7 +663,7 @@ final class QueueV4DiagnosticBundleService
             'section_failure_can_abort_bundle' => false,
             'bundle_generates_partial' => true,
             'control_unit' => 'PHYSICAL_API_CALL',
-            'cron_max_calls' => 2,
+            'cron_max_calls' => (new AutomationCallBudgetService())->resolve(null, null)['max_calls'],
             'cron_legacy_max_jobs_alias_accepted' => true,
             'dual_capacity_arguments_fail_closed' => true,
             'queue_active' => (string) ($queue['control']['engine_state'] ?? '') === 'ACTIVE',
@@ -721,7 +722,7 @@ final class QueueV4DiagnosticBundleService
             'debug_enabled' => (bool) ($debug['enabled'] ?? false),
             'debug_expires_at' => $debug['expires_at'] ?? null,
             'control_unit' => 'PHYSICAL_API_CALL',
-            'cron_max_calls' => 2,
+            'cron_max_calls' => (new AutomationCallBudgetService())->resolve(null, null)['max_calls'],
             'cron_legacy_max_jobs_alias_accepted' => true,
             'dual_capacity_arguments_fail_closed' => true,
             'queue_active' => (string) ($queue['control']['engine_state'] ?? '') === 'ACTIVE',
@@ -881,8 +882,8 @@ final class QueueV4DiagnosticBundleService
             'generated_at_utc' => $this->now(),
             'control' => $this->controlRow(),
             'control_unit' => 'PHYSICAL_API_CALL',
-            'canonical_entrypoint' => 'jobs/queue_v4_clean.php --runtime=45 --max-calls=2',
-            'legacy_hpanel_alias_accepted' => 'jobs/queue_v4_clean.php --runtime=45 --max-jobs=2',
+            'canonical_entrypoint' => 'jobs/queue_v4_clean.php --runtime=45 --max-calls=1',
+            'legacy_hpanel_alias_accepted' => 'jobs/queue_v4_clean.php --runtime=45 --max-jobs=1',
             'dual_capacity_arguments_fail_closed' => true,
             'base_receipt_status' => $this->baseReceiptStatus(),
             'manual_cron_runs_by_diagnostic' => 0,

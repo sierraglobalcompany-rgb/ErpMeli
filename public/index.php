@@ -457,6 +457,7 @@ $router->get('/settings/api-health/incidents.json', [SettingsController::class, 
 $router->get('/settings/api-health/incidents/show', [SettingsController::class, 'apiHealthIncidentShow']);
 $router->get('/settings/api-health/incidents/show.json', [SettingsController::class, 'apiHealthIncidentShowJson']);
 $router->get('/settings/api-health/incidents/status.json', [SettingsController::class, 'apiHealthIncidentsStatus']);
+$router->post('/settings/api-health/email-test', [SettingsController::class, 'sendCriticalApiAlertTestEmail']);
 $router->get('/settings/api-health/protection', [SettingsController::class, 'apiHealthProtection']);
 $router->get('/settings/api-health/technical', [SettingsController::class, 'apiHealthTechnical']);
 $router->post('/settings/api-health/incidents/acknowledge', [SettingsController::class, 'acknowledgeApiIncident']);

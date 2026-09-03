@@ -19,6 +19,7 @@ use App\Services\ApiManualPauseService;
 use App\Services\ApiErrorSummaryService;
 use App\Services\BusinessScopeContext;
 use App\Services\AppSettingsService;
+use App\Services\AutomationCallBudgetService;
 use App\Services\CronHealthService;
 use App\Services\ReleaseIntegrityService;
 use App\Services\DiagnosticService;
@@ -92,6 +93,17 @@ final class SettingsController
             $target = 30;
         }
         $settings = new AppSettingsService();
+        $callBudget = (new AutomationCallBudgetService())->resolve(null, null);
+        $previousMaxCalls = (int) $callBudget['max_calls'];
+        $postedMaxCalls = max(1, min(15, (int) ($_POST['automation_max_api_calls_per_cycle'] ?? $previousMaxCalls)));
+        if ($postedMaxCalls > $previousMaxCalls) {
+            $gate = $this->queueV4RhythmIncreaseGate();
+            if (empty($gate['allowed'])) {
+                Session::flash('error', 'No se subió el presupuesto por ciclo: ' . $gate['message']);
+                $this->redirect('/settings/cron/rhythm');
+            }
+        }
+        $settings->set('automation.max_api_calls_per_cycle', (string) $postedMaxCalls, 'automation');
         $billingBackoff = $this->billing429BackoffMinutesFromPost();
         $previousProfile = (string) $settings->get('api.rhythm.profile', '');
         $previousTarget = $settings->int('api.rhythm.target_http_per_minute', $target);
@@ -457,6 +469,14 @@ final class SettingsController
         if (isset($_POST['questions_email_to'])) {
             $settings->set('questions.email_to', trim((string) $_POST['questions_email_to']), 'questions');
         }
+        $settings->set('alerts.email.enabled', isset($_POST['alerts_email_enabled']) ? '1' : '0', 'alerts');
+        if (isset($_POST['alerts_email_to'])) {
+            $settings->set('alerts.email.to', trim((string) $_POST['alerts_email_to']), 'alerts');
+        }
+        $settings->set('alerts.email.notify_429', isset($_POST['alerts_email_notify_429']) ? '1' : '0', 'alerts');
+        $settings->set('alerts.email.notify_auth', isset($_POST['alerts_email_notify_auth']) ? '1' : '0', 'alerts');
+        $settings->set('alerts.email.notify_scheduler_fatal', isset($_POST['alerts_email_notify_scheduler_fatal']) ? '1' : '0', 'alerts');
+        $settings->set('alerts.email.notify_recovery', isset($_POST['alerts_email_notify_recovery']) ? '1' : '0', 'alerts');
         $settings->set('notifications.enabled', isset($_POST['notifications_enabled']) ? '1' : '0', 'notifications');
         $settings->set('notifications.safe_mode', isset($_POST['notifications_safe_mode']) ? '1' : '0', 'notifications');
         $settings->set('notifications.missed_feeds_enabled', isset($_POST['notifications_missed_feeds_enabled']) ? '1' : '0', 'notifications');
@@ -1820,6 +1840,14 @@ final class SettingsController
         $page = max(1, (int) ($_GET['page'] ?? 1));
         $perPage = max(10, min(100, (int) ($_GET['per_page'] ?? 50)));
         $this->releaseReadOnlySession();
+        if ((string) ($_GET['full'] ?? '') !== '1') {
+            $query = http_build_query($filters + ['page' => $page, 'per_page' => $perPage]);
+            $apiHealthSection = 'incidents';
+            $apiHealthHours = (int) $filters['hours'];
+            $apiHealthCheckedAt = gmdate('Y-m-d H:i:s');
+            View::render('settings/api_health_incidents_shell', compact('query', 'apiHealthSection', 'apiHealthHours', 'apiHealthCheckedAt'));
+            return;
+        }
         $service = new ApiHealthService();
         try {
             if (method_exists($service, 'incidentPage')) {
@@ -1901,10 +1929,26 @@ final class SettingsController
         $this->apiHealthIncidentsJson();
     }
 
+    public function sendCriticalApiAlertTestEmail(): void
+    {
+        $this->requireAdminPermanent();
+        $this->assertSameOrigin();
+        Csrf::validate($_POST['_token'] ?? null);
+        $result = (new CriticalApiAlertEmailService())->sendTest();
+        Session::flash(
+            !empty($result['sent']) ? 'success' : 'error',
+            !empty($result['sent'])
+                ? 'Email de prueba enviado.'
+                : 'No se envió el email de prueba: ' . (string) ($result['status'] ?? 'sin detalle') . '.'
+        );
+        $this->redirect('/settings/cron/rhythm');
+    }
+
     public function apiHealthIncidentsJson(): void
     {
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
+        $started = microtime(true);
         $filters = [
             'hours' => max(1, min(720, (int) ($_GET['hours'] ?? 24))),
             'account_id' => max(0, (int) ($_GET['account_id'] ?? 0)),
@@ -1918,15 +1962,39 @@ final class SettingsController
         $perPage = max(10, min(100, (int) ($_GET['per_page'] ?? 50)));
         $service = new ApiHealthService();
         $accountId = (int) $filters['account_id'] > 0 ? (int) $filters['account_id'] : null;
-        $incidentPage = $service->incidentPage($filters, $perPage, ($page - 1) * $perPage);
-        $incidentsAvailable = $service->dataAvailable();
-        $summary = (new ApiHealthService())->summary((int) $filters['hours'], $accountId);
+        try {
+            $incidentPage = $service->incidentPage($filters, $perPage, ($page - 1) * $perPage);
+            $incidentsAvailable = $service->dataAvailable();
+            $summary = (new ApiHealthService())->summary((int) $filters['hours'], $accountId);
+        } catch (\Throwable $error) {
+            header('Server-Timing: api_incidents;dur=' . number_format((microtime(true) - $started) * 1000, 1, '.', ''));
+            http_response_code(503);
+            $this->json([
+                'ok' => false,
+                'protocol' => 'unavailable',
+                'snapshot_state' => 'unavailable',
+                'authoritative' => false,
+                'summary' => ['error' => 'incident_json_unavailable'],
+                'incidents' => [],
+                'pagination' => [
+                    'page' => $page,
+                    'per_page' => $perPage,
+                    'total' => 0,
+                    'pages' => 1,
+                    'truncated' => false,
+                ],
+                'message' => 'No se pudo cargar incidentes en segundo plano. No se informa como cero.',
+                'measured_at' => gmdate('Y-m-d\TH:i:s\Z'),
+            ]);
+            return;
+        }
         if (isset($summary['budget']['windows'])) {
             $summary['budget']['windows'] = [];
         }
         if (!$incidentsAvailable) {
             http_response_code(503);
         }
+        header('Server-Timing: api_incidents;dur=' . number_format((microtime(true) - $started) * 1000, 1, '.', ''));
         $this->json([
             'ok' => $incidentsAvailable,
             'protocol' => $incidentPage['protocol'],

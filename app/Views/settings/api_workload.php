@@ -3,9 +3,13 @@
 use App\Core\Csrf;
 use App\Core\Env;
 use App\Core\View;
+use App\Services\AutomationCallBudgetService;
 
 $base = rtrim(Env::get('APP_URL', ''), '/');
 $rhythm = is_array($rhythm ?? null) ? $rhythm : [];
+$callBudget = (new AutomationCallBudgetService())->resolve(null, null);
+$maxCalls = max(1, min(15, (int) $callBudget['max_calls']));
+$maxCallsSource = (string) $callBudget['max_calls_source'];
 $formatRamp = static function (mixed $steps, string $fallback = '15 → 20 → 25 → 30 → 35 → 40'): string {
     if (is_array($steps)) {
         $values = array_values(array_filter(array_map('intval', $steps), static fn (int $v): bool => $v > 0));
@@ -83,31 +87,31 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
 ?>
 <div class="page-head cron-page-head">
   <div>
-    <span class="eyebrow">AUTOMATIZACIÓN · RITMO</span>
-    <h1>Velocidad de salidas HTTP</h1>
-    <p>Elija un techo global de llamadas API físicas. El ERP subirá gradualmente y respetará siempre las protecciones de cada cuenta y endpoint.</p>
+    <span class="eyebrow">AUTOMATIZACIÓN · CALIBRACIÓN</span>
+    <h1>Llamadas API por ciclo</h1>
+    <p>Configure cuántas llamadas físicas puede iniciar cada ciclo automático. La unidad visible es la llamada API.</p>
   </div>
   <a class="btn" href="<?= View::e($base) ?>/settings/cron">Volver a Cron</a>
 </div>
 
 <nav class="cron-view-tabs" aria-label="Vistas de Cron">
   <a href="<?= View::e($base) ?>/settings/cron#resumen">Resumen</a>
-  <a class="is-active" aria-current="page" href="<?= View::e($base) ?>/settings/cron/rhythm">Ritmo</a>
-  <a href="<?= View::e($base) ?>/settings/cron#colas">Colas</a>
-  <a href="<?= View::e($base) ?>/settings/cron#historial">Historial</a>
+  <a class="is-active" aria-current="page" href="<?= View::e($base) ?>/settings/cron/rhythm">Calibración</a>
+  <a href="<?= View::e($base) ?>/settings/manual-processing">Procesar ahora</a>
+  <a href="<?= View::e($base) ?>/settings/api-health">Salud y alertas</a>
 </nav>
 
 <section class="operation-explainer" aria-label="Cómo funciona el ritmo">
-  <div><span>Qué está configurado</span><strong data-rhythm-current-profile><?= View::e($profiles[$profile][0]) ?> · <?= $targetRpm ?> HTTP/min</strong></div>
-  <div><span>Qué hará el ERP</span><strong>Subirá por pasos únicamente cuando la API permanezca estable.</strong></div>
-  <div><span>Qué debe saber</span><strong>Una salida HTTP puede recibir uno o varios recursos; no equivale necesariamente a un dato.</strong></div>
+  <div><span>Qué está configurado</span><strong data-rhythm-current-profile><?= $maxCalls ?> llamada<?= $maxCalls === 1 ? '' : 's' ?> API/ciclo</strong></div>
+  <div><span>Qué hará el ERP</span><strong>Detendrá el ciclo al consumir ese presupuesto físico o ante 429 remoto.</strong></div>
+  <div><span>Qué debe saber</span><strong>El cron puede correr cada minuto, pero la seguridad 429 manda sobre la velocidad.</strong></div>
 </section>
 
 <section class="rhythm-truth-grid rhythm-capacity-grid" aria-label="Capacidad solicitada, permitida y observada">
   <article>
-    <span>Solicitado</span>
-    <strong data-rhythm-requested><?= $targetRpm ?> HTTP/min</strong>
-    <p data-rhythm-theoretical>Techo teórico: <?= number_format($targetRpm * 60, 0, ',', '.') ?> HTTP/h.</p>
+    <span>Presupuesto por ciclo</span>
+    <strong data-rhythm-requested><?= $maxCalls ?> llamada<?= $maxCalls === 1 ? '' : 's' ?></strong>
+    <p data-rhythm-theoretical>Fuente: <?= View::e($maxCallsSource) ?> · hard max 15.</p>
   </article>
   <article>
     <span>Rampa actual</span>
@@ -176,6 +180,20 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
   </div>
   <form method="post" action="<?= View::e($base) ?>/settings/cron/rhythm">
     <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
+    <section class="rhythm-custom-panel" aria-label="Presupuesto físico por ciclo">
+      <div class="rhythm-panel-head">
+        <div>
+          <span class="eyebrow">K1D · UNIDAD CANÓNICA</span>
+          <h3>Máximo de llamadas API físicas por ciclo</h3>
+          <p>El valor seguro recomendado es 1. Subirlo requiere evidencia estable y sin 429 remoto reciente.</p>
+        </div>
+      </div>
+      <label><span>Llamadas API por ciclo automático</span><input type="number" name="automation_max_api_calls_per_cycle" min="1" max="15" value="<?= $maxCalls ?>"><small>Default K1D: 1 · máximo duro: 15 · no equivale a cantidad de órdenes ni recursos.</small></label>
+      <div class="alert info">
+        <strong>El cron recomendado queda:</strong>
+        <code>jobs/queue_v4_clean.php --runtime=45 --max-calls=<?= $maxCalls ?></code>
+      </div>
+    </section>
     <fieldset class="rhythm-profile-fieldset"><legend>Perfil de velocidad HTTP</legend>
     <p class="rhythm-step-title">1. Velocidad máxima deseada</p>
     <div class="rhythm-profile-grid rhythm-profile-grid-four">
@@ -272,6 +290,12 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
       <div class="alert info">
         <strong>No reduce Retry-After enviado por Mercado Libre.</strong>
         Sólo aplica a Billing 429 remoto real; las demoras locales preventivas se reportan aparte como <code>LOCAL_RATE_LIMITED_PRETRANSPORT</code>.
+      </div>
+      <div class="page-actions mt-2">
+        <form method="post" action="<?= View::e($base) ?>/settings/api-health/email-test">
+          <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
+          <button class="btn" type="submit">Enviar email de prueba</button>
+        </form>
       </div>
     </section>
     <div class="alert info"><strong>La cifra no significa “datos por minuto”.</strong> Solo cuenta cuando comienza el transporte HTTP. Seleccionar, inspeccionar o aplazar un trabajo no consume el límite.</div>

@@ -2,15 +2,18 @@
 use App\Core\Csrf;
 use App\Core\Env;
 use App\Core\View;
+use App\Services\AutomationCallBudgetService;
 
 $base = rtrim(Env::get('APP_URL', ''), '/');
 $csrfToken = Csrf::token();
+$callBudget = (new AutomationCallBudgetService())->resolve(null, null);
+$maxCalls = (int) $callBudget['max_calls'];
 ?>
 <div class="page-head cron-page-head">
   <div>
     <span class="eyebrow">AUTOMATIZACIÓN</span>
-    <h1>Centro de automatización</h1>
-    <p>Estado actual, último ciclo, llamadas API físicas y atención necesaria sin mezclar histórico con alarmas.</p>
+    <h1>Automatización y seguridad API</h1>
+    <p>Estado actual, último ciclo, llamadas API físicas y protección 429 sin mezclar histórico con alarmas.</p>
   </div>
   <div class="page-actions">
     <a class="btn" href="<?= View::e($base) ?>/settings/api-health">Salud API</a>
@@ -33,7 +36,7 @@ $csrfToken = Csrf::token();
     <article><span>Estado</span><strong data-qv4-engine>—</strong><p>Activa / Atención / Detenida.</p></article>
     <article><span>Último ciclo</span><strong data-qv4-heartbeat>—</strong><p>Debe actualizarse cerca de cada minuto.</p></article>
     <article><span>Cron físico</span><strong data-qv4-physical>Verificando…</strong><p>Cada minuto.</p></article>
-    <article><span>Máximo de llamadas API por ciclo</span><strong>2</strong><p>Comando canónico: <code>jobs/queue_v4_clean.php --runtime=45 --max-calls=2</code>.</p></article>
+    <article><span>Máximo de llamadas API por ciclo</span><strong data-qv4-max-calls><?= $maxCalls ?></strong><p>Comando canónico: <code>jobs/queue_v4_clean.php --runtime=45 --max-calls=<?= $maxCalls ?></code>.</p></article>
   </section>
 
   <section class="cron-task-section cron-api-risks" data-cron-api-risks
@@ -121,7 +124,7 @@ $csrfToken = Csrf::token();
       <section class="cron-truth-grid" aria-label="Detalles internos">
         <article><span>Readiness GET</span><strong data-qv4-readiness>0/3</strong><p>GET /users/me por cuenta.</p></article>
         <article><span>Programador</span><strong data-qv4-scheduler>Inactivo</strong><p>Estado configurado, no acción manual.</p></article>
-        <article><span>Comando</span><strong>queue_v4_clean.php --runtime=45 --max-calls=2</strong><p>Entrada canónica por llamadas API; hPanel puede seguir usando --max-jobs=2 como alias temporal.</p></article>
+        <article><span>Comando</span><strong>queue_v4_clean.php --runtime=45 --max-calls=<?= $maxCalls ?></strong><p>Entrada canónica por llamadas API físicas; <code>--max-jobs</code> se acepta sólo como alias temporal.</p></article>
         <article><span>Legado consultado</span><strong data-qv4-legacy>No</strong><p>Debe permanecer fuera de autoridad.</p></article>
       </section>
       <section class="cron-truth-grid" aria-label="OAuth técnico" data-qv4-oauth-operations>

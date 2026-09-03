@@ -5,11 +5,10 @@ use App\Core\View;
 $base = rtrim(Env::get('APP_URL', ''), '/');
 $automationTab = $automationTab ?? 'summary';
 $tabs = [
-    'summary' => ['/settings/cron', 'Centro'],
-    'next' => ['/settings/cron/next', 'Próxima ejecución'],
-    'queue' => ['/settings/cron/queue', 'Pendientes'],
-    'history' => ['/settings/cron/history', 'Evidencia'],
+    'summary' => ['/settings/cron', 'Resumen'],
+    'rhythm' => ['/settings/cron/rhythm', 'Calibración'],
     'manual' => ['/settings/manual-processing', 'Procesar ahora'],
+    'health' => ['/settings/api-health', 'Salud y alertas'],
 ];
 ?>
 <nav class="section-tabs automation-tabs" aria-label="Procesamiento del ERP">

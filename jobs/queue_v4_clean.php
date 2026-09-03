@@ -8,6 +8,7 @@ use App\QueueV4Clean\QueueV4CleanOAuthStageContext;
 use App\QueueV4Clean\QueueV4CleanSafeDiagnosticService;
 use App\QueueV4Clean\QueueV4CleanWorker;
 use App\Services\AutomationCallBudgetService;
+use App\Services\AutomationCliCapacityArgumentParser;
 use App\Services\CronDeadlineContext;
 
 if (PHP_SAPI !== 'cli') {
@@ -21,17 +22,20 @@ $options = getopt('', ['runtime::', 'max-jobs::', 'max-calls::']);
 $runtime = max(5, min(45, (int) ($options['runtime'] ?? 45)));
 $hasLegacyMaxJobs = array_key_exists('max-jobs', $options);
 $hasCanonicalMaxCalls = array_key_exists('max-calls', $options);
-if ($hasLegacyMaxJobs && $hasCanonicalMaxCalls) {
+
+try {
+    $capacityArgs = (new AutomationCliCapacityArgumentParser())->parse($options);
+} catch (\InvalidArgumentException $error) {
     fwrite(STDERR, "QUEUE_V4_CLEAN_FAILED\n");
-    fwrite(STDERR, "safe_error=dual_capacity_arguments\n");
+    fwrite(STDERR, 'safe_error=' . $error->getMessage() . PHP_EOL);
     exit(2);
 }
 
 try {
     Database::useProfile('cli');
     $budget = (new AutomationCallBudgetService())->resolve(
-        $hasCanonicalMaxCalls ? (int) $options['max-calls'] : null,
-        $hasLegacyMaxJobs ? (int) $options['max-jobs'] : null,
+        $capacityArgs['max_calls'],
+        $capacityArgs['legacy_max_jobs'],
     );
     $maxCalls = (int) $budget['max_calls'];
     CronDeadlineContext::start($runtime, max(1, $runtime - 5), 8, 3);

@@ -36,7 +36,7 @@ $maxCalls = (int) $callBudget['max_calls'];
     <article><span>Estado</span><strong data-qv4-engine>—</strong><p>Activa / Atención / Detenida.</p></article>
     <article><span>Último ciclo</span><strong data-qv4-heartbeat>—</strong><p>Debe actualizarse cerca de cada minuto.</p></article>
     <article><span>Cron físico</span><strong data-qv4-physical>Verificando…</strong><p>Cada minuto.</p></article>
-    <article><span>Máximo de llamadas API por ciclo</span><strong data-qv4-max-calls><?= $maxCalls ?></strong><p>Comando canónico: <code>jobs/queue_v4_clean.php --runtime=45 --max-calls=<?= $maxCalls ?></code>.</p></article>
+    <article><span>Máximo de llamadas API por ciclo</span><strong data-qv4-max-calls><?= $maxCalls ?></strong><p>Comando canónico: <code>jobs/queue_v4_clean.php --runtime=45</code>. El ERP lee la configuración guardada.</p></article>
   </section>
 
   <section class="cron-task-section cron-api-risks" data-cron-api-risks
@@ -124,7 +124,7 @@ $maxCalls = (int) $callBudget['max_calls'];
       <section class="cron-truth-grid" aria-label="Detalles internos">
         <article><span>Readiness GET</span><strong data-qv4-readiness>0/3</strong><p>GET /users/me por cuenta.</p></article>
         <article><span>Programador</span><strong data-qv4-scheduler>Inactivo</strong><p>Estado configurado, no acción manual.</p></article>
-        <article><span>Comando</span><strong>queue_v4_clean.php --runtime=45 --max-calls=<?= $maxCalls ?></strong><p>Entrada canónica por llamadas API físicas; <code>--max-jobs</code> se acepta sólo como alias temporal.</p></article>
+        <article><span>Comando</span><strong>queue_v4_clean.php --runtime=45</strong><p>Entrada canónica. Los overrides <code>--max-calls</code> y <code>--max-jobs</code> quedan sólo para soporte técnico avanzado.</p></article>
         <article><span>Legado consultado</span><strong data-qv4-legacy>No</strong><p>Debe permanecer fuera de autoridad.</p></article>
       </section>
       <section class="cron-truth-grid" aria-label="OAuth técnico" data-qv4-oauth-operations>

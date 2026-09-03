@@ -178,7 +178,7 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
   <div class="card-header">
       <div><h2>Elegir velocidad máxima</h2><p>Reducir se aplica de inmediato. Aumentar inicia una rampa segura; nunca eleva silenciosamente los límites individuales.</p></div>
   </div>
-  <form method="post" action="<?= View::e($base) ?>/settings/cron/rhythm">
+  <form id="call-budget-form" method="post" action="<?= View::e($base) ?>/settings/cron/call-budget">
     <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
     <section class="rhythm-custom-panel" aria-label="Presupuesto físico por ciclo">
       <div class="rhythm-panel-head">
@@ -191,9 +191,16 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
       <label><span>Llamadas API por ciclo automático</span><input type="number" name="automation_max_api_calls_per_cycle" min="1" max="15" value="<?= $maxCalls ?>"><small>Default K1D: 1 · máximo duro: 15 · no equivale a cantidad de órdenes ni recursos.</small></label>
       <div class="alert info">
         <strong>El cron recomendado queda:</strong>
-        <code>jobs/queue_v4_clean.php --runtime=45 --max-calls=<?= $maxCalls ?></code>
+        <code>jobs/queue_v4_clean.php --runtime=45</code>
+        <small>Overrides técnicos disponibles sólo para soporte avanzado: <code>--max-calls=N</code> y alias temporal <code>--max-jobs=N</code>.</small>
+      </div>
+      <div class="page-actions mt-2">
+        <button class="btn primary" type="submit">Guardar presupuesto por ciclo</button>
       </div>
     </section>
+  </form>
+  <form id="rhythm-profile-form" method="post" action="<?= View::e($base) ?>/settings/cron/rhythm">
+    <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
     <fieldset class="rhythm-profile-fieldset"><legend>Perfil de velocidad HTTP</legend>
     <p class="rhythm-step-title">1. Velocidad máxima deseada</p>
     <div class="rhythm-profile-grid rhythm-profile-grid-four">
@@ -291,12 +298,6 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
         <strong>No reduce Retry-After enviado por Mercado Libre.</strong>
         Sólo aplica a Billing 429 remoto real; las demoras locales preventivas se reportan aparte como <code>LOCAL_RATE_LIMITED_PRETRANSPORT</code>.
       </div>
-      <div class="page-actions mt-2">
-        <form method="post" action="<?= View::e($base) ?>/settings/api-health/email-test">
-          <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
-          <button class="btn" type="submit">Enviar email de prueba</button>
-        </form>
-      </div>
     </section>
     <div class="alert info"><strong>La cifra no significa “datos por minuto”.</strong> Solo cuenta cuando comienza el transporte HTTP. Seleccionar, inspeccionar o aplazar un trabajo no consume el límite.</div>
     <div class="page-actions rhythm-save-actions">
@@ -304,5 +305,9 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
       <a class="btn" href="<?= View::e($base) ?>/settings/cron">Cancelar</a>
     </div>
     <noscript><p class="alert warning">Puede guardar el perfil sin JavaScript. La confirmación visual se actualizará al recargar.</p></noscript>
+  </form>
+  <form id="critical-email-test-form" class="page-actions mt-2" method="post" action="<?= View::e($base) ?>/settings/api-health/email-test">
+    <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
+    <button class="btn" type="submit">Enviar email de prueba</button>
   </form>
 </section>

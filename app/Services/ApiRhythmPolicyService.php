@@ -1567,7 +1567,7 @@ final class ApiRhythmPolicyService
     ): int
     {
         $base = max(
-            300,
+            self::SHARED_429_FALLBACK_SECONDS,
             min(86400, $this->settings->int('api.rhythm.shared_429_backoff_seconds', self::SHARED_429_FALLBACK_SECONDS))
         );
         $jitterMax = max(

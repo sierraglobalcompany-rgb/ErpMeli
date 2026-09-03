@@ -781,9 +781,11 @@ final class MeliApiClient implements MeliReadClientInterface
                 'http_status' => $status,
                 'retry_after' => $retryAfter,
                 'request_id' => $requestId,
-                'execution_source' => $meta['execution_source'] ?? '',
-                'job_type' => $meta['source_work_type'] ?? '',
+                'execution_source' => $meta['source'] ?? $meta['execution_source'] ?? '',
+                'job_type' => $meta['job_type'] ?? '',
                 'source_work_id' => $meta['source_work_id'] ?? '',
+                'operation_key' => $meta['operation_key'] ?? $meta['profile_key'] ?? '',
+                'company_id' => $meta['company_id'] ?? null,
                 'next_safe_at' => $nextSafeAt,
                 'safe_message' => $safeMessage,
             ]);

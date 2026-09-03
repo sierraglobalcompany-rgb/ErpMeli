@@ -20,6 +20,7 @@ use App\Services\ApiErrorSummaryService;
 use App\Services\BusinessScopeContext;
 use App\Services\AppSettingsService;
 use App\Services\AutomationCallBudgetService;
+use App\Services\CriticalApiAlertEmailService;
 use App\Services\CronHealthService;
 use App\Services\ReleaseIntegrityService;
 use App\Services\DiagnosticService;
@@ -93,17 +94,6 @@ final class SettingsController
             $target = 30;
         }
         $settings = new AppSettingsService();
-        $callBudget = (new AutomationCallBudgetService())->resolve(null, null);
-        $previousMaxCalls = (int) $callBudget['max_calls'];
-        $postedMaxCalls = max(1, min(15, (int) ($_POST['automation_max_api_calls_per_cycle'] ?? $previousMaxCalls)));
-        if ($postedMaxCalls > $previousMaxCalls) {
-            $gate = $this->queueV4RhythmIncreaseGate();
-            if (empty($gate['allowed'])) {
-                Session::flash('error', 'No se subió el presupuesto por ciclo: ' . $gate['message']);
-                $this->redirect('/settings/cron/rhythm');
-            }
-        }
-        $settings->set('automation.max_api_calls_per_cycle', (string) $postedMaxCalls, 'automation');
         $billingBackoff = $this->billing429BackoffMinutesFromPost();
         $previousProfile = (string) $settings->get('api.rhythm.profile', '');
         $previousTarget = $settings->int('api.rhythm.target_http_per_minute', $target);
@@ -154,6 +144,40 @@ final class SettingsController
             $settings->set('api.rhythm.last_ramp_evaluation_at', $now, 'api_rhythm');
         }
         Session::flash('success', 'Ritmo guardado. Los límites de Mercado Libre, cuenta, endpoint y presupuesto siguen prevaleciendo.');
+        $this->redirect('/settings/cron/rhythm');
+    }
+
+    public function saveCronCallBudget(): void
+    {
+        $this->requireAdminPermanent();
+        $this->assertSameOrigin();
+        Csrf::validate($_POST['_token'] ?? null);
+
+        $raw = trim((string) ($_POST['automation_max_api_calls_per_cycle'] ?? ''));
+        if ($raw === '' || preg_match('/^\d+$/', $raw) !== 1) {
+            Session::flash('error', 'El presupuesto por ciclo debe ser un entero entre 1 y 15.');
+            $this->redirect('/settings/cron/rhythm');
+        }
+
+        $postedMaxCalls = max(
+            AutomationCallBudgetService::MIN,
+            min(AutomationCallBudgetService::HARD_MAX, (int) $raw)
+        );
+        $previousMaxCalls = (int) (new AutomationCallBudgetService())->resolve(null, null)['max_calls'];
+        if ($postedMaxCalls > $previousMaxCalls) {
+            $gate = $this->queueV4RhythmIncreaseGate();
+            if (empty($gate['allowed'])) {
+                Session::flash('error', 'No se subió el presupuesto por ciclo: ' . $gate['message']);
+                $this->redirect('/settings/cron/rhythm');
+            }
+        }
+
+        (new AppSettingsService())->set(
+            AutomationCallBudgetService::SETTING_KEY,
+            (string) $postedMaxCalls,
+            'automation'
+        );
+        Session::flash('success', 'Presupuesto de llamadas por ciclo guardado.');
         $this->redirect('/settings/cron/rhythm');
     }
 
@@ -475,8 +499,6 @@ final class SettingsController
         }
         $settings->set('alerts.email.notify_429', isset($_POST['alerts_email_notify_429']) ? '1' : '0', 'alerts');
         $settings->set('alerts.email.notify_auth', isset($_POST['alerts_email_notify_auth']) ? '1' : '0', 'alerts');
-        $settings->set('alerts.email.notify_scheduler_fatal', isset($_POST['alerts_email_notify_scheduler_fatal']) ? '1' : '0', 'alerts');
-        $settings->set('alerts.email.notify_recovery', isset($_POST['alerts_email_notify_recovery']) ? '1' : '0', 'alerts');
         $settings->set('notifications.enabled', isset($_POST['notifications_enabled']) ? '1' : '0', 'notifications');
         $settings->set('notifications.safe_mode', isset($_POST['notifications_safe_mode']) ? '1' : '0', 'notifications');
         $settings->set('notifications.missed_feeds_enabled', isset($_POST['notifications_missed_feeds_enabled']) ? '1' : '0', 'notifications');

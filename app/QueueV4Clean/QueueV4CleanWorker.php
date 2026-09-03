@@ -362,10 +362,6 @@ final class QueueV4CleanWorker
                     $this->functionalFailure($job, $runId, $error);
                     $receiptJobs[] = $this->cycleJobReceipt($job, 'waiting', $this->failureClass($error), false, null, null, null);
                     $deferred++;
-                    if (!empty($outcome['reached_remote']) && (int) ($outcome['http_status'] ?? 0) === 429) {
-                        $endReason = 'remote_429_global_pause';
-                        break;
-                    }
                     continue;
                 }
                 if (($outcome['state'] ?? '') === 'waiting') {
@@ -385,6 +381,10 @@ final class QueueV4CleanWorker
                         isset($outcome['next_safe_at']) ? (string) $outcome['next_safe_at'] : null
                     );
                     $deferred++;
+                    if (!empty($outcome['reached_remote']) && (int) ($outcome['http_status'] ?? 0) === 429) {
+                        $endReason = 'remote_429_global_pause';
+                        break;
+                    }
                     continue;
                 }
                 if (($outcome['state'] ?? '') === 'review') {

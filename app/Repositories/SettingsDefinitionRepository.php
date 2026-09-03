@@ -68,8 +68,6 @@ final class SettingsDefinitionRepository
                 $this->number('alerts.email.cooldown_minutes', 'Repetición mínima de alerta crítica', 60, 5, 1440, 'min', 'Evita repetir correos por el mismo incidente dentro de la ventana.', true),
                 $this->bool('alerts.email.notify_429', 'Alertar 429 remoto', true, 'Avisa cuando Mercado Libre confirma rate limit remoto.', true),
                 $this->bool('alerts.email.notify_auth', 'Alertar autorización/permisos', true, 'Avisa 401/403 remotos.', true),
-                $this->bool('alerts.email.notify_scheduler_fatal', 'Alertar fallas fatales del scheduler', true, 'Reserva para errores críticos del automatizador.', true),
-                $this->bool('alerts.email.notify_recovery', 'Alertar recuperación', false, 'Mantener apagado salvo que se requiera confirmación de cierre.', true),
                 $this->number('api.guard.jitter_min_ms', 'Espera aleatoria mínima', 250, 0, 10000, 'ms', 'Separa consultas simultáneas.', true),
                 $this->number('api.guard.jitter_max_ms', 'Espera aleatoria máxima', 1500, 0, 30000, 'ms', 'Separa consultas simultáneas.', true),
                 $this->number('api.logs.request_retention_days', 'Retención de consultas', 60, 1, 730, 'días', 'Conserva evidencia operativa sin crecer indefinidamente.', true),

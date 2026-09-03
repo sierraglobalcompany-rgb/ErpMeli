@@ -5,9 +5,7 @@ INSERT IGNORE INTO app_settings(setting_key, setting_value, is_encrypted, settin
 ('alerts.email.to', '', 0, 'alerts'),
 ('alerts.email.cooldown_minutes', '60', 0, 'alerts'),
 ('alerts.email.notify_429', '1', 0, 'alerts'),
-('alerts.email.notify_auth', '1', 0, 'alerts'),
-('alerts.email.notify_scheduler_fatal', '1', 0, 'alerts'),
-('alerts.email.notify_recovery', '0', 0, 'alerts');
+('alerts.email.notify_auth', '1', 0, 'alerts');
 
 CREATE TABLE IF NOT EXISTS api_critical_email_notifications (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,

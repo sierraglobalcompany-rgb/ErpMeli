@@ -64,7 +64,7 @@ $recentFailures = is_array($recentFailures ?? null) ? $recentFailures : [];
   <header class="panel-head"><div><h2>1. Configure el lanzador único</h2><p>Frecuencia recomendada: cada minuto. Si Hostinger entrega otra frecuencia, el ERP medirá el intervalo real.</p></div></header>
   <label for="notificationCronCommand">Comando</label>
   <div class="copy-field">
-    <input id="notificationCronCommand" class="input" readonly value="<?= View::e($notificationCronCommand ?? 'php jobs/queue_v4_clean.php --runtime=45 --max-calls=2') ?>">
+    <input id="notificationCronCommand" class="input" readonly value="<?= View::e($notificationCronCommand ?? 'php jobs/queue_v4_clean.php --runtime=45') ?>">
     <button type="button" class="btn" data-copy-target="#notificationCronCommand">Copiar comando</button>
   </div>
 </section>

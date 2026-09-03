@@ -43,9 +43,9 @@ final class CriticalApiAlertEmailService
         try {
             $pdo = Database::connectionFresh();
             $this->upsertLedger($pdo, $fingerprint, $incidentKey, $scopeKey, $now);
-            $ledger = $this->ledgerRow($pdo, $fingerprint);
-            if (!$this->canAttempt($ledger, $now)) {
-                return $this->result(false, false, 'cooldown', $fingerprint);
+            $leaseUntil = gmdate('Y-m-d H:i:s', time() + 300);
+            if (!$this->claimSendLease($pdo, $fingerprint, $now, $leaseUntil)) {
+                return $this->result(false, false, 'claimed_or_cooldown', $fingerprint);
             }
 
             [$subject, $body] = $this->message($context);
@@ -80,7 +80,13 @@ final class CriticalApiAlertEmailService
     /** @return array{attempted:bool,sent:bool,status:string,fingerprint:string} */
     public function sendTest(): array
     {
-        return $this->notifyApiIncident([
+        $settings = new AppSettingsService();
+        $to = trim((string) $settings->get('alerts.email.to', ''));
+        if ($to === '' || filter_var($to, FILTER_VALIDATE_EMAIL) === false) {
+            return $this->result(false, false, 'invalid_recipient', 'test');
+        }
+
+        [$subject, $body] = $this->message([
             'meli_account_id' => 0,
             'method' => 'GET',
             'endpoint_path' => '/settings/api-health',
@@ -94,6 +100,10 @@ final class CriticalApiAlertEmailService
             'next_safe_at' => gmdate('Y-m-d H:i:s', time() + 1800),
             'safe_message' => 'Prueba administrativa de alerta crítica ERP Meli.',
         ]);
+        $headers = 'From: ' . (Env::get('MAIL_FROM', 'no-reply@localhost') ?: 'no-reply@localhost');
+        $sent = $this->send($to, $subject, $body, $headers);
+
+        return $this->result(true, $sent, $sent ? 'sent' : 'failed', 'test');
     }
 
     private function shouldNotifyStatus(int $status): bool
@@ -129,20 +139,23 @@ final class CriticalApiAlertEmailService
         ]);
     }
 
-    /** @return array<string,mixed> */
-    private function ledgerRow(PDO $pdo, string $fingerprint): array
+    private function claimSendLease(PDO $pdo, string $fingerprint, string $now, string $leaseUntil): bool
     {
-        $stmt = $pdo->prepare('SELECT * FROM api_critical_email_notifications WHERE fingerprint=:fingerprint LIMIT 1');
-        $stmt->execute(['fingerprint' => $fingerprint]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        return is_array($row) ? $row : [];
-    }
-
-    /** @param array<string,mixed> $ledger */
-    private function canAttempt(array $ledger, string $now): bool
-    {
-        $next = trim((string) ($ledger['next_attempt_at'] ?? ''));
-        return $next === '' || $next <= $now;
+        $stmt = $pdo->prepare(
+            'UPDATE api_critical_email_notifications
+             SET status="sending",last_attempt_at=:now,next_attempt_at=:lease_until,updated_at=UTC_TIMESTAMP(3)
+             WHERE fingerprint=:fingerprint
+               AND (next_attempt_at IS NULL OR next_attempt_at<=:now_due)
+               AND (status<>"sending" OR next_attempt_at<=:now_sending_due)'
+        );
+        $stmt->execute([
+            'now' => $now,
+            'lease_until' => $leaseUntil,
+            'fingerprint' => $fingerprint,
+            'now_due' => $now,
+            'now_sending_due' => $now,
+        ]);
+        return $stmt->rowCount() === 1;
     }
 
     /** @param array<string,mixed> $context @return array{0:string,1:string} */
@@ -153,12 +166,14 @@ final class CriticalApiAlertEmailService
         $endpoint = $this->safe((string) ($context['endpoint_path'] ?? $context['path'] ?? ''));
         $method = $this->safe((string) ($context['method'] ?? 'GET'));
         $source = $this->safe((string) ($context['execution_source'] ?? $context['source'] ?? 'unknown'));
+        $companyId = (int) ($context['company_id'] ?? 0);
         $requestId = $this->safe((string) ($context['request_id'] ?? ''));
         $nextSafeAt = $this->safe((string) ($context['next_safe_at'] ?? ''));
         $retryAfter = $context['retry_after'] ?? null;
         $accountId = (int) ($context['meli_account_id'] ?? $context['account_id'] ?? 0);
-        $jobType = $this->safe((string) ($context['job_type'] ?? $context['source_work_type'] ?? ''));
+        $jobType = $this->safe((string) ($context['job_type'] ?? ''));
         $sourceWorkId = $this->safe((string) ($context['source_work_id'] ?? ''));
+        $operationKey = $this->safe((string) ($context['operation_key'] ?? $context['endpoint_key'] ?? ''));
         $message = $this->safe((string) ($context['safe_message'] ?? 'Mercado Libre devolvió una respuesta crítica.'));
         $link = rtrim((string) Env::get('APP_URL', ''), '/') . '/settings/api-health/incidents';
 
@@ -166,10 +181,12 @@ final class CriticalApiAlertEmailService
             'ERP Meli - alerta API crítica',
             'Fecha UTC: ' . gmdate('Y-m-d H:i:s'),
             'Severidad: ' . $severity,
+            $companyId > 0 ? 'Empresa ID: ' . $companyId : '',
             'Cuenta ID: ' . ($accountId > 0 ? (string) $accountId : 'aplicacion'),
             'HTTP: ' . $status,
             'Método/endpoint: ' . trim($method . ' ' . $endpoint),
             'Fuente: ' . $source,
+            $operationKey !== '' ? 'Operación: ' . $operationKey : '',
             $jobType !== '' ? 'Trabajo: ' . $jobType : '',
             $sourceWorkId !== '' ? 'Work ID: ' . $sourceWorkId : '',
             $requestId !== '' ? 'Request ID: ' . $requestId : '',

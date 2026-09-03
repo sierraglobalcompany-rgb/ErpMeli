@@ -420,6 +420,7 @@ $router->get('/settings/cron/run.json', [SettingsController::class, 'cronRunJson
 $router->get('/settings/cron/history.json', [SettingsController::class, 'cronHistoryJson']);
 $router->get('/settings/cron/rhythm', [SettingsController::class, 'cronRhythm']);
 $router->post('/settings/cron/rhythm', [SettingsController::class, 'saveCronRhythm']);
+$router->post('/settings/cron/call-budget', [SettingsController::class, 'saveCronCallBudget']);
 $router->get('/settings/cron/rhythm/preview.json', [SettingsController::class, 'cronRhythmPreview']);
 $router->get('/settings/cron/next', [SettingsController::class, 'automationNext']);
 $router->get('/settings/cron/work', [SettingsController::class, 'automationWork']);

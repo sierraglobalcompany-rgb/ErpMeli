@@ -790,7 +790,7 @@ final class ManagedRuntimePublicationPolicy
             if (in_array($path, ['.gitattributes', '.gitignore', 'config.env.example', 'phpstan.neon'], true)) {
                 return 'BUILD_ONLY';
             }
-            if ($path === 'H3_BACKLOG_RECOVERY_DESIGN.txt') {
+            if (in_array($path, ['AGENTS.md', 'H3_BACKLOG_RECOVERY_DESIGN.txt'], true)) {
                 return 'NON_RUNTIME';
             }
             return 'UNCLASSIFIED';

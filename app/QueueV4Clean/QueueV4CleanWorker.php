@@ -417,7 +417,7 @@ final class QueueV4CleanWorker
                 $receiptJobs[] = $this->cycleJobReceipt($job, 'completed', 'completed', (bool) ($outcome['reached_remote'] ?? false), null, null, null);
                 $completed++;
             }
-            if (QueueV4CleanCycleBudget::exhausted()) {
+            if ($endReason !== 'remote_429_global_pause' && QueueV4CleanCycleBudget::exhausted()) {
                 $endReason = 'call_budget_exhausted';
             } elseif ($claimed >= $pointerSafetyLimit) {
                 $endReason = 'pointer_safety_limit_reached';

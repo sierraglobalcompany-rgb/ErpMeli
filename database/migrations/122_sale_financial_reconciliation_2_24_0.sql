@@ -175,7 +175,8 @@ CROSS JOIN JSON_TABLE(
 ) AS expected
 LEFT JOIN meli_orders o
   ON o.meli_account_id=p.meli_account_id
- AND CAST(o.external_order_id AS CHAR)=expected.external_order_id
+ AND CONVERT(o.external_order_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+     = CONVERT(expected.external_order_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
 WHERE expected.external_order_id IS NOT NULL
 ON DUPLICATE KEY UPDATE meli_order_id=VALUES(meli_order_id),status=VALUES(status),verified_at=VALUES(verified_at);
 

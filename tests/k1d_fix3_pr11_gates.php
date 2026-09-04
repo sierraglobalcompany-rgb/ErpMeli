@@ -50,7 +50,22 @@ $advancedEnd = $advancedStart === false ? false : strpos($cronShell, '<details c
 $advanced = ($advancedStart !== false && $advancedEnd !== false) ? substr($cronShell, $advancedStart, $advancedEnd - $advancedStart) : '';
 k1b_assert($advanced !== '' && str_contains($advanced, '_queue_v4_diagnostic_bundle.php'), 'K1D_FIX3_QUEUE_DIAGNOSTIC_BUNDLE_INSIDE_ADVANCED');
 k1b_assert(!str_contains(substr($cronShell, (int) $advancedEnd), '_queue_v4_diagnostic_bundle.php'), 'K1D_FIX3_QUEUE_DIAGNOSTIC_BUNDLE_NOT_PRIMARY');
-k1b_assert(str_contains($css, '@media(max-width:430px){.automation-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))'), 'K1D_FIX3_MOBILE_TABS_2X2_RULE');
+$mobileMediaStart = strpos($css, '@media(max-width:430px)');
+$mobileMedia = $mobileMediaStart === false ? '' : substr($css, $mobileMediaStart, 700);
+k1b_assert(
+    $mobileMedia !== ''
+    && str_contains($mobileMedia, '.automation-tabs')
+    && str_contains($mobileMedia, 'display:grid')
+    && str_contains($mobileMedia, 'grid-template-columns:repeat(2,minmax(0,1fr))')
+    && str_contains($mobileMedia, 'white-space:normal')
+    && str_contains($mobileMedia, 'line-height:1.15'),
+    'K1D_FIX3_MOBILE_TABS_2X2_RULE'
+);
+k1b_assert(
+    str_contains($mobileMedia, '.api-health-tabs')
+    && str_contains($mobileMedia, '.api-health-tabs a:last-child:nth-child(odd)'),
+    'K1D_FIX3_MOBILE_API_HEALTH_TABS_NO_OVERFLOW_RULE'
+);
 
 k1b_assert(!str_contains($migrationTest, 'DROP TABLE IF EXISTS api_critical_email_notifications'), 'K1D_FIX3_NO_EMAIL_DROP_TABLE_IN_BEHAVIOR_TEST');
 k1b_assert(!str_contains($migrationTest, 'DROP TABLE IF EXISTS app_settings'), 'K1D_FIX3_NO_APP_SETTINGS_DROP_TABLE_IN_BEHAVIOR_TEST');

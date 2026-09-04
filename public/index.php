@@ -425,6 +425,7 @@ $router->get('/settings/cron/rhythm/preview.json', [SettingsController::class, '
 $router->get('/settings/cron/next', [SettingsController::class, 'automationNext']);
 $router->get('/settings/cron/work', [SettingsController::class, 'automationWork']);
 $router->post('/settings/cron/work/remediate', [SettingsController::class, 'automationWorkRemediate']);
+$router->get('/settings/cron/review', [SettingsController::class, 'automationAttention']);
 $router->get('/settings/cron/queue', [SettingsController::class, 'automationQueue']);
 $router->get('/settings/cron/history', [SettingsController::class, 'automationHistory']);
 $router->get('/settings/cron/diagnostics', [SettingsController::class, 'automationDiagnostics']);

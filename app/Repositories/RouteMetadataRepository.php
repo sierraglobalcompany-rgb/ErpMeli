@@ -28,7 +28,7 @@ final class RouteMetadataRepository
                 || str_starts_with($path, '/notifications/technical')
                 || str_starts_with($path, '/notifications/backfill')
                 || str_starts_with($path, '/notifications/missed'),
-            'csrf' => $method === 'POST' && !in_array($path, ['/login'], true),
+            'csrf' => $method === 'POST' && !in_array($path, ['/login', '/performance/metrics'], true),
             'rate_limit' => $public && str_starts_with($path, '/catalogo/') ? 'public_catalog' : 'session',
             'response' => str_ends_with($path, '.json') ? 'json' : 'html',
         ];

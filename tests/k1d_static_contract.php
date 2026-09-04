@@ -19,8 +19,9 @@ $settingsSection = file_get_contents(__DIR__ . '/../app/Views/settings/section.p
 $settingsDefinitions = file_get_contents(__DIR__ . '/../app/Repositories/SettingsDefinitionRepository.php');
 $incidentsShell = file_get_contents(__DIR__ . '/../app/Views/settings/api_health_incidents_shell.php');
 $parser = file_get_contents(__DIR__ . '/../app/Services/AutomationCliCapacityArgumentParser.php');
+$routeMetadata = file_get_contents(__DIR__ . '/../app/Repositories/RouteMetadataRepository.php');
 
-foreach (compact('budget', 'job', 'worker', 'rhythm', 'client', 'email', 'migration', 'cronShell', 'calibration', 'automationNav', 'apiHealth', 'settingsSection', 'settingsDefinitions', 'incidentsShell', 'parser') as $name => $content) {
+foreach (compact('budget', 'job', 'worker', 'rhythm', 'client', 'email', 'migration', 'cronShell', 'calibration', 'automationNav', 'apiHealth', 'settingsSection', 'settingsDefinitions', 'incidentsShell', 'parser', 'routeMetadata') as $name => $content) {
     k1b_assert(is_string($content) && $content !== '', 'read_' . $name);
 }
 
@@ -47,6 +48,7 @@ k1b_assert(str_contains($rhythm, 'ORDERS_SEARCH_LOCAL_CEILING = 3'), 'orders_sea
 
 k1b_assert(substr_count($worker, 'remote_429_global_pause') >= 3, 'worker_global_429_scope');
 k1b_assert(str_contains($worker, '$endReason = \'remote_429_global_pause\';') && str_contains($worker, 'break;'), 'worker_429_breaks_cycle');
+k1b_assert(str_contains($worker, '$endReason !== \'remote_429_global_pause\' && QueueV4CleanCycleBudget::exhausted()'), 'worker_429_stop_reason_priority');
 k1b_assert(str_contains($client, 'notifyCriticalApiIncident'), 'client_calls_email_alert');
 k1b_assert(substr_count($client, 'remote_429_global_pause') >= 2, 'client_429_global_scope');
 k1b_assert(str_contains($client, "\$meta['source']") && str_contains($client, "\$meta['job_type']") && str_contains($client, "\$meta['source_work_id']"), 'email_context_uses_canonical_meta');
@@ -76,7 +78,9 @@ k1b_assert(str_contains($settingsSection, 'managed_elsewhere') && !str_contains(
 k1b_assert(str_contains($settingsSection, 'Cambiar en su módulo') && str_contains($settingsSection, 'Valor actual:'), 'generic_settings_managed_link_ui');
 k1b_assert(str_contains($incidentsShell, 'data-api-incidents-shell') && str_contains($incidentsShell, 'incidents.json'), 'incidents_async_shell');
 k1b_assert(str_contains($incidentsShell, 'La lectura no está certificada') && strpos($incidentsShell, 'La lectura no está certificada') < strpos($incidentsShell, 'No hay incidentes para esta lectura certificada'), 'incidents_ok_false_not_zero');
+k1b_assert(str_contains($routeMetadata, "['/login', '/performance/metrics']"), 'performance_beacon_json_csrf_not_post_form_bound');
 k1b_assert(str_contains(file_get_contents(__DIR__ . '/../public/index.php'), '/settings/api-health/email-test'), 'email_test_route');
 k1b_assert(str_contains(file_get_contents(__DIR__ . '/../public/index.php'), '/settings/cron/call-budget'), 'call_budget_route');
+k1b_assert(str_contains(file_get_contents(__DIR__ . '/../public/index.php'), '/settings/cron/review'), 'cron_review_route');
 
 echo "STATUS=PASS K1D_STATIC_CONTRACT\n";

@@ -10,6 +10,8 @@ $apiHealthHours = max(1, (int) ($hours ?? 24));
 $apiHealthCheckedAt = null;
 $apiHealthAsset = View::asset($base, 'api-health.js') . '&v=' . rawurlencode(AssetVersionService::fingerprint('assets/api-health.js'));
 require __DIR__ . '/_api_health_header.php';
+$automationTab = 'health';
+require __DIR__ . '/_automation_nav.php';
 require __DIR__ . '/_api_health_nav.php';
 $query = http_build_query(array_filter([
     'hours' => $apiHealthHours,

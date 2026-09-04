@@ -55,6 +55,8 @@ $incidentLink = static function (array $overrides = []) use ($base, $apiHealthHo
 };
 if (empty($apiHealthPartial)) {
     require __DIR__ . '/_api_health_header.php';
+    $automationTab = 'health';
+    require __DIR__ . '/_automation_nav.php';
     require __DIR__ . '/_api_health_nav.php';
 }
 ?>

@@ -22,6 +22,8 @@ $maxCalls = (int) $callBudget['max_calls'];
   </div>
 </div>
 
+<?php $automationTab = 'summary'; require __DIR__ . '/_automation_nav.php'; ?>
+
 <div class="cron-control" data-queue-v4-clean
      data-status-url="<?= View::e($base) ?>/settings/cron/queue-v4.json">
   <section class="cron-status-line is-neutral" aria-live="polite" data-qv4-status-line>
@@ -149,10 +151,9 @@ $maxCalls = (int) $callBudget['max_calls'];
       <span hidden data-qv4-review="human">0</span>
       <span hidden data-cron-api-risk="remote_uncertain">0</span>
       <span hidden data-cron-api-risk-context="remote_uncertain"></span>
+      <?php include __DIR__ . '/_queue_v4_diagnostic_bundle.php'; ?>
     </div>
   </details>
-
-  <?php include __DIR__ . '/_queue_v4_diagnostic_bundle.php'; ?>
 
   <details class="technical-details cron-admin-actions">
     <summary><span>Acciones administrativas</span><span aria-hidden="true">⌄</span></summary>

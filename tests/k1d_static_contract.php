@@ -13,13 +13,14 @@ $email = file_get_contents(__DIR__ . '/../app/Services/CriticalApiAlertEmailServ
 $migration = file_get_contents(__DIR__ . '/../database/migrations/301_k1d_api_safety_2_40_1.sql');
 $cronShell = file_get_contents(__DIR__ . '/../app/Views/settings/cron_shell.php');
 $calibration = file_get_contents(__DIR__ . '/../app/Views/settings/api_workload.php');
+$automationNav = file_get_contents(__DIR__ . '/../app/Views/settings/_automation_nav.php');
 $apiHealth = file_get_contents(__DIR__ . '/../app/Views/settings/api_health.php');
 $settingsSection = file_get_contents(__DIR__ . '/../app/Views/settings/section.php');
 $settingsDefinitions = file_get_contents(__DIR__ . '/../app/Repositories/SettingsDefinitionRepository.php');
 $incidentsShell = file_get_contents(__DIR__ . '/../app/Views/settings/api_health_incidents_shell.php');
 $parser = file_get_contents(__DIR__ . '/../app/Services/AutomationCliCapacityArgumentParser.php');
 
-foreach (compact('budget', 'job', 'worker', 'rhythm', 'client', 'email', 'migration', 'cronShell', 'calibration', 'apiHealth', 'settingsSection', 'settingsDefinitions', 'incidentsShell', 'parser') as $name => $content) {
+foreach (compact('budget', 'job', 'worker', 'rhythm', 'client', 'email', 'migration', 'cronShell', 'calibration', 'automationNav', 'apiHealth', 'settingsSection', 'settingsDefinitions', 'incidentsShell', 'parser') as $name => $content) {
     k1b_assert(is_string($content) && $content !== '', 'read_' . $name);
 }
 
@@ -65,7 +66,7 @@ k1b_assert(!str_contains($migration, 'notify_scheduler_fatal') && !str_contains(
 
 k1b_assert(str_contains($cronShell, 'Automatización y seguridad API'), 'unified_module_name');
 k1b_assert(!str_contains($cronShell, 'queue_v4_clean.php --runtime=45 --max-calls='), 'primary_cron_command_has_no_override');
-k1b_assert(substr_count($calibration, '<a') === 4 || substr_count(substr($calibration, strpos($calibration, '<nav class="cron-view-tabs"'), strpos($calibration, '</nav>', strpos($calibration, '<nav class="cron-view-tabs"')) - strpos($calibration, '<nav class="cron-view-tabs"')), '<a') === 4, 'cron_tabs_exactly_four');
+k1b_assert(str_contains($calibration, "require __DIR__ . '/_automation_nav.php';") && substr_count($automationNav, "=> ['") === 4, 'cron_tabs_exactly_four');
 k1b_assert(str_contains($calibration, 'Llamadas API por ciclo automático') && str_contains($calibration, 'Máximo teórico de 15 minutos'), 'calibration_call_budget_primary');
 k1b_assert(str_contains($calibration, 'automation_max_api_calls_per_cycle') && str_contains($calibration, '/settings/cron/call-budget'), 'calibration_dedicated_call_budget_form');
 k1b_assert(!str_contains($calibration, 'critical-email-test-form') && str_contains($calibration, '<details class="panel settings-advanced rhythm-advanced-settings">'), 'calibration_advanced_closed_and_email_removed');

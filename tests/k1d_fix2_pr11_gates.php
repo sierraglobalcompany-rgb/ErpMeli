@@ -9,6 +9,7 @@ require_once __DIR__ . '/../app/Services/CriticalApiAlertEmailService.php';
 use App\Services\CriticalApiAlertEmailService;
 
 $calibration = file_get_contents(__DIR__ . '/../app/Views/settings/api_workload.php');
+$automationNav = file_get_contents(__DIR__ . '/../app/Views/settings/_automation_nav.php');
 $apiHealth = file_get_contents(__DIR__ . '/../app/Views/settings/api_health.php');
 $incidentsShell = file_get_contents(__DIR__ . '/../app/Views/settings/api_health_incidents_shell.php');
 $settingsSection = file_get_contents(__DIR__ . '/../app/Views/settings/section.php');
@@ -17,15 +18,16 @@ $settingsController = file_get_contents(__DIR__ . '/../app/Controllers/SettingsC
 $index = file_get_contents(__DIR__ . '/../public/index.php');
 $email = file_get_contents(__DIR__ . '/../app/Services/CriticalApiAlertEmailService.php');
 
-foreach (compact('calibration', 'apiHealth', 'incidentsShell', 'settingsSection', 'settingsDefinitions', 'settingsController', 'index', 'email') as $name => $content) {
+foreach (compact('calibration', 'automationNav', 'apiHealth', 'incidentsShell', 'settingsSection', 'settingsDefinitions', 'settingsController', 'index', 'email') as $name => $content) {
     k1b_assert(is_string($content) && $content !== '', 'read_' . $name);
 }
 
-$navStart = strpos($calibration, '<nav class="cron-view-tabs"');
-$navEnd = $navStart === false ? false : strpos($calibration, '</nav>', $navStart);
-$nav = ($navStart !== false && $navEnd !== false) ? substr($calibration, $navStart, $navEnd - $navStart) : '';
-k1b_assert($nav !== '' && substr_count($nav, '<a ') === 4, 'K1D_FIX2_EXACTLY_FOUR_CRON_TABS');
-k1b_assert(str_contains($nav, 'Resumen') && str_contains($nav, 'Calibración') && str_contains($nav, 'Procesar ahora') && str_contains($nav, 'Salud y alertas'), 'K1D_FIX2_TAB_NAMES');
+$navStart = strpos($automationNav, '<nav class="cron-view-tabs');
+$navEnd = $navStart === false ? false : strpos($automationNav, '</nav>', $navStart);
+$nav = ($navStart !== false && $navEnd !== false) ? substr($automationNav, $navStart, $navEnd - $navStart) : '';
+k1b_assert($nav !== '' && substr_count($automationNav, "=> ['") === 4, 'K1D_FIX2_EXACTLY_FOUR_CRON_TABS');
+k1b_assert(str_contains($automationNav, 'Resumen') && str_contains($automationNav, 'Calibración') && str_contains($automationNav, 'Procesar ahora') && str_contains($automationNav, 'Salud y alertas'), 'K1D_FIX2_TAB_NAMES');
+k1b_assert(str_contains($calibration, "require __DIR__ . '/_automation_nav.php'"), 'K1D_FIX2_CALIBRATION_USES_SHARED_AUTOMATION_NAV');
 
 $budgetFormStart = strpos($calibration, 'id="call-budget-form"');
 $budgetFormEnd = $budgetFormStart === false ? false : strpos($calibration, '</form>', $budgetFormStart);

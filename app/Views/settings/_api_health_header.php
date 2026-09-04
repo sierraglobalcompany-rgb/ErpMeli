@@ -11,8 +11,8 @@ $apiHealthCheckedAt = $apiHealthCheckedAt ?? null;
 <div class="page-head api-health-page-head">
   <div>
     <span class="eyebrow">Mercado Libre</span>
-    <h1>Salud de Mercado Libre</h1>
-    <p>Estado de la conexión, cuentas y protecciones.</p>
+    <h1>Salud y alertas</h1>
+    <p>Estado de conexión, incidentes, protecciones y alertas críticas.</p>
     <?php if ($apiHealthCheckedAt): ?><small>Última comprobación: <?= View::e(DateTimePresenter::formatQueue($apiHealthCheckedAt, 'd/m/Y H:i:s')) ?></small><?php endif; ?>
   </div>
   <div class="api-health-head-tools">

@@ -97,12 +97,7 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
   <a class="btn" href="<?= View::e($base) ?>/settings/cron">Volver a Cron</a>
 </div>
 
-<nav class="cron-view-tabs" aria-label="Vistas de Cron">
-  <a href="<?= View::e($base) ?>/settings/cron#resumen">Resumen</a>
-  <a class="is-active" aria-current="page" href="<?= View::e($base) ?>/settings/cron/rhythm">Calibración</a>
-  <a href="<?= View::e($base) ?>/settings/manual-processing">Procesar ahora</a>
-  <a href="<?= View::e($base) ?>/settings/api-health">Salud y alertas</a>
-</nav>
+<?php $automationTab = 'rhythm'; require __DIR__ . '/_automation_nav.php'; ?>
 
 <section class="operation-explainer" aria-label="Cómo funciona el ritmo">
   <div><span>Qué está configurado</span><strong data-rhythm-current-profile><?= $maxCalls ?> llamada<?= $maxCalls === 1 ? '' : 's' ?> API/ciclo</strong></div>

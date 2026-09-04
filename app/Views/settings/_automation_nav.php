@@ -11,8 +11,8 @@ $tabs = [
     'health' => ['/settings/api-health', 'Salud y alertas'],
 ];
 ?>
-<nav class="section-tabs automation-tabs" aria-label="Procesamiento del ERP">
+<nav class="cron-view-tabs automation-tabs" aria-label="Automatización y seguridad API">
   <?php foreach ($tabs as $key => [$path, $label]): ?>
-    <a href="<?= View::e($base . $path) ?>" <?= $automationTab === $key ? 'aria-current="page" class="active"' : '' ?>><?= View::e($label) ?></a>
+    <a href="<?= View::e($base . $path) ?>" <?= $automationTab === $key ? 'aria-current="page" class="is-active active"' : '' ?>><?= View::e($label) ?></a>
   <?php endforeach; ?>
 </nav>

@@ -44,7 +44,7 @@ final class ManagedRuntimePublicationPolicy
     public const VERSION = '2.40.1';
     public const BUILD_ID = 'erp-meli-2.40.1-worker-cycle-control-single-truth-rc1-20260827';
     public const BUILT_AT = '2026-08-27T00:00:00Z';
-    public const MINIMUM_MIGRATION = '300_manual_drain_sessions_2_40_0.sql';
+    public const MINIMUM_MIGRATION = '301_k1d_api_safety_2_40_1.sql';
     private const INVENTORY_MINIMUM_MIGRATION = '295_inventory_warehouse_v1_2_38_0.sql';
     private const QUEUE_V4_MINIMUM_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';
     private const LEGACY_MINIMUM_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
@@ -790,7 +790,9 @@ final class ManagedRuntimePublicationPolicy
             if (in_array($path, ['.gitattributes', '.gitignore', 'config.env.example', 'phpstan.neon'], true)) {
                 return 'BUILD_ONLY';
             }
-            if ($path === 'H3_BACKLOG_RECOVERY_DESIGN.txt') {
+            if (str_ends_with(strtolower($path), '.md')
+                || in_array($path, ['H3_BACKLOG_RECOVERY_DESIGN.txt', 'VERSION.txt'], true)
+            ) {
                 return 'NON_RUNTIME';
             }
             return 'UNCLASSIFIED';

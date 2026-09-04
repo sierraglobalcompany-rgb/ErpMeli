@@ -36,6 +36,8 @@ $businessLegacyAllowed = [
     'app/Views/settings/manual_processing.php',
     'app/Views/settings/cron.php',
     'app/Views/settings/cron_shell.php',
+    'app/Views/settings/api_workload.php',
+    'app/Services/AutomationCliCapacityArgumentParser.php',
     'app/Services/ApiHealthOverviewService.php',
     'app/Services/ManualCampaignPreviewService.php',
     'app/Services/ManualProcessingService.php',

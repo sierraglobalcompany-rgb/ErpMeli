@@ -420,10 +420,12 @@ $router->get('/settings/cron/run.json', [SettingsController::class, 'cronRunJson
 $router->get('/settings/cron/history.json', [SettingsController::class, 'cronHistoryJson']);
 $router->get('/settings/cron/rhythm', [SettingsController::class, 'cronRhythm']);
 $router->post('/settings/cron/rhythm', [SettingsController::class, 'saveCronRhythm']);
+$router->post('/settings/cron/call-budget', [SettingsController::class, 'saveCronCallBudget']);
 $router->get('/settings/cron/rhythm/preview.json', [SettingsController::class, 'cronRhythmPreview']);
 $router->get('/settings/cron/next', [SettingsController::class, 'automationNext']);
 $router->get('/settings/cron/work', [SettingsController::class, 'automationWork']);
 $router->post('/settings/cron/work/remediate', [SettingsController::class, 'automationWorkRemediate']);
+$router->get('/settings/cron/review', [SettingsController::class, 'automationAttention']);
 $router->get('/settings/cron/queue', [SettingsController::class, 'automationQueue']);
 $router->get('/settings/cron/history', [SettingsController::class, 'automationHistory']);
 $router->get('/settings/cron/diagnostics', [SettingsController::class, 'automationDiagnostics']);
@@ -457,6 +459,8 @@ $router->get('/settings/api-health/incidents.json', [SettingsController::class, 
 $router->get('/settings/api-health/incidents/show', [SettingsController::class, 'apiHealthIncidentShow']);
 $router->get('/settings/api-health/incidents/show.json', [SettingsController::class, 'apiHealthIncidentShowJson']);
 $router->get('/settings/api-health/incidents/status.json', [SettingsController::class, 'apiHealthIncidentsStatus']);
+$router->post('/settings/api-health/email-settings', [SettingsController::class, 'saveCriticalApiAlertSettings']);
+$router->post('/settings/api-health/email-test', [SettingsController::class, 'sendCriticalApiAlertTestEmail']);
 $router->get('/settings/api-health/protection', [SettingsController::class, 'apiHealthProtection']);
 $router->get('/settings/api-health/technical', [SettingsController::class, 'apiHealthTechnical']);
 $router->post('/settings/api-health/incidents/acknowledge', [SettingsController::class, 'acknowledgeApiIncident']);

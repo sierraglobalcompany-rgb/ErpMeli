@@ -19,6 +19,8 @@ use App\Services\ApiManualPauseService;
 use App\Services\ApiErrorSummaryService;
 use App\Services\BusinessScopeContext;
 use App\Services\AppSettingsService;
+use App\Services\AutomationCallBudgetService;
+use App\Services\CriticalApiAlertEmailService;
 use App\Services\CronHealthService;
 use App\Services\ReleaseIntegrityService;
 use App\Services\DiagnosticService;
@@ -142,6 +144,40 @@ final class SettingsController
             $settings->set('api.rhythm.last_ramp_evaluation_at', $now, 'api_rhythm');
         }
         Session::flash('success', 'Ritmo guardado. Los límites de Mercado Libre, cuenta, endpoint y presupuesto siguen prevaleciendo.');
+        $this->redirect('/settings/cron/rhythm');
+    }
+
+    public function saveCronCallBudget(): void
+    {
+        $this->requireAdminPermanent();
+        $this->assertSameOrigin();
+        Csrf::validate($_POST['_token'] ?? null);
+
+        $raw = trim((string) ($_POST['automation_max_api_calls_per_cycle'] ?? ''));
+        if ($raw === '' || preg_match('/^\d+$/', $raw) !== 1) {
+            Session::flash('error', 'El presupuesto por ciclo debe ser un entero entre 1 y 15.');
+            $this->redirect('/settings/cron/rhythm');
+        }
+
+        $postedMaxCalls = max(
+            AutomationCallBudgetService::MIN,
+            min(AutomationCallBudgetService::HARD_MAX, (int) $raw)
+        );
+        $previousMaxCalls = (int) (new AutomationCallBudgetService())->resolve(null, null)['max_calls'];
+        if ($postedMaxCalls > $previousMaxCalls) {
+            $gate = $this->queueV4RhythmIncreaseGate();
+            if (empty($gate['allowed'])) {
+                Session::flash('error', 'No se subió el presupuesto por ciclo: ' . $gate['message']);
+                $this->redirect('/settings/cron/rhythm');
+            }
+        }
+
+        (new AppSettingsService())->set(
+            AutomationCallBudgetService::SETTING_KEY,
+            (string) $postedMaxCalls,
+            'automation'
+        );
+        Session::flash('success', 'Presupuesto de llamadas por ciclo guardado.');
         $this->redirect('/settings/cron/rhythm');
     }
 
@@ -1820,6 +1856,14 @@ final class SettingsController
         $page = max(1, (int) ($_GET['page'] ?? 1));
         $perPage = max(10, min(100, (int) ($_GET['per_page'] ?? 50)));
         $this->releaseReadOnlySession();
+        if ((string) ($_GET['full'] ?? '') !== '1') {
+            $query = http_build_query($filters + ['page' => $page, 'per_page' => $perPage]);
+            $apiHealthSection = 'incidents';
+            $apiHealthHours = (int) $filters['hours'];
+            $apiHealthCheckedAt = gmdate('Y-m-d H:i:s');
+            View::render('settings/api_health_incidents_shell', compact('query', 'apiHealthSection', 'apiHealthHours', 'apiHealthCheckedAt'));
+            return;
+        }
         $service = new ApiHealthService();
         try {
             if (method_exists($service, 'incidentPage')) {
@@ -1901,10 +1945,49 @@ final class SettingsController
         $this->apiHealthIncidentsJson();
     }
 
+    public function sendCriticalApiAlertTestEmail(): void
+    {
+        $this->requireAdminPermanent();
+        $this->assertSameOrigin();
+        Csrf::validate($_POST['_token'] ?? null);
+        $result = (new CriticalApiAlertEmailService())->sendTest();
+        Session::flash(
+            !empty($result['sent']) ? 'success' : 'error',
+            !empty($result['sent'])
+                ? 'Email de prueba enviado.'
+                : 'No se envió el email de prueba: ' . (string) ($result['status'] ?? 'sin detalle') . '.'
+        );
+        $this->redirect('/settings/api-health');
+    }
+
+    public function saveCriticalApiAlertSettings(): void
+    {
+        $this->requireAdminPermanent();
+        $this->assertSameOrigin();
+        Csrf::validate($_POST['_token'] ?? null);
+
+        $settings = new AppSettingsService();
+        $to = trim((string) ($_POST['alerts_email_to'] ?? ''));
+        $cooldown = max(5, min(1440, (int) ($_POST['alerts_email_cooldown_minutes'] ?? 60)));
+        if ($to !== '' && filter_var($to, FILTER_VALIDATE_EMAIL) === false) {
+            Session::flash('error', 'El correo de alertas críticas no tiene un formato válido.');
+            $this->redirect('/settings/api-health');
+        }
+
+        $settings->set('alerts.email.enabled', isset($_POST['alerts_email_enabled']) ? '1' : '0', 'alerts');
+        $settings->set('alerts.email.to', $to, 'alerts');
+        $settings->set('alerts.email.cooldown_minutes', (string) $cooldown, 'alerts');
+        $settings->set('alerts.email.notify_429', isset($_POST['alerts_email_notify_429']) ? '1' : '0', 'alerts');
+        $settings->set('alerts.email.notify_auth', isset($_POST['alerts_email_notify_auth']) ? '1' : '0', 'alerts');
+        Session::flash('success', 'Alertas críticas guardadas en Salud y alertas.');
+        $this->redirect('/settings/api-health');
+    }
+
     public function apiHealthIncidentsJson(): void
     {
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
+        $started = microtime(true);
         $filters = [
             'hours' => max(1, min(720, (int) ($_GET['hours'] ?? 24))),
             'account_id' => max(0, (int) ($_GET['account_id'] ?? 0)),
@@ -1918,15 +2001,39 @@ final class SettingsController
         $perPage = max(10, min(100, (int) ($_GET['per_page'] ?? 50)));
         $service = new ApiHealthService();
         $accountId = (int) $filters['account_id'] > 0 ? (int) $filters['account_id'] : null;
-        $incidentPage = $service->incidentPage($filters, $perPage, ($page - 1) * $perPage);
-        $incidentsAvailable = $service->dataAvailable();
-        $summary = (new ApiHealthService())->summary((int) $filters['hours'], $accountId);
+        try {
+            $incidentPage = $service->incidentPage($filters, $perPage, ($page - 1) * $perPage);
+            $incidentsAvailable = $service->dataAvailable();
+            $summary = (new ApiHealthService())->summary((int) $filters['hours'], $accountId);
+        } catch (\Throwable $error) {
+            header('Server-Timing: api_incidents;dur=' . number_format((microtime(true) - $started) * 1000, 1, '.', ''));
+            http_response_code(503);
+            $this->json([
+                'ok' => false,
+                'protocol' => 'unavailable',
+                'snapshot_state' => 'unavailable',
+                'authoritative' => false,
+                'summary' => ['error' => 'incident_json_unavailable'],
+                'incidents' => [],
+                'pagination' => [
+                    'page' => $page,
+                    'per_page' => $perPage,
+                    'total' => 0,
+                    'pages' => 1,
+                    'truncated' => false,
+                ],
+                'message' => 'No se pudo cargar incidentes en segundo plano. No se informa como cero.',
+                'measured_at' => gmdate('Y-m-d\TH:i:s\Z'),
+            ]);
+            return;
+        }
         if (isset($summary['budget']['windows'])) {
             $summary['budget']['windows'] = [];
         }
         if (!$incidentsAvailable) {
             http_response_code(503);
         }
+        header('Server-Timing: api_incidents;dur=' . number_format((microtime(true) - $started) * 1000, 1, '.', ''));
         $this->json([
             'ok' => $incidentsAvailable,
             'protocol' => $incidentPage['protocol'],

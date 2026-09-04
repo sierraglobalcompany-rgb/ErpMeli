@@ -41,6 +41,11 @@ final class SettingsDefinitionRepository
                 $this->bool('api.cron.priority_budget_enabled', 'Priorizar automatización segura', true, 'Protege órdenes y tokens antes que tareas secundarias.'),
                 $this->number('api.budget.global_requests_per_15m', 'Capacidad general', 300, 1, 10000, 'llamadas API / 15 min', 'Límite preventivo de toda la aplicación.'),
                 $this->number('api.budget.account_requests_per_15m', 'Capacidad por cuenta', 120, 1, 5000, 'llamadas API / 15 min', 'Evita que una cuenta consuma todo el presupuesto.'),
+                $this->managed(
+                    $this->number('automation.max_api_calls_per_cycle', 'Máximo de llamadas API por ciclo automático', 1, 1, 15, 'llamadas API', 'Unidad operativa canónica del cron automático. Se aumenta manualmente sólo con evidencia sana.'),
+                    '/settings/cron/rhythm',
+                    'Cambiar en Automatización y seguridad API'
+                ),
                 $this->number('api.budget.web_request_api_limit', 'Máximo desde una pantalla', 10, 1, 100, 'llamadas API', 'Las operaciones mayores deben pasar a automatización.'),
                 $this->number('oauth.auto_refresh_lead_seconds', 'Anticipación de renovación OAuth', 3600, 300, 7200, 'segundos', 'La automatización renueva antes del vencimiento sin alterar la barrera comercial.', true),
                 $this->number('oauth.auto_refresh_global_reserve_per_15m', 'Reserva OAuth global', 3, 3, 30, 'llamadas API / 15 min', 'Capacidad mínima reservada para renovar las tres cuentas.', true),
@@ -60,6 +65,33 @@ final class SettingsDefinitionRepository
                 $this->number('api.rhythm.billing_429_backoff_2_minutes', 'Billing 429 · segunda pausa', 120, 5, 720, 'min', 'Sólo para Billing 429 remoto real; Retry-After de Mercado Libre prevalece.', true),
                 $this->number('api.rhythm.billing_429_backoff_3_minutes', 'Billing 429 · tercera pausa', 360, 5, 720, 'min', 'Sólo para Billing 429 remoto real; Retry-After de Mercado Libre prevalece.', true),
                 $this->number('api.rhythm.billing_429_backoff_max_minutes', 'Billing 429 · pausa máxima', 720, 5, 720, 'min', 'Sólo para Billing 429 remoto real; Retry-After de Mercado Libre prevalece.', true),
+                $this->number('api.rhythm.shared_429_backoff_seconds', '429 remoto · pausa global compartida', 1800, 300, 86400, 'seg', 'Barrera simple para todas las fuentes automáticas cuando Mercado Libre responde 429 sin Retry-After.', true),
+                $this->number('api.rhythm.orders_search_requests_per_15m', 'Búsqueda de órdenes · techo local', 3, 1, 30, 'llamadas / 15 min', 'Límite específico de /orders/search; no reemplaza el máximo total por ciclo.', true),
+                $this->managed(
+                    $this->bool('alerts.email.enabled', 'Enviar alertas críticas por correo', false, 'Notifica 429, autorización o fallas fatales con deduplicación y sin secretos.', true),
+                    '/settings/api-health',
+                    'Cambiar en Salud y alertas'
+                ),
+                $this->managed(
+                    $this->text('alerts.email.to', 'Correo para alertas críticas', '', 'email', 'Destino operativo para alertas API críticas.', true),
+                    '/settings/api-health',
+                    'Cambiar en Salud y alertas'
+                ),
+                $this->managed(
+                    $this->number('alerts.email.cooldown_minutes', 'Repetición mínima de alerta crítica', 60, 5, 1440, 'min', 'Evita repetir correos por el mismo incidente dentro de la ventana.', true),
+                    '/settings/api-health',
+                    'Cambiar en Salud y alertas'
+                ),
+                $this->managed(
+                    $this->bool('alerts.email.notify_429', 'Alertar 429 remoto', true, 'Avisa cuando Mercado Libre confirma rate limit remoto.', true),
+                    '/settings/api-health',
+                    'Cambiar en Salud y alertas'
+                ),
+                $this->managed(
+                    $this->bool('alerts.email.notify_auth', 'Alertar autorización/permisos', true, 'Avisa 401/403 remotos.', true),
+                    '/settings/api-health',
+                    'Cambiar en Salud y alertas'
+                ),
                 $this->number('api.guard.jitter_min_ms', 'Espera aleatoria mínima', 250, 0, 10000, 'ms', 'Separa consultas simultáneas.', true),
                 $this->number('api.guard.jitter_max_ms', 'Espera aleatoria máxima', 1500, 0, 30000, 'ms', 'Separa consultas simultáneas.', true),
                 $this->number('api.logs.request_retention_days', 'Retención de consultas', 60, 1, 730, 'días', 'Conserva evidencia operativa sin crecer indefinidamente.', true),
@@ -142,6 +174,12 @@ final class SettingsDefinitionRepository
     private function bool(string $key, string $label, bool $recommended, string $help, bool $advanced = false): array
     {
         return compact('key', 'label', 'recommended', 'help', 'advanced') + ['type' => 'boolean'];
+    }
+
+    private function managed(array $field, string $href, string $label): array
+    {
+        $field['managed_elsewhere'] = ['href' => $href, 'label' => $label];
+        return $field;
     }
 
     private function select(string $key, string $label, string $recommended, array $options, string $help, bool $advanced = false): array

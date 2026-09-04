@@ -199,7 +199,7 @@ $label = static fn (string $value): string => match ($value) {
     </div>
     <?php if (!$automatic): ?>
       <div class="alert warning">
-        Las notificaciones se atienden mediante la automatización única <code><?= View::e($notificationCronCommand ?? 'php jobs/queue_v4_clean.php --runtime=45 --max-calls=2') ?></code>. No configure una segunda tarea.
+        Las notificaciones se atienden mediante la automatización única <code><?= View::e($notificationCronCommand ?? 'php jobs/queue_v4_clean.php --runtime=45') ?></code>. No configure una segunda tarea.
       </div>
     <?php endif; ?>
     <div class="notification-actions">

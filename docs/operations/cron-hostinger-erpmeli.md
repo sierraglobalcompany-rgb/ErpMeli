@@ -3,7 +3,7 @@
 Current production Cron command:
 
 ```text
-/usr/bin/php /home/u390570745/domains/bodegadigitalmedellin.com/public_html/erp-meli/jobs/queue_v4_clean.php --runtime=45 --max-calls=2
+/usr/bin/php /home/u390570745/domains/bodegadigitalmedellin.com/public_html/erp-meli/jobs/queue_v4_clean.php --runtime=45
 ```
 
 Schedule:
@@ -15,7 +15,7 @@ Schedule:
 Rules:
 
 - Keep exactly one ERP Meli Queue V4 Cron entry active.
-- Do not duplicate this Cron with legacy `--max-jobs` launchers.
+- Do not duplicate this Cron with technical override launchers such as `--max-calls` or legacy `--max-jobs`.
 - Do not use manual Cron execution as validation.
 - Do not change Billing interval, Billing scope, backoff policy, schema, or version as part of Cron validation.
 

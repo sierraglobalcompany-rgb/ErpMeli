@@ -73,13 +73,15 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
 <div class="page-head manual-page-head">
   <div>
     <p class="eyebrow">ADMINISTRACIÓN</p>
-    <h1>Procesamiento manual</h1>
+    <h1>Procesar ahora</h1>
     <p><span class="status-dot <?= empty($campaignReady) || !empty($emergencyStop) ? 'is-paused' : '' ?>"></span><span class="badge <?= empty($campaignReady) || !empty($emergencyStop) ? 'amber' : 'green' ?>"><?= empty($campaignReady) || !empty($emergencyStop) ? 'Ocupado' : 'Disponible' ?></span> Procesa una selección acotada y termina al responder la petición.</p>
   </div>
   <div class="page-actions">
     <a class="btn" href="<?= View::e($base . '/settings/cron') ?>">Ver automatización</a>
   </div>
 </div>
+
+<?php $automationTab = 'manual'; require __DIR__ . '/_automation_nav.php'; ?>
 
 <ol class="manual-stepper" aria-label="Etapas del procesamiento">
   <li class="<?= $preview === null ? 'active' : 'complete' ?>"><span>1</span> Qué procesar</li>

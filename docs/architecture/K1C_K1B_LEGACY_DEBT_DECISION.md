@@ -6,7 +6,7 @@ Decision:
 
 - Primary operator surfaces must describe capacity as physical API calls and current work as pending items.
 - Technical surfaces may still mention Queue V4, worker, job, batch, `--max-jobs`, database tables and source adapters when that wording is necessary for diagnosis or compatibility.
-- `--max-jobs=2` remains only as a temporary hPanel compatibility alias documented inside diagnostics; the human command remains `--max-calls=2`.
+- `--max-calls=N` and legacy `--max-jobs=N` remain only as temporary support overrides documented inside diagnostics; the human command remains `queue_v4_clean.php --runtime=45`.
 - K1C does not change drainer behavior, cron cadence, schema, updater, production state or Mercado Libre transport.
 
 Reason:

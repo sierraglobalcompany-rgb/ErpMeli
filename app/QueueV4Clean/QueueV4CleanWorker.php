@@ -8,6 +8,7 @@ use App\Services\ApiExecutionMetadataContext;
 use App\Services\ApiBudgetInfrastructureException;
 use App\Services\ApiBudgetExhaustedException;
 use App\Services\ApiManualPauseException;
+use App\Services\ApiRhythmPolicyService;
 use App\Services\ApiRhythmDeferredException;
 use App\Services\CronDeadlineContext;
 use App\Services\CronDeadlineDeferredException;
@@ -31,7 +32,7 @@ use Throwable;
 
 final class QueueV4CleanWorker
 {
-    public const DEFAULT_MAX_CALLS = 2;
+    public const DEFAULT_MAX_CALLS = 1;
     public const HARD_MAX_CALLS = 15;
     /** @deprecated Temporary Hostinger/hPanel compatibility input alias. */
     public const DEFAULT_MAX_JOBS = self::DEFAULT_MAX_CALLS;
@@ -336,6 +337,12 @@ final class QueueV4CleanWorker
                     continue;
                 } catch (MeliApiException $error) {
                     $this->functionalFailure($job, $runId, $error);
+                    $nextSafeAt = null;
+                    if ((int) ($error->httpStatus ?? 0) === 429) {
+                        $nextSafeAt = (new ApiRhythmPolicyService())->openSharedRateLimitPause(
+                            isset($error->response['retry_after']) ? (int) $error->response['retry_after'] : null
+                        );
+                    }
                     $receiptJobs[] = $this->cycleJobReceipt(
                         $job,
                         'waiting',
@@ -343,9 +350,13 @@ final class QueueV4CleanWorker
                         $error->requestId !== null,
                         $error->httpStatus,
                         null,
-                        null
+                        $nextSafeAt
                     );
                     $deferred++;
+                    if ((int) ($error->httpStatus ?? 0) === 429) {
+                        $endReason = 'remote_429_global_pause';
+                        break;
+                    }
                     continue;
                 } catch (RuntimeException $error) {
                     $this->functionalFailure($job, $runId, $error);
@@ -370,6 +381,10 @@ final class QueueV4CleanWorker
                         isset($outcome['next_safe_at']) ? (string) $outcome['next_safe_at'] : null
                     );
                     $deferred++;
+                    if (!empty($outcome['reached_remote']) && (int) ($outcome['http_status'] ?? 0) === 429) {
+                        $endReason = 'remote_429_global_pause';
+                        break;
+                    }
                     continue;
                 }
                 if (($outcome['state'] ?? '') === 'review') {
@@ -389,6 +404,10 @@ final class QueueV4CleanWorker
                     );
                     $reviewed++;
                     $deferred++;
+                    if (!empty($outcome['reached_remote']) && (int) ($outcome['http_status'] ?? 0) === 429) {
+                        $endReason = 'remote_429_global_pause';
+                        break;
+                    }
                     continue;
                 }
                 if (($outcome['state'] ?? '') !== 'completed') {
@@ -398,7 +417,7 @@ final class QueueV4CleanWorker
                 $receiptJobs[] = $this->cycleJobReceipt($job, 'completed', 'completed', (bool) ($outcome['reached_remote'] ?? false), null, null, null);
                 $completed++;
             }
-            if (QueueV4CleanCycleBudget::exhausted()) {
+            if ($endReason !== 'remote_429_global_pause' && QueueV4CleanCycleBudget::exhausted()) {
                 $endReason = 'call_budget_exhausted';
             } elseif ($claimed >= $pointerSafetyLimit) {
                 $endReason = 'pointer_safety_limit_reached';
@@ -1091,6 +1110,7 @@ final class QueueV4CleanWorker
             'rhythm_interval',
             'rhythm_block_pause',
             'rhythm_global_window',
+            'remote_429_global_pause',
             'rhythm_penalty_state_unavailable',
         ], true)) {
             return 'break';

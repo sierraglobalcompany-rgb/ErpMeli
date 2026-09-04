@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "authority_id": "worker-cycle-control-single-truth-release-2.40.1-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "8dd746a7f0fb9ca71e8f9ed7aebde7a8795e87ee62bf6518019f7ef3675b5cbf",
-  "coverage_base_commit": "8e102e2711905a3dc9c9c4e62a4afce41adbfa1f",
+  "runtime_manifest_paths_sha256": "0f0dff2c41cdebffd8875f2f8b94ee38af3cda7a1dfdd2dc65c833291d351e7f",
+  "coverage_base_commit": "6cb102595d0f2e5d47b07fa868aec8bbc22f8653",
   "classifications": {
     "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",
     "RUNTIME_OPTIONAL_FAIL_CLOSED": "Optional capacity that fails closed when absent.",
@@ -91,7 +91,7 @@
       ],
       "provenance": {
         "kind": "static_tracked_release_authority",
-        "generator": "2.40.1 Worker Cycle Control release classification"
+        "generator": "2.40.1 K1D PR11 fix1 release classification"
       },
       "missing_effect": "Runtime manifest completeness fails closed."
     },

@@ -425,9 +425,9 @@ final class CronHealthService
     {
         $root = AppPaths::installationRoot();
         if (AppPaths::managed() && is_file($root . '/launcher/cron.php')) {
-            return 'php ' . $root . '/launcher/cron.php queue_v4_clean.php --runtime=45 --max-calls=2';
+            return 'php ' . $root . '/launcher/cron.php queue_v4_clean.php --runtime=45';
         }
-        return 'php ' . $root . '/jobs/queue_v4_clean.php --runtime=45 --max-calls=2';
+        return 'php ' . $root . '/jobs/queue_v4_clean.php --runtime=45';
     }
 
     /** @return array<string,mixed> */

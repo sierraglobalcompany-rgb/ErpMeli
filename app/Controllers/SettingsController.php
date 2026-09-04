@@ -493,12 +493,6 @@ final class SettingsController
         if (isset($_POST['questions_email_to'])) {
             $settings->set('questions.email_to', trim((string) $_POST['questions_email_to']), 'questions');
         }
-        $settings->set('alerts.email.enabled', isset($_POST['alerts_email_enabled']) ? '1' : '0', 'alerts');
-        if (isset($_POST['alerts_email_to'])) {
-            $settings->set('alerts.email.to', trim((string) $_POST['alerts_email_to']), 'alerts');
-        }
-        $settings->set('alerts.email.notify_429', isset($_POST['alerts_email_notify_429']) ? '1' : '0', 'alerts');
-        $settings->set('alerts.email.notify_auth', isset($_POST['alerts_email_notify_auth']) ? '1' : '0', 'alerts');
         $settings->set('notifications.enabled', isset($_POST['notifications_enabled']) ? '1' : '0', 'notifications');
         $settings->set('notifications.safe_mode', isset($_POST['notifications_safe_mode']) ? '1' : '0', 'notifications');
         $settings->set('notifications.missed_feeds_enabled', isset($_POST['notifications_missed_feeds_enabled']) ? '1' : '0', 'notifications');
@@ -1963,7 +1957,30 @@ final class SettingsController
                 ? 'Email de prueba enviado.'
                 : 'No se envió el email de prueba: ' . (string) ($result['status'] ?? 'sin detalle') . '.'
         );
-        $this->redirect('/settings/cron/rhythm');
+        $this->redirect('/settings/api-health');
+    }
+
+    public function saveCriticalApiAlertSettings(): void
+    {
+        $this->requireAdminPermanent();
+        $this->assertSameOrigin();
+        Csrf::validate($_POST['_token'] ?? null);
+
+        $settings = new AppSettingsService();
+        $to = trim((string) ($_POST['alerts_email_to'] ?? ''));
+        $cooldown = max(5, min(1440, (int) ($_POST['alerts_email_cooldown_minutes'] ?? 60)));
+        if ($to !== '' && filter_var($to, FILTER_VALIDATE_EMAIL) === false) {
+            Session::flash('error', 'El correo de alertas críticas no tiene un formato válido.');
+            $this->redirect('/settings/api-health');
+        }
+
+        $settings->set('alerts.email.enabled', isset($_POST['alerts_email_enabled']) ? '1' : '0', 'alerts');
+        $settings->set('alerts.email.to', $to, 'alerts');
+        $settings->set('alerts.email.cooldown_minutes', (string) $cooldown, 'alerts');
+        $settings->set('alerts.email.notify_429', isset($_POST['alerts_email_notify_429']) ? '1' : '0', 'alerts');
+        $settings->set('alerts.email.notify_auth', isset($_POST['alerts_email_notify_auth']) ? '1' : '0', 'alerts');
+        Session::flash('success', 'Alertas críticas guardadas en Salud y alertas.');
+        $this->redirect('/settings/api-health');
     }
 
     public function apiHealthIncidentsJson(): void

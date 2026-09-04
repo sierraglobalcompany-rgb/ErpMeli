@@ -76,8 +76,12 @@ require __DIR__ . '/_api_health_nav.php';
       metric('remote', rows.filter(i => i && i.reached_remote && Number(i.http_status || 0) >= 500).length);
       title.textContent = ok ? 'Catálogo agrupado cargado' : 'Catálogo no certificado';
       status.textContent = ok ? `Mostrando ${rows.length} de ${total} grupos.` : 'No se informa como cero; abra la lectura completa si necesita detalle.';
+      if (!ok) {
+        list.innerHTML = '<div class="empty-state"><strong>La lectura no está certificada</strong><span>No se informa como cero. Abra la lectura completa o reintente cuando el catálogo responda.</span></div>';
+        return;
+      }
       if (rows.length === 0) {
-        list.innerHTML = '<div class="empty-state"><strong>No hay grupos para esta lectura certificada</strong><span>Si el catálogo no está al día, el sistema lo indicará arriba.</span></div>';
+        list.innerHTML = '<div class="empty-state"><strong>No hay incidentes para esta lectura certificada</strong><span>La respuesta fue válida y no devolvió grupos en este periodo.</span></div>';
         return;
       }
       list.innerHTML = rows.slice(0, 10).map((incident) => {
@@ -92,9 +96,9 @@ require __DIR__ . '/_api_health_nav.php';
     .catch(() => {
       clearTimeout(timeout);
       root.setAttribute('aria-busy', 'false');
-      title.textContent = 'Lectura completa recomendada';
-      status.textContent = 'El JSON tardó demasiado o falló; no se informa como vacío.';
-      list.innerHTML = `<div class="empty-state"><strong>No se pudo cargar en segundo plano</strong><span>Use “Abrir lectura completa” para una lectura acotada del servidor.</span></div>`;
+      title.textContent = 'Lectura no certificada';
+      status.textContent = 'El JSON tardó demasiado, falló o no fue válido; no se informa como cero.';
+      list.innerHTML = `<div class="empty-state"><strong>La lectura no está certificada</strong><span>No se informa como cero. Use “Abrir lectura completa” para una lectura acotada del servidor.</span></div>`;
     });
 
   function escapeHtml(value) {

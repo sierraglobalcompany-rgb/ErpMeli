@@ -3,6 +3,7 @@
 use App\Core\Csrf;
 use App\Core\Env;
 use App\Core\View;
+use App\Services\AppSettingsService;
 use App\Services\AssetVersionService;
 use App\Services\AutomationHumanLanguageService;
 use App\Services\DateTimePresenter;
@@ -34,6 +35,12 @@ $priorityIncidents = array_values(array_filter(
         || in_array((string) ($incident['severity'] ?? ''), ['critical', 'high'], true)
 ));
 $rateLimitPriorityCount = count(array_filter($priorityIncidents, static fn(array $incident): bool => ($incident['transport_class'] ?? '') === 'REMOTE_HTTP_429'));
+$alertSettings = new AppSettingsService();
+$alertsEmailEnabled = $alertSettings->bool('alerts.email.enabled', false);
+$alertsEmailTo = (string) $alertSettings->get('alerts.email.to', '');
+$alertsEmailCooldown = max(5, min(1440, $alertSettings->int('alerts.email.cooldown_minutes', 60)));
+$alertsEmailNotify429 = $alertSettings->bool('alerts.email.notify_429', true);
+$alertsEmailNotifyAuth = $alertSettings->bool('alerts.email.notify_auth', true);
 $apiHealthSection = 'overview';
 $apiHealthHours = (int) ($overview['hours'] ?? 24);
 $apiHealthCheckedAt = $overview['checked_at'] ?? null;
@@ -83,6 +90,70 @@ if (empty($apiHealthPartial)) {
     <a href="<?= View::e($incidentLink(['hours' => 24, 'origin' => 'protection'])) ?>"><span>Protecciones locales</span><strong><?= (int) ($dayWindow['local_protections'] ?? 0) ?></strong><p>No llegaron a Mercado Libre.</p></a>
     <a href="<?= View::e($incidentLink(['hours' => 24, 'origin' => 'remote'])) ?>"><span>5xx remoto</span><strong><?= (int) ($dayWindow['remote_5xx'] ?? 0) ?></strong><p>Fallo real del remoto si aparece.</p></a>
   </div>
+</section>
+
+<section class="api-command-section" aria-labelledby="api-critical-email-title">
+  <header>
+    <div>
+      <span class="eyebrow">Salud y alertas</span>
+      <h2 id="api-critical-email-title">Alertas críticas por email</h2>
+      <p>Configura avisos de 429 remoto, autorización/permisos y fallos críticos sin duplicar controles en Configuración.</p>
+    </div>
+  </header>
+  <form method="post" action="<?= View::e($base) ?>/settings/api-health/email-settings" class="settings-section-form api-email-settings-form">
+    <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
+    <div class="settings-fields-grid">
+      <div class="setting-field is-toggle">
+        <div class="setting-field-copy">
+          <label for="alerts-email-enabled">Activar alertas críticas</label>
+          <p id="alerts-email-enabled-help">Notifica 429 remoto, autorización o fallos críticos con deduplicación y sin secretos.</p>
+        </div>
+        <label class="switch" aria-label="Activar alertas críticas">
+          <input id="alerts-email-enabled" type="checkbox" name="alerts_email_enabled" value="1" <?= $alertsEmailEnabled ? 'checked' : '' ?> aria-describedby="alerts-email-enabled-help">
+          <span aria-hidden="true"></span>
+        </label>
+      </div>
+      <div class="setting-field">
+        <label for="alerts-email-to">Correo de destino</label>
+        <p id="alerts-email-to-help">Destino operativo para alertas API críticas.</p>
+        <div class="setting-control">
+          <input class="input" id="alerts-email-to" type="email" name="alerts_email_to" value="<?= View::e($alertsEmailTo) ?>" aria-describedby="alerts-email-to-help">
+        </div>
+      </div>
+      <div class="setting-field">
+        <label for="alerts-email-cooldown">Cooldown</label>
+        <p id="alerts-email-cooldown-help">Evita repetir correos por el mismo incidente dentro de la ventana.</p>
+        <div class="setting-control">
+          <input class="input" id="alerts-email-cooldown" type="number" name="alerts_email_cooldown_minutes" min="5" max="1440" value="<?= $alertsEmailCooldown ?>" aria-describedby="alerts-email-cooldown-help">
+          <span class="setting-unit">min</span>
+        </div>
+      </div>
+      <div class="setting-field is-toggle">
+        <div class="setting-field-copy">
+          <label for="alerts-email-429">Notificar 429</label>
+          <p id="alerts-email-429-help">Avisa cuando Mercado Libre confirma rate limit remoto.</p>
+        </div>
+        <label class="switch" aria-label="Notificar 429">
+          <input id="alerts-email-429" type="checkbox" name="alerts_email_notify_429" value="1" <?= $alertsEmailNotify429 ? 'checked' : '' ?> aria-describedby="alerts-email-429-help">
+          <span aria-hidden="true"></span>
+        </label>
+      </div>
+      <div class="setting-field is-toggle">
+        <div class="setting-field-copy">
+          <label for="alerts-email-auth">Notificar 401/403</label>
+          <p id="alerts-email-auth-help">Avisa errores remotos de autorización o permisos.</p>
+        </div>
+        <label class="switch" aria-label="Notificar 401/403">
+          <input id="alerts-email-auth" type="checkbox" name="alerts_email_notify_auth" value="1" <?= $alertsEmailNotifyAuth ? 'checked' : '' ?> aria-describedby="alerts-email-auth-help">
+          <span aria-hidden="true"></span>
+        </label>
+      </div>
+    </div>
+    <div class="page-actions mt-2">
+      <button class="btn primary" type="submit">Guardar alertas</button>
+      <button class="btn" type="submit" formaction="<?= View::e($base) ?>/settings/api-health/email-test">Enviar email de prueba</button>
+    </div>
+  </form>
 </section>
 
 <section class="api-command-section" aria-labelledby="api-protections-title">

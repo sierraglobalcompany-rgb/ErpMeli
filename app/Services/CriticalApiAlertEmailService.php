@@ -49,8 +49,7 @@ final class CriticalApiAlertEmailService
             }
 
             [$subject, $body] = $this->message($context);
-            $headers = 'From: ' . (Env::get('MAIL_FROM', 'no-reply@localhost') ?: 'no-reply@localhost');
-            $sent = $this->send($to, $subject, $body, $headers);
+            $sent = $this->send($to, $subject, $body, $this->headers());
             $nextAttemptAt = gmdate('Y-m-d H:i:s', time() + ($cooldownMinutes * 60));
             $stmt = $pdo->prepare(
                 'UPDATE api_critical_email_notifications
@@ -100,8 +99,7 @@ final class CriticalApiAlertEmailService
             'next_safe_at' => gmdate('Y-m-d H:i:s', time() + 1800),
             'safe_message' => 'Prueba administrativa de alerta crítica ERP Meli.',
         ]);
-        $headers = 'From: ' . (Env::get('MAIL_FROM', 'no-reply@localhost') ?: 'no-reply@localhost');
-        $sent = $this->send($to, $subject, $body, $headers);
+        $sent = $this->send($to, $subject, $body, $this->headers());
 
         return $this->result(true, $sent, $sent ? 'sent' : 'failed', 'test');
     }
@@ -124,7 +122,7 @@ final class CriticalApiAlertEmailService
             'INSERT INTO api_critical_email_notifications
                  (fingerprint,incident_key,scope_key,first_seen_at,last_seen_at,repetition_count,status,next_attempt_at)
              VALUES
-                 (:fingerprint,:incident_key,:scope_key,:now,:now,1,"pending",NULL)
+                 (:fingerprint,:incident_key,:scope_key,:first_seen_at,:last_seen_at,1,"pending",NULL)
              ON DUPLICATE KEY UPDATE
                  incident_key=VALUES(incident_key),
                  scope_key=VALUES(scope_key),
@@ -135,7 +133,8 @@ final class CriticalApiAlertEmailService
             'fingerprint' => $fingerprint,
             'incident_key' => $incidentKey,
             'scope_key' => $scopeKey,
-            'now' => $now,
+            'first_seen_at' => $now,
+            'last_seen_at' => $now,
         ]);
     }
 
@@ -176,17 +175,18 @@ final class CriticalApiAlertEmailService
         $operationKey = $this->safe((string) ($context['operation_key'] ?? $context['endpoint_key'] ?? ''));
         $message = $this->safe((string) ($context['safe_message'] ?? 'Mercado Libre devolvió una respuesta crítica.'));
         $link = rtrim((string) Env::get('APP_URL', ''), '/') . '/settings/api-health/incidents';
+        $labels = $this->humanContextLabels($companyId, $accountId);
 
         $body = implode("\n", array_filter([
             'ERP Meli - alerta API crítica',
             'Fecha UTC: ' . gmdate('Y-m-d H:i:s'),
             'Severidad: ' . $severity,
-            $companyId > 0 ? 'Empresa ID: ' . $companyId : '',
-            'Cuenta ID: ' . ($accountId > 0 ? (string) $accountId : 'aplicacion'),
+            $labels['company'] !== '' ? 'Empresa: ' . $labels['company'] : '',
+            'Cuenta: ' . $labels['account'],
             'HTTP: ' . $status,
             'Método/endpoint: ' . trim($method . ' ' . $endpoint),
             'Fuente: ' . $source,
-            $operationKey !== '' ? 'Operación: ' . $operationKey : '',
+            $operationKey !== '' ? 'Operación/endpoint: ' . $operationKey : '',
             $jobType !== '' ? 'Trabajo: ' . $jobType : '',
             $sourceWorkId !== '' ? 'Work ID: ' . $sourceWorkId : '',
             $requestId !== '' ? 'Request ID: ' . $requestId : '',
@@ -197,6 +197,56 @@ final class CriticalApiAlertEmailService
         ], static fn(string $line): bool => $line !== ''));
 
         return ['ERP Meli: alerta API HTTP ' . $status, $body];
+    }
+
+    /** @return array{company:string,account:string} */
+    private function humanContextLabels(int $companyId, int $accountId): array
+    {
+        $company = $companyId > 0 ? 'ID técnico ' . $companyId : '';
+        $account = $accountId > 0 ? 'ID técnico ' . $accountId : 'aplicación';
+
+        try {
+            $pdo = Database::connectionFresh();
+            if ($companyId > 0) {
+                $stmt = $pdo->prepare('SELECT name FROM companies WHERE id=:id LIMIT 1');
+                $stmt->execute(['id' => $companyId]);
+                $name = trim((string) ($stmt->fetchColumn() ?: ''));
+                if ($name !== '') {
+                    $company = $this->safe($name) . ' (ID técnico ' . $companyId . ')';
+                }
+            }
+            if ($accountId > 0) {
+                $stmt = $pdo->prepare('SELECT account_name,nickname FROM meli_accounts WHERE id=:id LIMIT 1');
+                $stmt->execute(['id' => $accountId]);
+                $row = $stmt->fetch(PDO::FETCH_ASSOC);
+                if (is_array($row)) {
+                    $name = trim((string) ($row['account_name'] ?? ''));
+                    $nickname = trim((string) ($row['nickname'] ?? ''));
+                    $label = $name !== '' ? $name : $nickname;
+                    if ($label !== '') {
+                        $account = $this->safe($label) . ' (ID técnico ' . $accountId . ')';
+                    }
+                }
+            }
+        } catch (Throwable) {
+            // The email must remain sendable even if the optional human-label lookup is unavailable.
+        }
+
+        return ['company' => $company, 'account' => $account];
+    }
+
+    private function headers(): string
+    {
+        $from = preg_replace('/[\r\n]+/', '', (string) (Env::get('MAIL_FROM', 'no-reply@localhost') ?: 'no-reply@localhost'));
+        if (!is_string($from) || filter_var($from, FILTER_VALIDATE_EMAIL) === false) {
+            $from = 'no-reply@localhost';
+        }
+
+        return implode("\r\n", [
+            'MIME-Version: 1.0',
+            'Content-Type: text/plain; charset=UTF-8',
+            'From: ' . $from,
+        ]);
     }
 
     /** @param array<string,mixed> $context */
@@ -227,7 +277,7 @@ final class CriticalApiAlertEmailService
 
     private function safe(string $value): string
     {
-        return mb_substr(Logger::redactString($value), 0, 500);
+        return mb_substr(preg_replace('/[\r\n]+/', ' ', Logger::redactString($value)) ?? '', 0, 500);
     }
 
     private function send(string $to, string $subject, string $body, string $headers): bool

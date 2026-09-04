@@ -7,15 +7,23 @@ $base = rtrim(Env::get('APP_URL', ''), '/');
 $basicFields = array_values(array_filter($section['fields'], static fn(array $field): bool => !($field['advanced'] ?? false)));
 $advancedFields = array_values(array_filter($section['fields'], static fn(array $field): bool => (bool) ($field['advanced'] ?? false)));
 $fieldId = static fn(string $key): string => 'setting-' . str_replace(['.', '_'], '-', $key);
-$renderField = static function (array $field) use ($values, $fieldId): void {
+$renderField = static function (array $field) use ($values, $fieldId, $base): void {
     $key = $field['key'];
     $id = $fieldId($key);
     $value = (string) ($values[$key] ?? '');
     $retiredQuestionSetting = in_array($key, ['questions.sync_enabled', 'questions.endpoint_confirmed'], true);
     $recommended = is_bool($field['recommended']) ? ($field['recommended'] ? 'Activado' : 'Desactivado') : (string) $field['recommended'];
+    $managed = is_array($field['managed_elsewhere'] ?? null) ? $field['managed_elsewhere'] : null;
 ?>
   <div class="setting-field <?= $field['type'] === 'boolean' ? 'is-toggle' : '' ?>">
-    <?php if ($field['type'] === 'boolean'): ?>
+    <?php if ($managed !== null): ?>
+      <div class="setting-field-copy">
+        <span class="label-like"><?= View::e($field['label']) ?></span>
+        <p><?= View::e($field['help']) ?></p>
+        <small>Valor actual: <?= View::e($value === '' ? 'sin configurar' : $value) ?> · Recomendado: <?= View::e($recommended) ?></small>
+      </div>
+      <a class="btn" href="<?= View::e($base . (string) ($managed['href'] ?? '/settings')) ?>"><?= View::e((string) ($managed['label'] ?? 'Cambiar en su módulo')) ?></a>
+    <?php elseif ($field['type'] === 'boolean'): ?>
       <div class="setting-field-copy">
         <label for="<?= View::e($id) ?>"><?= View::e($field['label']) ?></label>
         <p id="<?= View::e($id) ?>-help"><?= View::e($field['help']) ?></p>

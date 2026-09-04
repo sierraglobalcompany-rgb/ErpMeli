@@ -43,6 +43,8 @@ try {
 $cron = file_get_contents(__DIR__ . '/../app/Services/CronHealthService.php');
 $shell = file_get_contents(__DIR__ . '/../app/Views/settings/cron_shell.php');
 $calibration = file_get_contents(__DIR__ . '/../app/Views/settings/api_workload.php');
+$apiHealth = file_get_contents(__DIR__ . '/../app/Views/settings/api_health.php');
+$settingsDefinitions = file_get_contents(__DIR__ . '/../app/Repositories/SettingsDefinitionRepository.php');
 $worker = file_get_contents(__DIR__ . '/../app/QueueV4Clean/QueueV4CleanWorker.php');
 $email = file_get_contents(__DIR__ . '/../app/Services/CriticalApiAlertEmailService.php');
 $client = file_get_contents(__DIR__ . '/../app/Services/MeliApiClient.php');
@@ -53,7 +55,9 @@ k1b_assert(!str_contains($cron, '--runtime=45 --max-calls='), 'PRIMARY_RECOMMEND
 k1b_assert(!str_contains($cron, '--runtime=45 --max-jobs='), 'PRIMARY_RECOMMENDED_COMMAND_CONTAINS_MAX_JOBS_NO');
 k1b_assert(str_contains($calibration, 'Overrides técnicos') && str_contains($calibration, '--max-calls=N') && str_contains($calibration, '--max-jobs=N'), 'ADVANCED_OVERRIDE_DOCUMENTED');
 k1b_assert(substr_count($calibration, '<form') === substr_count($calibration, '</form>'), 'FORM_TAGS_BALANCED');
-k1b_assert(strpos($calibration, 'critical-email-test-form') > strrpos($calibration, '</form>', strpos($calibration, 'rhythm-profile-form') - strlen($calibration)), 'EMAIL_TEST_FORM_AFTER_PROFILE_FORM');
+k1b_assert(!str_contains($calibration, 'critical-email-test-form') && !str_contains($calibration, '/settings/api-health/email-test'), 'EMAIL_TEST_NOT_IN_CALIBRATION');
+k1b_assert(str_contains($apiHealth, '/settings/api-health/email-settings') && str_contains($apiHealth, '/settings/api-health/email-test'), 'EMAIL_SETTINGS_AND_TEST_IN_API_HEALTH');
+k1b_assert(str_contains($settingsDefinitions, 'managed_elsewhere') && str_contains($settingsDefinitions, '/settings/cron/rhythm') && str_contains($settingsDefinitions, '/settings/api-health'), 'GENERIC_SETTINGS_LINK_MANAGED_CONTROLS');
 k1b_assert(str_contains($index, '/settings/cron/call-budget'), 'CALL_BUDGET_DEDICATED_SAVE');
 $runtimeCatchOffset = strpos($worker, 'catch (RuntimeException $error)');
 $runtimeCatch = $runtimeCatchOffset === false ? '' : substr($worker, $runtimeCatchOffset, 280);
@@ -61,6 +65,7 @@ k1b_assert($runtimeCatch !== '' && !str_contains($runtimeCatch, '$outcome'), 'NO
 k1b_assert(substr_count($worker, '$endReason = \'remote_429_global_pause\';') >= 3, 'FIRST_429_STOPS_WAITING_REVIEW_EXCEPTION_PATHS');
 k1b_assert(str_contains($email, 'claimSendLease') && str_contains($email, 'status="sending"') && str_contains($email, 'rowCount() === 1'), 'EMAIL_ATOMIC_CLAIM');
 k1b_assert(str_contains($email, 'public function sendTest') && !str_contains(substr($email, strpos($email, 'public function sendTest'), 500), 'alerts.email.enabled'), 'EMAIL_TEST_INDEPENDENT_OF_ENABLED');
+k1b_assert(str_contains($email, 'humanContextLabels') && str_contains($email, 'Content-Type: text/plain; charset=UTF-8') && str_contains($email, 'preg_replace'), 'EMAIL_HUMAN_LABELS_AND_SAFE_UTF8_HEADERS');
 k1b_assert(str_contains($client, "\$meta['source']") && str_contains($client, "\$meta['job_type']") && str_contains($client, "\$meta['source_work_id']"), 'EMAIL_CONTEXT_CANONICAL_META');
 k1b_assert(!str_contains($migration, 'notify_scheduler_fatal') && !str_contains($migration, 'notify_recovery'), 'UNIMPLEMENTED_EMAIL_SETTINGS_NOT_MIGRATED');
 

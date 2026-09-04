@@ -73,6 +73,9 @@ $rateLimitIncidents = array_values(array_filter(
     is_array($rhythm['recent_rate_limit_incidents'] ?? null) ? $rhythm['recent_rate_limit_incidents'] : [],
     static fn(array $incident): bool => ($incident['transport_class'] ?? '') === 'REMOTE_HTTP_429'
 ));
+$last429 = $rateLimitIncidents[0] ?? null;
+$last429SeenAt = is_array($last429) ? trim((string) ($last429['last_seen_at'] ?? '')) : '';
+$last429NextSafeAt = is_array($last429) ? trim((string) ($last429['next_safe_at'] ?? $rhythm['next_safe_at'] ?? '')) : trim((string) ($rhythm['next_safe_at'] ?? ''));
 $limitingScope = trim((string) ($rhythm['limiting_scope'] ?? ''));
 $increaseBlocker = trim((string) ($rhythm['increase_blocker'] ?? ''));
 $safeToIncrease = $increaseBlocker === '' && $allowedRpm !== null && $observed60 !== null && $observed60 >= min($allowedRpm, $targetRpm) * 0.7;
@@ -88,8 +91,8 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
 <div class="page-head cron-page-head">
   <div>
     <span class="eyebrow">AUTOMATIZACIÓN · CALIBRACIÓN</span>
-    <h1>Llamadas API por ciclo</h1>
-    <p>Configure cuántas llamadas físicas puede iniciar cada ciclo automático. La unidad visible es la llamada API.</p>
+    <h1>Automatización y seguridad API</h1>
+    <p>Configure el presupuesto físico del ciclo automático sin mezclarlo con ajustes técnicos de ritmo.</p>
   </div>
   <a class="btn" href="<?= View::e($base) ?>/settings/cron">Volver a Cron</a>
 </div>
@@ -109,44 +112,34 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
 
 <section class="rhythm-truth-grid rhythm-capacity-grid" aria-label="Capacidad solicitada, permitida y observada">
   <article>
-    <span>Presupuesto por ciclo</span>
+    <span>Máximo de llamadas API por ciclo automático</span>
     <strong data-rhythm-requested><?= $maxCalls ?> llamada<?= $maxCalls === 1 ? '' : 's' ?></strong>
-    <p data-rhythm-theoretical>Fuente: <?= View::e($maxCallsSource) ?> · hard max 15.</p>
+    <p>Valor permitido: 1–15 llamadas físicas por ciclo.</p>
   </article>
   <article>
-    <span>Rampa actual</span>
-    <strong><?= $adaptiveLimit === null ? 'Por comprobar' : View::e(number_format($adaptiveLimit, 1, ',', '.')) . ' HTTP/min' ?></strong>
-    <p>Puede ser menor que el perfil mientras se reúne evidencia segura.</p>
+    <span>Frecuencia física</span>
+    <strong>Cada minuto</strong>
+    <p>El cron recomendado no lleva presupuesto en la línea de comando.</p>
   </article>
   <article>
-    <span>Ritmo efectivo estimado</span>
-    <strong><?= View::e($fmtRate($allowedRpm)) ?></strong>
-    <p>Permitido ahora; es una estimación, no una promesa. <?= $limitingScope !== '' ? 'Limitante: ' . View::e($limitingScope) . '.' : 'Se mostrará la protección más restrictiva.' ?></p>
+    <span>Máximo teórico de 15 minutos</span>
+    <strong><?= $maxCalls * 15 ?> llamadas</strong>
+    <p>Techo teórico; 429 remoto o pausas locales pueden reducirlo.</p>
   </article>
   <article>
-    <span>Observado · 15 min</span>
-    <strong><?= View::e($fmtRate($observed15)) ?></strong>
-    <p>Transportes que realmente comenzaron en todas las cuentas autorizadas.</p>
+    <span>Fuente efectiva</span>
+    <strong><?= View::e($maxCallsSource) ?></strong>
+    <p>La setting canónica es única: <code>automation.max_api_calls_per_cycle</code>.</p>
   </article>
   <article>
-    <span>Observado · 60 min</span>
-    <strong><?= View::e($fmtRate($observed60)) ?></strong>
-    <p><?= $observed60 === null ? 'Aún no hay una ventana completa comparable.' : 'Todas las cuentas autorizadas · equivale a ' . View::e(number_format($observed60 * 60, 0, ',', '.')) . ' HTTP/h observados.' ?></p>
+    <span>Último 429 / próxima hora segura</span>
+    <strong><?= $last429SeenAt !== '' ? View::e($last429SeenAt) : 'Sin 429 reciente' ?></strong>
+    <p><?= $last429NextSafeAt !== '' ? 'Próxima hora segura: ' . View::e($last429NextSafeAt) : 'Sin pausa 429 activa en esta lectura.' ?></p>
   </article>
   <article>
-    <span>Recursos aceptados por HTTP</span>
-    <strong><?= $resourcesPerHttp === null ? 'Por medir' : View::e(number_format($resourcesPerHttp, 2, ',', '.')) ?></strong>
-    <p>Solo incluye respuestas con conteo certificado. Combina tipos de recurso y no equivale a recursos finalizados.</p>
-  </article>
-  <article>
-    <span>Pendientes operativos</span>
-    <strong><?= $operationalBacklog === null ? 'Por comprobar' : number_format($operationalBacklog, 0, ',', '.') . ' pendientes' ?></strong>
-    <p>En revisión: <?= $reviewBacklog !== null ? number_format($reviewBacklog, 0, ',', '.') : 'por comprobar' ?> · Cron no drena la revisión automáticamente. Completados última hora: <?= $completedLastHour !== null ? number_format($completedLastHour, 0, ',', '.') : 'por comprobar' ?>.</p>
-  </article>
-  <article>
-    <span>Intervalo mínimo</span>
-    <strong>1 segundo</strong>
-    <p>La ventana rodante evita ráfagas al cambiar de minuto.</p>
+    <span>Puerta de aumento</span>
+    <strong><?= $safeToIncrease ? 'Disponible' : 'Bloqueada' ?></strong>
+    <p><?= $safeToIncrease ? 'No hay bloqueo visible en esta lectura.' : View::e($increaseBlocker !== '' ? $increaseBlocker : 'Requiere más evidencia estable antes de subir.') ?></p>
   </article>
 </section>
 
@@ -176,7 +169,7 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
 
 <section class="card rhythm-editor" data-rhythm-editor data-saved-profile="<?= View::e($profile) ?>">
   <div class="card-header">
-      <div><h2>Elegir velocidad máxima</h2><p>Reducir se aplica de inmediato. Aumentar inicia una rampa segura; nunca eleva silenciosamente los límites individuales.</p></div>
+      <div><h2>Presupuesto del ciclo automático</h2><p>Este es el único control primario editable de capacidad automática.</p></div>
   </div>
   <form id="call-budget-form" method="post" action="<?= View::e($base) ?>/settings/cron/call-budget">
     <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
@@ -199,6 +192,8 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
       </div>
     </section>
   </form>
+  <details class="panel settings-advanced rhythm-advanced-settings">
+    <summary><span><strong>Ajustes avanzados</strong><small>Perfiles HTTP, rampa, ventanas, jitter, backoff Billing y controles heredados.</small></span><span aria-hidden="true">⌄</span></summary>
   <form id="rhythm-profile-form" method="post" action="<?= View::e($base) ?>/settings/cron/rhythm">
     <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
     <fieldset class="rhythm-profile-fieldset"><legend>Perfil de velocidad HTTP</legend>
@@ -306,8 +301,5 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
     </div>
     <noscript><p class="alert warning">Puede guardar el perfil sin JavaScript. La confirmación visual se actualizará al recargar.</p></noscript>
   </form>
-  <form id="critical-email-test-form" class="page-actions mt-2" method="post" action="<?= View::e($base) ?>/settings/api-health/email-test">
-    <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
-    <button class="btn" type="submit">Enviar email de prueba</button>
-  </form>
+  </details>
 </section>

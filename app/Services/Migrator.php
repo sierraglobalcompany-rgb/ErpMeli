@@ -657,6 +657,8 @@ final class Migrator
      */
     private function sqlForCurrentServer(string $sql): string
     {
+        $sql = $this->sqlForHistoricalMigration122Compatibility($sql);
+
         if ($this->currentServerIsMariaDb === null) {
             $version = (string) $this->pdo->query('SELECT VERSION()')->fetchColumn();
             $this->currentServerIsMariaDb = stripos($version, 'mariadb') !== false;
@@ -714,6 +716,20 @@ final class Migrator
             },
             $sql
         ) ?? $sql;
+    }
+
+    private function sqlForHistoricalMigration122Compatibility(string $sql): string
+    {
+        if ($this->currentMigration !== '122_sale_financial_reconciliation_2_24_0.sql') {
+            return $sql;
+        }
+
+        return str_replace(
+            'AND CAST(o.external_order_id AS CHAR)=expected.external_order_id',
+            "AND CONVERT(o.external_order_id USING utf8mb4) COLLATE utf8mb4_unicode_ci\n"
+                . "    = CONVERT(expected.external_order_id USING utf8mb4) COLLATE utf8mb4_unicode_ci",
+            $sql
+        );
     }
 
     /** @return list<string> */

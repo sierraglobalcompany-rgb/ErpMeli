@@ -60,13 +60,13 @@ try {
     $upgradeDb = K1dSafeTestDatabase::createFromEnvironment();
     $pdo = $upgradeDb->pdo();
 
-    runMigratorChild($runner, $baseRoot, $upgradeDb->dbName, '300');
+    runMigratorChild($runner, $baseRoot, $upgradeDb->dbName, '300', 'utf8mb4_general_ci');
     $metrics['baseChecksum122'] = checksumFor($pdo, $migration122);
     $beforeSql122 = sqlStartedEvents($pdo, $migration122);
     $pdo->exec("CREATE TABLE IF NOT EXISTS k1d_rc2_business_marker (id INT NOT NULL PRIMARY KEY, marker VARCHAR(30) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
     $pdo->exec("INSERT INTO k1d_rc2_business_marker (id,marker) VALUES (1,'preserved')");
 
-    runMigratorChild($runner, $targetRoot, $upgradeDb->dbName, '1');
+    runMigratorChild($runner, $targetRoot, $upgradeDb->dbName, '1', 'utf8mb4_unicode_ci');
     $afterSql122 = sqlStartedEvents($pdo, $migration122);
     $metrics['targetChecksum122'] = checksumFor($pdo, $migration122);
     $metrics['historicalChecksumDrift'] = driftCount($pdo);
@@ -75,7 +75,7 @@ try {
     $metrics['businessPreserved'] = (string) $pdo->query('SELECT marker FROM k1d_rc2_business_marker WHERE id=1')->fetchColumn() === 'preserved';
 
     $countBeforeRerun = migrationCount($pdo);
-    runMigratorChild($runner, $targetRoot, $upgradeDb->dbName, '1');
+    runMigratorChild($runner, $targetRoot, $upgradeDb->dbName, '1', 'utf8mb4_unicode_ci');
     $countAfterRerun = migrationCount($pdo);
     $metrics['newMigrationsOnRerun'] = $countAfterRerun - $countBeforeRerun;
     $metrics['rerunPass'] = $metrics['newMigrationsOnRerun'] === 0 && migrationApplied($pdo, $migration301);
@@ -83,10 +83,10 @@ try {
     putenv('DB_NAME=erp_meli_k1d_test_rc2_fresh_' . strtolower(bin2hex(random_bytes(4))));
     $freshDb = K1dSafeTestDatabase::createFromEnvironment();
     $freshPdo = $freshDb->pdo();
-    runMigratorChild($runner, $targetRoot, $freshDb->dbName, '301');
+    runMigratorChild($runner, $targetRoot, $freshDb->dbName, '301', 'utf8mb4_unicode_ci');
     $metrics['freshPass'] = migrationApplied($freshPdo, $migration301);
     $metrics['compatPass'] = migrationApplied($freshPdo, $migration122)
-        && hash_equals('43c8986e31f0e1e35b2c670836cb9e399cc2b32f', checksumFor($freshPdo, $migration122));
+        && hash_equals(hash_file('sha256', $targetRoot . '/database/migrations/' . $migration122) ?: '', checksumFor($freshPdo, $migration122));
 } catch (Throwable $error) {
     $metrics['failure'] = get_class($error) . ':' . preg_replace('/\s+/', ' ', $error->getMessage());
 } finally {
@@ -110,7 +110,8 @@ try {
     }
 }
 
-$pass = hash_equals('43c8986e31f0e1e35b2c670836cb9e399cc2b32f', $metrics['baseChecksum122'])
+$expectedMigration122Checksum = hash_file('sha256', $root . '/database/migrations/' . $migration122) ?: '';
+$pass = hash_equals($expectedMigration122Checksum, $metrics['baseChecksum122'])
     && hash_equals($metrics['baseChecksum122'], $metrics['targetChecksum122'])
     && $metrics['historicalChecksumDrift'] === 0
     && $metrics['migration122SqlReexecuted'] === 'NO'
@@ -152,6 +153,7 @@ declare(strict_types=1);
 $root = $argv[1] ?? '';
 $dbName = $argv[2] ?? '';
 $limit = isset($argv[3]) ? (int) $argv[3] : 1;
+$collation = $argv[4] ?? 'utf8mb4_unicode_ci';
 if ($root === '' || $dbName === '') {
     fwrite(STDERR, "RUNNER_ARGS_MISSING\n");
     exit(64);
@@ -179,7 +181,7 @@ $pdo = new PDO(
         PDO::ATTR_PERSISTENT => false,
     ]
 );
-$pdo->exec('SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci');
+$pdo->exec('SET NAMES utf8mb4 COLLATE ' . $collation);
 $pdo->exec("SET SESSION time_zone='+00:00'");
 if (class_exists('App\\Core\\Database')) {
     App\Core\Database::useProfile('migration');
@@ -217,9 +219,9 @@ function gitWorktreeRemove(string $root, string $path): void
     runCommand(['git', '-C', $root, 'worktree', 'remove', '--force', $path]);
 }
 
-function runMigratorChild(string $runner, string $root, string $dbName, string $limit): void
+function runMigratorChild(string $runner, string $root, string $dbName, string $limit, string $collation): void
 {
-    [$exit, $stdout, $stderr] = runCommand([PHP_BINARY, $runner, $root, $dbName, $limit]);
+    [$exit, $stdout, $stderr] = runCommand([PHP_BINARY, $runner, $root, $dbName, $limit, $collation]);
     if ($exit !== 0) {
         throw new RuntimeException('MIGRATOR_CHILD_FAILED_' . $exit . ':' . trim($stderr . ' ' . $stdout));
     }

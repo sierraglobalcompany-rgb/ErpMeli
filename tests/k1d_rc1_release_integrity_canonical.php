@@ -31,14 +31,23 @@ $managedRegistryJson = 'FAIL';
 $registryCrossHash = 'FAIL';
 $failure = '';
 $inspection = [];
+$releaseErrors = [];
 
 try {
     $pdo = $harness->pdo();
     $migrationPath = realpath($root . '/database/migrations');
     k1b_assert(is_string($migrationPath), 'MIGRATION_PATH_FOUND');
     (new Migrator($pdo, $migrationPath))->run(301);
+    $version = trim((string) file_get_contents($root . '/VERSION'));
+    $stmt = $pdo->prepare(
+        'INSERT INTO app_settings (setting_key,setting_value,is_encrypted,setting_group)
+         VALUES ("app.version",?,0,"system")
+         ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),is_encrypted=VALUES(is_encrypted),setting_group=VALUES(setting_group)'
+    );
+    $stmt->execute([$version]);
 
     $inspection = (new ReleaseIntegrityService())->inspectDirectory($root, true, false);
+    $releaseErrors = is_array($inspection['errors'] ?? null) ? $inspection['errors'] : [];
     $components = is_array($inspection['components'] ?? null) ? $inspection['components'] : [];
     $componentCount = count($components);
     foreach ($components as $component) {
@@ -97,6 +106,10 @@ echo "RUNTIME_COMPONENT_MISMATCH={$componentMismatch}\n";
 echo 'PUBLICATION_POLICY_ISSUES=' . count($publicationIssues) . "\n";
 echo "MANAGED_REGISTRY_JSON={$managedRegistryJson}\n";
 echo "REGISTRY_CROSS_HASH={$registryCrossHash}\n";
+echo 'RELEASE_INTEGRITY_ERROR_COUNT=' . count($releaseErrors) . "\n";
+if ($releaseErrors !== []) {
+    echo 'RELEASE_INTEGRITY_ERRORS_JSON=' . json_encode($releaseErrors, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n";
+}
 if ($failure !== '') {
     echo "FAILURE={$failure}\n";
 }

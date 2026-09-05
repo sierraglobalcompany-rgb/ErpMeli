@@ -19,6 +19,7 @@ use App\Services\ApiManualPauseService;
 use App\Services\ApiErrorSummaryService;
 use App\Services\BusinessScopeContext;
 use App\Services\AppSettingsService;
+use App\Services\CapacityChangeGuard;
 use App\Services\CapacityPolicyService;
 use App\Services\CriticalApiAlertEmailService;
 use App\Services\CronHealthService;
@@ -186,9 +187,11 @@ final class SettingsController
                 || !hash_equals((string) ($proposal['nonce'] ?? ''), $_POST['confirmation_nonce'])) {
                 throw new \App\Core\HttpException(409, 'La confirmación venció. Revise y confirme nuevamente la capacidad.');
             }
+            $capacityGuard = new CapacityChangeGuard();
+            $capacityGuard->assertGlobalAuthorization();
             Session::forget($sessionKey);
             try {
-                $policy->save($module, $proposal['current'], $proposal['ceiling'], $proposal['revision'], fn (): array => $this->queueV4RhythmIncreaseGate());
+                $policy->save($module, $proposal['current'], $proposal['ceiling'], $proposal['revision'], fn (): array => $capacityGuard->increaseGate());
                 Session::flash('success', 'Capacidad guardada. No se inició ningún procesamiento.');
             } catch (\Throwable $error) {
                 Session::flash('error', \App\Services\SafeErrorPresenter::message($error, 'No se guardó la capacidad. Recargue y revise los valores actuales.'));
@@ -198,6 +201,7 @@ final class SettingsController
         if ($intent !== 'prepare') {
             throw new \App\Core\HttpException(422, 'Acción de capacidad inválida.');
         }
+        (new CapacityChangeGuard())->assertGlobalAuthorization();
         $before = $policy->snapshot($module);
         $currentKey = $module === 'automation' ? 'automation_max_api_calls_per_cycle' : 'manual_api_calls_per_step';
         try {
@@ -306,26 +310,7 @@ final class SettingsController
     /** @return array{allowed:bool,message:string} */
     private function queueV4RhythmIncreaseGate(?array $snapshot = null): array
     {
-        try {
-            $snapshot ??= $this->queueV4RhythmSnapshot();
-            $totals = is_array($snapshot['totals'] ?? null) ? $snapshot['totals'] : [];
-            if ((int) ($totals['dead'] ?? 0) > 0) {
-                return ['allowed' => false, 'message' => 'Queue V4 tiene trabajos muertos; resuelva ese diagnóstico antes de subir el ritmo.'];
-            }
-            if ((int) ($totals['stale_running'] ?? 0) > 0) {
-                return ['allowed' => false, 'message' => 'Queue V4 tiene leases vencidos; espere estabilidad antes de subir el ritmo.'];
-            }
-            if ((string) ($snapshot['state'] ?? '') !== 'healthy') {
-                return ['allowed' => false, 'message' => 'Queue V4 no tiene una señal reciente y certificada para subir el ritmo.'];
-            }
-            if ($this->recentRateLimitIncidents() !== []) {
-                return ['allowed' => false, 'message' => 'hay un 429 remoto reciente; respete la ventana de estabilidad antes de subir el ritmo.'];
-            }
-
-            return ['allowed' => true, 'message' => 'Queue V4 tiene evidencia suficiente para subir el ritmo.'];
-        } catch (\Throwable) {
-            return ['allowed' => false, 'message' => 'no se pudo comprobar la salud de Queue V4 con una lectura completa.'];
-        }
+        return (new CapacityChangeGuard())->increaseGate();
     }
 
     public function cronRhythmPreview(): void

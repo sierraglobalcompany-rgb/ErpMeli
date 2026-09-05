@@ -12,6 +12,10 @@ namespace App\Core {
 }
 namespace App\Services {
     final class ApiHealthAccessScope { public function snapshot(): array { throw new \RuntimeException('Fixture health unavailable'); } }
+    final class CapacityChangeGuard {
+        public function assertGlobalAuthorization(): void {}
+        public function increaseGate(): array { return ['allowed' => false, 'message' => 'health blocked']; }
+    }
     final class SafeErrorPresenter { public static function message(\Throwable $error, string $fallback, array $context = []): string { return $fallback; } }
     // Persistence spy: no database/network; shared policy has independent real MySQL tests.
     final class CapacityPolicyService {

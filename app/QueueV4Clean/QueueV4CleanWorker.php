@@ -772,11 +772,11 @@ final class QueueV4CleanWorker
         }
 
         if ($capability === 'notification_work_item') {
-            $result = (new NotificationWorkItemService())->processQueueV4Exact(
-                $sourceId,
-                $accountId,
-                $companyId,
-                CronDeadlineContext::deadline(),
+            $result = ApiExecutionMetadataContext::run(
+                $this->domainTransportMeta($job, $source, $capability, $sourceId),
+                static fn (): array => (new NotificationWorkItemService())->processQueueV4Exact(
+                    $sourceId, $accountId, $companyId, CronDeadlineContext::deadline(),
+                ),
             );
             if ((string) ($result['status'] ?? '') === 'complete') {
                 return ['state' => 'completed'];
@@ -793,11 +793,11 @@ final class QueueV4CleanWorker
 
         if ($capability === 'order_enrichment_pack') {
             $service = new OrderEnrichmentService();
-            $result = $service->processQueueV4PackExact(
-                $sourceId,
-                $accountId,
-                $companyId,
-                CronDeadlineContext::deadline(),
+            $result = ApiExecutionMetadataContext::run(
+                $this->domainTransportMeta($job, $source, $capability, $sourceId),
+                static fn (): array => $service->processQueueV4PackExact(
+                    $sourceId, $accountId, $companyId, CronDeadlineContext::deadline(),
+                ),
             );
             if ((string) ($result['status'] ?? '') === 'complete') {
                 return ['state' => 'completed'];
@@ -886,7 +886,8 @@ final class QueueV4CleanWorker
     private function domainSource(string $capability, int $sourceId, int $companyId, int $accountId): ?array
     {
         if ($capability === 'notification_work_item') {
-            $sql = 'SELECT w.id,a.company_id,w.meli_account_id,w.status,w.next_run_at,NULL sale_key,NULL external_sale_id
+            $sql = 'SELECT w.id,a.company_id,w.meli_account_id,w.status,w.next_run_at,w.resource_type,
+                          w.remote_resource_id,NULL sale_key,NULL external_sale_id
                FROM meli_notification_work_items w
                JOIN meli_accounts a ON a.id=w.meli_account_id
                WHERE w.id=? AND a.company_id=? AND w.meli_account_id=? LIMIT 1';
@@ -1363,5 +1364,21 @@ final class QueueV4CleanWorker
             'queue_v4_lease_owner' => (string) ($job['lease_owner'] ?? ''),
             'queue_v4_lease_generation' => (int) ($job['lease_generation'] ?? 0),
         ];
+    }
+
+    /** Resource identity comes only from the tenant-bound durable source, never the job payload. */
+    private function domainTransportMeta(array $job, array $source, string $capability, int $sourceId): array
+    {
+        return [
+            'source' => MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT,
+            'job_type' => 'domain_exact',
+            'company_id' => (int) $source['company_id'],
+            'account_id' => (int) $source['meli_account_id'],
+            'source_queue_key' => $capability,
+            'source_work_id' => (string) $sourceId,
+            'domain_resource_type' => (string) $source['resource_type'],
+            'domain_remote_resource_id' => (string) ($source['remote_resource_id'] ?? $source['external_sale_id']),
+            'bulk' => false,
+        ] + $this->transportMeta($job);
     }
 }

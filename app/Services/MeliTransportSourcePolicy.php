@@ -50,6 +50,10 @@ final class MeliTransportSourcePolicy
 
     public static function assertAllowed(string $source, string $method, string $path): void
     {
+        if (\App\QueueV4Clean\QueueV4CleanCycleBudget::snapshot()['limit'] > 0
+            && !self::requiresQueueV4ReadFence($source) && !self::requiresCurrentOAuthFence($source)) {
+            throw new RuntimeException('queue_v4_clean_cycle_transport_source_denied');
+        }
         if (!self::capabilities($source)['known']) {
             throw new RuntimeException('meli_transport_source_unknown');
         }
@@ -74,9 +78,7 @@ final class MeliTransportSourcePolicy
             return;
         }
         if ($source === self::QUEUE_V4_DOMAIN_EXACT) {
-            if (strtoupper($method) !== 'GET'
-                || (!hash_equals('/billing/integration/group/ML/order/details', $path)
-                    && preg_match('#^/packs/[0-9]+$#D', $path) !== 1)) {
+            if (!self::allowsDomainExact($method, $path)) {
                 throw new RuntimeException('queue_v4_clean_domain_transport_capability_denied');
             }
             return;
@@ -87,6 +89,41 @@ final class MeliTransportSourcePolicy
         if (strtoupper($method) !== 'POST' || !hash_equals('/oauth/token', $path)) {
             throw new RuntimeException('queue_v4_clean_oauth_transport_capability_denied');
         }
+    }
+
+    /** Closed GET map; identity is supplied by the tenant-bound source row. */
+    public static function allowsDomainExact(string $method, string $path): bool
+    {
+        if (strtoupper($method) !== 'GET') {
+            return false;
+        }
+        $meta = ApiExecutionMetadataContext::current();
+        $type = (string) ($meta['domain_resource_type'] ?? '');
+        $id = (string) ($meta['domain_remote_resource_id'] ?? '');
+        if ($type === '' && $id === '') {
+            return hash_equals('/billing/integration/group/ML/order/details', $path);
+        }
+        $prefix = match ($type) {
+            'pack' => '/packs/', 'order' => '/orders/', 'shipment' => '/shipments/',
+            'question' => '/questions/', 'claim' => '/post-purchase/v1/claims/', 'item' => '/items/',
+            default => null,
+        };
+        return $prefix !== null && self::domainEndpointKey($path) !== null
+            && hash_equals($prefix . $id, $path);
+    }
+
+    public static function domainEndpointKey(string $path): ?string
+    {
+        return match (true) {
+            hash_equals('/billing/integration/group/ML/order/details', $path) => 'billing_orders',
+            preg_match('#^/packs/[0-9]+$#D', $path) === 1 => 'pack_exact',
+            preg_match('#^/orders/[0-9]+$#D', $path) === 1 => 'order_exact',
+            preg_match('#^/shipments/[0-9]+$#D', $path) === 1 => 'shipment_exact',
+            preg_match('#^/questions/[0-9]+$#D', $path) === 1 => 'question_exact',
+            preg_match('#^/post-purchase/v1/claims/[0-9]+$#D', $path) === 1 => 'claim_exact',
+            preg_match('#^/items/[A-Z]{2,4}[0-9]+$#D', $path) === 1 => 'item_exact',
+            default => null,
+        };
     }
 
     public static function isSingleDispatch(string $source): bool

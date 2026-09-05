@@ -2,7 +2,7 @@
 use App\Core\Csrf;
 use App\Core\Env;
 use App\Core\View;
-use App\QueueV4Clean\QueueV4CleanWorker;
+use App\Services\CapacityPolicyService;
 
 $base = rtrim(Env::get('APP_URL', ''), '/');
 $scopeLabels = [
@@ -27,15 +27,7 @@ $scopeHelp = [
   'modules' => 'Filtra capacidades aisladas sin iniciar procesos en segundo plano.',
   'all' => 'Muestra todos los pendientes exactos elegibles dentro del contexto autorizado actual.',
 ];
-$availableQueueMax = max(1, (int) QueueV4CleanWorker::HARD_MAX_CALLS);
-$availableQueueOptions = array_values(array_filter(
-  [1, 5, 10, 15],
-  static fn (int $size): bool => $size <= $availableQueueMax
-));
-if (!in_array($availableQueueMax, $availableQueueOptions, true)) {
-  $availableQueueOptions[] = $availableQueueMax;
-}
-sort($availableQueueOptions);
+$capacity = $capacity ?? (new CapacityPolicyService())->snapshot('manual');
 $duration = static function (int $seconds): string {
   if ($seconds < 60) return $seconds . ' s';
   if ($seconds < 3600) return (int) ceil($seconds / 60) . ' min';
@@ -52,19 +44,16 @@ if (is_array($preview ?? null)) {
     );
   }
 }
-$configuredLimit = max(1, min(60, (int) ($blockSize ?? 1)));
-if ((string) ($scope ?? '') === 'available_queue') {
-  $configuredLimit = min($configuredLimit, $availableQueueMax);
-}
+$configuredLimit = (int) $capacity['current'];
 $previewRows = is_array($preview ?? null) ? array_values((array) ($preview['rows'] ?? [])) : [];
 $isAvailableQueuePreview = is_array($preview ?? null)
   && (string) (($preview['configuration']['scope'] ?? $scope) ?: '') === 'available_queue';
 $previewLimit = is_array($preview ?? null)
-  ? max(1, min($configuredLimit, max(1, count($previewRows))))
+  ? (int) ($preview['configuration']['physical_api_call_budget'] ?? $configuredLimit)
   : $configuredLimit;
-if ($isAvailableQueuePreview) {
-  $previewLimit = min($previewLimit, $availableQueueMax);
-}
+$previewSelectionLimit = $isAvailableQueuePreview ? $previewLimit : min(count($previewRows), (int) ($preview['configuration']['block_size'] ?? 30));
+$previewStale = is_array($preview ?? null) && ($previewLimit > $configuredLimit
+  || (string) ($preview['configuration']['capacity_revision'] ?? '') !== (string) $capacity['revision']);
 $manualAccountLabel = trim((string) ($manualAccountLabel ?? '')) ?: 'Todas las cuentas autorizadas';
 $manualResult = is_array($manualResult ?? null) ? $manualResult : null;
 $manualAvailableQueueResult = is_array($manualAvailableQueueResult ?? null) ? $manualAvailableQueueResult : null;
@@ -82,6 +71,21 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
 </div>
 
 <?php $automationTab = 'manual'; require __DIR__ . '/_automation_nav.php'; ?>
+
+<section class="panel manual-capacity">
+  <div class="panel-head"><div><h2>Capacidad manual guardada</h2><p>Independiente de la automatización. Guardar no procesa pendientes.</p></div></div>
+  <div class="panel-body">
+    <form method="post" action="<?= View::e($base) ?>/settings/manual-processing/call-budget" class="manual-config-form">
+      <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
+      <input type="hidden" name="capacity_revision" value="<?= View::e($capacity['revision']) ?>">
+      <div class="manual-config-grid">
+        <label class="field">Techo permitido de llamadas API<input class="input" type="number" name="manual_api_calls_ceiling" min="1" max="100" value="<?= (int) $capacity['ceiling'] ?>" required><small>Inicial: 55. Límite técnico: 100. Cambiar sólo el techo conserva el presupuesto actual.</small></label>
+        <label class="field">Máximo de llamadas API por paso<input class="input" type="number" name="manual_api_calls_per_step" min="1" max="100" value="<?= $configuredLimit ?>" required><small>Debe ser menor o igual al techo elegido. Los aumentos requieren salud comprobada.</small></label>
+      </div>
+      <div class="manual-actions"><button class="btn" type="submit">Revisar y guardar capacidad</button></div>
+    </form>
+  </div>
+</section>
 
 <ol class="manual-stepper" aria-label="Etapas del procesamiento">
   <li class="<?= $preview === null ? 'active' : 'complete' ?>"><span>1</span> Qué procesar</li>
@@ -171,6 +175,7 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
       <input type="hidden" name="block_pause_seconds" value="0">
       <input type="hidden" name="max_blocks" value="0">
       <input type="hidden" name="max_duration_minutes" value="0">
+      <input type="hidden" name="capacity_revision" value="<?= View::e($capacity['revision']) ?>">
       <?php foreach ((array) ($originContext ?? []) as $key => $value): ?>
         <?php if ($value !== '' && $value !== 0): ?>
           <input type="hidden" name="<?= View::e((string) $key) ?>" value="<?= View::e((string) $value) ?>">
@@ -198,15 +203,10 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
           <p><?= View::e($manualAccountLabel) ?></p>
           <small>La empresa y cuenta se toman del contexto global y se revalidan antes de procesar.</small>
         </div>
-        <label>
-          Máximo de llamadas API
-          <select name="block_size" class="input">
-            <?php foreach (($scope === 'available_queue' ? $availableQueueOptions : [5, 10, 20, 30, 40, 60]) as $size): ?>
-              <option value="<?= $size ?>" <?= $configuredLimit === $size ? 'selected' : '' ?>><?= $size ?> llamada<?= $size === 1 ? '' : 's' ?></option>
-            <?php endforeach; ?>
-          </select>
-          <small>Consume como máximo N llamadas físicas a Mercado Libre. La atención local puede avanzar sin gastar llamadas.</small>
-        </label>
+        <div class="manual-context-card"><strong>Máximo de llamadas API: <?= $configuredLimit ?></strong><p>El preview usa la capacidad manual guardada. La atención local puede avanzar sin gastar llamadas.</p><small>Para modificarla, guarde primero el formulario de capacidad.</small></div>
+        <?php if ($scope !== 'available_queue'): ?>
+          <label>Elementos exactos a seleccionar<input type="number" name="block_size" min="1" max="60" value="<?= max(1, min(60, (int) ($blockSize ?? 30))) ?>"><small>Selección de recursos, distinta del presupuesto físico.</small></label>
+        <?php endif; ?>
       </div>
 
       <div class="manual-actions">
@@ -232,11 +232,12 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
       <?php if ($isAvailableQueuePreview): ?>
         <p>Estos son los pendientes disponibles en este momento. Al procesar, el sistema vuelve a validar la elegibilidad y tomará hasta <?= $previewLimit ?> que continúen disponibles.</p>
       <?php else: ?>
-        <p>Esta selección queda ligada al botón. Si procesa, sólo puede tomar estas filas y hasta <?= $previewLimit ?> elemento(s).</p>
+        <p>Esta selección queda ligada al botón. Si procesa, sólo puede tomar estas filas y hasta <?= $previewSelectionLimit ?> elemento(s).</p>
       <?php endif; ?>
     </div>
   </div>
   <div class="panel-body">
+    <?php if ($previewStale): ?><div class="alert warning">La capacidad cambió. Vuelva a previsualizar antes de procesar.</div><?php endif; ?>
     <div class="metric-grid manual-metric-grid">
       <article><span>Elegibles ahora</span><strong><?= (int) ($preview['eligible_jobs'] ?? count($previewRows)) ?></strong></article>
       <article><span>Límite de llamadas API</span><strong><?= $previewLimit ?> llamada<?= $previewLimit === 1 ? '' : 's' ?></strong></article>
@@ -283,13 +284,13 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
         <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
         <input type="hidden" name="preview_token" value="<?= View::e((string) ($preview['preview_token'] ?? '')) ?>">
         <input type="hidden" name="scope" value="<?= View::e((string) ($preview['configuration']['scope'] ?? $scope)) ?>">
-        <input type="hidden" name="process_limit" value="<?= $previewLimit ?>">
+        <input type="hidden" name="process_limit" value="<?= $previewSelectionLimit ?>">
         <?php if ($isAvailableQueuePreview): ?>
           <p><strong>Confirmación:</strong> usar hasta <?= $previewLimit ?> llamada<?= $previewLimit === 1 ? '' : 's' ?> API en pendientes que continúen disponibles.</p>
         <?php else: ?>
           <p><strong>Confirmación:</strong> usar máximo <?= $previewLimit ?> llamada(s) API sobre elementos exactos del preview. Sin campaña, sin sesión, sin continuación oculta.</p>
         <?php endif; ?>
-        <button class="btn primary" type="submit"><?= $isAvailableQueuePreview ? 'Procesar pendientes disponibles' : 'PROCESAR ' . $previewLimit ?></button>
+        <button class="btn primary" type="submit" <?= $previewStale ? 'disabled' : '' ?>><?= $isAvailableQueuePreview ? 'Procesar pendientes disponibles' : 'PROCESAR SELECCIÓN' ?></button>
       </form>
     <?php endif; ?>
 

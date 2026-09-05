@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "authority_id": "worker-cycle-control-single-truth-release-2.40.1-runtime-dependencies",
-  "runtime_manifest_paths_sha256": "0f0dff2c41cdebffd8875f2f8b94ee38af3cda7a1dfdd2dc65c833291d351e7f",
+  "runtime_manifest_paths_sha256": "66bf45bd78087e7189209246adb0c7601c3f62dcce5ca39bea8cd5404a32a48d",
   "coverage_base_commit": "6cb102595d0f2e5d47b07fa868aec8bbc22f8653",
   "classifications": {
     "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",
@@ -61,7 +61,7 @@
       "id": "tests",
       "classification": "TEST_ONLY",
       "kind": "regex",
-      "value": "#^tests/.+\\.php$#D"
+      "value": "#^tests/.+\\.(?:php|js)$#D"
     },
     {
       "id": "release-artifact-builders",
@@ -77,6 +77,57 @@
     }
   ],
   "runtime_dependencies": [
+    {
+      "id": "capacity-policy",
+      "path": "app/Services/CapacityPolicyService.php",
+      "classification": "RUNTIME_REQUIRED",
+      "required_in_runtime_manifest": true,
+      "consumers": [
+        {
+          "source_path": "app/Services/AutomationCallBudgetService.php",
+          "symbol": "App\\Services\\CapacityPolicyService",
+          "path_literal": "CapacityPolicyService"
+        }
+      ],
+      "provenance": {
+        "kind": "tracked_php_autoload",
+        "generator": "capacity-config from main 191c5ee"
+      }
+    },
+    {
+      "id": "manual-physical-budget",
+      "path": "app/Services/ManualPhysicalCallBudget.php",
+      "classification": "RUNTIME_REQUIRED",
+      "required_in_runtime_manifest": true,
+      "consumers": [
+        {
+          "source_path": "app/Services/ManualSingleStepService.php",
+          "symbol": "App\\Services\\ManualPhysicalCallBudget",
+          "path_literal": "ManualPhysicalCallBudget"
+        }
+      ],
+      "provenance": {
+        "kind": "tracked_php_autoload",
+        "generator": "capacity-config from main 191c5ee"
+      }
+    },
+    {
+      "id": "capacity-confirmation-view",
+      "path": "app/Views/settings/capacity_confirmation.php",
+      "classification": "RUNTIME_REQUIRED",
+      "required_in_runtime_manifest": true,
+      "consumers": [
+        {
+          "source_path": "app/Controllers/SettingsController.php",
+          "symbol": "App\\Controllers\\SettingsController",
+          "path_literal": "settings/capacity_confirmation"
+        }
+      ],
+      "provenance": {
+        "kind": "tracked_php_view",
+        "generator": "capacity-config from main 191c5ee"
+      }
+    },
     {
       "id": "managed-runtime-dependency-registry",
       "path": "resources/release/managed-runtime-dependencies-2.40.1.json",

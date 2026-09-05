@@ -1,0 +1,33 @@
+async (page) => {
+  const check = (v, why) => { if (!v) throw new Error(why); };
+  const auto = 'http://127.0.0.1:8097/settings/cron/rhythm';
+  const ceiling = p => p.getByRole('spinbutton', {name: 'Techo permitido de llamadas'});
+  const current = p => p.getByRole('spinbutton', {name: 'Llamadas API por ciclo automático'});
+  const review = p => p.getByRole('button', {name:'Revisar y guardar presupuesto'});
+  const confirm = p => p.getByRole('button', {name:'Confirmar', exact:true});
+  await page.goto(auto);
+  check(['55','100'].includes(await ceiling(page).inputValue()), 'ceiling invalid');
+  check(await current(page).inputValue() === '1', 'initial auto changed');
+  await ceiling(page).fill('100'); await review(page).click();
+  check((await page.locator('body').innerText()).includes('→ 100'), 'missing before/after');
+  await page.screenshot({path:'auto-confirm.png', fullPage:true});
+  await confirm(page).click(); await page.reload();
+  check(await ceiling(page).inputValue() === '100' && await current(page).inputValue() === '1', 'ceiling changed current');
+  await page.goto(auto+'?health=healthy');
+  await current(page).fill('3'); await review(page).click(); await confirm(page).click();
+  check(await current(page).inputValue() === '3', 'healthy save');
+  const tab2 = await page.context().newPage(); await tab2.goto(auto);
+  await current(page).fill('2'); await review(page).click();
+  await current(tab2).fill('1'); await review(tab2).click(); await confirm(tab2).click();
+  await confirm(page).click();
+  check(/capacidad cambió|confirmación venció/.test(await page.locator('body').innerText()), 'stale tab not rejected');
+  await page.goto(auto);
+  check(await current(page).inputValue() === '1', 'stale tab overwrote');
+  await tab2.close();
+  await page.goto(auto+'?health=429'); await current(page).fill('55'); await review(page).click(); await confirm(page).click();
+  check(await current(page).inputValue() === '1', '429 increase accepted');
+  await page.screenshot({path:'auto-429.png',fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  await page.screenshot({path:'auto-mobile.png',fullPage:true});
+  console.log('BROWSER_AUTO_PASS cancel,ceiling-only,reload,healthy-save,two-tabs-conflict,429-denial,mobile');
+}

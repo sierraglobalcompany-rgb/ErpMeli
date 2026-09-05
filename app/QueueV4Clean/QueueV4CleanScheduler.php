@@ -6,6 +6,7 @@ namespace App\QueueV4Clean;
 
 use App\Core\Env;
 use App\Services\CronDeadlineContext;
+use App\Services\CapacityPolicyService;
 use App\Services\EmergencyControlService;
 use App\Services\SalesAuditExactRepairService;
 use App\Work\Adapters\QueueCoreDrainAuthority;
@@ -21,6 +22,8 @@ final class QueueV4CleanScheduler
     /** @return array<string,mixed> */
     public function run(int $maxCalls = QueueV4CleanWorker::DEFAULT_MAX_CALLS, int $runtimeSeconds = 45): array
     {
+        $policy = (new CapacityPolicyService($this->pdo))->snapshot('automation');
+        $maxCalls = max(1, min($policy['ceiling'], $maxCalls));
         QueueV4CleanOAuthStageContext::reset();
         $startedAt = microtime(true);
         $deadline = $startedAt + max(5, min(45, $runtimeSeconds));
@@ -35,7 +38,7 @@ final class QueueV4CleanScheduler
                 'status' => 'stopped',
                 'processed' => 0,
                 'control_unit' => 'PHYSICAL_API_CALL',
-                'max_calls' => max(1, min(QueueV4CleanWorker::HARD_MAX_CALLS, $maxCalls)),
+                'max_calls' => $maxCalls,
             ];
         }
         $owner = bin2hex(random_bytes(16));
@@ -52,7 +55,7 @@ final class QueueV4CleanScheduler
                 'status' => 'busy',
                 'processed' => 0,
                 'control_unit' => 'PHYSICAL_API_CALL',
-                'max_calls' => max(1, min(QueueV4CleanWorker::HARD_MAX_CALLS, $maxCalls)),
+                'max_calls' => $maxCalls,
             ];
         }
         $drainLeases = new QueueCoreDrainAuthority($this->pdo);
@@ -70,10 +73,9 @@ final class QueueV4CleanScheduler
                 'processed' => 0,
                 'claimed_total' => 0,
                 'control_unit' => 'PHYSICAL_API_CALL',
-                'max_calls' => max(1, min(QueueV4CleanWorker::HARD_MAX_CALLS, $maxCalls)),
+                'max_calls' => $maxCalls,
             ];
         }
-        $maxCalls = max(1, min(QueueV4CleanWorker::HARD_MAX_CALLS, $maxCalls));
         QueueV4CleanCycleBudget::start($maxCalls);
         try {
             $oauth = (new QueueV4CleanOAuthSupervisor(

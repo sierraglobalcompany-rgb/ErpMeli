@@ -84,10 +84,12 @@ try {
     $harness->cleanup();
 }
 
+$expectedComponentCount = count(ManagedRuntimePublicationPolicy::manifestPaths($root, 'HEAD'));
 $pass = $failure === ''
     && !empty($inspection['ok'])
-    && $componentCount === 1240
-    && $componentMatch === 1240
+    && $expectedComponentCount > 0
+    && $componentCount === $expectedComponentCount
+    && $componentMatch === $expectedComponentCount
     && $componentMissing === 0
     && $componentMismatch === 0
     && count($publicationIssues) === 0

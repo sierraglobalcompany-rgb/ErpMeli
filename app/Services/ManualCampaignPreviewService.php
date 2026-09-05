@@ -6,7 +6,6 @@ namespace App\Services;
 
 use App\Core\Database;
 use App\QueueV4Clean\QueueV4CleanRepository;
-use App\QueueV4Clean\QueueV4CleanWorker;
 use PDO;
 use RuntimeException;
 use Throwable;
@@ -191,8 +190,12 @@ final class ManualCampaignPreviewService
     /** @param array<string,mixed> $configuration @return array<string,mixed> */
     private function normalize(array $configuration): array
     {
-        return [
-            'preview_format' => 2,
+        $capacity = ManualPhysicalCallBudget::previewConfiguration(
+            $configuration,
+            (new CapacityPolicyService())->snapshot('manual')
+        );
+        return $capacity + [
+            'preview_format' => 3,
             'scope' => preg_replace('/[^a-z_]/', '', (string) ($configuration['scope'] ?? 'recommended')) ?: 'recommended',
             'account_id' => max(0, (int) ($configuration['account_id'] ?? 0)),
             'block_size' => max(1, min(60, (int) ($configuration['block_size'] ?? 30))),
@@ -220,7 +223,7 @@ final class ManualCampaignPreviewService
         $preview = [
             'eligible_jobs' => $repository->eligibleCount($allowedAccountIds, $accountId > 0 ? $accountId : null),
             'rows' => $repository->previewEligible(
-                min(QueueV4CleanWorker::HARD_MAX_CALLS, (int) $configuration['block_size']),
+                (int) $configuration['physical_api_call_budget'],
                 $allowedAccountIds,
                 $accountId > 0 ? $accountId : null
             ),

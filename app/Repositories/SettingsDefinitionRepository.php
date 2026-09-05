@@ -42,9 +42,24 @@ final class SettingsDefinitionRepository
                 $this->number('api.budget.global_requests_per_15m', 'Capacidad general', 300, 1, 10000, 'llamadas API / 15 min', 'Límite preventivo de toda la aplicación.'),
                 $this->number('api.budget.account_requests_per_15m', 'Capacidad por cuenta', 120, 1, 5000, 'llamadas API / 15 min', 'Evita que una cuenta consuma todo el presupuesto.'),
                 $this->managed(
-                    $this->number('automation.max_api_calls_per_cycle', 'Máximo de llamadas API por ciclo automático', 1, 1, 15, 'llamadas API', 'Unidad operativa canónica del cron automático. Se aumenta manualmente sólo con evidencia sana.'),
+                    $this->number('automation.max_api_calls_per_cycle', 'Máximo de llamadas API por ciclo automático', 1, 1, 100, 'llamadas API', 'Configurar y confirmar en Automatización. No puede superar el techo automático.'),
                     '/settings/cron/rhythm',
                     'Cambiar en Automatización y seguridad API'
+                ),
+                $this->managed(
+                    $this->number('automation.api_calls_ceiling', 'Techo de llamadas API automático', 55, 1, 100, 'llamadas API', 'Configurar y confirmar en Automatización. Cambiar el techo no cambia el presupuesto actual.'),
+                    '/settings/cron/rhythm',
+                    'Cambiar en Automatización y seguridad API'
+                ),
+                $this->managed(
+                    $this->number('manual.api_calls_per_step', 'Máximo de llamadas API por paso manual', 1, 1, 100, 'llamadas API', 'Configurar y confirmar en Procesar ahora. Conserva la capacidad heredada mientras no se guarde.'),
+                    '/settings/manual-processing',
+                    'Cambiar en Procesar ahora'
+                ),
+                $this->managed(
+                    $this->number('manual.api_calls_ceiling', 'Techo de llamadas API manual', 55, 1, 100, 'llamadas API', 'Configurar y confirmar en Procesar ahora. Independiente del techo automático.'),
+                    '/settings/manual-processing',
+                    'Cambiar en Procesar ahora'
                 ),
                 $this->number('api.budget.web_request_api_limit', 'Máximo desde una pantalla', 10, 1, 100, 'llamadas API', 'Las operaciones mayores deben pasar a automatización.'),
                 $this->number('oauth.auto_refresh_lead_seconds', 'Anticipación de renovación OAuth', 3600, 300, 7200, 'segundos', 'La automatización renueva antes del vencimiento sin alterar la barrera comercial.', true),

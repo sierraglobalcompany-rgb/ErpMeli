@@ -28,7 +28,7 @@ foreach (compact('budget', 'job', 'worker', 'rhythm', 'client', 'email', 'migrat
 k1b_assert(str_contains($budget, "SETTING_KEY = 'automation.max_api_calls_per_cycle'"), 'budget_setting_key');
 k1b_assert(str_contains($budget, 'public const DEFAULT = 1'), 'budget_default_1');
 k1b_assert(str_contains($budget, 'public const MIN = 1'), 'budget_min_1');
-k1b_assert(str_contains($budget, 'public const HARD_MAX = 15'), 'budget_hard_max_15');
+k1b_assert(str_contains($budget, 'public const HARD_MAX = CapacityPolicyService::TECHNICAL_MAX'), 'budget_shared_technical_max');
 k1b_assert(str_contains($budget, 'CLI_MAX_CALLS_OVERRIDE'), 'cli_override_source');
 k1b_assert(str_contains($budget, 'LEGACY_MAX_JOBS_OVERRIDE'), 'legacy_override_source');
 k1b_assert(str_contains($budget, 'ERP_SETTINGS'), 'settings_source');

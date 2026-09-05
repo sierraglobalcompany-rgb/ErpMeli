@@ -29,7 +29,7 @@ try {
     k1d_rc1_budget_install_schema($pdo);
     AppSettingsService::clearCache();
 
-    foreach ([1, 2, 15] as $maxCalls) {
+    foreach ([1, 2, 3, 15, 55, 100] as $maxCalls) {
         for ($cycle = 1; $cycle <= 30; $cycle++) {
             $cycles++;
             k1d_rc1_budget_reset_cycle($pdo, $maxCalls + 1, $cycle, $maxCalls);
@@ -42,7 +42,7 @@ try {
             $worker = new QueueV4CleanWorker($pdo, $repository, null, null, $handler);
             QueueV4CleanCycleBudget::start($maxCalls);
             try {
-                $result = $worker->run('test', $maxCalls, 10, [2], 2);
+                $result = $worker->run('test', $maxCalls, 45, [2], 2);
             } finally {
                 QueueV4CleanCycleBudget::clear();
             }
@@ -51,8 +51,31 @@ try {
                 $violations++;
             }
             k1b_assert($calls === $maxCalls, 'WORKER_CYCLE_CONSUMED_EXACT_BUDGET_' . $maxCalls . '_' . $cycle);
+            k1b_assert(($result['max_calls'] ?? 0) === $maxCalls, 'WORKER_REPORTS_CONFIGURED_BUDGET_' . $maxCalls);
         }
     }
+    foreach ([1, 2, 3, 15, 55, 100] as $totalBudget) {
+        k1d_rc1_budget_reset_cycle($pdo, $totalBudget + 1, 31, $totalBudget);
+        $calls = 0;
+        QueueV4CleanCycleBudget::start($totalBudget);
+        QueueV4CleanCycleBudget::claim(); // Earlier OAuth/producer stage used one physical call.
+        $remaining = QueueV4CleanCycleBudget::remaining();
+        $worker = new QueueV4CleanWorker($pdo, new QueueV4CleanRepository($pdo), null, null,
+            static function (array $job) use (&$calls): void { QueueV4CleanCycleBudget::claim(); $calls++; });
+        try {
+            $worker->run('test', $remaining, 45, [2], 2);
+            k1b_assert($calls === $totalBudget - 1, 'SHARED_STAGES_REMAINING_' . $totalBudget);
+            k1b_assert(QueueV4CleanCycleBudget::snapshot()['used'] === $totalBudget, 'SHARED_STAGES_TOTAL_' . $totalBudget);
+        } finally { QueueV4CleanCycleBudget::clear(); }
+    }
+    k1d_rc1_budget_reset_cycle($pdo, 25, 32, 1);
+    QueueV4CleanCycleBudget::start(1);
+    $localOnlyWorker = new QueueV4CleanWorker($pdo, new QueueV4CleanRepository($pdo), null, null, static function (array $job): void {});
+    try {
+        $local = $localOnlyWorker->run('test', 1, 45, [2], 2);
+        k1b_assert($local['claimed'] === 20, 'SMALL_BUDGET_LOCAL_POINTER_SAFETY_UNCHANGED');
+        k1b_assert(QueueV4CleanCycleBudget::snapshot()['used'] === 0, 'LOCAL_POINTERS_NOT_PHYSICAL_CALLS');
+    } finally { QueueV4CleanCycleBudget::clear(); }
 } catch (Throwable $error) {
     $failure = get_class($error) . ':' . preg_replace('/\s+/', ' ', $error->getMessage());
 } finally {
@@ -60,11 +83,11 @@ try {
     $harness->cleanup();
 }
 
-$pass = $failure === '' && $cycles === 90 && $violations === 0 && $maxTransportsPerCycle === 15;
+$pass = $failure === '' && $cycles === 180 && $violations === 0 && $maxTransportsPerCycle === 100;
 
 echo 'STATUS=' . ($pass ? 'PASS K1D_RC1_WORKER_BUDGET_CYCLES' : 'BLOCKED K1D_RC1_WORKER_BUDGET_CYCLES') . "\n";
 echo "ACTUAL_WORKER_CYCLES={$cycles}\n";
-echo "WORKER_BUDGET_LEVELS=1,2,15\n";
+echo "WORKER_BUDGET_LEVELS=1,2,3,15,55,100\n";
 echo "WORKER_CYCLES_PER_LEVEL=30\n";
 echo "MAX_TRANSPORTS_PER_CYCLE={$maxTransportsPerCycle}\n";
 echo "MAX_CALLS_VIOLATIONS={$violations}\n";

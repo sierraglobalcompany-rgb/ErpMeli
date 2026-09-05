@@ -26,6 +26,18 @@ final class ManualSingleStepService
     /** @return array<string,mixed> */
     public function executeMany(string $previewToken, int $userId, int $limit): array
     {
+        // The browser request owns one window, including preview loading,
+        // locks, scope checks and source inspection before either launcher.
+        CronDeadlineContext::start(45, 43, 8, 3);
+        try {
+            return $this->executeWithinRequest($previewToken, $userId, $limit);
+        } finally {
+            CronDeadlineContext::clear();
+        }
+    }
+
+    private function executeWithinRequest(string $previewToken, int $userId, int $limit): array
+    {
         if ($previewToken === '') {
             throw new RuntimeException('Calcule y revise un trabajo antes de procesarlo.');
         }
@@ -42,8 +54,17 @@ final class ManualSingleStepService
         try {
             $previews = new ManualCampaignPreviewService();
             $preview = $previews->load($previewToken, $userId);
-            if ((string) ($preview['configuration']['scope'] ?? '') === 'available_queue') {
-                return $this->executeAvailableQueue($pdo, $previews, $preview, $previewToken, $userId, $limit);
+            $configuration = (array) ($preview['configuration'] ?? []);
+            $isAvailableQueue = (string) ($configuration['scope'] ?? '') === 'available_queue';
+            $physicalCallBudget = ManualPhysicalCallBudget::resolve(
+                $configuration,
+                // Available work uses an HTTP request cap. Exact selection
+                // uses process_limit only for resources, never for HTTP.
+                $isAvailableQueue ? $limit : CapacityPolicyService::TECHNICAL_MAX,
+                (new CapacityPolicyService())->snapshot('manual')
+            );
+            if ($isAvailableQueue) {
+                return $this->executeAvailableQueue($pdo, $previews, $preview, $previewToken, $userId, $physicalCallBudget);
             }
             $rows = array_values(array_filter(
                 (array) ($preview['rows'] ?? []),
@@ -53,9 +74,16 @@ final class ManualSingleStepService
                 throw new RuntimeException('El calculo no contiene trabajos exactos disponibles.');
             }
 
+            // Legacy previews can contain all eligible rows (max_blocks=0).
+            // The saved resource selection, not the larger physical budget
+            // or a forged POST, is the authority for this exact subset.
+            $limit = min($limit, max(1, min(60, (int) ($configuration['block_size'] ?? 30))));
             $selectedRows = array_slice($rows, 0, $limit);
             $items = [];
             foreach ($selectedRows as $index => $row) {
+                if (!CronDeadlineContext::canAcceptWork(2)) {
+                    throw new RuntimeException('Se agotó el tiempo para preparar el paso manual. Vuelva a calcular.');
+                }
                 $queueKey = (string) ($row['queue_key'] ?? '');
                 $sourceId = (string) ($row['source_id'] ?? '');
                 $accountId = max(0, (int) ($row['meli_account_id'] ?? 0));
@@ -67,7 +95,7 @@ final class ManualSingleStepService
                     throw new RuntimeException('El trabajo no tiene un ejecutor exacto certificado.');
                 }
 
-                $account = (new BusinessScopeContext())->account($accountId);
+                $account = (new BusinessScopeContext())->account($accountId, 0, $userId);
                 $companyId = (int) ($account['company_id'] ?? 0);
                 if ($companyId < 1) {
                     throw new RuntimeException('No fue posible confirmar la empresa de la cuenta.');
@@ -121,7 +149,7 @@ final class ManualSingleStepService
             // Manual and Cron V4 are launchers only. Manual confirms an exact,
             // preview-bound subset and the launcher processes only those rows
             // under a single global execution lease.
-            $result = (new ManualQueueLauncher())->runExactBatch($items);
+            $result = (new ManualQueueLauncher())->runExactBatch($items, $physicalCallBudget, CronDeadlineContext::deadline());
             // Solo se consume después de que Queue Core adquirió exclusión,
             // persistió y ejecutó la selección exacta sin continuación automática.
             $previews->consume($previewToken, $userId);
@@ -152,7 +180,7 @@ final class ManualSingleStepService
             static fn ($row): bool => is_array($row)
         ));
         $requested = max(1, min(QueueV4CleanWorker::HARD_MAX_CALLS, $limit));
-        $selected = min($requested, max(0, count($rows)), QueueV4CleanWorker::HARD_MAX_CALLS);
+        $selected = count($rows);
         if ($selected < 1) {
             throw new RuntimeException('La cola disponible ya no contiene trabajos para procesar.');
         }
@@ -178,13 +206,13 @@ final class ManualSingleStepService
                 'control_unit' => 'PHYSICAL_API_CALL',
                 'requested_api_calls' => $requested,
                 'api_calls_used' => 0,
-                'requested_count' => $requested,
-                'selected_count' => 0,
+                'requested_count' => $selected,
+                'selected_count' => $selected,
                 'processed_count' => 0,
                 'completed_count' => 0,
                 'waiting_count' => 0,
                 'review_error_count' => 0,
-                'not_processed_count' => $requested,
+                'not_processed_count' => $selected,
                 'active_drainers_max' => 1,
                 'manual_auto_shared_global_authority' => true,
                 'second_global_lease_acquire' => 0,
@@ -194,6 +222,12 @@ final class ManualSingleStepService
 
         QueueV4CleanCycleBudget::start($requested);
         try {
+            // Recheck after prework/lease acquisition; a saved reduction must
+            // never be bypassed by a previously posted or loaded preview.
+            $requested = ManualPhysicalCallBudget::resolve(
+                $configuration, $requested, (new CapacityPolicyService())->snapshot('manual')
+            );
+            QueueV4CleanCycleBudget::start($requested);
             $repository = new QueueV4CleanRepository($pdo);
             $currentEligible = $repository->eligibleCount($allowedAccountIds, $accountId ?: null);
             $workerLimit = min($requested, QueueV4CleanWorker::HARD_MAX_CALLS);
@@ -201,7 +235,7 @@ final class ManualSingleStepService
                 ? (new QueueV4CleanWorker($pdo, $repository))->run(
                     'manual',
                     $workerLimit,
-                    45,
+                    max(0, (int) floor(CronDeadlineContext::remainingSeconds())),
                     $allowedAccountIds,
                     $accountId ?: null
                 )
@@ -212,7 +246,7 @@ final class ManualSingleStepService
             $completed = (int) ($runSummary['completed'] ?? $workerResult['completed'] ?? 0);
             $waiting = (int) ($runSummary['waiting'] ?? 0);
             $review = (int) ($runSummary['review'] ?? 0) + (int) ($runSummary['dead'] ?? 0);
-            $notProcessed = max(0, $requested - $claimed);
+            $notProcessed = max(0, count($rows) - $claimed);
 
             $previews->consume($previewToken, $userId);
 
@@ -232,7 +266,7 @@ final class ManualSingleStepService
                 'control_unit' => 'PHYSICAL_API_CALL',
                 'requested_api_calls' => $requested,
                 'api_calls_used' => $apiCallsUsed,
-                'requested_count' => $requested,
+                'requested_count' => $selected,
                 'selected_count' => $selected,
                 'processed_count' => $claimed,
                 'completed_count' => $completed,

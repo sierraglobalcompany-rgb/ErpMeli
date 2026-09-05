@@ -27,10 +27,10 @@ $routes = $read('public/index.php');
 $assert(str_contains($single, 'function executeMany(string $previewToken, int $userId, int $limit)'), 'manual_amount_entrypoint');
 $assert(str_contains($single, 'array_slice($rows, 0, $limit)'), 'preview_bound_exact_subset');
 $assert(str_contains($single, "'manual-explicit', \$previewToken, (string) \$userId,"), 'explicit_attempt_key_bound_to_preview');
-$assert(str_contains($single, 'runExactBatch($items)'), 'single_step_uses_batch_launcher');
+$assert(str_contains($single, 'runExactBatch($items, $physicalCallBudget, CronDeadlineContext::deadline())'), 'single_step_uses_preview_and_deadline_bound_batch_launcher');
 
 $assert(substr_count($launcher, "->acquire('manual'") === 1, 'single_global_lease_acquire');
-$assert(str_contains($launcher, 'runExactBatch(array $items)'), 'batch_launcher_exists');
+$assert(str_contains($launcher, 'runExactBatch(array $items, ?int $physicalCallBudget = null, ?float $requestDeadline = null)'), 'batch_launcher_exists');
 $assert(str_contains($launcher, "'manual_step_no_background_continuation'"), 'no_background_continuation_guard');
 $assert(str_contains($launcher, "['manual_exact']"), 'manual_exact_runner_filter');
 $assert(str_contains($launcher, "'manual',\$jobId"), 'only_bound_job_id_run');
@@ -58,8 +58,8 @@ $assert(str_contains($routes, "'manualProcessingPreview'"), 'manual_processing_p
 $assert(str_contains($routes, "'manualProcessingStart'"), 'manual_processing_start_route_kept');
 $assert(!str_contains($view, 'k10-manual-drain'), 'k10_panel_removed');
 $assert(!str_contains($view, 'data-k10'), 'k10_javascript_removed');
-$assert(str_contains($view, '¿Cuántos procesar?'), 'kiss_amount_ui');
-$assert(str_contains($view, 'Procesar selección exacta'), 'kiss_process_button');
+$assert(str_contains($view, 'Máximo de llamadas API por paso') && str_contains($view, 'Elementos exactos a seleccionar'), 'kiss_physical_capacity_separate_from_selection');
+$assert(str_contains($view, 'PROCESAR SELECCIÓN'), 'kiss_process_button');
 $assert(str_contains($view, 'BACKGROUND_CONTINUATION=0'), 'no_background_claim_visible');
 $assert(str_contains($view, 'ACTIVE_DRAINERS_MAX=1'), 'single_drainer_claim_visible');
 

@@ -5,11 +5,20 @@ namespace App\QueueCore;
 
 use App\Core\Database;
 use App\Services\CronDeadlineContext;
+use App\Services\CapacityPolicyService;
 use PDO;
 use RuntimeException;
 
 final class ManualQueueLauncher
 {
+    private ?\Closure $coreFactory;
+
+    /** Optional local-fixture seam; production always uses the certified factory. */
+    public function __construct(?callable $coreFactory = null)
+    {
+        $this->coreFactory = $coreFactory === null ? null : \Closure::fromCallable($coreFactory);
+    }
+
     /** @return array<string,mixed> */
     public function runExact(
         int $companyId,
@@ -45,20 +54,40 @@ final class ManualQueueLauncher
      * @param array<int,array<string,mixed>> $items
      * @return array<string,mixed>
      */
-    public function runExactBatch(array $items): array
+    public function runExactBatch(array $items, ?int $physicalCallBudget = null, ?float $requestDeadline = null): array
+    {
+        $ownsDeadline = !CronDeadlineContext::active();
+        if ($ownsDeadline) CronDeadlineContext::start(45, 43, 8, 3);
+        $deadline = min($requestDeadline ?? INF, CronDeadlineContext::deadline() ?? microtime(true) + 45);
+        try {
+            return $this->runBoundBatch($items, $physicalCallBudget, $deadline);
+        } finally {
+            if ($ownsDeadline) CronDeadlineContext::clear();
+        }
+    }
+
+    private function runBoundBatch(array $items, ?int $physicalCallBudget, float $requestDeadline): array
     {
         if($items===[])throw new RuntimeException('La seleccion manual no contiene trabajos exactos.');
-        $core=QueueCoreFactory::build();
+        $policy=(new CapacityPolicyService())->snapshot('manual');
+        $physicalCallBudget=max(1,min($physicalCallBudget??(int)$policy['current'],(int)$policy['current'],(int)$policy['ceiling'],CapacityPolicyService::TECHNICAL_MAX));
+        $core=$this->coreFactory===null?QueueCoreFactory::build():($this->coreFactory)();
         $worker='manual-'.bin2hex(random_bytes(8));
         $lease=$core['execution_leases']->acquire('manual',$worker,60);
         if($lease===null)throw new RuntimeException('Ya hay un paso manual en curso. Espere su resultado.');
         $results=[];
         $summary=null;
+        $usedCalls=0;
+        $stopReason='selection_completed';
         try {
             $pdo=Database::connectionFresh();
             $core['repository']->recoverAbandonedManualJobs();
 
             foreach($items as $item){
+                $freshPolicy=(new CapacityPolicyService())->snapshot('manual');
+                $physicalCallBudget=min($physicalCallBudget,(int)$freshPolicy['current'],(int)$freshPolicy['ceiling']);
+                if($usedCalls>=$physicalCallBudget){$stopReason='physical_call_budget';break;}
+                if(microtime(true)>=$requestDeadline-0.25 || !CronDeadlineContext::canAcceptWork(1)){$stopReason='request_deadline';break;}
                 $companyId=(int)($item['company_id']??0);
                 $accountId=(int)($item['account_id']??0);
                 $queueKey=(string)($item['queue_key']??'');
@@ -77,7 +106,8 @@ final class ManualQueueLauncher
                 $busy=$pdo->query("SELECT id FROM queue_core_jobs WHERE queue_domain='manual' AND state IN ('pending','claimed','running','retry_wait','waiting_oauth') ORDER BY id LIMIT 1")->fetchColumn();
                 if((int)$busy>0)throw new ManualFifoBusyException();
 
-                CronDeadlineContext::start(25,20,8,3);
+                $stepDeadline=min($requestDeadline,microtime(true)+25);
+                $stepRemoteDeadline=min($stepDeadline,microtime(true)+20);
                 $jobId=$core['repository']->enqueue(new QueueJob(
                     $companyId,$accountId,'manual_exact',$queueKey,$sourceId,
                     $usesApi?'normal':'local',80,
@@ -94,24 +124,26 @@ final class ManualQueueLauncher
                     ['launcher'=>'manual_single_step','durable_input_version'=>$inputVersion,'explicit_attempt_key'=>$explicitAttemptKey],
                     1,null,'manual'
                 ));
+                $previousAttempt=$pdo->prepare('SELECT COALESCE(MAX(id),0) FROM queue_core_attempts WHERE job_id=? AND company_id=? AND meli_account_id=?');
+                $previousAttempt->execute([$jobId,$companyId,$accountId]);
+                $previousAttemptId=(int)$previousAttempt->fetchColumn();
                 try{
-                    $summary=$core['runner']->run(new QueueRunRequest(
-                        'manual',$worker,1,CronDeadlineContext::deadline()??microtime(true)+25,
+                    $summary=CronDeadlineContext::within($stepRemoteDeadline,fn()=>$core['runner']->run(new QueueRunRequest(
+                        'manual',$worker,1,$stepDeadline,
                         45,[],['manual_exact'],$accountId,$lease,'manual',$jobId
-                    ));
+                    )));
                 }catch(\Throwable $error){
                     $core['repository']->abandonManualJob($jobId,'manual_runner_failed');
                     throw $error;
-                } finally {
-                    CronDeadlineContext::clear();
                 }
                 $after=$core['repository']->job($jobId);
                 if(is_array($after)&&in_array((string)$after['state'],['pending','claimed','running','retry_wait','waiting_oauth'],true)){
                     $core['repository']->abandonManualJob($jobId,'manual_step_no_background_continuation');
                 }
                 $row=$core['repository']->job($jobId)??[];
-                $attempt=Database::connectionFresh()->prepare('SELECT physical_http_calls,resources_persisted FROM queue_core_attempts WHERE job_id=? ORDER BY id DESC LIMIT 1');
-                $attempt->execute([$jobId]);$evidence=$attempt->fetch(PDO::FETCH_ASSOC)?:[];
+                $attempt=$pdo->prepare('SELECT COALESCE(SUM(physical_http_calls),0) physical_http_calls,COALESCE(SUM(resources_persisted),0) resources_persisted FROM queue_core_attempts WHERE job_id=? AND company_id=? AND meli_account_id=? AND id>?');
+                $attempt->execute([$jobId,$companyId,$accountId,$previousAttemptId]);$evidence=$attempt->fetch(PDO::FETCH_ASSOC)?:[];
+                $usedCalls+=(int)($evidence['physical_http_calls']??0);
                 $results[]=[
                     'status'=>(string)($row['state']??'review'),
                     'message'=>self::message((string)($row['state']??'review')),
@@ -120,9 +152,15 @@ final class ManualQueueLauncher
                     'processed'=>(int)($evidence['resources_persisted']??0),
                     'queue_core_job_id'=>$jobId,'launcher_summary'=>$summary,
                 ];
+                // Every non-completed exact step closes locally and stops this
+                // request: rate limit, auth, policy, uncertainty and lease loss
+                // cannot cause the rest of a selection to dispatch.
+                if((string)($row['state']??'')!=='completed'){
+                    $stopReason=(int)($after['last_http_status']??0)===429?'remote_429':(string)($after['last_error_class']??$summary['reason']??'protection');
+                    break;
+                }
             }
         } finally {
-            CronDeadlineContext::clear();
             $core['execution_leases']->release($lease);
         }
 
@@ -134,12 +172,22 @@ final class ManualQueueLauncher
             $processed+=(int)($result['processed']??0);
             if(in_array((string)($result['status']??''),['review','dead'],true))$status='review';
         }
+        $notProcessed=max(0,count($items)-count($results));
+        if($notProcessed>0 && $status==='completed')$status='waiting';
         return [
             'status'=>$status,
-            'message'=>$status==='completed'
+            'message'=>$notProcessed>0
+                ? sprintf('El paso manual atendió %d elementos; %d quedaron sin procesar. No hay continuación en segundo plano.',count($results),$notProcessed)
+                : ($status==='completed'
                 ? 'La seleccion exacta termino. No quedo continuacion en segundo plano.'
-                : 'La seleccion exacta termino con elementos para revision; no quedo continuacion en segundo plano.',
+                : 'La seleccion exacta termino con elementos para revision; no quedo continuacion en segundo plano.'),
             'selected_count'=>count($items),
+            'processed_count'=>count($results),
+            'not_processed_count'=>$notProcessed,
+            'requested_api_calls'=>$physicalCallBudget,
+            'api_calls_used'=>$remoteDispatches,
+            'stop_reason'=>$stopReason,
+            'background_continuation'=>0,
             'remote_dispatches'=>$remoteDispatches,
             'processed'=>$processed,
             'results'=>$results,

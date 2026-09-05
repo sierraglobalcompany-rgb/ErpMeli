@@ -3,13 +3,13 @@
 use App\Core\Csrf;
 use App\Core\Env;
 use App\Core\View;
-use App\Services\AutomationCallBudgetService;
+use App\Services\CapacityPolicyService;
 
 $base = rtrim(Env::get('APP_URL', ''), '/');
 $rhythm = is_array($rhythm ?? null) ? $rhythm : [];
-$callBudget = (new AutomationCallBudgetService())->resolve(null, null);
-$maxCalls = max(1, min(15, (int) $callBudget['max_calls']));
-$maxCallsSource = (string) $callBudget['max_calls_source'];
+$capacity = $capacity ?? (new CapacityPolicyService())->snapshot('automation');
+$maxCalls = (int) $capacity['current'];
+$maxCallsSource = 'Configuración automática guardada';
 $formatRamp = static function (mixed $steps, string $fallback = '15 → 20 → 25 → 30 → 35 → 40'): string {
     if (is_array($steps)) {
         $values = array_values(array_filter(array_map('intval', $steps), static fn (int $v): bool => $v > 0));
@@ -109,7 +109,7 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
   <article>
     <span>Máximo de llamadas API por ciclo automático</span>
     <strong data-rhythm-requested><?= $maxCalls ?> llamada<?= $maxCalls === 1 ? '' : 's' ?></strong>
-    <p>Valor permitido: 1–15 llamadas físicas por ciclo.</p>
+    <p>Techo configurado: <?= (int) $capacity['ceiling'] ?> llamadas físicas por ciclo.</p>
   </article>
   <article>
     <span>Frecuencia física</span>
@@ -124,7 +124,7 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
   <article>
     <span>Fuente efectiva</span>
     <strong><?= View::e($maxCallsSource) ?></strong>
-    <p>La setting canónica es única: <code>automation.max_api_calls_per_cycle</code>.</p>
+    <p>Presupuesto actual y techo independientes del procesamiento manual.</p>
   </article>
   <article>
     <span>Último 429 / próxima hora segura</span>
@@ -164,10 +164,11 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
 
 <section class="card rhythm-editor" data-rhythm-editor data-saved-profile="<?= View::e($profile) ?>">
   <div class="card-header">
-      <div><h2>Presupuesto del ciclo automático</h2><p>Este es el único control primario editable de capacidad automática.</p></div>
+      <div><h2>Presupuesto del ciclo automático</h2><p>Configure el techo permitido y el presupuesto actual por separado.</p></div>
   </div>
   <form id="call-budget-form" method="post" action="<?= View::e($base) ?>/settings/cron/call-budget">
     <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
+    <input type="hidden" name="capacity_revision" value="<?= View::e($capacity['revision']) ?>">
     <section class="rhythm-custom-panel" aria-label="Presupuesto físico por ciclo">
       <div class="rhythm-panel-head">
         <div>
@@ -176,14 +177,15 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
           <p>El valor seguro recomendado es 1. Subirlo requiere evidencia estable y sin 429 remoto reciente.</p>
         </div>
       </div>
-      <label><span>Llamadas API por ciclo automático</span><input type="number" name="automation_max_api_calls_per_cycle" min="1" max="15" value="<?= $maxCalls ?>"><small>Default K1D: 1 · máximo duro: 15 · no equivale a cantidad de órdenes ni recursos.</small></label>
+      <label class="field"><span>Techo permitido de llamadas API por ciclo</span><input class="input" type="number" name="automation_api_calls_ceiling" min="1" max="100" value="<?= (int) $capacity['ceiling'] ?>" required><small>Inicial: 55. Límite técnico: 100. Subir el techo no cambia el presupuesto actual.</small></label>
+      <label class="field"><span>Llamadas API por ciclo automático</span><input class="input" type="number" name="automation_max_api_calls_per_cycle" min="1" max="100" value="<?= $maxCalls ?>" required><small>Debe ser menor o igual al techo elegido. No equivale a cantidad de órdenes ni recursos.</small></label>
       <div class="alert info">
         <strong>El cron recomendado queda:</strong>
         <code>jobs/queue_v4_clean.php --runtime=45</code>
         <small>Overrides técnicos disponibles sólo para soporte avanzado: <code>--max-calls=N</code> y alias temporal <code>--max-jobs=N</code>.</small>
       </div>
       <div class="page-actions mt-2">
-        <button class="btn primary" type="submit">Guardar presupuesto por ciclo</button>
+        <button class="btn primary" type="submit">Revisar y guardar presupuesto</button>
       </div>
     </section>
   </form>

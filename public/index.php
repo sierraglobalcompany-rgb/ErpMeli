@@ -436,6 +436,7 @@ $router->post('/settings/api-workload', [SettingsController::class, 'saveApiWork
 $router->get('/settings/manual-processing', [SettingsController::class, 'manualProcessing']);
 $router->get('/settings/manual-processing/new', [SettingsController::class, 'manualProcessing']);
 $router->post('/settings/manual-processing/preview', [SettingsController::class, 'manualProcessingPreview']);
+$router->post('/settings/manual-processing/call-budget', [SettingsController::class, 'saveManualCallBudget']);
 $router->get('/settings/manual-processing/excluded', [SettingsController::class, 'manualProcessingExcluded']);
 $router->post('/settings/manual-processing/start', [SettingsController::class, 'manualProcessingStart']);
 $router->get('/settings/cron/status.json', [SettingsController::class, 'cronStatus']);

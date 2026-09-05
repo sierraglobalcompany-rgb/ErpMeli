@@ -15,7 +15,8 @@ $cases = [
     [['max-calls' => '3'], 3, null],
     [['max-jobs' => '2'], null, 2],
     [['max-calls' => '0'], 1, null],
-    [['max-calls' => '99'], 15, null],
+    [['max-calls' => '99'], 99, null],
+    [['max-calls' => '101'], 100, null],
 ];
 
 foreach ($cases as [$input, $expectedCalls, $expectedJobs]) {
@@ -24,7 +25,7 @@ foreach ($cases as [$input, $expectedCalls, $expectedJobs]) {
     k1b_assert($actual['legacy_max_jobs'] === $expectedJobs, 'parse_max_jobs_' . json_encode($input));
 }
 
-foreach ([['max-calls' => 'abc'], ['max-calls' => ''], ['max-calls' => false]] as $input) {
+foreach ([['max-calls' => 'abc'], ['max-calls' => ''], ['max-calls' => false], ['max-calls' => true], ['max-calls' => ['1','2']], ['max-calls'=>1.0], ['max-calls'=>'-1'], ['max-calls'=>'1e2']] as $input) {
     try {
         $parser->parse($input);
         k1b_assert(false, 'invalid_capacity_argument_' . json_encode($input));

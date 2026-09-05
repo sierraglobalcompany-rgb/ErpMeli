@@ -29,7 +29,7 @@ final class AutomationCliCapacityArgumentParser
 
     private function parseOne(mixed $raw): int
     {
-        if ($raw === false || $raw === null) {
+        if (!is_int($raw) && !is_string($raw)) {
             throw new InvalidArgumentException('invalid_capacity_argument');
         }
 

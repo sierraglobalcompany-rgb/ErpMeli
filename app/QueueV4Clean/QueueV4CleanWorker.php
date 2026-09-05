@@ -11,6 +11,7 @@ use App\Services\ApiManualPauseException;
 use App\Services\ApiRhythmPolicyService;
 use App\Services\ApiRhythmDeferredException;
 use App\Services\CronDeadlineContext;
+use App\Services\CapacityPolicyService;
 use App\Services\CronDeadlineDeferredException;
 use App\Services\MeliApiClient;
 use App\Services\MeliApiException;
@@ -33,12 +34,13 @@ use Throwable;
 final class QueueV4CleanWorker
 {
     public const DEFAULT_MAX_CALLS = 1;
-    public const HARD_MAX_CALLS = 15;
+    public const HARD_MAX_CALLS = CapacityPolicyService::TECHNICAL_MAX;
     /** @deprecated Temporary Hostinger/hPanel compatibility input alias. */
     public const DEFAULT_MAX_JOBS = self::DEFAULT_MAX_CALLS;
     /** @deprecated Temporary Hostinger/hPanel compatibility input alias. */
     public const HARD_MAX_JOBS = self::HARD_MAX_CALLS;
     private const POINTER_SAFETY_MULTIPLIER = 20;
+    private const POINTER_SAFETY_FLOOR = 15;
     private const FINANCIAL_RECONCILIATION_STALE_RECHECK_SECONDS = 900;
     private const QUEUE_V4_AUDIT_DIR = 'storage/queue-v4-audit';
 
@@ -166,7 +168,7 @@ final class QueueV4CleanWorker
             ];
         }
         $maxCalls = min(self::HARD_MAX_CALLS, $maxCalls);
-        $pointerSafetyLimit = max(self::HARD_MAX_CALLS, $maxCalls * self::POINTER_SAFETY_MULTIPLIER);
+        $pointerSafetyLimit = max(self::POINTER_SAFETY_FLOOR, $maxCalls * self::POINTER_SAFETY_MULTIPLIER);
         $deadline = microtime(true) + max(5, min(45, $runtimeSeconds));
         $owner = bin2hex(random_bytes(16));
         $runId = $this->repository->beginRun($launcher, $owner);

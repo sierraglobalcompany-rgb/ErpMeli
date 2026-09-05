@@ -37,8 +37,9 @@ try {
     };
 
     $worker = new QueueV4CleanWorker($pdo, $repository, null, null, $handler);
-    QueueV4CleanCycleBudget::start(1);
-    $result = $worker->run('test', 1, 10, [2], 2);
+    QueueV4CleanCycleBudget::start(100);
+    $result = $worker->run('test', 100, 10, [2], 2);
+    k1b_assert(QueueV4CleanCycleBudget::remaining() === 99, '429_STOP_NOT_EXPLAINED_BY_EXHAUSTED_BUDGET');
     QueueV4CleanCycleBudget::clear();
 
     $jobStates = $pdo->query(
@@ -60,6 +61,7 @@ k1b_assert($stopReason === 'remote_429_global_pause', 'STOP_REASON_REMOTE_429_PR
 
 echo "STATUS=PASS K1D_RC1_WORKER_429_REGRESSION\n";
 echo "WORKER_JOBS_SEEDED={$seeded}\n";
+echo "WORKER_CONFIGURED_BUDGET=100\nREMAINING_BUDGET_AT_STOP=99\n";
 echo "FIRST_REMOTE_429_STOPS_CYCLE=YES\n";
 echo "CALLS_AFTER_429_SAME_CYCLE={$callsAfter429}\n";
 echo "STOP_REASON={$stopReason}\n";

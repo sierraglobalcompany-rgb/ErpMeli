@@ -14,7 +14,7 @@ Implementation progress is tracked in .superpowers/sdd/2026-09-05-cap2/progress.
 ## Safe checkpoint
 
 - Tasks 1 and 2 implemented and independently reviewed; Task2 review findings fixed at 0edcc5b.
-- Task3 implemented at 07f1d34; focused tests and 180-cycle boundary matrix passed. Independent review is being recorded in the ledger.
+- Task3 implemented at 07f1d34; focused tests and 180-cycle boundary matrix passed, but independent review requires two fixes: protect lease cleanup when the post-acquisition capacity read throws, and make the concurrent-reduction regression actually change settings between scheduler resolutions. Resume Task3 fix round1 first; it is NOT certified complete.
 - Tasks4–7 not executed. No new deploy package approved or generated.
 - C: free space declined to approximately 665 MB during execution. Owned QA files total approximately23 MB and the owned MariaDB data174 MB; these do not explain the large decline. Windows pagefile allocation observed13,063 MB, but cause of disk growth is not certified.
 - Paused new implementation/package generation to protect local writes. No unrelated files or processes were removed or stopped.

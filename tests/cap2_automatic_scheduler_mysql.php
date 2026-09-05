@@ -9,6 +9,9 @@ namespace App\QueueV4Clean {
     final class Cap2AutomaticStageFixture {
         public static int $calls = 0;
         public static ?int $workerArgument = null;
+        public static ?\PDO $interleavingPdo = null;
+        public static string $leaseBoundaryAction = 'none';
+        public static int $leaseBoundaryActions = 0;
         public static function consume(int $wanted = 1): int {
             $count = min($wanted, QueueV4CleanCycleBudget::remaining());
             for ($i = 0; $i < $count; $i++) {
@@ -58,11 +61,25 @@ namespace App\Services {
 }
 namespace App\Work\Adapters {
     final class QueueCoreDrainAuthority {
+        public static int $acquired = 0;
+        public static int $released = 0;
         public function __construct(\PDO $pdo) {}
         public function acquire(string $drainer, string $owner, int $lease): \App\Work\DrainAuthorityToken {
+            self::$acquired++;
+            $fixture = \App\QueueV4Clean\Cap2AutomaticStageFixture::class;
+            if ($fixture::$leaseBoundaryAction === 'reduce') {
+                $stmt = $fixture::$interleavingPdo->prepare(
+                    "UPDATE app_settings SET setting_value='3' WHERE setting_key='automation.max_api_calls_per_cycle'"
+                );
+                $stmt->execute();
+                $fixture::$leaseBoundaryActions++;
+            } elseif ($fixture::$leaseBoundaryAction === 'break_capacity_read') {
+                $fixture::$interleavingPdo->exec('DROP TABLE app_settings');
+                $fixture::$leaseBoundaryActions++;
+            }
             return new \App\Work\DrainAuthorityToken($drainer, $owner, 1, $lease, 'cap2-fixture');
         }
-        public function release(\App\Work\DrainAuthorityToken $token): void {}
+        public function release(\App\Work\DrainAuthorityToken $token): void { self::$released++; }
     }
 }
 namespace {
@@ -75,6 +92,7 @@ namespace {
     use App\Services\AppSettingsService;
     use App\Services\AutomationCallBudgetService;
     use App\Services\CapacityPolicyService;
+    use App\Work\Adapters\QueueCoreDrainAuthority;
 
     putenv('APP_ENV=test');
     putenv('ML_WRITE_ENABLED=false');
@@ -100,14 +118,20 @@ namespace {
         AppSettingsService::clearCache();
         $loadedBeforeReduction = (new AutomationCallBudgetService())->resolve(50);
         k1b_assert($loadedBeforeReduction['max_calls'] === 50, 'fixture_loaded_fifty_before_concurrent_reduction');
-
-        $beforeReduction = $policy->snapshot('automation');
-        $policy->save('automation', 3, 100, $beforeReduction['revision'], $allow);
-        AppSettingsService::clearCache();
+        Cap2AutomaticStageFixture::$interleavingPdo = new PDO(
+            'mysql:host=127.0.0.1;port=33079;dbname=' . getenv('DB_NAME') . ';charset=utf8mb4',
+            'root',
+            '',
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_EMULATE_PREPARES => false],
+        );
+        Cap2AutomaticStageFixture::$leaseBoundaryAction = 'reduce';
+        Cap2AutomaticStageFixture::$leaseBoundaryActions = 0;
         Cap2AutomaticStageFixture::$calls = 0;
         Cap2AutomaticStageFixture::$workerArgument = null;
 
         $result = (new QueueV4CleanScheduler($pdo))->run(50, 45);
+        k1b_assert(Cap2AutomaticStageFixture::$leaseBoundaryActions === 1,
+            'second_connection_reduces_current_at_drain_lease_boundary');
         k1b_assert($result['status'] === 'completed', 'scheduler_runs_after_concurrent_reduction');
         k1b_assert(($result['requested_max_calls'] ?? null) === 50, 'scheduler_preserves_original_requested_capacity');
         k1b_assert($result['configured_max_calls'] === 3 && $result['ceiling'] === 100,
@@ -117,6 +141,24 @@ namespace {
             'oauth_audit_and_worker_share_final_three_call_budget');
         k1b_assert(Cap2AutomaticStageFixture::$workerArgument === 1, 'worker_receives_only_remaining_call');
         k1b_assert(QueueV4CleanCycleBudget::snapshot()['limit'] === 0, 'scheduler_clears_outer_budget');
+
+        $beforeReadFailure = $policy->snapshot('automation');
+        $policy->save('automation', 50, 100, $beforeReadFailure['revision'], $allow);
+        AppSettingsService::clearCache();
+        Cap2AutomaticStageFixture::$leaseBoundaryAction = 'break_capacity_read';
+        $readFailed = false;
+        try {
+            (new QueueV4CleanScheduler($pdo))->run(50, 45);
+        } catch (PDOException) {
+            $readFailed = true;
+        }
+        k1b_assert($readFailed, 'fresh_capacity_read_failure_propagates');
+        k1b_assert(QueueCoreDrainAuthority::$acquired === 2 && QueueCoreDrainAuthority::$released === 2,
+            'fresh_capacity_read_failure_releases_drain_authority');
+        k1b_assert($pdo->query("SELECT owner_ref FROM queue_v4_clean_leases WHERE lease_key='scheduler'")->fetchColumn() === null,
+            'fresh_capacity_read_failure_releases_scheduler_lease');
+        k1b_assert(QueueV4CleanCycleBudget::snapshot()['limit'] === 0,
+            'fresh_capacity_read_failure_clears_cycle_budget_context');
 
         echo "STATUS=PASS CAP2_AUTOMATIC_SCHEDULER_MYSQL\nSTAGE_DOUBLES=NOT_FINAL_PHYSICAL_PROOF\nREAL_MELI_HTTP=0\nREAL_EMAIL_SENT=0\n";
     } finally {

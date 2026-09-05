@@ -92,3 +92,50 @@ No domain handler, metric query, migration, schema, version, production configur
 - Scope: worker edits stop after budget entry; domain handling and metric SQL were not touched.
 - Quality: no new counter/reset path was added. Existing local pointer limits and physical fuse are unchanged.
 - Concern: aggregate/release suites remain unexecuted in this task due the controller's urgent disk-space boundary. Existing scheduler tests use declared stage doubles and must not be described as final physical transport proof.
+
+## Fix round 1: review findings
+
+### Changes
+
+- Moved the scheduler cleanup `try/finally` boundary to immediately after successful drain-authority acquisition. The second live capacity read and `QueueV4CleanCycleBudget::start()` are now covered by both authority releases and cycle-budget cleanup.
+- Reworked `cap2_automatic_scheduler_mysql.php` so a separate real MariaDB connection changes saved current from 50 to 3 inside the drain-authority acquisition seam. This is deterministically between the scheduler's first capacity resolution and its second pre-work resolution.
+- Added a second boundary action that drops `app_settings` after both leases are acquired. The expected live-read failure must propagate while releasing drain authority, clearing the scheduler SQL lease, and clearing cycle-budget context.
+
+### TDD RED
+
+Command:
+
+`C:\xampphp\php\php.exe -d error_reporting=-1 -d display_errors=1 tests\cap2_automatic_scheduler_mysql.php`
+
+Relevant expected failure against the reviewed implementation:
+
+`RuntimeException: fresh_capacity_read_failure_releases_drain_authority`
+
+The separate connection had dropped `app_settings` at the lease boundary, the second capacity read threw, and the failure showed that the existing cleanup scope had not started.
+
+### Concurrent-read mutation proof
+
+After the cleanup fix, the second scheduler `resolve()` was temporarily removed and the same test was run. It failed with:
+
+`RuntimeException: scheduler_rereads_final_erp_capacity`
+
+This proves the corrected interleaving test fails if the second read is removed. The read was restored before all GREEN commands below.
+
+### GREEN and regressions
+
+- `...php tests\cap2_automatic_scheduler_mysql.php` -> `STATUS=PASS CAP2_AUTOMATIC_SCHEDULER_MYSQL`; `STAGE_DOUBLES=NOT_FINAL_PHYSICAL_PROOF`
+- `...php tests\cap2_automatic_budget_mysql.php` -> `STATUS=PASS CAP2_AUTOMATIC_BUDGET_MYSQL`
+- `...php tests\cap2_automatic_worker_context_mysql.php` -> `STATUS=PASS CAP2_AUTOMATIC_WORKER_CONTEXT_MYSQL`
+- `...php tests\capacity_active_scheduler_mysql.php` -> `STATUS=PASS CAPACITY_ACTIVE_SCHEDULER_MYSQL`; six levels 1/2/3/15/55/100 and shared OAuth/audit/worker/repair stages
+- `php -l app\QueueV4Clean\QueueV4CleanScheduler.php` -> no syntax errors
+- `php -l tests\cap2_automatic_scheduler_mysql.php` -> no syntax errors
+- `git diff --check` -> exit 0, no output
+
+All commands used `TEMP`/`TMP=D:\Codex\tmp\erp-meli\cap2-20260905\tmp` and `npm_config_cache=D:\Codex\tmp\erp-meli\cap2-20260905\npm-cache`. No full aggregate/release suite was repeated, as directed; no final physical-wire proof is claimed.
+
+### Fix-round self-review
+
+- The cleanup scope begins only after both authorities are successfully held; existing explicit scheduler-lease cleanup for drain-acquisition failure remains unchanged.
+- A failure before cycle-budget initialization safely calls `clear()` and cannot retain stale in-process state.
+- The deterministic reduction happens during the scheduler invocation, not before it, and the assertion observes final configured/current, ceiling, effective limit, stage total, and worker remaining argument.
+- Only the scheduler cleanup boundary, its Task 3 test, and this report changed in the fix round.

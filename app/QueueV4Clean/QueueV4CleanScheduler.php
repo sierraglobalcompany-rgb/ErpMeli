@@ -92,12 +92,12 @@ final class QueueV4CleanScheduler
                 'ceiling' => $capacity['ceiling'],
             ];
         }
-        // The lease wait is a concurrency boundary. Re-read the ERP pair
-        // immediately before beginning physical work so saved reductions win.
-        $capacity = $capacityService->resolve($requestedMaxCalls);
-        $maxCalls = $capacity['max_calls'];
-        QueueV4CleanCycleBudget::start($maxCalls);
         try {
+            // The lease wait is a concurrency boundary. Re-read the ERP pair
+            // immediately before beginning physical work so saved reductions win.
+            $capacity = $capacityService->resolve($requestedMaxCalls);
+            $maxCalls = $capacity['max_calls'];
+            QueueV4CleanCycleBudget::start($maxCalls);
             $oauth = (new QueueV4CleanOAuthSupervisor(
                 $this->pdo,
                 new QueueV4CleanOAuthOperationRepository($this->pdo),

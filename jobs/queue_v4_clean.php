@@ -37,13 +37,11 @@ try {
         $capacityArgs['max_calls'],
         $capacityArgs['legacy_max_jobs'],
     );
-    $maxCalls = (int) $budget['max_calls'];
+    $requestedMaxCalls = (int) $budget['requested_max_calls'];
     CronDeadlineContext::start($runtime, max(1, $runtime - 5), 8, 3);
-    $result = (new QueueV4CleanScheduler(Database::connectionFresh()))->run($maxCalls, $runtime);
+    $result = (new QueueV4CleanScheduler(Database::connectionFresh()))->run($requestedMaxCalls, $runtime);
     $result['control_unit'] = 'PHYSICAL_API_CALL';
-    $result['max_calls'] = $maxCalls;
     $result['max_calls_source'] = $budget['max_calls_source'];
-    $result['configured_max_calls'] = $budget['configured_max_calls'];
     $result['canonical_max_calls_input_used'] = $hasCanonicalMaxCalls;
     $result['legacy_max_jobs_compat_input_used'] = $hasLegacyMaxJobs;
     $result['legacy_max_jobs_normalized_to_calls'] = $hasLegacyMaxJobs && !$hasCanonicalMaxCalls;

@@ -11,14 +11,15 @@ final class AutomationCallBudgetService
     public const MIN = 1;
     public const HARD_MAX = CapacityPolicyService::TECHNICAL_MAX;
 
-    public function __construct(private readonly AppSettingsService $settings = new AppSettingsService())
-    {
-    }
+    public function __construct(
+        private readonly AppSettingsService $settings = new AppSettingsService(),
+        private readonly ?CapacityPolicyService $policy = null,
+    ) {}
 
-    /** @return array{max_calls:int,configured_max_calls:int,ceiling:int,max_calls_source:string,control_unit:string} */
+    /** @return array{max_calls:int,requested_max_calls:int,configured_max_calls:int,ceiling:int,max_calls_source:string,control_unit:string} */
     public function resolve(?int $cliMaxCalls = null, ?int $legacyMaxJobs = null): array
     {
-        $policy = (new CapacityPolicyService())->snapshot('automation');
+        $policy = ($this->policy ?? new CapacityPolicyService())->snapshot('automation');
         $configured = $policy['current'];
         $ceiling = $policy['ceiling'];
         if ($cliMaxCalls !== null) {
@@ -37,12 +38,15 @@ final class AutomationCallBudgetService
         return $this->result($configured, 'SAFE_DEFAULT', $configured, $ceiling);
     }
 
-    /** @return array{max_calls:int,configured_max_calls:int,ceiling:int,max_calls_source:string,control_unit:string} */
+    /** @return array{max_calls:int,requested_max_calls:int,configured_max_calls:int,ceiling:int,max_calls_source:string,control_unit:string} */
     private function result(int $value, string $source, int $configured, int $ceiling): array
     {
+        $requested = $this->bound($value, self::HARD_MAX);
+        $configured = $this->bound($configured, $ceiling);
         return [
-            'max_calls' => $this->bound($value, $ceiling),
-            'configured_max_calls' => $this->bound($configured, $ceiling),
+            'max_calls' => min($requested, $configured, $ceiling, self::HARD_MAX),
+            'requested_max_calls' => $requested,
+            'configured_max_calls' => $configured,
             'ceiling' => $ceiling,
             'max_calls_source' => $source,
             'control_unit' => 'PHYSICAL_API_CALL',

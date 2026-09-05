@@ -96,6 +96,7 @@ final class QueueV4CleanWorker
         ?int $accountId = null
     ): array
     {
+        $maxCalls = max(0, min(self::HARD_MAX_CALLS, $maxCalls));
         if ($maxCalls < 1 || $runtimeSeconds < 5) {
             return [
                 'run_id' => 0,
@@ -106,6 +107,13 @@ final class QueueV4CleanWorker
                 'max_calls' => max(0, $maxCalls),
                 'physical_http_calls' => 0,
             ];
+        }
+        $outerBudget = QueueV4CleanCycleBudget::snapshot();
+        if ($outerBudget['limit'] < 1) {
+            throw new RuntimeException('queue_v4_clean_cycle_budget_context_missing');
+        }
+        if ($outerBudget['remaining'] > $maxCalls) {
+            throw new RuntimeException('queue_v4_clean_cycle_budget_exceeds_authorized_calls');
         }
         $receiptStartedAt = microtime(true);
         $receiptStartedText = gmdate('Y-m-d H:i:s');
@@ -167,7 +175,6 @@ final class QueueV4CleanWorker
                 'physical_http_calls' => 0,
             ];
         }
-        $maxCalls = min(self::HARD_MAX_CALLS, $maxCalls);
         $pointerSafetyLimit = max(self::POINTER_SAFETY_FLOOR, $maxCalls * self::POINTER_SAFETY_MULTIPLIER);
         $deadline = microtime(true) + max(5, min(45, $runtimeSeconds));
         $owner = bin2hex(random_bytes(16));

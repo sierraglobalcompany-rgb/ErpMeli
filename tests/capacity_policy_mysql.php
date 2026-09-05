@@ -70,12 +70,12 @@ try {
     $ceilingOnly = $policy->save('automation',1,100,$after['revision'],$noGate);
     k1b_assert($ceilingOnly['current'] === 1 && $ceilingOnly['ceiling'] === 100, 'ceiling_only_keeps_current');
     $small = $policy->save('automation',2,3,$ceilingOnly['revision'],$allow);
-    k1b_assert((new AutomationCallBudgetService())->resolve(100)['max_calls'] === 3, 'cli_override_clamped_to_module_ceiling');
-    k1b_assert((new AutomationCallBudgetService())->resolve(null,100)['max_calls'] === 3, 'cli_legacy_alias_clamped_to_module_ceiling');
+    k1b_assert((new AutomationCallBudgetService())->resolve(100)['max_calls'] === 2, 'cli_override_cannot_raise_current');
+    k1b_assert((new AutomationCallBudgetService())->resolve(null,100)['max_calls'] === 2, 'cli_legacy_alias_cannot_raise_current');
     $pdo->exec('CREATE TABLE queue_v4_clean_control (control_key VARCHAR(32) PRIMARY KEY,engine_state VARCHAR(20),scheduler_enabled TINYINT) ENGINE=InnoDB');
     $pdo->exec("INSERT INTO queue_v4_clean_control VALUES ('primary','STOPPED',0)");
     $stopped = (new App\QueueV4Clean\QueueV4CleanScheduler($pdo))->run(100);
-    k1b_assert($stopped['max_calls'] === 3 && $stopped['status'] === 'stopped', 'scheduler_entry_uses_configured_ceiling');
+    k1b_assert($stopped['max_calls'] === 2 && $stopped['status'] === 'stopped', 'scheduler_entry_uses_configured_current');
     k1b_assert($policy->snapshot('manual')['current'] === 2 && $policy->snapshot('manual')['ceiling'] === 55, 'manual_unmodified_by_automation');
     $manual = $policy->snapshot('manual');
     $savedManual = $policy->save('manual',55,55,$manual['revision'],$allow);

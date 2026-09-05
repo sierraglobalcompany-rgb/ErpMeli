@@ -37,6 +37,33 @@ try {
     k1b_assert($instrumentedGate['allowed'] === true, 'instrumented_healthy_fixture_must_allow');
     k1b_assert($guardSelects <= 12, 'capacity_health_guard_select_budget_exceeded:' . $guardSelects);
 
+    $pdo->exec("INSERT INTO companies VALUES (6,'OAuth inactiva',0)");
+    $pdo->exec("INSERT INTO meli_accounts VALUES (66,6,'Cuenta OAuth 66','u66','conectado')");
+    $pdo->exec("INSERT INTO meli_tokens VALUES (66,'enc',DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 DAY),1)");
+    $pdo->exec("INSERT INTO oauth_refresh_operations(company_id,meli_account_id,state,next_attempt_at,last_error_class) VALUES (6,66,'FAILED',UTC_TIMESTAMP(3),'oauth_only_fixture')");
+    $denied = false;
+    try { $guard->assertGlobalAuthorization(); } catch (HttpException $error) { $denied = $error->status === 403; }
+    k1b_assert($denied, 'oauth_only_terminal_tenant_must_require_company_and_account_authority');
+    $pdo->exec("INSERT INTO user_company_access VALUES (7,6,'admin')");
+    k1b_assert($guard->increaseGate()['allowed'] === false, 'oauth_only_terminal_without_readiness_or_job_must_block_increase');
+    $pdo->exec('DELETE FROM oauth_refresh_operations WHERE meli_account_id=66');
+    $pdo->exec('DELETE FROM user_company_access WHERE company_id=6');
+    $pdo->exec('DELETE FROM meli_tokens WHERE meli_account_id=66');
+    $pdo->exec('DELETE FROM meli_accounts WHERE id=66');
+    $pdo->exec('DELETE FROM companies WHERE id=6');
+
+    $pdo->exec('DELETE FROM user_company_access WHERE company_id=5');
+    $denied = false;
+    try { $guard->assertGlobalAuthorization(); } catch (HttpException $error) { $denied = $error->status === 403; }
+    k1b_assert($denied, 'active_company_account_without_readiness_or_work_must_be_covered');
+    $pdo->exec("INSERT INTO user_company_access VALUES (7,5,'admin')");
+
+    $pdo->exec('DELETE FROM user_company_access WHERE company_id=4');
+    $denied = false;
+    try { $guard->assertGlobalAuthorization(); } catch (HttpException $error) { $denied = $error->status === 403; }
+    k1b_assert($denied, 'active_company_without_account_must_be_covered');
+    $pdo->exec("INSERT INTO user_company_access VALUES (7,4,'admin')");
+
     $pdo->exec('DELETE FROM user_company_access WHERE company_id=2');
     $denied = false;
     try { $guard->assertGlobalAuthorization(); } catch (HttpException $error) {

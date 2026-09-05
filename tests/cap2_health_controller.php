@@ -71,6 +71,20 @@ namespace {
         k1b_assert($denied, 'prepare_must_apply_global_authorization');
 
         $pdo->exec("INSERT INTO user_company_access VALUES (7,2,'admin')");
+        $pdo->exec('DELETE FROM user_company_access WHERE company_id=5');
+        $denied = false;
+        try { (new App\Controllers\SettingsController())->saveManualCallBudget(); }
+        catch (HttpException $error) { $denied = $error->status === 403; }
+        k1b_assert($denied, 'prepare_must_cover_active_account_without_readiness_or_work');
+        $pdo->exec("INSERT INTO user_company_access VALUES (7,5,'admin')");
+
+        $pdo->exec('DELETE FROM user_company_access WHERE company_id=4');
+        $denied = false;
+        try { (new App\Controllers\SettingsController())->saveManualCallBudget(); }
+        catch (HttpException $error) { $denied = $error->status === 403; }
+        k1b_assert($denied, 'prepare_must_cover_active_company_without_account');
+        $pdo->exec("INSERT INTO user_company_access VALUES (7,4,'admin')");
+
         unset($GLOBALS['cap2_rendered']);
         (new App\Controllers\SettingsController())->saveManualCallBudget();
         k1b_assert(($GLOBALS['cap2_rendered']['view'] ?? '') === 'settings/capacity_confirmation', 'authorized_prepare_must_render_real_controller_confirmation');

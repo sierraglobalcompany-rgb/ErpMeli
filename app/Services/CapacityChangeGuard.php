@@ -51,6 +51,7 @@ final class CapacityChangeGuard
                 || (int) ($oauthStates['REMOTE_UNCERTAIN'] ?? 0) > 0
                 || (int) ($oauthStates['RECONNECT_REQUIRED'] ?? 0) > 0
                 || (int) ($oauthStates['FAILED'] ?? 0) > 0
+                || $this->hasAffectedOAuthBlocker()
                 || $this->hasRecentRemote429($scope);
 
             return $blocked
@@ -72,12 +73,14 @@ final class CapacityChangeGuard
                       ON company_access.user_id=? AND company_access.company_id=affected.company_id
                     LEFT JOIN user_meli_account_access account_access
                       ON account_access.user_id=? AND account_access.meli_account_id=affected.meli_account_id
-                    WHERE account.id IS NULL
-                       OR company_access.user_id IS NULL
-                       OR (
+                    WHERE company_access.user_id IS NULL
+                       OR (affected.meli_account_id IS NOT NULL AND (
+                           account.id IS NULL
+                           OR (
                            EXISTS (SELECT 1 FROM user_meli_account_access configured WHERE configured.user_id=?)
                            AND account_access.user_id IS NULL
-                       )
+                           )
+                       ))
                     LIMIT 1
                 )';
         $statement = $this->pdo()->prepare($sql);
@@ -98,8 +101,10 @@ final class CapacityChangeGuard
         foreach ($rows as $row) {
             $companyId = (int) ($row['company_id'] ?? 0);
             $accountId = (int) ($row['meli_account_id'] ?? 0);
-            if ($companyId > 0 && $accountId > 0) {
+            if ($companyId > 0) {
                 $companyIds[$companyId] = true;
+            }
+            if ($accountId > 0) {
                 $accountIds[$accountId] = true;
             }
         }
@@ -107,6 +112,36 @@ final class CapacityChangeGuard
             'company_ids' => array_map('intval', array_keys($companyIds)),
             'account_ids' => array_map('intval', array_keys($accountIds)),
         ];
+    }
+
+    private function hasAffectedOAuthBlocker(): bool
+    {
+        $statement = $this->pdo()->query(
+            'SELECT EXISTS(
+                SELECT 1
+                FROM (' . $this->affectedTenantSql() . ') affected
+                INNER JOIN meli_accounts account
+                  ON account.company_id=affected.company_id AND account.id=affected.meli_account_id
+                LEFT JOIN meli_tokens token ON token.meli_account_id=account.id
+                LEFT JOIN oauth_refresh_operations operation ON operation.id=(
+                    SELECT MAX(latest.id)
+                    FROM oauth_refresh_operations latest
+                    WHERE latest.company_id=affected.company_id
+                      AND latest.meli_account_id=affected.meli_account_id
+                )
+                WHERE affected.meli_account_id IS NOT NULL
+                  AND (
+                    account.status NOT IN ("conectado","connected")
+                    OR token.meli_account_id IS NULL
+                    OR account.meli_user_id=""
+                    OR token.refresh_token_encrypted=""
+                    OR token.expires_at IS NULL
+                    OR operation.state IN ("FAILED","REMOTE_UNCERTAIN","RECONNECT_REQUIRED")
+                  )
+                LIMIT 1
+             )'
+        );
+        return (int) $statement->fetchColumn() === 1;
     }
 
     /** @param array{company_ids:list<int>,account_ids:list<int>} $scope */
@@ -140,7 +175,12 @@ final class CapacityChangeGuard
 
     private function affectedTenantSql(): string
     {
-        return 'SELECT ra.company_id,ra.meli_account_id
+        return 'SELECT company.id company_id,account.id meli_account_id
+                  FROM companies company
+                  LEFT JOIN meli_accounts account ON account.company_id=company.id
+                  WHERE company.status=1
+                UNION
+                SELECT ra.company_id,ra.meli_account_id
                   FROM queue_v4_clean_readiness_accounts ra
                   INNER JOIN queue_v4_clean_readiness_runs rr
                     ON rr.id=ra.readiness_run_id AND rr.state="CERTIFIED"
@@ -151,7 +191,7 @@ final class CapacityChangeGuard
                   WHERE state IN ("ready","running","waiting","review","dead")
                 UNION
                 SELECT company_id,meli_account_id FROM oauth_refresh_operations
-                  WHERE state IN ("SCHEDULED","RUNNING","WAITING")
+                  WHERE state IN ("SCHEDULED","RUNNING","WAITING","FAILED","REMOTE_UNCERTAIN","RECONNECT_REQUIRED")
                 UNION
                 SELECT company_id,meli_account_id FROM sync_sales_audit_jobs
                   WHERE status IN ("pending","running","waiting_budget")

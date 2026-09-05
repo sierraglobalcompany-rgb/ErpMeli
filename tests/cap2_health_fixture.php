@@ -36,10 +36,10 @@ function cap2_health_create_schema(PDO $pdo): void
 function cap2_health_seed(PDO $pdo): void
 {
     $pdo->exec("INSERT INTO users VALUES (7,'Admin','admin@local.test','x','admin',1,0)");
-    $pdo->exec("INSERT INTO companies VALUES (1,'Uno',1),(2,'Dos',1),(3,'Inactiva',0)");
-    $pdo->exec("INSERT INTO meli_accounts VALUES (11,1,'Cuenta 11','u11','conectado'),(22,2,'Cuenta 22','u22','conectado'),(33,3,'Cuenta 33','u33','conectado')");
-    $pdo->exec("INSERT INTO meli_tokens VALUES (11,'enc',DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 DAY),1),(22,'enc',DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 DAY),1),(33,'enc',DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 DAY),1)");
-    $pdo->exec("INSERT INTO user_company_access VALUES (7,1,'admin'),(7,2,'admin'),(7,3,'admin')");
+    $pdo->exec("INSERT INTO companies VALUES (1,'Uno',1),(2,'Dos',1),(3,'Inactiva',0),(4,'Activa sin cuenta',1),(5,'Activa sin trabajo',1)");
+    $pdo->exec("INSERT INTO meli_accounts VALUES (11,1,'Cuenta 11','u11','conectado'),(22,2,'Cuenta 22','u22','conectado'),(33,3,'Cuenta 33','u33','conectado'),(55,5,'Cuenta 55','u55','conectado')");
+    $pdo->exec("INSERT INTO meli_tokens VALUES (11,'enc',DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 DAY),1),(22,'enc',DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 DAY),1),(33,'enc',DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 DAY),1),(55,'enc',DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 DAY),1)");
+    $pdo->exec("INSERT INTO user_company_access VALUES (7,1,'admin'),(7,2,'admin'),(7,3,'admin'),(7,4,'admin'),(7,5,'admin')");
     $pdo->exec("INSERT INTO queue_v4_clean_control VALUES ('primary','ACTIVE','CERTIFIED',1,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3))");
     $pdo->exec("INSERT INTO queue_v4_clean_readiness_runs(id,state) VALUES (1,'CERTIFIED')");
     $pdo->exec("INSERT INTO queue_v4_clean_readiness_accounts VALUES (1,1,11,'PASS'),(1,2,22,'PASS'),(1,3,33,'PASS')");

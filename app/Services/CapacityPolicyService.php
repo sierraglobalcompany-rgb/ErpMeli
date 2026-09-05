@@ -28,7 +28,7 @@ final class CapacityPolicyService
 
     public function __construct(private readonly ?PDO $pdo = null) {}
 
-    /** @return array{module:string,ceiling:int,current:int,revision:string} */
+    /** @return array{module:string,ceiling:int,current:int,revision:string,legacy_derived:bool} */
     public function snapshot(string $module): array
     {
         return $this->read($this->pdo ?? Database::connectionFresh(), $module);
@@ -37,16 +37,12 @@ final class CapacityPolicyService
     /**
      * The module advisory lock also serializes the first save, when neither
      * setting exists. Row locks fence existing raw and legacy dependencies.
-     * @return array{module:string,ceiling:int,current:int,revision:string}
+     * @return array{module:string,ceiling:int,current:int,revision:string,legacy_derived:bool}
      */
     public function save(string $module, mixed $current, mixed $ceiling, string $revision, callable $increaseGate): array
     {
         $this->keys($module);
-        $current = $this->integer($current);
-        $ceiling = $this->integer($ceiling);
-        if ($current > $ceiling) {
-            throw new InvalidArgumentException('La capacidad actual no puede superar su techo.');
-        }
+        ['current' => $current, 'ceiling' => $ceiling] = $this->validatePair($current, $ceiling);
         $pdo = $this->pdo ?? Database::connectionFresh();
         if ($pdo->inTransaction()) {
             throw new RuntimeException('No se puede guardar capacidad dentro de otra transacción.');
@@ -93,6 +89,35 @@ final class CapacityPolicyService
         }
     }
 
+    /** @return array{current:int,ceiling:int} */
+    public function validatePair(mixed $current, mixed $ceiling): array
+    {
+        $current = $this->integer($current);
+        $ceiling = $this->integer($ceiling);
+        if ($current > $ceiling) {
+            throw new InvalidArgumentException('La capacidad actual no puede superar su techo.');
+        }
+        return ['current' => $current, 'ceiling' => $ceiling];
+    }
+
+    public function requiresManualAdoptionForRhythm(string $profile, int $target): bool
+    {
+        if ($target < 1 || $target > 300) {
+            throw new InvalidArgumentException('El ritmo debe estar entre 1 y 300.');
+        }
+        $pdo = $this->pdo ?? Database::connectionFresh();
+        $before = $this->read($pdo, 'manual');
+        if (!$before['legacy_derived']) {
+            return false;
+        }
+        $after = $this->read($pdo, 'manual', false, [
+            'api.rhythm.mode' => $profile,
+            'api.rhythm.profile' => $profile,
+            'api.rhythm.target_http_per_minute' => (string) $target,
+        ]);
+        return $after['current'] !== $before['current'];
+    }
+
     private function integer(mixed $value): int
     {
         if ((!is_int($value) && !is_string($value))
@@ -112,8 +137,8 @@ final class CapacityPolicyService
         return $module === 'manual' ? [...self::KEYS[$module], ...self::LEGACY_MANUAL_KEYS] : self::KEYS[$module];
     }
 
-    /** @return array{module:string,ceiling:int,current:int,revision:string} */
-    private function read(PDO $pdo, string $module, bool $locking = false): array
+    /** @return array{module:string,ceiling:int,current:int,revision:string,legacy_derived:bool} */
+    private function read(PDO $pdo, string $module, bool $locking = false, array $overrides = []): array
     {
         $keys = $this->keys($module);
         $stmt = $pdo->prepare('SELECT setting_key,setting_value,is_encrypted FROM app_settings WHERE setting_key IN ('
@@ -133,7 +158,13 @@ final class CapacityPolicyService
             $values[$key] = $value;
             $raw[$key] = ['row'=>$row, 'environment'=>$row === null ? $value : null];
         }
+        foreach ($overrides as $key => $value) {
+            if (array_key_exists($key, $values)) {
+                $values[$key] = $value;
+            }
+        }
         [$currentKey, $ceilingKey] = self::KEYS[$module];
+        $legacyDerived = $module === 'manual' && $values[$currentKey] === null;
         $ceiling = max(1, min(self::TECHNICAL_MAX, $this->legacyInt($values[$ceilingKey], self::DEFAULT_CEILING)));
         if ($module === 'automation') {
             $current = $this->legacyInt($values[$currentKey], 1);
@@ -142,12 +173,16 @@ final class CapacityPolicyService
                 $current = min(15, $current);
             }
         } else {
-            $current = $values[$currentKey] === null
+            $current = $legacyDerived
                 ? min(15, max(1, $this->legacyInt($values['manual_campaign.default_block_size'], 30)), $this->legacyRhythmTarget($values))
                 : $this->legacyInt($values[$currentKey], 1);
         }
+        if (!$legacyDerived && $module === 'manual') {
+            $raw = array_intersect_key($raw, array_flip(self::KEYS['manual']));
+        }
         return ['module'=>$module, 'ceiling'=>$ceiling, 'current'=>max(1, min($ceiling, $current)),
-            'revision'=>hash('sha256', json_encode([$module, $raw], JSON_THROW_ON_ERROR))];
+            'revision'=>hash('sha256', json_encode([$module, $raw], JSON_THROW_ON_ERROR)),
+            'legacy_derived'=>$legacyDerived];
     }
 
     private function legacyInt(mixed $value, int $default): int

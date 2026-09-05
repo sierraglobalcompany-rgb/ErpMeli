@@ -18,7 +18,13 @@ namespace App\Services {
         public const TECHNICAL_MAX = 100;
         public const DEFAULT_CEILING = 55;
         public static int $writes = 0;
+        public static int $validations = 0;
         public function snapshot(string $module): array { return ['module' => $module, 'current' => 3, 'ceiling' => 55, 'revision' => 'rev-1']; }
+        public function validatePair(mixed $current, mixed $ceiling): array {
+            self::$validations++;
+            if ($current === '101') throw new \InvalidArgumentException('invalid capacity');
+            return ['current' => (int) $current, 'ceiling' => (int) $ceiling];
+        }
         public function save(string $module, mixed $current, mixed $ceiling, string $revision, callable $gate): array {
             if ($revision !== 'rev-1') throw new \App\Core\HttpException(409, 'stale revision');
             if ($current > 3 && empty($gate()['allowed'])) throw new \App\Core\HttpException(409, 'health blocked');
@@ -53,6 +59,7 @@ namespace {
         $expected = $mode === 'confirm' ? 1 : 0;
         k1b_assert(App\Services\CapacityPolicyService::$writes === $expected, 'Only an authenticated confirmed valid proposal may persist.');
         if ($mode === 'prepare') {
+            k1b_assert(App\Services\CapacityPolicyService::$validations === 1, 'Controller must delegate pair validation to the policy.');
             k1b_assert(($GLOBALS['rendered']['view'] ?? '') === 'settings/capacity_confirmation', 'First submission only renders confirmation.');
             k1b_assert(($_SESSION['capacity_proposal_manual']['current'] ?? null) === 2, 'Server holds confirmed candidate.');
         }

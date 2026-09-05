@@ -38,6 +38,9 @@ final class SettingsSectionService
         $pdo->beginTransaction();
         try {
             foreach ($section['fields'] as $field) {
+                if (isset($field['managed_elsewhere'])) {
+                    continue;
+                }
                 $key = $field['key'];
                 $raw = $restoreRecommended ? $field['recommended'] : ($submitted[$key] ?? null);
                 $after[$key] = $this->validate($field, $raw);
@@ -46,6 +49,9 @@ final class SettingsSectionService
                 $this->normalizeBilling429Backoff($after);
             }
             foreach ($section['fields'] as $field) {
+                if (isset($field['managed_elsewhere'])) {
+                    continue;
+                }
                 $key = $field['key'];
                 $this->settings->set($key, $after[$key], $sectionKey);
             }

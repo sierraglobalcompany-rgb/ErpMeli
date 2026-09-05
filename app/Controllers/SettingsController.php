@@ -101,6 +101,10 @@ final class SettingsController
         $previousCurrent = $settings->int('api.rhythm.current_adaptive_limit', min(15, $target));
         $previousAdaptive = $settings->bool('api.rhythm.adaptive_enabled', true);
         $adaptiveEnabled = isset($_POST['adaptive_enabled']);
+        if ((new CapacityPolicyService())->requiresManualAdoptionForRhythm($profile, $target)) {
+            Session::flash('error', 'Antes de cambiar este ritmo, guarde explícitamente la capacidad manual actual y su techo en Procesar ahora.');
+            $this->redirect('/settings/cron/rhythm');
+        }
         if ($target > $previousTarget) {
             $gate = $this->queueV4RhythmIncreaseGate();
             if (empty($gate['allowed'])) {
@@ -196,10 +200,13 @@ final class SettingsController
         }
         $before = $policy->snapshot($module);
         $currentKey = $module === 'automation' ? 'automation_max_api_calls_per_cycle' : 'manual_api_calls_per_step';
-        $current = $this->capacityInteger($_POST[$currentKey] ?? null);
-        $ceiling = $this->capacityInteger($_POST[$module . '_api_calls_ceiling'] ?? $before['ceiling']);
-        if ($current > $ceiling) {
-            throw new \App\Core\HttpException(422, 'La capacidad actual no puede superar el techo elegido.');
+        try {
+            ['current' => $current, 'ceiling' => $ceiling] = $policy->validatePair(
+                $_POST[$currentKey] ?? null,
+                $_POST[$module . '_api_calls_ceiling'] ?? $before['ceiling']
+            );
+        } catch (\InvalidArgumentException $error) {
+            throw new \App\Core\HttpException(422, $error->getMessage());
         }
         $revision = $_POST['capacity_revision'] ?? $before['revision'];
         if (!is_string($revision) || !hash_equals($before['revision'], $revision)) {
@@ -212,15 +219,6 @@ final class SettingsController
         ];
         Session::put($sessionKey, $proposal);
         View::render('settings/capacity_confirmation', compact('module', 'action', 'returnPath', 'proposal'));
-    }
-
-    private function capacityInteger(mixed $raw): int
-    {
-        if ((!is_string($raw) && !is_int($raw)) || preg_match('/^[1-9][0-9]*$/D', (string) $raw) !== 1
-            || (int) $raw < 1 || (int) $raw > CapacityPolicyService::TECHNICAL_MAX) {
-            throw new \App\Core\HttpException(422, 'La capacidad debe ser un entero entre 1 y 100.');
-        }
-        return (int) $raw;
     }
 
     /** @return array{1:int,2:int,3:int,4:int} */

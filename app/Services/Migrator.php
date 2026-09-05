@@ -268,15 +268,19 @@ final class Migrator
                 $metadataState = $meta !== null ? (string) ($meta['state'] ?? '') : '';
                 $registeredChecksum = $meta !== null ? (string) ($meta['checksum_sha256'] ?? '') : '';
                 if ($meta !== null && !hash_equals($registeredChecksum, $checksum)) {
-                    if ($this->isPortableLineEndingChecksum($file, $registeredChecksum)) {
+                    $portableMode = null;
+                    if ($this->isPortableLineEndingChecksum($file, $registeredChecksum, $portableMode)) {
+                        $terminalLfOnly = $portableMode === 'migration_text_terminal_lf';
                         $this->currentStage = 'state_adopted';
                         $this->markMigration(
                             $version,
                             $checksum,
                             'adopted',
-                            'Checksum equivalente por finales de línea. No se ejecutó SQL.'
+                            $terminalLfOnly
+                                ? 'Checksum equivalente por un LF terminal adicional en migración. SQL_EXECUTED=NO.'
+                                : 'Checksum equivalente por finales de línea. No se ejecutó SQL.'
                         );
-                        $this->trace?->event('checksum_line_ending_equivalent', 'adopted', $version, $checksum, null, [
+                        $this->trace?->event($terminalLfOnly ? 'checksum_terminal_lf_equivalent' : 'checksum_line_ending_equivalent', 'adopted', $version, $checksum, null, [
                             'registered_checksum' => $registeredChecksum,
                             'observed_checksum' => $checksum,
                             'sql_executed' => false,
@@ -490,8 +494,9 @@ final class Migrator
         return $results;
     }
 
-    private function isPortableLineEndingChecksum(string $file, string $registeredChecksum): bool
+    private function isPortableLineEndingChecksum(string $file, string $registeredChecksum, ?string &$matchMode = null): bool
     {
+        $matchMode = null;
         if ($registeredChecksum === '' || !preg_match('/^[a-f0-9]{64}$/i', $registeredChecksum)) {
             return false;
         }
@@ -506,7 +511,25 @@ final class Migrator
         }
         foreach ([$sql, $lf, $crlf] as $variant) {
             if (hash_equals(strtolower($registeredChecksum), hash('sha256', $variant))) {
+                $matchMode = 'line_endings';
                 return true;
+            }
+        }
+        if (preg_match('#(?:^|/)database/migrations/[0-9]{3}_[A-Za-z0-9_]+\.sql$#D', str_replace('\\', '/', $file)) !== 1) {
+            return false;
+        }
+        preg_match('/\n*\z/', $lf, $tail);
+        $count = strlen($tail[0]);
+        if ($count !== 1 && $count !== 2) {
+            return false;
+        }
+        $one = substr($lf, 0, -$count) . "\n";
+        foreach ([$one, $one . "\n"] as $terminalVariant) {
+            foreach ([$terminalVariant, str_replace("\n", "\r\n", $terminalVariant)] as $variant) {
+                if (hash_equals(strtolower($registeredChecksum), hash('sha256', $variant))) {
+                    $matchMode = 'migration_text_terminal_lf';
+                    return true;
+                }
             }
         }
         return false;

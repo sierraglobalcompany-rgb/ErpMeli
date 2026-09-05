@@ -91,12 +91,15 @@ final class ReleaseIntegrityService
                 && is_string($actualTextHash)
                 && preg_match('/^[a-f0-9]{64}$/', $expectedTextHash) === 1
                 && hash_equals($expectedTextHash, strtolower($actualTextHash));
-            $matches = $exactMatches || $textMatches;
+            $terminalLfMatches = !$exactMatches && !$textMatches && $textHashAllowed
+                && $absolute !== ''
+                && $this->migrationTerminalLfMatches($absolute, $relative, $expectedTextHash);
+            $matches = $exactMatches || $textMatches || $terminalLfMatches;
             $components[$name] = [
                 'path' => $relative,
                 'exists' => $absolute !== '' && is_file($absolute),
                 'matches' => $matches,
-                'match_mode' => $exactMatches ? 'exact' : ($textMatches ? 'text_lf' : 'none'),
+                'match_mode' => $exactMatches ? 'exact' : ($textMatches ? 'text_lf' : ($terminalLfMatches ? 'migration_text_terminal_lf' : 'none')),
                 'expected_short' => $expectedHash !== '' ? substr($expectedHash, 0, 12) : null,
                 'actual_short' => is_string($actualHash) ? substr($actualHash, 0, 12) : null,
                 'expected_text_short' => $expectedTextHash !== '' ? substr($expectedTextHash, 0, 12) : null,
@@ -340,6 +343,29 @@ final class ReleaseIntegrityService
         } catch (Throwable) {
             return false;
         }
+    }
+
+    private function migrationTerminalLfMatches(string $absolute, string $relative, string $expectedTextHash): bool
+    {
+        if (preg_match('#^database/migrations/[0-9]{3}_[A-Za-z0-9_]+\.sql$#D', $relative) !== 1
+            || preg_match('/^[a-f0-9]{64}$/D', $expectedTextHash) !== 1
+            || !is_file($absolute)) {
+            return false;
+        }
+        $bytes = file_get_contents($absolute);
+        if ($bytes === false) {
+            return false;
+        }
+        $lf = str_replace(["\r\n", "\r"], "\n", $bytes);
+        preg_match('/\n*\z/', $lf, $tail);
+        $count = strlen($tail[0]);
+        if ($count !== 1 && $count !== 2) {
+            return false;
+        }
+        $one = substr($lf, 0, -$count) . "\n";
+        // The manifest stores digests, not bytes: test its one-/two-LF preimages.
+        return hash_equals($expectedTextHash, hash('sha256', $one))
+            || hash_equals($expectedTextHash, hash('sha256', $one . "\n"));
     }
 
     private function canonicalTextSha256(string $path): string|false

@@ -79,6 +79,18 @@ try {
     $cached = cap2_domains_run($pdo,1);
     k1b_assert($cached['completed']===1 && $cached['physical_http_calls']===0 && $cached['cycle_used']===0 && count(Cap2DomainsWire::$calls)===$before,'cached_item_review_zero_physical');
 
+    // The default hybrid branch must persist locally without a second remote read.
+    $pdo->exec("DELETE FROM app_settings WHERE setting_key='items.hybrid_notification_updates_enabled'");
+    AppSettingsService::clearCache();
+    k1b_assert((new AppSettingsService())->bool('items.hybrid_notification_updates_enabled', true), 'hybrid_default_enabled');
+    $hybridItem = array_replace($item, ['id'=>'MCO8190', 'title'=>'QA hybrid item']);
+    cap2_domains_case($pdo, 'item', 'MCO8190', '/items/MCO8190', $hybridItem, 'item_exact');
+    $persisted = $pdo->query("SELECT title FROM meli_items WHERE meli_account_id=9011 AND external_item_id='MCO8190'")->fetchColumn();
+    k1b_assert($persisted === 'QA hybrid item', 'hybrid_default_persists_exact_snapshot_locally');
+    k1b_assert((int)$pdo->query("SELECT COUNT(*) FROM meli_items WHERE meli_account_id<>9011 AND external_item_id='MCO8190'")->fetchColumn() === 0, 'hybrid_no_foreign_account_persistence');
+    $settings->set('items.hybrid_notification_updates_enabled', '0', 'items');
+    AppSettingsService::clearCache();
+
     cap2_domains_negative_fences($pdo);
     // An event arriving during the GET keeps its own ID unacknowledged and requests a rerun.
     $rerunWork=cap2_domains_notification($pdo,'question','8177','/questions/8177');
@@ -129,7 +141,7 @@ try {
     k1b_assert($pdo->query("SELECT status FROM meli_notification_work_items WHERE id={$badItem}")->fetchColumn()!=='complete','item_429_not_complete');
     k1b_assert($pdo->query("SELECT state FROM queue_v4_clean_jobs WHERE id={$laterJob}")->fetchColumn()==='ready','429_preserves_remaining_unclaimed');
     k1b_assert($itemCapable,'uncached_item_is_api_capable');
-    k1b_assert(count(Cap2DomainsWire::$calls)===9,'matrix_exact_nine_wire_calls');
+    k1b_assert(count(Cap2DomainsWire::$calls)===10,'matrix_exact_ten_wire_calls_including_default_hybrid');
     echo "STATUS=PASS CAP2_DOMAINS_MYSQL\nREAL_MELI_HTTP=0\nREAL_EMAIL_SENT=0\n";
 } finally {
     QueueV4CleanCycleBudget::clear();

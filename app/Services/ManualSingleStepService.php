@@ -134,6 +134,8 @@ final class ManualSingleStepService
                     (string) $index, $queueKey, $sourceId, $inputVersion,
                 ]));
                 $items[] = [
+                    'manual_preview_id' => (int) $preview['preview_id'],
+                    'manual_user_id' => $userId,
                     'company_id' => $companyId,
                     'account_id' => $accountId,
                     'queue_key' => $queueKey,

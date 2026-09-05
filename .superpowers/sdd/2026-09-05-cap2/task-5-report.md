@@ -96,3 +96,56 @@ The 45-second browser window still starts before preview loading/locks/source pr
 Independent specification/quality review is the parent/controller's next gate. The source-ineligibility race correction changes only the handler's initial stale-source branch: terminal existing resources may be completed; missing or nonterminal/ineligible resources require review and stop selection.
 
 Final post-review correction verification: reran `cap2_manual_safety.php` with its SQL source-race trigger and refreshed its D log; output `STATUS=PASS CAP2_MANUAL_SAFETY`, `REAL_MELI_HTTP=0`, exit 0. Re-linted `ManualExactHandler.php`, `cap2_manual_safety.php` and `cap2_manual_busy.php`; all passed. Re-ran `git diff --check` and staged diff check; both clean. The added recovery-order assertion in `cap2_manual_busy` also passed and its log was refreshed. No outstanding self-review defect remains known; independent review is still required.
+
+## Review fix round 1 — T5-1, recovered after application restart
+
+Recovery baseline: `111eea17af85d1a4be3f611527dd6aa2f0965724`. The existing uncommitted edits to `ManualQueueLauncher`, `QueueCoreRepository`, `ManualSingleStepService` and the new `cap2_manual_orphan` test survived the application crash. They were audited and retained, not discarded or reimplemented. Only indentation and recovery documentation were adjusted after restart before fresh verification. Other workers' files and the preexisting untracked `qa/` remain outside this task's staging scope.
+
+T5-1 correction:
+
+- The enqueue stores server-derived preview ID/user and the global execution owner/generation in existing provenance JSON; it does not store the reusable preview token or any OAuth secret.
+- Read-only pre-admission classification accepts only never-claimed `manual_exact`/`manual_web` pending jobs with `NOT_DISPATCHED`, no attempt rows, no job owner/expiry, generation zero, and a matching source/account in the same user's consumed durable preview. The account joins its company, and candidates are restricted to the company/account/user scopes freshly authorized by the request. Old provenance must identify an older manual generation and a different well-formed manual owner; the current global manual lease must be live.
+- A successful fresh admission precedes recovery. Under a transaction and locked current authority/rows, certification is repeated and exactly the classified candidates are closed locally as `review` / `manual_preclaim_orphan`. They are never claimed, dispatched or made retryable. Missing provenance, unknown owner, different user, future generation, legitimate pending FIFO and live owner remain busy; failed admission leaves the orphan untouched.
+- Cleanup now encloses the first post-enqueue previous-attempt SELECT as well as runner/result handling. A catchable failure at that boundary closes the envelope; a real process death is handled only by the certified fresh-preview path above. Consumed previews never become ready again.
+
+Recovered TDD evidence: `C:/xampphp/php/php.exe tests/cap2_manual_orphan.php` produced the intended RED before the fix at `fresh_preview_recovers_certified_committed_orphan_and_proceeds`, after printing `BOUNDARY=COMMITTED_ENQUEUE_BEFORE_CLAIM`. The surviving raw log is `D:/Codex/tmp/erp-meli/cap2-20260905/qa/task5-fix1-orphan-red.log`; it was read after restart. This is explicitly recovered historical RED, not claimed as a new post-restart failure. Pre-restart GREEN logs were retained but not used as fresh completion evidence.
+
+The regression uses an actual child PHP process exiting with 71 after an independently observed committed enqueue and consumed preview; no finally/cleanup executes in that process. A second child throws at the same SELECT boundary (exit 72 after the application catches it). Main execution retains real MariaDB schema 301, preview/service/adapter/handler, source and Core physical fences; only physical cURL wire responses are fake. The fresh-preview expiry race is a real SQL trigger at global acquisition. No real Mercado Libre request, engine/ACL relaxation, background job, new table or migration is involved.
+
+### Fresh post-restart verification
+
+All 14 suites below completed with PHP exit 0 on 2026-09-05. This includes the new orphan regression and reruns of all 13 original focused suites. The four changed/new PHP files passed individual `php -l`; `git diff --check` passed. The owner-controlled MariaDB remained `meli-cap2-qa`, loopback port 33079, 512 MiB; full-schema migration suites were serialized. The parent was notified when this task released the migration slot.
+
+```powershell
+$env:TEMP='D:/Codex/tmp/erp-meli/cap2-20260905/tmp'; $env:TMP=$env:TEMP
+# Pure/controller contracts ran first while MariaDB was restarting.
+$tests=@('cap2_manual_budget','cap2_manual_item_contract','cap2_manual_presentation','capacity_manual_controller','f5_manual_kiss_contract')
+foreach($test in $tests) {
+  & C:/xampphp/php/php.exe ('tests/'+$test+'.php') 2>&1 | Tee-Object -FilePath ('D:/Codex/tmp/erp-meli/cap2-20260905/qa/task5-fix1-resume-'+$test+'.log')
+  if($LASTEXITCODE -ne 0) { throw $test }
+}
+# After the parent confirmed DB readiness and exclusive migration slot:
+$env:DB_PORT='33079'; $env:DB_PASS=''
+$tests=@('cap2_manual_orphan','cap2_manual_busy','cap2_manual_launcher','cap2_manual_admission','cap2_manual_outcomes','cap2_manual_safety','cap2_manual_items','capacity_manual_selection','capacity_manual_runtime')
+foreach($test in $tests) {
+  & C:/xampphp/php/php.exe ('tests/'+$test+'.php') 2>&1 | Tee-Object -FilePath ('D:/Codex/tmp/erp-meli/cap2-20260905/qa/task5-fix1-resume-'+$test+'.log')
+  if($LASTEXITCODE -ne 0) { throw ('Focused verification failed: '+$test) }
+}
+```
+
+Fresh orphan raw output:
+
+```text
+BOUNDARY=COMMITTED_ENQUEUE_BEFORE_CLAIM
+PASS=real_committed_orphan_recovery
+BOUNDARY=COMMITTED_ENQUEUE_BEFORE_CLAIM
+FAILURE=CAUGHT_POST_ENQUEUE
+STATUS=PASS CAP2_MANUAL_ORPHAN
+REAL_MELI_HTTP=0
+```
+
+`FAILURE=CAUGHT_POST_ENQUEUE` is the expected child fault, not a failed suite. The parent asserts child exits 71/72 with empty stderr, the consumed preview, successful catchable cleanup, zero old-token/precheck HTTP and exactly one physical fake-wire GET belonging only to the fresh preview. Live old global lease, changed user, unknown owner, future generation, missing preview provenance and uncertified pending work all leave the new preview ready. Expiry at fresh admission leaves the certified orphan pending. The closed orphan has no attempt row.
+
+Logs: `D:/Codex/tmp/erp-meli/cap2-20260905/qa/task5-fix1-resume-<test>.log` for each named suite; final four-file lint output is `task5-fix1-resume-lint-final.log` in the same directory. No warnings or unexpected errors appeared in the fresh suite outputs.
+
+Self-review found no additional T5-1 defect. The new pending-recovery path is tenant/account/user-bound, read-only before admission, re-certified under a newer live global authority and strictly local; existing expired-claimed recovery behavior is retained. Task 6 transport/deadline/compensation work and Task 7 aggregate/browser/package gates are not certified by these results. Independent scoped spec/quality rereview remains required before T5-1 is considered closed.

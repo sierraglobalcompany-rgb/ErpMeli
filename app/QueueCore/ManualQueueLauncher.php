@@ -89,18 +89,19 @@ final class ManualQueueLauncher
                 if(!empty($item['uses_api'])&&!is_array($item['remote_contract']??null))throw new RuntimeException('El trabajo manual no tiene un contrato remoto certificado.');
                 if(preg_match('/^[a-f0-9]{64}$/',(string)($item['explicit_attempt_key']??''))!==1)throw new RuntimeException('La intención manual explícita no es válida.');
             }
+            $pendingOrphans=$admit===null?[]:$core['repository']->pendingManualOrphans($items,$lease);
             $busy=$pdo->query("SELECT id FROM queue_core_jobs WHERE queue_domain='manual'
                 AND state IN ('pending','claimed','running','retry_wait','waiting_oauth')
                 AND NOT (work_type='manual_exact' AND state IN ('claimed','running') AND lease_expires_at IS NOT NULL AND lease_expires_at<=UTC_TIMESTAMP(3))
-                ORDER BY id LIMIT 1")->fetchColumn();
-            if((int)$busy>0)throw new ManualFifoBusyException();
+                ORDER BY id")->fetchAll(PDO::FETCH_COLUMN);
+            foreach($busy as $busyId)if(!in_array((int)$busyId,$pendingOrphans,true))throw new ManualFifoBusyException();
             $freshPolicy=(new CapacityPolicyService())->snapshot('manual');
             $physicalCallBudget=min($physicalCallBudget,(int)$freshPolicy['current'],(int)$freshPolicy['ceiling']);
             if(microtime(true)>=$requestDeadline-0.25 || !CronDeadlineContext::canAcceptWork(1)){
                 throw new RuntimeException('Se agotó el tiempo para preparar el paso manual. Vuelva a calcular.');
             }
             if($admit!==null)$admit();
-            $core['repository']->recoverAbandonedManualJobs();
+            $core['repository']->recoverAbandonedManualJobs($lease,$items,$pendingOrphans);
 
             foreach($items as $item){
                 $freshPolicy=(new CapacityPolicyService())->snapshot('manual');
@@ -140,45 +141,47 @@ final class ManualQueueLauncher
                         'explicit_attempt_key'=>$explicitAttemptKey,
                         'remote_contract'=>$contract,
                     ],
-                    ['launcher'=>'manual_single_step','durable_input_version'=>$inputVersion,'explicit_attempt_key'=>$explicitAttemptKey],
+                    ['launcher'=>'manual_single_step','durable_input_version'=>$inputVersion,'explicit_attempt_key'=>$explicitAttemptKey,
+                        'manual_preview_id'=>(int)($item['manual_preview_id']??0),'manual_user_id'=>(int)($item['manual_user_id']??0),
+                        'execution_owner'=>$lease->ownerToken,'execution_generation'=>$lease->generation],
                     1,null,'manual'
                 ));
-                $previousAttempt=$pdo->prepare('SELECT COALESCE(MAX(id),0) FROM queue_core_attempts WHERE job_id=? AND company_id=? AND meli_account_id=?');
-                $previousAttempt->execute([$jobId,$companyId,$accountId]);
-                $previousAttemptId=(int)$previousAttempt->fetchColumn();
                 try{
+                    $previousAttempt=$pdo->prepare('SELECT COALESCE(MAX(id),0) FROM queue_core_attempts WHERE job_id=? AND company_id=? AND meli_account_id=?');
+                    $previousAttempt->execute([$jobId,$companyId,$accountId]);
+                    $previousAttemptId=(int)$previousAttempt->fetchColumn();
                     $summary=CronDeadlineContext::within($stepRemoteDeadline,fn()=>$core['runner']->run(new QueueRunRequest(
                         'manual',$worker,1,$stepDeadline,
                         45,[],['manual_exact'],$accountId,$lease,'manual',$jobId
                     )));
+                    $after=$core['repository']->job($jobId);
+                    if(is_array($after)&&in_array((string)$after['state'],['pending','claimed','running','retry_wait','waiting_oauth'],true)){
+                        $core['repository']->abandonManualJob($jobId,'manual_step_no_background_continuation');
+                    }
+                    $row=$core['repository']->job($jobId)??[];
+                    $protectedHttp=in_array((int)($row['last_http_status']??0),[401,403,429],true);
+                    $outcome=$protectedHttp?'review':((int)($summary['claimed']??0)===0?'not_started':((string)($row['last_error_class']??'')==='manual_checkpoint_deferred'?'deferred':(string)($row['state']??'review')));
+                    $attempt=$pdo->prepare('SELECT COALESCE(SUM(physical_http_calls),0) physical_http_calls,COALESCE(SUM(resources_persisted),0) resources_persisted FROM queue_core_attempts WHERE job_id=? AND company_id=? AND meli_account_id=? AND id>?');
+                    $attempt->execute([$jobId,$companyId,$accountId,$previousAttemptId]);$evidence=$attempt->fetch(PDO::FETCH_ASSOC)?:[];
+                    $usedCalls+=(int)($evidence['physical_http_calls']??0);
+                    $results[]=[
+                        'status'=>$outcome,
+                        'message'=>self::message($outcome),
+                        'reason'=>$protectedHttp?'remote_'.(int)$row['last_http_status']:(string)($row['last_error_class']??''),
+                        'queue_key'=>$queueKey,'source_id'=>$sourceId,
+                        'remote_dispatches'=>(int)($evidence['physical_http_calls']??0),
+                        'processed'=>(int)($evidence['resources_persisted']??0),
+                        'queue_core_job_id'=>$jobId,'launcher_summary'=>$summary,
+                    ];
+                    // An ordinary successful checkpoint may continue the selection;
+                    // protection, uncertainty and lease loss always stop it.
+                    if($protectedHttp || !in_array($outcome,['completed','deferred'],true)){
+                        $stopReason=$protectedHttp?'remote_'.(int)$row['last_http_status']:(string)($after['last_error_class']??$summary['reason']??'protection');
+                        break;
+                    }
                 }catch(\Throwable $error){
                     $core['repository']->abandonManualJob($jobId,'manual_runner_failed');
                     throw $error;
-                }
-                $after=$core['repository']->job($jobId);
-                if(is_array($after)&&in_array((string)$after['state'],['pending','claimed','running','retry_wait','waiting_oauth'],true)){
-                    $core['repository']->abandonManualJob($jobId,'manual_step_no_background_continuation');
-                }
-                $row=$core['repository']->job($jobId)??[];
-                $protectedHttp=in_array((int)($row['last_http_status']??0),[401,403,429],true);
-                $outcome=$protectedHttp?'review':((int)($summary['claimed']??0)===0?'not_started':((string)($row['last_error_class']??'')==='manual_checkpoint_deferred'?'deferred':(string)($row['state']??'review')));
-                $attempt=$pdo->prepare('SELECT COALESCE(SUM(physical_http_calls),0) physical_http_calls,COALESCE(SUM(resources_persisted),0) resources_persisted FROM queue_core_attempts WHERE job_id=? AND company_id=? AND meli_account_id=? AND id>?');
-                $attempt->execute([$jobId,$companyId,$accountId,$previousAttemptId]);$evidence=$attempt->fetch(PDO::FETCH_ASSOC)?:[];
-                $usedCalls+=(int)($evidence['physical_http_calls']??0);
-                $results[]=[
-                    'status'=>$outcome,
-                    'message'=>self::message($outcome),
-                    'reason'=>$protectedHttp?'remote_'.(int)$row['last_http_status']:(string)($row['last_error_class']??''),
-                    'queue_key'=>$queueKey,'source_id'=>$sourceId,
-                    'remote_dispatches'=>(int)($evidence['physical_http_calls']??0),
-                    'processed'=>(int)($evidence['resources_persisted']??0),
-                    'queue_core_job_id'=>$jobId,'launcher_summary'=>$summary,
-                ];
-                // An ordinary successful checkpoint may continue the selection;
-                // protection, uncertainty and lease loss always stop it.
-                if($protectedHttp || !in_array($outcome,['completed','deferred'],true)){
-                    $stopReason=$protectedHttp?'remote_'.(int)$row['last_http_status']:(string)($after['last_error_class']??$summary['reason']??'protection');
-                    break;
                 }
             }
         } finally {

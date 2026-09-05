@@ -3,7 +3,7 @@
 Starting commit: b131a026a3b82e129fd9354d106dd5eb5eb025d8. Branch: codex/capacity-config.
 Approved execution plan: ../superpowers/plans/2026-09-05-cap2.md.
 
-STATUS=BLOCKED_LOCAL_DISK_NO_DEPLOY
+STATUS=RESUMED_D_TEMP_NO_DEPLOY
 PREVIOUS_PACKAGE_APPROVAL=WITHDRAWN
 Previous ZIP meli-cap-deploy-20260905-191946.zip is NOT APPROVED for upload; its original archive is retained unchanged as evidence.
 Previous CONTROL PASS_LOCAL_NO_DEPLOY does not supersede this audit withdrawal.
@@ -20,3 +20,9 @@ Implementation progress is tracked in .superpowers/sdd/2026-09-05-cap2/progress.
 - Paused new implementation/package generation to protect local writes. No unrelated files or processes were removed or stopped.
 - Stopped ONLY the owned meli-cap2-qa container after checking exact ID and erp-meli.task=cap2 label; its volume is retained. Restart it when disk headroom is restored.
 - Resume after sufficient disk space is available (recommend at least8–10 GB for remaining QA and packaging). Read latest ledger/review first; do not repeat completed tasks or upload old package.
+
+## User-authorized D temporary workspace
+
+The user authorized D: as temporal storage and continuation. New temporary files, logs, browser profiles/cache and packages use D:/Codex/tmp/erp-meli/cap2-20260905 (approximately50GB free). Baseline ZIP/log copies were SHA256-verified there. Source/git remain in the authoritative worktree.
+Docker cannot bind this FAT32 USB path. The existing owned meli-cap2-qa container was restarted with512MiB memory limit; its small disposable DB volume remains in Docker. No global Docker or unrelated project changes. Monitor C: headroom.
+Task3 fixes committed as0efb11c, independent scoped review passed. Tasks1–3 complete; resume Task4 physical pack/notification paths. Ledger holds newest result. No package approved until all tasks and final verification pass.

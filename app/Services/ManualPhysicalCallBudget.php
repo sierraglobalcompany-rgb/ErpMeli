@@ -25,9 +25,13 @@ final class ManualPhysicalCallBudget
 
     public static function resolve(array $configuration, int $requested, array $policy): int
     {
-        $previewBudget = (int) ($configuration['preview_format'] ?? 2) >= 3
-            ? (int) ($configuration['physical_api_call_budget'] ?? 0)
-            : max(1, min(15, (int) ($configuration['block_size'] ?? 15)));
+        if ((int) ($configuration['preview_format'] ?? 0) < 3
+            || !is_int($configuration['physical_api_call_budget'] ?? null)
+            || !is_string($configuration['capacity_revision'] ?? null)
+            || $configuration['capacity_revision'] === '') {
+            throw new RuntimeException('El cálculo no certifica la capacidad física manual. Vuelva a calcular los trabajos disponibles.');
+        }
+        $previewBudget = $configuration['physical_api_call_budget'];
         $current = min(CapacityPolicyService::TECHNICAL_MAX, (int) $policy['current'], (int) $policy['ceiling']);
         if ($previewBudget < 1 || $previewBudget > $current) {
             throw new RuntimeException('La capacidad manual se redujo o el cálculo no es válido. Vuelva a calcular los trabajos disponibles.');

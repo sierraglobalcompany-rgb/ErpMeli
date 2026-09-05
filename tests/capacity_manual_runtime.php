@@ -121,8 +121,10 @@ try {
     $launcher->runExactBatch($items(1),1,microtime(true)+45);
     k1b_assert($handler->calls===1 && $repository->job($unrelated)['state']==='pending','Exact manual selection never drains an unrelated tenant/FIFO job.');
     $handler->mode='ok';$handler->calls=0;
-    $result=$launcher->runExactBatch($items(2),2,microtime(true)-1);
-    k1b_assert($handler->calls===0 && $result['not_processed_count']===2,'Prework exhausted deadline cannot be restarted at the launcher.');
+    $expiredRejected=false;$admitted=0;
+    try {$launcher->runExactBatch($items(2),2,microtime(true)-1,static function() use(&$admitted): void {$admitted++;});}
+    catch(RuntimeException) {$expiredRejected=true;}
+    k1b_assert($expiredRejected && $handler->calls===0 && $admitted===0,'Prework exhausted deadline is rejected before admission and cannot be restarted.');
     $handler->mode='expire';$handler->calls=0;$handler->deadlines=[];$deadline=microtime(true)+0.8;
     $result=$launcher->runExactBatch($items(3),3,$deadline);
     k1b_assert($handler->calls<=1 && $result['not_processed_count']>=2,'Outer request deadline is never restarted per item.');

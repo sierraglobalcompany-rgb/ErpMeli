@@ -32,7 +32,9 @@ final class ManualExactHandler implements QueueHandler
                 $queue,$source,$job->meliAccountId,$job->companyId
             );
             if(!$state->exists||$state->terminal||!$state->eligible){
-                return QueueResult::completed(0,0);
+                return $state->exists && $state->terminal
+                    ? QueueResult::completed(0,0)
+                    : QueueResult::review(ManualStaleSourceException::REASON);
             }
             $authority=(new ManualSourceAuthorityService())->inspect(
                 $queue,$source,$job->meliAccountId,$job->companyId,$state
@@ -65,12 +67,21 @@ final class ManualExactHandler implements QueueHandler
                 $source,$job->meliAccountId,
                 new CampaignExecutionContext(0,0,$job->companyId,'queue_core_manual',$job->leaseGeneration,$context->deadline,1,$expected)
             );
+            // Physical evidence outranks an adapter that swallowed an HTTP
+            // protection and reported complete/deferred. Never dispatch rest.
+            $evidence=\App\Core\Database::connectionFresh()->prepare(
+                'SELECT http_status FROM queue_core_attempts WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=?'
+            );
+            $evidence->execute([$context->attemptId,$job->id,$job->companyId,$job->meliAccountId,$job->leaseOwner,$job->leaseGeneration]);
+            $http=(int)$evidence->fetchColumn();
+            if(in_array($http,[401,403,429],true))return QueueResult::review('remote_'.$http,$http);
             return match($result->status){
                 'completed'=>QueueResult::completed($result->processed,0),
                 // Un aplazamiento cierra esta petición. La fila fuente queda
                 // intacta para que el administrador pueda pedir otro paso;
                 // Cron nunca reclama el dominio manual.
-                'deferred'=>QueueResult::completed($result->processed,0),
+                'deferred'=>QueueResult::manualDeferred($result->processed),
+                'protected'=>QueueResult::review($result->reason??'manual_protection',$result->httpStatus),
                 'error'=>QueueResult::review($result->reason??'manual_error'),
                 default=>QueueResult::review('manual_unknown_outcome'),
             };

@@ -149,11 +149,34 @@ final class ManualSingleStepService
             // Manual and Cron V4 are launchers only. Manual confirms an exact,
             // preview-bound subset and the launcher processes only those rows
             // under a single global execution lease.
-            $result = (new ManualQueueLauncher())->runExactBatch($items, $physicalCallBudget, CronDeadlineContext::deadline());
-            // Solo se consume después de que Queue Core adquirió exclusión,
-            // persistió y ejecutó la selección exacta sin continuación automática.
-            $previews->consume($previewToken, $userId);
-            return $result;
+            return (new ManualQueueLauncher())->runExactBatch(
+                $items, $physicalCallBudget, CronDeadlineContext::deadline(),
+                static function () use ($items, $configuration, $physicalCallBudget, $previews, $previewToken, $userId): void {
+                    foreach ($items as $item) {
+                        (new BusinessScopeContext())->account($item['account_id'], $item['company_id'], $userId);
+                        $state = (new ManualCampaignSourceInspector())->inspect(
+                            $item['queue_key'], $item['source_id'], $item['account_id'], $item['company_id']
+                        );
+                        if (!$state->exists || $state->terminal || !$state->eligible) {
+                            throw new RuntimeException('La selección cambió. Vuelva a calcular los trabajos disponibles.');
+                        }
+                        $authority = (new ManualSourceAuthorityService())->inspect(
+                            $item['queue_key'], $item['source_id'], $item['account_id'], $item['company_id'], $state
+                        );
+                        if ($authority->explicitlyUnsupported
+                            || !hash_equals($item['source_authority_version'], $authority->durableInputVersion)
+                            || $item['uses_api'] !== $authority->usesApi
+                            || $item['remote_contract'] !== $authority->remoteContract) {
+                            throw new ManualStaleSourceException();
+                        }
+                    }
+                    ManualPhysicalCallBudget::resolve($configuration, $physicalCallBudget, (new CapacityPolicyService())->snapshot('manual'));
+                    if (!CronDeadlineContext::canAcceptWork(1)) {
+                        throw new RuntimeException('Se agotó el tiempo para preparar el paso manual. Vuelva a calcular.');
+                    }
+                    $previews->consume($previewToken, $userId);
+                }
+            );
         } finally {
             try {
                 $release = $pdo->prepare('SELECT RELEASE_LOCK(?)');
@@ -231,6 +254,12 @@ final class ManualSingleStepService
             $repository = new QueueV4CleanRepository($pdo);
             $currentEligible = $repository->eligibleCount($allowedAccountIds, $accountId ?: null);
             $workerLimit = min($requested, QueueV4CleanWorker::HARD_MAX_CALLS);
+            if ($currentEligible < 1 || !CronDeadlineContext::canAcceptWork(1)) {
+                throw new RuntimeException('El cálculo ya no tiene trabajo disponible en esta ventana. Vuelva a calcular.');
+            }
+            // Available work has no exact launcher: consume directly before
+            // entering its worker, while holding the same global authority.
+            $previews->consume($previewToken, $userId);
             $workerResult = $currentEligible > 0
                 ? (new QueueV4CleanWorker($pdo, $repository))->run(
                     'manual',
@@ -248,10 +277,8 @@ final class ManualSingleStepService
             $review = (int) ($runSummary['review'] ?? 0) + (int) ($runSummary['dead'] ?? 0);
             $notProcessed = max(0, count($rows) - $claimed);
 
-            $previews->consume($previewToken, $userId);
-
             return [
-                'status' => $review > 0 ? 'review' : 'completed',
+                'status' => $review > 0 ? 'review' : ($waiting > 0 ? 'deferred' : ($notProcessed > 0 ? 'waiting' : 'completed')),
                 'message' => sprintf(
                     'Pendientes disponibles: llamadas API solicitadas %d, llamadas usadas %d, elementos atendidos %d, completados %d, esperando %d, revisión/error %d, no procesados %d.',
                     $requested,

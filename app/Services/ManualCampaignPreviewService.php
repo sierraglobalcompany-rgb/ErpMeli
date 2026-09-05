@@ -149,10 +149,15 @@ final class ManualCampaignPreviewService
 
     public function consume(string $token, int $userId): void
     {
-        Database::connectionFresh()->prepare(
+        $admission = Database::connectionFresh()->prepare(
             'UPDATE manual_campaign_previews SET status="consumed",consumed_at=UTC_TIMESTAMP(3)
-             WHERE preview_token=? AND created_by_user_id=? AND status="ready"'
-        )->execute([$token, $userId]);
+             WHERE preview_token=? AND created_by_user_id=? AND status="ready"
+               AND expires_at>UTC_TIMESTAMP(3)'
+        );
+        $admission->execute([$token, $userId]);
+        if ($admission->rowCount() !== 1) {
+            throw new RuntimeException('El cálculo venció o ya se utilizó. Vuelva a calcular los trabajos disponibles.');
+        }
     }
 
     /**

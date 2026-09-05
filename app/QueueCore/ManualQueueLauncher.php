@@ -54,19 +54,19 @@ final class ManualQueueLauncher
      * @param array<int,array<string,mixed>> $items
      * @return array<string,mixed>
      */
-    public function runExactBatch(array $items, ?int $physicalCallBudget = null, ?float $requestDeadline = null): array
+    public function runExactBatch(array $items, ?int $physicalCallBudget = null, ?float $requestDeadline = null, ?callable $admit = null): array
     {
         $ownsDeadline = !CronDeadlineContext::active();
         if ($ownsDeadline) CronDeadlineContext::start(45, 43, 8, 3);
         $deadline = min($requestDeadline ?? INF, CronDeadlineContext::deadline() ?? microtime(true) + 45);
         try {
-            return $this->runBoundBatch($items, $physicalCallBudget, $deadline);
+            return $this->runBoundBatch($items, $physicalCallBudget, $deadline, $admit);
         } finally {
             if ($ownsDeadline) CronDeadlineContext::clear();
         }
     }
 
-    private function runBoundBatch(array $items, ?int $physicalCallBudget, float $requestDeadline): array
+    private function runBoundBatch(array $items, ?int $physicalCallBudget, float $requestDeadline, ?callable $admit): array
     {
         if($items===[])throw new RuntimeException('La seleccion manual no contiene trabajos exactos.');
         $policy=(new CapacityPolicyService())->snapshot('manual');
@@ -81,6 +81,25 @@ final class ManualQueueLauncher
         $stopReason='selection_completed';
         try {
             $pdo=Database::connectionFresh();
+            // Admission follows ALL read-only checks, but precedes recovery or
+            // enqueue. A later failure can never make the same preview reusable.
+            foreach($items as $item){
+                if((int)($item['company_id']??0)<1||(int)($item['account_id']??0)<1
+                    ||(string)($item['queue_key']??'')===''||(string)($item['source_id']??'')==='')throw new RuntimeException('La seleccion manual no esta completamente aislada por empresa y cuenta.');
+                if(!empty($item['uses_api'])&&!is_array($item['remote_contract']??null))throw new RuntimeException('El trabajo manual no tiene un contrato remoto certificado.');
+                if(preg_match('/^[a-f0-9]{64}$/',(string)($item['explicit_attempt_key']??''))!==1)throw new RuntimeException('La intención manual explícita no es válida.');
+            }
+            $busy=$pdo->query("SELECT id FROM queue_core_jobs WHERE queue_domain='manual'
+                AND state IN ('pending','claimed','running','retry_wait','waiting_oauth')
+                AND NOT (work_type='manual_exact' AND state IN ('claimed','running') AND lease_expires_at IS NOT NULL AND lease_expires_at<=UTC_TIMESTAMP(3))
+                ORDER BY id LIMIT 1")->fetchColumn();
+            if((int)$busy>0)throw new ManualFifoBusyException();
+            $freshPolicy=(new CapacityPolicyService())->snapshot('manual');
+            $physicalCallBudget=min($physicalCallBudget,(int)$freshPolicy['current'],(int)$freshPolicy['ceiling']);
+            if(microtime(true)>=$requestDeadline-0.25 || !CronDeadlineContext::canAcceptWork(1)){
+                throw new RuntimeException('Se agotó el tiempo para preparar el paso manual. Vuelva a calcular.');
+            }
+            if($admit!==null)$admit();
             $core['repository']->recoverAbandonedManualJobs();
 
             foreach($items as $item){
@@ -141,22 +160,24 @@ final class ManualQueueLauncher
                     $core['repository']->abandonManualJob($jobId,'manual_step_no_background_continuation');
                 }
                 $row=$core['repository']->job($jobId)??[];
+                $protectedHttp=in_array((int)($row['last_http_status']??0),[401,403,429],true);
+                $outcome=$protectedHttp?'review':((int)($summary['claimed']??0)===0?'not_started':((string)($row['last_error_class']??'')==='manual_checkpoint_deferred'?'deferred':(string)($row['state']??'review')));
                 $attempt=$pdo->prepare('SELECT COALESCE(SUM(physical_http_calls),0) physical_http_calls,COALESCE(SUM(resources_persisted),0) resources_persisted FROM queue_core_attempts WHERE job_id=? AND company_id=? AND meli_account_id=? AND id>?');
                 $attempt->execute([$jobId,$companyId,$accountId,$previousAttemptId]);$evidence=$attempt->fetch(PDO::FETCH_ASSOC)?:[];
                 $usedCalls+=(int)($evidence['physical_http_calls']??0);
                 $results[]=[
-                    'status'=>(string)($row['state']??'review'),
-                    'message'=>self::message((string)($row['state']??'review')),
+                    'status'=>$outcome,
+                    'message'=>self::message($outcome),
+                    'reason'=>$protectedHttp?'remote_'.(int)$row['last_http_status']:(string)($row['last_error_class']??''),
                     'queue_key'=>$queueKey,'source_id'=>$sourceId,
                     'remote_dispatches'=>(int)($evidence['physical_http_calls']??0),
                     'processed'=>(int)($evidence['resources_persisted']??0),
                     'queue_core_job_id'=>$jobId,'launcher_summary'=>$summary,
                 ];
-                // Every non-completed exact step closes locally and stops this
-                // request: rate limit, auth, policy, uncertainty and lease loss
-                // cannot cause the rest of a selection to dispatch.
-                if((string)($row['state']??'')!=='completed'){
-                    $stopReason=(int)($after['last_http_status']??0)===429?'remote_429':(string)($after['last_error_class']??$summary['reason']??'protection');
+                // An ordinary successful checkpoint may continue the selection;
+                // protection, uncertainty and lease loss always stop it.
+                if($protectedHttp || !in_array($outcome,['completed','deferred'],true)){
+                    $stopReason=$protectedHttp?'remote_'.(int)$row['last_http_status']:(string)($after['last_error_class']??$summary['reason']??'protection');
                     break;
                 }
             }
@@ -167,22 +188,30 @@ final class ManualQueueLauncher
         $remoteDispatches=0;
         $processed=0;
         $status='completed';
+        $completed=0;
+        $deferred=0;
+        $review=0;
         foreach($results as $result){
             $remoteDispatches+=(int)($result['remote_dispatches']??0);
             $processed+=(int)($result['processed']??0);
             if(in_array((string)($result['status']??''),['review','dead'],true))$status='review';
+            if($result['status']==='completed')$completed++;
+            elseif($result['status']==='deferred')$deferred++;
+            elseif($result['status']!=='not_started')$review++;
         }
-        $notProcessed=max(0,count($items)-count($results));
+        $attended=$completed+$deferred+$review;
+        $notProcessed=max(0,count($items)-$attended);
+        if($status==='completed' && $deferred>0)$status='deferred';
         if($notProcessed>0 && $status==='completed')$status='waiting';
         return [
             'status'=>$status,
-            'message'=>$notProcessed>0
-                ? sprintf('El paso manual atendió %d elementos; %d quedaron sin procesar. No hay continuación en segundo plano.',count($results),$notProcessed)
-                : ($status==='completed'
-                ? 'La seleccion exacta termino. No quedo continuacion en segundo plano.'
-                : 'La seleccion exacta termino con elementos para revision; no quedo continuacion en segundo plano.'),
+            'message'=>sprintf('Paso manual: %d completados, %d aplazados con su progreso guardado, %d para revisión y %d sin iniciar. Para otro paso, vuelva a calcular. No hay continuación manual en segundo plano.',$completed,$deferred,$review,$notProcessed),
             'selected_count'=>count($items),
-            'processed_count'=>count($results),
+            'processed_count'=>$attended,
+            'completed_count'=>$completed,
+            'deferred_count'=>$deferred,
+            'waiting_count'=>$deferred,
+            'review_error_count'=>$review,
             'not_processed_count'=>$notProcessed,
             'requested_api_calls'=>$physicalCallBudget,
             'api_calls_used'=>$remoteDispatches,
@@ -199,6 +228,8 @@ final class ManualQueueLauncher
     {
         return match($state){
             'completed'=>'El paso exacto terminó. No quedó continuación en segundo plano.',
+            'deferred'=>'El recurso conserva progreso pendiente. Vuelva a calcular para otro paso manual.',
+            'not_started'=>'El recurso no se inició. Vuelva a calcular para otro paso manual.',
             'dead','review'=>'El paso quedó cerrado para revisión; no se repetirá en segundo plano.',
             default=>'El paso manual terminó sin continuación automática.',
         };

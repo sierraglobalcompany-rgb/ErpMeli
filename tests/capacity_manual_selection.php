@@ -5,7 +5,8 @@ declare(strict_types=1);
 // policy, tenant ACL, projection, adapter/source inspection and identity are real.
 namespace App\QueueCore {
     final class ManualQueueLauncher {
-        public function runExactBatch(array $items, ?int $physicalCallBudget=null, ?float $requestDeadline=null): array {
+        public function runExactBatch(array $items, ?int $physicalCallBudget=null, ?float $requestDeadline=null, ?callable $admit=null): array {
+            if ($admit!==null) $admit();
             return ['selected_count'=>count($items),'requested_api_calls'=>$physicalCallBudget,'remote_dispatches'=>0,'processed_count'=>count($items),'items'=>$items];
         }
     }
@@ -40,7 +41,7 @@ try {
     foreach([[55,1,55,1],[1,30,30,30],[55,1,1,1],[55,30,2,2]] as [$capacity,$resources,$posted,$expected]) {
         $pdo->exec("UPDATE app_settings SET setting_value='$capacity' WHERE setting_key='manual.api_calls_per_step'");
         \App\Services\AppSettingsService::clearCache();
-        $configuration=['preview_format'=>3,'scope'=>'financial','account_id'=>2,'block_size'=>$resources,'physical_api_call_budget'=>$capacity];
+        $configuration=['preview_format'=>3,'scope'=>'financial','account_id'=>2,'block_size'=>$resources,'physical_api_call_budget'=>$capacity,'capacity_revision'=>(new \App\Services\CapacityPolicyService())->snapshot('manual')['revision']];
         $token=bin2hex(random_bytes(20));
         $pdo->prepare('INSERT INTO manual_campaign_previews(preview_token,created_by_user_id,scope_key,configuration_hash,configuration_json,summary_json,expires_at) VALUES(?,7,"financial",?,?,"{}",DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 HOUR))')->execute([$token,hash('sha256',$token),json_encode($configuration)]);
         $previewId=(int)$pdo->lastInsertId();

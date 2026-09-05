@@ -27,10 +27,11 @@ $routes = $read('public/index.php');
 $assert(str_contains($single, 'function executeMany(string $previewToken, int $userId, int $limit)'), 'manual_amount_entrypoint');
 $assert(str_contains($single, 'array_slice($rows, 0, $limit)'), 'preview_bound_exact_subset');
 $assert(str_contains($single, "'manual-explicit', \$previewToken, (string) \$userId,"), 'explicit_attempt_key_bound_to_preview');
-$assert(str_contains($single, 'runExactBatch($items, $physicalCallBudget, CronDeadlineContext::deadline())'), 'single_step_uses_preview_and_deadline_bound_batch_launcher');
+$assert(str_contains($single, '$items, $physicalCallBudget, CronDeadlineContext::deadline(),')
+    && str_contains($single, '$previews->consume($previewToken, $userId);'), 'single_step_uses_preview_deadline_and_one_shot_admission');
 
 $assert(substr_count($launcher, "->acquire('manual'") === 1, 'single_global_lease_acquire');
-$assert(str_contains($launcher, 'runExactBatch(array $items, ?int $physicalCallBudget = null, ?float $requestDeadline = null)'), 'batch_launcher_exists');
+$assert(str_contains($launcher, 'runExactBatch(array $items, ?int $physicalCallBudget = null, ?float $requestDeadline = null, ?callable $admit = null)'), 'batch_launcher_accepts_admission_callback');
 $assert(str_contains($launcher, "'manual_step_no_background_continuation'"), 'no_background_continuation_guard');
 $assert(str_contains($launcher, "['manual_exact']"), 'manual_exact_runner_filter');
 $assert(str_contains($launcher, "'manual',\$jobId"), 'only_bound_job_id_run');

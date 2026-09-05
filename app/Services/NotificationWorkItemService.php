@@ -531,8 +531,11 @@ final class NotificationWorkItemService
         CampaignExecutionContext $context,
         bool $allowContinuation=true
     ): array {
-        if (\App\QueueCore\QueueCoreOwnershipGuard::v4OwnsWebhook()) {
-            return \App\QueueCore\QueueCoreOwnershipGuard::skippedResult();
+        $coreManual = $context->worker === 'queue_core_manual';
+        if (($coreManual && !$this->certifiedManualAttempt($workId, $accountId, $context))
+            || (!$coreManual && \App\QueueCore\QueueCoreOwnershipGuard::v4OwnsWebhook())) {
+            return ['status'=>'protected','stop_reason'=>'manual_ownership_unproven','processed'=>0,
+                'message'=>'La autoridad exacta no está disponible. Vuelva a calcular.'];
         }
         if (!$this->canStartResource($context->deadline)) {
             return [
@@ -560,7 +563,7 @@ final class NotificationWorkItemService
         }
         $started = microtime(true);
         try {
-            $result = $this->processOne($work,$allowContinuation);
+            $result = $this->processOne($work,$allowContinuation,$coreManual);
             $this->complete($work, $owner, $result, (int) round((microtime(true) - $started) * 1000));
             return [
                 'status' => 'complete',
@@ -573,27 +576,53 @@ final class NotificationWorkItemService
             $safeAt = (new SystemDatabaseUtcClock())->timestamp((string) ($waiting->nextSafeAt ?? ''));
             $minutes = $safeAt !== null ? max(1, (int) ceil(($safeAt - time()) / 60)) : 1;
             $this->defer($work, $owner, $minutes, $waiting instanceof ApiRhythmDeferredException ? 'api_rhythm_deferred' : 'api_budget_exhausted', $waiting->getMessage(), $diagnosticId, 'policy', false);
-            return ['status' => $waiting instanceof ApiRhythmDeferredException ? 'waiting_rhythm' : 'waiting_budget', 'processed' => 0, 'message' => $waiting->getMessage(), 'next_eligible_at' => $waiting->nextSafeAt];
+            return ['status'=>'protected','stop_reason'=>$waiting instanceof ApiRhythmDeferredException && $waiting->reachedRemote ? 'remote_429' : 'policy_deferred', 'processed'=>0, 'message'=>$waiting->getMessage(), 'next_eligible_at'=>$waiting->nextSafeAt];
         } catch (RemoteResultUncertainException $uncertain) {
             $diagnosticId = $this->reportWorkError($work, $uncertain, 'fencing');
             $this->markActionRequired($work, $owner, $uncertain, $diagnosticId);
             return ['status' => 'action_required', 'processed' => 0, 'errors' => 1, 'message' => $this->safeMessage($uncertain), 'diagnostic_id' => $diagnosticId];
         } catch (ManualRemoteCallLimitException) {
             $this->defer($work, $owner, 1, 'manual_step_limit', 'La consulta principal continuará en el siguiente paso.', 'STEP-' . gmdate('Ymd-His'), 'guard', false);
-            return ['status' => 'deferred', 'processed' => 0, 'message' => 'La autorización se renovó. El recurso continuará después del intervalo.', 'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 60)];
+            return ['status'=>'protected','stop_reason'=>'manual_step_limit', 'processed' => 0, 'message' => 'La autorización se renovó. El recurso continuará después del intervalo.', 'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 60)];
         } catch (ApiManualPauseException $pause) {
             $diagnosticId = 'PAUSE-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(3));
             $this->defer($work, $owner, 5, 'api_manual_pause', $pause->getMessage(), $diagnosticId, 'guard', false);
-            return ['status' => 'deferred', 'processed' => 0, 'message' => 'La protección preventiva aplazó esta consulta.', 'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 300)];
+            return ['status'=>'protected','stop_reason'=>'api_manual_pause', 'processed' => 0, 'message' => 'La protección preventiva aplazó esta consulta.', 'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 300)];
         } catch (MeliApiException $error) {
             $diagnosticId = $this->reportWorkError($work, $error, 'api');
             $this->deferApiError($work, $owner, $error, $diagnosticId);
-            return ['status' => 'deferred', 'processed' => 0, 'message' => $this->safeMessage($error), 'diagnostic_id' => $diagnosticId];
+            return ['status'=>'protected','stop_reason'=>'remote_'.max(0,(int)$error->httpStatus),'http_status'=>$error->httpStatus, 'processed' => 0, 'message' => $this->safeMessage($error), 'diagnostic_id' => $diagnosticId];
         } catch (Throwable $error) {
             $diagnosticId = $this->reportWorkError($work, $error, 'processing');
             $this->failOrRetry($work, $owner, $error, $diagnosticId);
             return ['status' => 'error', 'processed' => 0, 'errors' => 1, 'message' => $this->safeMessage($error), 'diagnostic_id' => $diagnosticId];
         }
+    }
+
+    /** Read-only authorization; the physical Core fence still repeats all leases and capabilities. */
+    private function certifiedManualAttempt(int $workId, int $accountId, CampaignExecutionContext $context): bool
+    {
+        $m = ApiExecutionMetadataContext::current();
+        if (($m['source'] ?? '') !== 'queue_core' || ($m['queue_core_launcher'] ?? '') !== 'manual'
+            || ($m['queue_core_work_type'] ?? '') !== 'manual_exact'
+            || (int)($m['account_id'] ?? 0) !== $accountId || (int)($m['company_id'] ?? 0) !== $context->companyId) {
+            return false;
+        }
+        $s = Database::connectionFresh()->prepare(
+            "SELECT 1 FROM queue_core_jobs j
+             JOIN queue_core_attempts a ON a.job_id=j.id AND a.company_id=j.company_id AND a.meli_account_id=j.meli_account_id
+               AND a.lease_owner=j.lease_owner AND a.lease_generation=j.lease_generation
+             JOIN queue_core_execution_leases e ON e.lease_key='global' AND e.launcher='manual'
+             WHERE j.id=? AND a.id=? AND j.company_id=? AND j.meli_account_id=?
+               AND j.work_type='manual_exact' AND j.queue_domain='manual' AND j.resource_type='notification_fallback' AND j.resource_id=?
+               AND JSON_UNQUOTE(JSON_EXTRACT(j.payload_json,'$.source_authority_version'))=?
+               AND j.state='running' AND j.lease_owner=? AND j.lease_generation=? AND j.lease_expires_at>UTC_TIMESTAMP(3)
+               AND a.finished_at IS NULL AND e.owner_token=? AND e.generation=? AND e.expires_at>UTC_TIMESTAMP(3) LIMIT 1"
+        );
+        $s->execute([(int)($m['queue_core_job_id']??0),(int)($m['queue_core_attempt_id']??0),$context->companyId,$accountId,(string)$workId,
+            $context->expectedSourceAuthorityVersion,(string)($m['queue_core_lease_owner']??''),$context->leaseGeneration,
+            (string)($m['queue_core_execution_owner']??''),(int)($m['queue_core_execution_generation']??0)]);
+        return (bool)$s->fetchColumn();
     }
 
     /** @return array<string,mixed> */

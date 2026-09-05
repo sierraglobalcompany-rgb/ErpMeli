@@ -1451,7 +1451,7 @@ final class SettingsController
             if (!empty($result['manual_available_queue'])) {
                 Session::put('manual_available_queue_result', $result);
                 Session::flash(
-                    $status === 'waiting' || $status === 'review' ? 'warning' : 'success',
+                    $status !== 'completed' ? 'warning' : 'success',
                     (string) ($result['message'] ?? 'Pendientes disponibles atendidos.')
                 );
                 $this->redirect('/settings/manual-processing?scope=available_queue#resultado-proceso');
@@ -1468,23 +1468,22 @@ final class SettingsController
                 $rowState = (string) ($row['status'] ?? '');
                 if ($rowState === 'completed') {
                     $completed++;
-                } elseif (in_array($rowState, ['waiting', 'retry_wait', 'waiting_oauth', 'pending', 'claimed', 'running'], true)) {
+                } elseif (in_array($rowState, ['deferred', 'waiting', 'retry_wait', 'waiting_oauth', 'pending', 'claimed', 'running'], true)) {
                     $waiting++;
-                } else {
+                } elseif ($rowState !== 'not_started') {
                     $review++;
                 }
             }
-            if ($resultRows === [] && $status === 'completed') {
-                $completed = $selected;
-            }
+            $attended = (int) ($result['processed_count'] ?? count($resultRows));
             Session::put('manual_processing_result', [
-                'processed' => $selected,
+                'processed' => $attended,
                 'completed' => $completed,
                 'waiting' => $waiting,
                 'review' => $review,
+                'not_started' => max(0, (int) ($result['not_processed_count'] ?? $selected - $attended)),
             ]);
             Session::flash(
-                $status === 'review' ? 'warning' : 'success',
+                $status !== 'completed' ? 'warning' : 'success',
                 (string) ($result['message'] ?? ('Se proceso la seleccion exacta: ' . $selected . ' trabajo(s).'))
             );
             $this->redirect('/settings/manual-processing');

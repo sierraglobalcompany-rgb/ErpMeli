@@ -153,8 +153,9 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
       <article><span>Elementos completados</span><strong><?= (int) ($manualResult['completed'] ?? 0) ?></strong></article>
       <article><span>Elementos esperando</span><strong><?= (int) ($manualResult['waiting'] ?? 0) ?></strong></article>
       <article><span>Elementos para revisión</span><strong><?= (int) ($manualResult['review'] ?? 0) ?></strong></article>
+      <article><span>Sin iniciar</span><strong><?= (int) ($manualResult['not_started'] ?? 0) ?></strong></article>
     </div>
-    <a class="btn primary" href="<?= View::e($base . '/settings/manual-processing') ?>">Procesar más</a>
+    <a class="btn primary" href="<?= View::e($base . '/settings/manual-processing') ?>">Volver a calcular</a>
   </div>
 </section>
 <?php endif; ?>

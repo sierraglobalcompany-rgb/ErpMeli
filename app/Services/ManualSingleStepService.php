@@ -423,15 +423,22 @@ final class ManualSingleStepService
     {
         $budget = QueueV4CleanCycleBudget::snapshot();
         $used = max(0, (int) ($budget['used'] ?? $result['api_calls_used'] ?? 0));
+        $certainty = (string) ($budget['physical_http_calls_certainty'] ?? 'UNKNOWN');
+        $physicalCalls = array_key_exists('physical_http_calls', $budget)
+            ? $budget['physical_http_calls']
+            : ($certainty === 'CERTIFIED' ? $used : null);
         return array_replace($result, [
             'control_unit' => 'PHYSICAL_API_CALL',
             'configured_api_calls' => (int) ($configuration['physical_api_call_budget'] ?? $effective),
             'requested_api_calls' => $requested,
             'effective_api_calls' => $effective,
-            'physical_http_calls' => $used,
+            'physical_http_calls' => is_int($physicalCalls) ? max(0, $physicalCalls) : null,
+            'physical_http_calls_certainty' => $certainty,
+            'known_physical_calls' => max(0, (int) ($budget['known_physical_calls'] ?? 0)),
+            'unresolved_reservations' => max(0, (int) ($budget['unresolved_reservations'] ?? 0)),
             'api_calls_used' => $used,
             'api_calls_remaining' => max(0, $effective - $used),
-            'evidence_state' => 'CERTIFIED',
+            'evidence_state' => $certainty === 'CERTIFIED' ? 'CERTIFIED' : 'UNKNOWN',
         ]);
     }
 

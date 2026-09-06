@@ -42,15 +42,15 @@ try {
     $previewSchema=file_get_contents(__DIR__.'/../database/migrations/110_manual_campaign_preview_exact_notifications_2_20_6.sql');
     $pdo->exec(explode('SET @has_notification_manual_idx',$previewSchema)[0]);
     $normalize=new ReflectionMethod(ManualCampaignPreviewService::class,'normalize');
-    $normalized=$normalize->invoke(new ManualCampaignPreviewService(),['block_size'=>60]);
-    k1b_assert($normalized['preview_format']===3 && $normalized['block_size']===60 && $normalized['physical_api_call_budget']===100,'Production normalization separates physical capacity from resources.');
+    $normalized=$normalize->invoke(new ManualCampaignPreviewService(),[]);
+    k1b_assert($normalized['preview_format']===4 && !array_key_exists('block_size',$normalized) && $normalized['physical_api_call_budget']===100,'Production normalization persists only calls capacity, not a hidden resource cutoff.');
     k1b_assert($normalized['capacity_revision']===(new CapacityPolicyService())->snapshot('manual')['revision'],'Production preview stores authoritative revision.');
     $token=bin2hex(random_bytes(20));
     $pdo->prepare('INSERT INTO manual_campaign_previews (preview_token,created_by_user_id,scope_key,configuration_hash,configuration_json,summary_json,expires_at) VALUES (?,7,"available_queue",?,?,"{}",DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 HOUR))')->execute([$token,hash('sha256','preview'),json_encode($normalized)]);
     $pdo->exec("UPDATE app_settings SET setting_value='1' WHERE setting_key='manual.api_calls_per_step'");
     $rejected=false;
-    try{(new ManualSingleStepService())->executeMany($token,7,100);}catch(RuntimeException $error){$rejected=str_contains($error->getMessage(),'capacidad manual');}
-    k1b_assert($rejected,'Real executeMany rejects a stale over-budget preview before any business dispatch.');
+    try{(new ManualSingleStepService())->executePreview($token,7,100);}catch(RuntimeException $error){$rejected=str_contains($error->getMessage(),'capacidad manual');}
+    k1b_assert($rejected,'Real executePreview rejects a stale over-budget preview before any business dispatch.');
     k1b_assert(!CronDeadlineContext::active(),'Rejected preview clears request deadline.');
     k1b_assert($pdo->query('SELECT status FROM manual_campaign_previews')->fetchColumn()==='ready','Rejected preview is not consumed.');
     $pdo->exec("UPDATE app_settings SET setting_value='100' WHERE setting_key='manual.api_calls_per_step'");

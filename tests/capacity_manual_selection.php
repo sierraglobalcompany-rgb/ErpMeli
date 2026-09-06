@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-// Only the effect boundary is replaced. executeMany, persisted preview loading,
+// Only the effect boundary is replaced. executePreview, persisted preview loading,
 // policy, tenant ACL, projection, adapter/source inspection and identity are real.
 namespace App\QueueCore {
     final class ManualQueueLauncher {
@@ -38,23 +38,40 @@ try {
     $pdo->exec(explode('SET @has_notification_manual_idx',$schema)[0]);
     \App\Core\Session::put('user',['id'=>7,'role'=>'admin','session_generation'=>(new \App\Services\SessionGenerationService())->current()]);
     $failures=[];
-    foreach([[55,1,55,1],[1,30,30,30],[55,1,1,1],[55,30,2,2]] as [$capacity,$resources,$posted,$expected]) {
+    foreach([[55,55],[1,30],[55,1],[55,30]] as [$capacity,$posted]) {
         $pdo->exec("UPDATE app_settings SET setting_value='$capacity' WHERE setting_key='manual.api_calls_per_step'");
         \App\Services\AppSettingsService::clearCache();
-        $configuration=['preview_format'=>3,'scope'=>'financial','account_id'=>2,'block_size'=>$resources,'physical_api_call_budget'=>$capacity,'capacity_revision'=>(new \App\Services\CapacityPolicyService())->snapshot('manual')['revision']];
+        $configuration=['preview_format'=>4,'scope'=>'financial','account_id'=>2,'physical_api_call_budget'=>$capacity,'capacity_revision'=>(new \App\Services\CapacityPolicyService())->snapshot('manual')['revision']];
         $token=bin2hex(random_bytes(20));
         $pdo->prepare('INSERT INTO manual_campaign_previews(preview_token,created_by_user_id,scope_key,configuration_hash,configuration_json,summary_json,expires_at) VALUES(?,7,"financial",?,?,"{}",DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 HOUR))')->execute([$token,hash('sha256',$token),json_encode($configuration)]);
         $previewId=(int)$pdo->lastInsertId();
         for($i=1;$i<=60;$i++){
             $row=['queue_key'=>'financial_recalc','source_id'=>(string)$i,'meli_account_id'=>2];
+            $adapter=(new \App\Services\ManualCampaignAdapterRegistry())->forQueue('financial_recalc');
+            k1b_assert($adapter!==null && $adapter->supportsExact(),'Financial fixture uses the registered exact adapter.');
+            $state=$adapter->inspect((string)$i,2);
+            $authorityService=new \App\QueueCore\ManualSourceAuthorityService();
+            $authority=$authorityService->inspect('financial_recalc',(string)$i,2,1,$state);
+            $row=array_replace($row,[
+                'company_id'=>1,
+                'selection_id'=>'exact:financial_recalc:'.$i,
+                'source_authority_version'=>$authority->durableInputVersion,
+                'operation_key'=>$authority->operationKey,
+                'uses_api'=>$authority->usesApi,
+                'remote_contract'=>$authority->remoteContract,
+                'related_resource_ids'=>$authorityService->relatedResourceIds('financial_recalc',(string)$i,2,1),
+            ]);
+            $row['selection_version']=\App\Services\ManualCampaignPreviewService::exactSelectionVersion($row);
             $pdo->prepare('INSERT INTO manual_campaign_preview_items(manual_campaign_preview_id,queue_key,source_id,meli_account_id,source_state,item_payload_json,position_no) VALUES(?,"financial_recalc",?,2,"pending",?,?)')->execute([$previewId,(string)$i,json_encode($row),$i]);
         }
-        $result=(new \App\Services\ManualSingleStepService())->executeMany($token,7,$posted);
-        if($result['selected_count']!==$expected)$failures[]="capacity=$capacity resources=$resources post=$posted selected={$result['selected_count']} expected=$expected";
-        if($result['requested_api_calls']!==$capacity)$failures[]="Resource selection reduced physical budget from $capacity to {$result['requested_api_calls']}";
+        $result=(new \App\Services\ManualSingleStepService())->executePreview($token,7,$posted);
+        if($result['selected_count']!==60)$failures[]="capacity=$capacity post=$posted selected={$result['selected_count']} expected=60";
+        if($result['requested_api_calls']!==$posted)$failures[]="Posted physical budget $posted was reported as {$result['requested_api_calls']}";
+        $expectedEffective=min($capacity,$posted);
+        if($result['effective_api_calls']!==$expectedEffective)$failures[]="Effective physical budget expected $expectedEffective, got {$result['effective_api_calls']}";
         k1b_assert($result['remote_dispatches']===0,'Local selections consume no physical HTTP.');
     }
     k1b_assert($failures===[],implode('; ',$failures));
-    echo "STATUS=PASS CAPACITY_MANUAL_SELECTION REAL_EXECUTE_MANY=YES REAL_HTTP=0\n";
+    echo "STATUS=PASS CAPACITY_MANUAL_SELECTION REAL_EXECUTE_PREVIEW=YES REAL_HTTP=0\n";
 } finally {$harness->cleanup();}
 }

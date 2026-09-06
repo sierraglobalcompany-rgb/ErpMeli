@@ -63,8 +63,7 @@ final class ManualSingleStepService
             $isAvailableQueue = (string) ($configuration['scope'] ?? '') === 'available_queue';
             $physicalCallBudget = ManualPhysicalCallBudget::resolve(
                 $configuration,
-                // The posted value is a physical HTTP cap in both modes.
-                $isAvailableQueue ? $limit : CapacityPolicyService::TECHNICAL_MAX,
+                $limit,
                 (new CapacityPolicyService())->snapshot('manual')
             );
             $safety = (new SystemSafetyStatusService())->status();

@@ -10,10 +10,11 @@ function cap2_manual_database(): K1dSafeTestDatabase
     putenv('DB_HOST=127.0.0.1'); putenv('DB_PORT=33079'); putenv('DB_USER=root'); putenv('DB_PASS=');
     putenv('DB_NAME=erp_meli_k1d_test_cap2_manual_'.bin2hex(random_bytes(4)));
     putenv('APP_KEY=cap2-disposable-test-only-not-a-real-secret');
-    putenv('PRIVATE_STORAGE_PATH=D:/Codex/tmp/erp-meli/cap2-20260905/qa/manual-private');
+    $qaRoot=rtrim((string)(getenv('CAP2_MANUAL_QA_ROOT')?:'D:/Codex/tmp/erp-meli/cap2-20260905/qa'),'/\\');
+    putenv('PRIVATE_STORAGE_PATH='.$qaRoot.'/manual-private');
     putenv('MELI_API_BASE=https://cap2-wire.invalid');
     // Emergency markers/logs belong to this disposable fixture, never the worktree.
-    if (!defined('ERP_INSTALLATION_ROOT')) define('ERP_INSTALLATION_ROOT','D:/Codex/tmp/erp-meli/cap2-20260905/qa/manual-install-'.bin2hex(random_bytes(4)));
+    if (!defined('ERP_INSTALLATION_ROOT')) define('ERP_INSTALLATION_ROOT',$qaRoot.'/manual-install-'.bin2hex(random_bytes(4)));
     if (!is_dir(ERP_INSTALLATION_ROOT)) mkdir(ERP_INSTALLATION_ROOT,0777,true);
     $h=K1dSafeTestDatabase::createFromEnvironment(); $pdo=$h->pdo();
     try {(new App\Services\Migrator($pdo,__DIR__.'/../database/migrations'))->run(301);}

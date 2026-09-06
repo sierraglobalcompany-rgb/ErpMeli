@@ -827,8 +827,12 @@ final class QueueV4CleanWorker
             $service = new OrderEnrichmentService();
             $result = ApiExecutionMetadataContext::run(
                 $this->domainTransportMeta($job, $source, $capability, $sourceId),
-                static fn (): array => $service->processQueueV4PackExact(
-                    $sourceId, $accountId, $companyId, CronDeadlineContext::deadline(),
+                fn (): array => $service->processQueueV4PackExact(
+                    $sourceId,
+                    $accountId,
+                    $companyId,
+                    CronDeadlineContext::deadline(),
+                    !$this->confirmedManualSelectionActive,
                 ),
             );
             if ((string) ($result['status'] ?? '') === 'complete') {
@@ -877,13 +881,19 @@ final class QueueV4CleanWorker
                         return;
                     }
                     if ($capability === 'financial_recalc') {
-                        (new OrderFinancialRecalcJobService())->processExact($sourceId, $accountId, 1);
+                        $service = new OrderFinancialRecalcJobService();
+                        if ($this->confirmedManualSelectionActive) {
+                            $service->processManualExact($sourceId, $accountId);
+                        } else {
+                            $service->processExact($sourceId, $accountId, 1);
+                        }
                         return;
                     }
                     $batchOutcomes = ($this->financialFactory)()->processDomainExactBatch(
                         $batchSourceIds,
                         $companyId,
                         $accountId,
+                        !$this->confirmedManualSelectionActive,
                     )['outcomes'];
                 }
             );

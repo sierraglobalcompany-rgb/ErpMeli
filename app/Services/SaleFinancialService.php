@@ -151,7 +151,7 @@ final class SaleFinancialService
      * @param list<int> $sourceIds
      * @return array{summary:array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string},outcomes:array<int,array{state:string,classification?:string,next_safe_at?:?string}>}
      */
-    public function processDomainExactBatch(array $sourceIds, int $companyId, int $accountId): array
+    public function processDomainExactBatch(array $sourceIds, int $companyId, int $accountId, bool $allowSuccessor = true): array
     {
         $summary = ['processed' => 0, 'completed' => 0, 'errors' => 0, 'deferred' => 0, 'stop_reason' => 'empty'];
         $outcomes = [];
@@ -174,7 +174,7 @@ final class SaleFinancialService
         }
 
         if (count($jobs) === 1 && str_starts_with((string) ($jobs[0]['safe_message'] ?? ''), 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED')) {
-            $result = $this->captureAndReconcile($jobs[0], true, true);
+            $result = $this->captureAndReconcile($jobs[0], $allowSuccessor, true);
             $outcomes[(int) $jobs[0]['id']] = $this->sourceOutcome(
                 (int) $jobs[0]['id'],
                 (int) $jobs[0]['company_id'],
@@ -187,7 +187,7 @@ final class SaleFinancialService
         $remote = [];
         $remaining = self::BILLING_MAX_ORDER_IDS;
         foreach ($jobs as $job) {
-            $prepared = $this->prepareBillingCandidate($job, true, true);
+            $prepared = $this->prepareBillingCandidate($job, $allowSuccessor, true);
             $candidateOrderCount = count($prepared['external_order_ids'] ?? []);
             if (($prepared['ready'] ?? false) === true
                 && $this->isSimpleCrossSaleCandidate($prepared)

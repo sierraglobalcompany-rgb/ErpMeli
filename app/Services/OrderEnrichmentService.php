@@ -123,7 +123,13 @@ final class OrderEnrichmentService
     }
 
     /** @return array{status:string,processed:int,completed:int,errors:int,deferred:int,stop_reason:string} */
-    public function processQueueV4PackExact(int $jobId, int $accountId, int $companyId, ?float $deadline = null): array
+    public function processQueueV4PackExact(
+        int $jobId,
+        int $accountId,
+        int $companyId,
+        ?float $deadline = null,
+        bool $allowContinuation = true,
+    ): array
     {
         if (!$this->packSourceBelongsToTenant($jobId, $accountId, $companyId)) {
             return ['status' => 'error', 'processed' => 0, 'completed' => 0, 'errors' => 1, 'deferred' => 0, 'stop_reason' => 'invalid_source'];
@@ -132,7 +138,7 @@ final class OrderEnrichmentService
             return ['status' => 'complete', 'processed' => 0, 'completed' => 1, 'errors' => 0, 'deferred' => 0, 'stop_reason' => 'already_known_local'];
         }
 
-        $summary = $this->processExact($jobId, $deadline);
+        $summary = $this->processSelected(1, $deadline, $jobId, $allowContinuation);
         $status = ((int) ($summary['completed'] ?? 0)) > 0
             ? 'complete'
             : (((int) ($summary['errors'] ?? 0)) > 0 ? 'error' : 'waiting');
@@ -212,7 +218,9 @@ final class OrderEnrichmentService
                         (int) $job['id'],
                         (string) $job['external_resource_id']
                     );
-                    $this->admitMissingPackChildOrders($job);
+                    if ($allowContinuation) {
+                        $this->admitMissingPackChildOrders($job);
+                    }
                 }
                 $this->complete($job);
                 $summary['completed']++;

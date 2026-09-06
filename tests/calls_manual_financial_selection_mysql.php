@@ -72,6 +72,49 @@ try {
     $assert((int) $result['selected_count'] === 1 && (int) $result['claimed'] === 1, 'receipt_never_counts_financial_neighbor');
     $assert(count(Cap2DomainsWire::$calls) <= 1, 'manual_financial_uses_at_most_confirmed_http_budget');
 
+    // A selected pointer whose underlying orders changed may close locally,
+    // but manual execution must not create a successor source the user never saw.
+    $externalOrderId=830003;
+    $pdo->prepare(
+        "INSERT INTO meli_orders
+         (meli_account_id,external_order_id,status,paid_amount,currency_id,synced_at)
+         VALUES (9011,?,'paid',100,'COP',UTC_TIMESTAMP())"
+    )->execute([(string)$externalOrderId]);
+    $state=(new SaleFinancialStateService())->projectSale(9001,9011,'O:'.$externalOrderId);
+    $pdo->prepare(
+        "INSERT INTO sale_financial_reconciliation_jobs
+         (company_id,meli_account_id,sale_key,external_sale_id,input_version,status,next_run_at)
+         VALUES (9001,9011,?,?,?,'pending','2000-01-01')"
+    )->execute(['O:'.$externalOrderId,(string)$externalOrderId,$state['input_version']]);
+    $changedSourceId=(int)$pdo->lastInsertId();
+    $pdo->prepare(
+        "INSERT INTO queue_v4_clean_jobs
+         (company_id,meli_account_id,job_type,resource_id,idempotency_key,state,available_at,payload_json)
+         VALUES (9001,9011,'domain_exact',?,?,'ready','2000-01-01',?)"
+    )->execute([
+        (string)$changedSourceId,
+        'calls-manual-financial-changed-'.$changedSourceId,
+        json_encode(['capability'=>'financial_reconciliation','source_id'=>$changedSourceId]),
+    ]);
+    $changedPointerId=(int)$pdo->lastInsertId();
+    $changedRows=array_values(array_filter(array_map(
+        static fn(array $row):?array => ManualCampaignPreviewService::bindAvailableSourceIdentity($row),
+        $repository->previewEligible(60,[9011],9011)
+    ),static fn(array $row):bool=>(int)($row['queue_job_id']??0)===$changedPointerId));
+    $assert(count($changedRows)===1,'changed_input_pointer_was_displayed');
+    $pdo->prepare('UPDATE meli_orders SET paid_amount=101 WHERE meli_account_id=9011 AND external_order_id=?')->execute([(string)$externalOrderId]);
+    $wireBefore=count(Cap2DomainsWire::$calls);
+    QueueV4CleanCycleBudget::start(1,'manual',microtime(true)+40);
+    try {
+        (new QueueV4CleanWorker($pdo,$repository))->run('manual',1,30,[9011],9011,$changedRows);
+    } finally {
+        QueueV4CleanCycleBudget::clear();
+    }
+    $successorCount=$pdo->prepare('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs WHERE company_id=9001 AND meli_account_id=9011 AND sale_key=?');
+    $successorCount->execute(['O:'.$externalOrderId]);
+    $assert((int)$successorCount->fetchColumn()===1,'manual_changed_input_creates_no_unconfirmed_successor');
+    $assert(count(Cap2DomainsWire::$calls)===$wireBefore,'manual_changed_input_zero_http');
+
     echo "STATUS=PASS CALLS_MANUAL_FINANCIAL_SELECTION REAL_MELI_HTTP=0\n";
 } finally {
     QueueV4CleanCycleBudget::clear();

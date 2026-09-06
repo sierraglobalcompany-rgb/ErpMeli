@@ -373,6 +373,24 @@ final class MeliApiClient implements MeliReadClientInterface
                     \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_result_uncertain');
                     throw $transportBlocked;
                 }
+                if ($source === 'queue_v4_clean_readiness'
+                    && (!$dispatchBoundaryCrossed || \App\QueueV4Clean\QueueV4CleanTransportContext::consumePreTransportCancellation(
+                        $requestId, (int) ($meta['company_id'] ?? 0), $this->accountId
+                    ))) {
+                    // cURL owns the physical reservation. This one-shot private
+                    // receipt refunds only the existing budget/rhythm reservations.
+                    // Consume evidence first: an ambiguous acknowledgement never
+                    // reaches another catch that could refund either one again.
+                    try {
+                        $budget->releaseReservation($budgetReservation, true);
+                        $rhythm->cancelBeforeTransport($rhythmPermit, true);
+                    } catch (Throwable) {
+                        \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_result_uncertain');
+                        throw new RemoteResultUncertainException($requestId);
+                    }
+                    ApiExecutionMetadataContext::markRemoteBlocked();
+                    throw $transportBlocked;
+                }
                 if ($queueCoreContext) {
                     // Do not infer physical dispatch merely because control
                     // was handed to the transport object. curl_init, option

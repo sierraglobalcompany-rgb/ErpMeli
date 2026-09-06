@@ -450,6 +450,9 @@ final class ApiRhythmPolicyService
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
             if (!is_array($row) || !in_array((string) $row['status'], ['reserved', 'dispatched'], true)) {
                 $pdo->rollBack();
+                if ($strict) {
+                    throw new \RuntimeException('Rhythm refund lacks its exact active permit fence.');
+                }
                 return;
             }
             if ((string) $row['status'] === 'dispatched') {

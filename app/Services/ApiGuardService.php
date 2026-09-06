@@ -214,7 +214,7 @@ final class ApiGuardService
         $stmt = Database::connection()->prepare(
             'SELECT COUNT(*) FROM api_request_logs
              WHERE ' . $whereAccount . ' AND endpoint_path=:path AND http_status=:status
-               AND (:type="" OR error_type=:type)
+               AND (:type_filter="" OR error_type=:type_value)
                AND created_at>=DATE_SUB(UTC_TIMESTAMP(), INTERVAL :window MINUTE)'
         );
         if ($accountId) {
@@ -222,7 +222,8 @@ final class ApiGuardService
         }
         $stmt->bindValue(':path', $path);
         $stmt->bindValue(':status', $status, PDO::PARAM_INT);
-        $stmt->bindValue(':type', $type);
+        $stmt->bindValue(':type_filter', $type);
+        $stmt->bindValue(':type_value', $type);
         $stmt->bindValue(':window', $window, PDO::PARAM_INT);
         $stmt->execute();
         $failures = (int) $stmt->fetchColumn();
@@ -250,14 +251,15 @@ final class ApiGuardService
         try {
             Database::connection()->prepare(
                 'INSERT INTO api_circuit_breakers (meli_account_id,endpoint_path,reason,http_status,status,blocked_until,last_message,error_type,failure_count,window_started_at,next_retry_at,scope)
-                 VALUES (:account,:path,:reason,:status,"open",DATE_ADD(UTC_TIMESTAMP(), INTERVAL :cooldown MINUTE),:message,:error_type,:failure_count,UTC_TIMESTAMP(),DATE_ADD(UTC_TIMESTAMP(), INTERVAL :cooldown MINUTE),:scope)
+                 VALUES (:account,:path,:reason,:status,"open",DATE_ADD(UTC_TIMESTAMP(), INTERVAL :cooldown_block MINUTE),:message,:error_type,:failure_count,UTC_TIMESTAMP(),DATE_ADD(UTC_TIMESTAMP(), INTERVAL :cooldown_retry MINUTE),:scope)
                  ON DUPLICATE KEY UPDATE status="open",reason=VALUES(reason),http_status=VALUES(http_status),blocked_until=VALUES(blocked_until),last_message=VALUES(last_message),error_type=VALUES(error_type),failure_count=VALUES(failure_count),next_retry_at=VALUES(next_retry_at),scope=VALUES(scope),closed_at=NULL,updated_at=UTC_TIMESTAMP()'
             )->execute([
                 'account' => $accountId ?: null,
                 'path' => $path,
                 'reason' => mb_substr($reason, 0, 120),
                 'status' => $status,
-                'cooldown' => max(1, $cooldownMinutes),
+                'cooldown_block' => max(1, $cooldownMinutes),
+                'cooldown_retry' => max(1, $cooldownMinutes),
                 'message' => $message ? mb_substr($message, 0, 500) : null,
                 'error_type' => $errorType ? mb_substr($errorType, 0, 80) : null,
                 'failure_count' => max(1, $failureCount),

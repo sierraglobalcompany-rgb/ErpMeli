@@ -16,6 +16,16 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         bool $form,
         array $timeouts
     ): array {
+        if ((string) (ApiExecutionMetadataContext::current()['source'] ?? '') === 'queue_v4_clean_readiness') {
+            return \App\QueueV4Clean\QueueV4CleanTransportContext::captureReadinessTransport(
+                fn (): array => $this->executeRequest($method, $url, $data, $headers, $form, $timeouts)
+            );
+        }
+        return $this->executeRequest($method, $url, $data, $headers, $form, $timeouts);
+    }
+
+    private function executeRequest(string $method, string $url, array $data, array $headers, bool $form, array $timeouts): array
+    {
         \App\QueueV4Clean\QueueV4CleanCycleBudget::assertActive();
         if ((string) (ApiExecutionMetadataContext::current()['source'] ?? '') === MeliTransportSourcePolicy::QUEUE_V4_OAUTH) {
             $capabilities = (new MeliCliRuntimeCapabilityService())->inspect();
@@ -105,9 +115,11 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             throw new RuntimeException('queue_v4_clean_curl_progress_option_rejected');
         }
         $prepared = false;
+        $reserved = false;
         $requestId = (string) (ApiExecutionMetadataContext::current()['transport_request_id'] ?? '');
         try {
         \App\QueueV4Clean\QueueV4CleanCycleBudget::reserve($requestId, $executionSource);
+        $reserved = true;
         if($executionSource==='queue_core'){
             // Persist the physical boundary only after cURL is fully prepared
             // and immediately before curl_exec.
@@ -139,6 +151,12 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
                 parse_url($url, PHP_URL_PATH) ?: '/'
             );
             $prepared = true;
+        }
+        if ($executionSource === 'queue_v4_clean_readiness') {
+            \App\QueueV4Clean\QueueV4CleanTransportContext::assertBeforeTransport(
+                $method, parse_url($url, PHP_URL_PATH) ?: '/',
+                (int) (ApiExecutionMetadataContext::current()['transport_meli_account_id'] ?? 0)
+            );
         }
         // Fence/DB setup can be slow. Recalculate at the physical boundary,
         // preserving any shorter timeout supplied by the caller.
@@ -172,8 +190,14 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
                     throw new RemoteResultUncertainException((string)(ApiExecutionMetadataContext::current()['transport_request_id']??''));
                 }
             }
-            \App\QueueV4Clean\QueueV4CleanCycleBudget::releaseBeforeTransport($requestId);
+            $released = \App\QueueV4Clean\QueueV4CleanCycleBudget::releaseBeforeTransport($requestId);
+            if ($executionSource === 'queue_v4_clean_readiness' && $reserved && !$released) {
+                throw new RemoteResultUncertainException($requestId);
+            }
             throw $blocked;
+        }
+        if ($executionSource === 'queue_v4_clean_readiness') {
+            \App\QueueV4Clean\QueueV4CleanTransportContext::readinessEnteringTransport();
         }
         $started = microtime(true);
         \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(

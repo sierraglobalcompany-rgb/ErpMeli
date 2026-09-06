@@ -20,7 +20,7 @@ function cap2ReviewEvidenceNameAllowed(string $name): bool
     if (preg_match('/\.(md|diff|log|png)$/iD', $name) !== 1) {
         return false;
     }
-    if (in_array($name, ['browser-prep-report.md', 'package-prep-report.md', 'browser-prep-review.md', 'package-prep-review.md', 'progress.md'], true)) {
+    if (in_array($name, ['browser-prep-report.md', 'browser-step-prep-report.md', 'package-prep-report.md', 'browser-prep-review.md', 'package-prep-review.md', 'progress.md'], true)) {
         return true;
     }
     return preg_match('/^(?:task-[1-7]-(?:brief|report|review|rereview[0-9]+)\.md|task-[1-7]-fix[0-9]+-review\.md|review-[A-Za-z0-9.]+\.diff)$/iD', $name) === 1;

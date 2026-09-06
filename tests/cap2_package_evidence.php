@@ -54,6 +54,7 @@ $head = trim($head);
 
 cap2EvidenceWrite($workspace . '/.superpowers/sdd/2026-09-05-cap2/task-7-review.md', "review\n");
 cap2EvidenceWrite($workspace . '/.superpowers/sdd/2026-09-05-cap2/browser-prep-report.md', "browser prep\n");
+cap2EvidenceWrite($workspace . '/.superpowers/sdd/2026-09-05-cap2/browser-step-prep-report.md', "browser step proof\n");
 cap2EvidenceWrite($workspace . '/.superpowers/sdd/2026-09-05-cap2/browser-prep-review.md', "browser review\n");
 cap2EvidenceWrite($workspace . '/.superpowers/sdd/2026-09-05-cap2/package-prep-review.md', "package review\n");
 cap2EvidenceWrite($workspace . '/.superpowers/sdd/2026-09-05-cap2/task-5-fix1-review.md', "fix review\n");
@@ -102,6 +103,7 @@ cap2EvidenceAssert(in_array('tests/capacity_artifact.php', $names, true), 'packa
 cap2EvidenceAssert(in_array('plan/2026-09-05-cap2.md', $names, true), 'plan_included');
 cap2EvidenceAssert(in_array('review/task-7-review.md', $names, true), 'review_included');
 cap2EvidenceAssert(in_array('review/browser-prep-report.md', $names, true), 'browser_report_included');
+cap2EvidenceAssert(in_array('review/browser-step-prep-report.md', $names, true), 'browser_step_report_included');
 cap2EvidenceAssert(in_array('review/browser-prep-review.md', $names, true), 'browser_independent_review_included');
 cap2EvidenceAssert(in_array('review/package-prep-review.md', $names, true), 'package_independent_review_included');
 cap2EvidenceAssert(in_array('review/task-5-fix1-review.md', $names, true), 'fix_review_included');

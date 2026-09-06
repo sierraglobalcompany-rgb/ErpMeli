@@ -13,9 +13,9 @@ foreach ([1,2,3,15,55] as $limit) {
 }
 $configuration = ManualPhysicalCallBudget::previewConfiguration([], ['current'=>100,'ceiling'=>100,'revision'=>'hundred']);
 k1b_assert($configuration['physical_api_call_budget']===100, 'Technical maximum 100 is supported.');
-k1b_assert(ManualPhysicalCallBudget::resolve(['preview_format'=>2,'block_size'=>60],100,$policy)===15, 'Legacy previews never gain capacity.');
-k1b_assert(ManualPhysicalCallBudget::resolve(['preview_format'=>2,'block_size'=>3],100,$policy)===3, 'Legacy preview selection remains bounded.');
 foreach ([
+    fn()=>ManualPhysicalCallBudget::resolve(['preview_format'=>2,'block_size'=>60],100,$policy),
+    fn()=>ManualPhysicalCallBudget::resolve(['preview_format'=>2,'block_size'=>3],100,$policy),
     fn()=>ManualPhysicalCallBudget::previewConfiguration(['physical_api_call_budget'=>56],$policy),
     fn()=>ManualPhysicalCallBudget::previewConfiguration(['physical_api_call_budget'=>0],$policy),
     fn()=>ManualPhysicalCallBudget::previewConfiguration(['physical_api_call_budget'=>'1.5'],$policy),

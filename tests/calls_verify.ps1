@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('static','database','manual','transport','readiness','selftest')][string]$Group = 'static'
+    [ValidateSet('static','database','manual','transport','readiness','package','selftest')][string]$Group = 'static'
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -44,6 +44,7 @@ $cases = @{
     )
     transport = @('calls_transport_mysql','cap2_transport_mysql','cap2_domains_mysql','cap2_uncertain_recovery','calls_oauth_persistence_mysql')
     readiness = @('calls_readiness_contract','calls_readiness_safety','calls_readiness_transport --mysql')
+    package = @('calls_package_contract','cap2_package_handoff','cap2_package_evidence')
 }
 $httpCases = @('prepare','check','cancel','activate','stop','legacy','invalid-step','invalid-run','invalid-token','injected-scope',
     'run-zero','run-negative','run-overflow','run-array','step-zero','step-four','step-array','token-empty','token-short','token-nonhex',

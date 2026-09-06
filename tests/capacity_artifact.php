@@ -164,8 +164,12 @@ function cap2BuildRawArtifact(
     string $out,
     array $baseRuntimePaths,
     array $headRuntimePaths,
-    string $date
+    string $date,
+    string $family = 'cap2'
 ): array {
+    if (!in_array($family, ['cap2', 'calls'], true)) {
+        throw new RuntimeException('invalid_package_family');
+    }
     if (preg_match('/^[0-9]{8}$/D', $date) !== 1) {
         throw new RuntimeException('date_must_be_yyyymmdd');
     }
@@ -243,7 +247,7 @@ function cap2BuildRawArtifact(
     }
 
     $deployHashes = [];
-    $deployZip = rtrim(str_replace('\\', '/', $out), '/') . '/meli-cap2-deploy-' . $date . '.zip';
+    $deployZip = rtrim(str_replace('\\', '/', $out), '/') . '/meli-' . $family . '-deploy-' . $date . '.zip';
     $zip = new ZipArchive();
     if ($zip->open($deployZip, ZipArchive::CREATE | ZipArchive::EXCL) !== true) {
         throw new RuntimeException('deploy_zip_create_failed');
@@ -362,7 +366,7 @@ function cap2ArtifactMain(array $argv): int
     if ($issues !== []) {
         throw new RuntimeException('manifest_issues:' . implode(',', $issues));
     }
-    $result = cap2BuildRawArtifact($root, $base, $head, $out, array_column($baseEntries, 'path'), array_column($headEntries, 'path'), $date);
+    $result = cap2BuildRawArtifact($root, $base, $head, $out, array_column($baseEntries, 'path'), array_column($headEntries, 'path'), $date, $argv[5] ?? 'cap2');
     $integrity = (new App\Services\ReleaseIntegrityService())->inspectDirectory($result['applied_tree'], false, false);
     cap2WriteFile($out . '/integrity.json', cap2Json($integrity));
     if (empty($integrity['ok'])) {

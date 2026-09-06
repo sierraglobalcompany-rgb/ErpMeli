@@ -226,10 +226,10 @@ final class SalesAuditRunService
             return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'page_checkpoint', 'misclassified_oauth_repaired' => $repairCount, 'retryable_not_dispatched_readmitted' => $retryableReadmitted];
         } catch (RemoteResultUncertainException $error) {
             $this->release(
-                $job, $worker, 'waiting_budget', 'remote_result_uncertain_safe_get', $error,
-                gmdate('Y-m-d H:i:s', time() + 60), true
+                $job, $worker, 'error', 'remote_result_uncertain', $error,
+                null, false, $error->requestId
             );
-            return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'safe_get_uncertain', 'misclassified_oauth_repaired' => $repairCount, 'retryable_not_dispatched_readmitted' => $retryableReadmitted];
+            throw $error; // Stop the shared cycle; do not start its next stage.
         } catch (QueueV4PreTransportDeferredException $error) {
             $this->release($job, $worker, 'waiting_budget', 'pre_transport_deferred', $error, $error->nextSafeAt, true);
             return ['claimed' => 1, 'processed' => $processed, 'errors' => 0, 'status' => 'deferred', 'stop_reason' => 'pre_transport', 'misclassified_oauth_repaired' => $repairCount, 'retryable_not_dispatched_readmitted' => $retryableReadmitted];
@@ -821,6 +821,7 @@ final class SalesAuditRunService
                   INNER JOIN meli_accounts a ON a.company_id=j.company_id AND a.id=j.meli_account_id
                   ' . $eligibilityJoin . '
                   WHERE j.status IN ("pending","waiting_budget")
+                   AND j.remote_dispatch_state<>"PHYSICAL_STARTED"
                    AND j.next_run_at<=UTC_TIMESTAMP()
                    AND (j.lock_expires_at IS NULL OR j.lock_expires_at<UTC_TIMESTAMP())
                     AND (? IS NULL OR j.id=?)' . $eligibilityWhere . $reservationGuard . '
@@ -1425,7 +1426,10 @@ final class SalesAuditRunService
         $fallbackDelay = $status === 'waiting_budget' ? 60 : ($status === 'error' ? 120 : 5);
         $timestamp = $nextSafeAt === null ? false : strtotime($nextSafeAt . ' UTC');
         $availableAt = gmdate('Y-m-d H:i:s', $timestamp === false ? time() + $fallbackDelay : max(time() + 1, $timestamp));
-        $safeMessage = $error ? 'La comprobación se interrumpió de forma segura y se reintentará.' : null;
+        $uncertain = $error instanceof RemoteResultUncertainException;
+        $safeMessage = $uncertain
+            ? 'El resultado remoto es incierto. Revise antes de autorizar otro intento.'
+            : ($error ? 'La comprobación se interrumpió de forma segura y se reintentará.' : null);
         $pdo = Database::connectionFresh();
         $update = $pdo->prepare(
             'UPDATE sync_sales_audit_jobs
@@ -1445,8 +1449,8 @@ final class SalesAuditRunService
             $nonFailure ? 1 : 0,
             $safeMessage,
             $diagnostic,
-            $error ? mb_substr($error::class, 0, 40) : null,
-            $error ? 1 : 0,
+            $uncertain ? 'remote_result_uncertain' : ($error ? mb_substr($error::class, 0, 40) : null),
+            $error && !$uncertain ? 1 : 0,
             (int) $job['id'],
             (int) $job['company_id'],
             (int) $job['meli_account_id'],

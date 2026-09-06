@@ -77,13 +77,13 @@ final class OrderEnrichmentService
              VALUES (:account,:order_id,:resource_type,:external_id,"pending",:priority,UTC_TIMESTAMP())
              ON DUPLICATE KEY UPDATE
                 priority=LEAST(priority,VALUES(priority)),
-                status=IF(status IN ("complete","running"),status,"pending"),
-                next_run_at=IF(status IN ("complete","running"),next_run_at,UTC_TIMESTAMP()),
-                last_error_message=IF(status IN ("complete","running"),last_error_message,NULL),
-                last_error_diagnostic_id=IF(status IN ("complete","running"),last_error_diagnostic_id,NULL),
-                last_error_code=IF(status IN ("complete","running"),last_error_code,NULL),
-                failure_class=IF(status IN ("complete","running"),failure_class,NULL),
-                reached_remote=IF(status IN ("complete","running"),reached_remote,NULL),
+                status=IF(status IN ("complete","running") OR failure_class IN ("remote_result_uncertain","remote_result_uncertain_safe_get"),status,"pending"),
+                next_run_at=IF(status IN ("complete","running") OR failure_class IN ("remote_result_uncertain","remote_result_uncertain_safe_get"),next_run_at,UTC_TIMESTAMP()),
+                last_error_message=IF(status IN ("complete","running") OR failure_class IN ("remote_result_uncertain","remote_result_uncertain_safe_get"),last_error_message,NULL),
+                last_error_diagnostic_id=IF(status IN ("complete","running") OR failure_class IN ("remote_result_uncertain","remote_result_uncertain_safe_get"),last_error_diagnostic_id,NULL),
+                last_error_code=IF(status IN ("complete","running") OR failure_class IN ("remote_result_uncertain","remote_result_uncertain_safe_get"),last_error_code,NULL),
+                failure_class=IF(status IN ("complete","running") OR failure_class IN ("remote_result_uncertain","remote_result_uncertain_safe_get"),failure_class,NULL),
+                reached_remote=IF(status IN ("complete","running") OR failure_class IN ("remote_result_uncertain","remote_result_uncertain_safe_get"),reached_remote,NULL),
                 updated_at=UTC_TIMESTAMP(),
                 id=LAST_INSERT_ID(id)'
         );
@@ -227,13 +227,7 @@ final class OrderEnrichmentService
                     $summary['errors']++;
                 }
                 if ($error instanceof RemoteResultUncertainException) {
-                    if ($this->isPackSafeGetRemoteUncertain($job, $error)) {
-                        $summary['status'] = 'waiting';
-                        $summary['stop_reason'] = 'remote_uncertain_safe_get';
-                        continue;
-                    }
-                    $summary['stop_reason'] = 'action_required';
-                    break;
+                    throw $error; // Preserve the failed source and stop the shared cycle.
                 }
                 if ($error instanceof CronDeadlineDeferredException) {
                     $summary['status'] = 'waiting_deadline';
@@ -285,6 +279,7 @@ final class OrderEnrichmentService
                  FROM order_resource_enrichment_jobs
                  JOIN meli_accounts a ON a.id=order_resource_enrichment_jobs.meli_account_id
                  WHERE order_resource_enrichment_jobs.status IN ("pending","retry")
+                   AND COALESCE(order_resource_enrichment_jobs.failure_class,"") NOT IN ("remote_result_uncertain","remote_result_uncertain_safe_get")
                    AND order_resource_enrichment_jobs.next_run_at<=UTC_TIMESTAMP()
                    AND (order_resource_enrichment_jobs.locked_at IS NULL OR order_resource_enrichment_jobs.locked_at<DATE_SUB(UTC_TIMESTAMP(),INTERVAL 10 MINUTE))
                    AND (? IS NULL OR order_resource_enrichment_jobs.id=?)' . $reservationGuard . '
@@ -418,21 +413,12 @@ final class OrderEnrichmentService
         $consumeAttempt = true;
         $reportError = true;
 
-        if ($error instanceof RemoteResultUncertainException && $this->isPackSafeGetRemoteUncertain($job, $error)) {
-            $class = 'remote_result_uncertain_safe_get';
-            $code = 'remote_result_uncertain_safe_get';
-            $reachedRemote = true;
-            $retry = true;
-            $nextAt = time() + 60;
-            $consumeAttempt = false;
-            $reportError = false;
-            $safeMessage = 'Resultado remoto incierto en GET idempotente de pack. Se reintentará en una ventana segura.';
-        } elseif ($error instanceof RemoteResultUncertainException) {
+        if ($error instanceof RemoteResultUncertainException) {
             $class = 'remote_result_uncertain';
             $code = 'remote_result_uncertain';
             $reachedRemote = true;
             $retry = false;
-            $safeMessage = 'Mercado Libre respondió, pero el resultado remoto no es confirmable. Revise antes de reintentar.';
+            $safeMessage = 'El resultado remoto es incierto. Revise antes de autorizar otro intento.';
         } elseif ($error instanceof CronDeadlineDeferredException) {
             $class = 'waiting_deadline';
             $code = 'cron_deadline_deferred';
@@ -509,15 +495,6 @@ final class OrderEnrichmentService
             'consume_attempt' => $consumeAttempt,
             'report_error' => $reportError,
         ];
-    }
-
-    /**
-     * @param array<string,mixed> $job
-     */
-    private function isPackSafeGetRemoteUncertain(array $job, Throwable $error): bool
-    {
-        return $error instanceof RemoteResultUncertainException
-            && (string) ($job['resource_type'] ?? '') === 'pack';
     }
 
     private function refreshOrderState(int $orderId, int $accountId, int $companyId): void

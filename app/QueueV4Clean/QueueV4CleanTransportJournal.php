@@ -77,7 +77,7 @@ final class QueueV4CleanTransportJournal
         unset(self::$preparing[$request]);
         if (!isset(self::$prepared[$request])) {
             if ($began) { throw new \App\Services\RemoteResultUncertainException($request); }
-            QueueV4CleanCycleBudget::releaseBeforeTransport();
+            QueueV4CleanCycleBudget::releaseBeforeTransport($request);
             return;
         }
         try { $cancelled = self::cancelBeforeCurl(\App\Core\Database::connectionFresh(), $meta); }
@@ -137,7 +137,7 @@ final class QueueV4CleanTransportJournal
             $event->execute([$p['id'],$p['company'],$p['account'],$p['source'],$p['work'],$p['attempt'],$p['generation'],$request]);
             if ($event->rowCount() !== 1) { throw new RuntimeException('queue_v4_cancel_event_lost'); }
             $pdo->commit();
-            QueueV4CleanCycleBudget::releaseBeforeTransport();
+            QueueV4CleanCycleBudget::releaseBeforeTransport($request);
             return true;
         } catch (\Throwable $error) {
             if ($pdo->inTransaction()) { $pdo->rollBack(); }

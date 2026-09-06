@@ -22,6 +22,24 @@ final class ApiExecutionMetadataContext
     private static int $remoteBlocked = 0;
     private static int $knownResponses = 0;
     private static int $resourcesReceived = 0;
+    private static ?string $technicalOperation = null;
+
+    /** Process-local capability installed only by an authorized technical launcher. */
+    public static function withTechnicalOperation(string $operation, callable $callback): mixed
+    {
+        if (!in_array($operation,['readiness','emergency_canary','emergency_oauth','initial_oauth','oauth_profile'],true)) {
+            throw new \RuntimeException('technical_transport_operation_invalid');
+        }
+        $previous = self::$technicalOperation;
+        self::$technicalOperation = $operation;
+        try { return $callback(); }
+        finally { self::$technicalOperation = $previous; }
+    }
+
+    public static function technicalOperation(): ?string
+    {
+        return self::$technicalOperation;
+    }
 
     /** @return array<string,scalar|null> */
     public static function current(): array
@@ -79,6 +97,12 @@ final class ApiExecutionMetadataContext
 
     public static function claimRemoteCall(): void
     {
+        if (\App\QueueV4Clean\QueueV4CleanCycleBudget::snapshot()['limit'] > 0) {
+            // The outer physical owner is authoritative; metadata is not a
+            // second counter and cannot charge a request that never reached cURL.
+            \App\QueueV4Clean\QueueV4CleanCycleBudget::assertActive();
+            return;
+        }
         $manualMaximum = self::manualPhysicalHttpLimit();
         if ($manualMaximum > 0) {
             if (self::$remoteCalls >= $manualMaximum) {

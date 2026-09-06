@@ -134,11 +134,11 @@ final class MeliApiClient implements MeliReadClientInterface
 
     private function send(string $method, string $url, array $data, array $headers = [], bool $mutation = false, bool $form = false, array $meta = []): array
     {
+        \App\QueueV4Clean\QueueV4CleanCycleBudget::assertActive();
         // El contexto del worker prevalece sobre etiquetas genéricas como
         // source=cron. Así cada llamada real puede atribuirse a su campaña.
         $meta = array_replace($meta, ApiExecutionMetadataContext::current());
         $method = strtoupper($method);
-        $requestId = bin2hex(random_bytes(12));
         $guard = new ApiGuardService();
         $budget = new ApiBudgetService();
         $rhythm = new ApiRhythmPolicyService();
@@ -186,6 +186,9 @@ final class MeliApiClient implements MeliReadClientInterface
         $queueCoreContext = (string) ($meta['source'] ?? '') === 'queue_core';
         $attempts = $singleDispatchAttempt ? 1 : $guard->maxAttempts($mutation, $method);
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
+            // One server-owned identity per physical attempt, never per work item.
+            $requestId = bin2hex(random_bytes(20));
+            $meta['transport_request_id'] = $requestId;
             ApiExecutionMetadataContext::markRemoteAttempted();
             $budgetReservation = [];
             $rhythmPermit = [];
@@ -367,6 +370,7 @@ final class MeliApiClient implements MeliReadClientInterface
                 // A failed certification cannot be downgraded by a later row
                 // read (for example a rollback whose acknowledgement was lost).
                 if ($transportBlocked instanceof RemoteResultUncertainException) {
+                    \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_result_uncertain');
                     throw $transportBlocked;
                 }
                 if ($queueCoreContext) {
@@ -402,6 +406,7 @@ final class MeliApiClient implements MeliReadClientInterface
                         }
                         ApiExecutionMetadataContext::markRemoteBlocked();
                         if ($compensationFailure !== null) {
+                            \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_result_uncertain');
                             throw new RemoteResultUncertainException($requestId);
                         }
                         throw $transportBlocked;
@@ -417,7 +422,7 @@ final class MeliApiClient implements MeliReadClientInterface
                         try {
                             $budget->releaseReservation($budgetReservation, true);
                             $rhythm->cancelBeforeTransport($rhythmPermit, true);
-                        } catch (Throwable) { throw new RemoteResultUncertainException($requestId); }
+                        } catch (Throwable) { \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_result_uncertain'); throw new RemoteResultUncertainException($requestId); }
                         ApiExecutionMetadataContext::markRemoteBlocked();
                         throw $transportBlocked;
                     }
@@ -433,7 +438,7 @@ final class MeliApiClient implements MeliReadClientInterface
                         try {
                             $budget->releaseReservation($budgetReservation, true);
                             $rhythm->cancelBeforeTransport($rhythmPermit, true);
-                        } catch (Throwable) { throw new RemoteResultUncertainException($requestId); }
+                        } catch (Throwable) { \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_result_uncertain'); throw new RemoteResultUncertainException($requestId); }
                         ApiExecutionMetadataContext::markRemoteBlocked();
                         if ($transportBlocked instanceof ApiRhythmDeferredException
                             || $transportBlocked instanceof ApiBudgetExhaustedException
@@ -474,6 +479,7 @@ final class MeliApiClient implements MeliReadClientInterface
                         'remote_result_uncertain',
                         $meta
                     );
+                    \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_result_uncertain');
                     throw new RemoteResultUncertainException($requestId);
                 }
                 // La barrera del transporte OAuth se ejecuta dentro del
@@ -538,6 +544,7 @@ final class MeliApiClient implements MeliReadClientInterface
                     'remote_result_uncertain',
                     $meta
                 );
+                \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_result_uncertain');
                 throw new RemoteResultUncertainException($requestId);
             }
             // La telemetría en memoria certifica transporte solo después de
@@ -545,6 +552,7 @@ final class MeliApiClient implements MeliReadClientInterface
             // contra cortes vive en el journal persistido antes de la llamada.
             ApiExecutionMetadataContext::markRemoteDispatched();
             $status = (int) $transportResult['status'];
+            if ($status === 429) { \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_429_global_pause'); }
             $curlError = (string) $transportResult['curl_error'];
             if ($queueCoreContext && $status > 0 && $curlError === '') {
                 \App\QueueCore\QueueCoreDispatchFence::responseKnown($status);
@@ -555,7 +563,7 @@ final class MeliApiClient implements MeliReadClientInterface
             $wireBytes = max(0, $transportResult['wire_bytes']);
             $decodedBytes = max(0, $transportResult['decoded_bytes']);
             $retryAfter = HttpRetryAfterParser::seconds($responseHeaders['retry-after'] ?? null);
-            if ($queueV4ReadContext && ($status <= 0 || $curlError !== '')) {
+            if ($status <= 0 || $curlError !== '') {
                 $classification = [
                     'type' => 'remote_result_uncertain',
                     'outcome_class' => 'action_required',
@@ -570,9 +578,10 @@ final class MeliApiClient implements MeliReadClientInterface
                 $guard->recordRequest(
                     $this->accountId, $requestId, $method, $path, null, $durationMs, null,
                     $attempt, false,
-                    'El GET inició transporte, pero no produjo una respuesta local verificable.',
+                    'La solicitud inició transporte, pero no produjo una respuesta local verificable.',
                     $classification, 'remote_result_uncertain', $meta
                 );
+                \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_result_uncertain');
                 throw new RemoteResultUncertainException($requestId);
             }
             // Queue Core treats 206 as an incomplete page, never as a

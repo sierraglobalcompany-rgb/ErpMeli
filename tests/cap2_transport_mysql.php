@@ -37,7 +37,7 @@ try {
         $blocked=null;
         try { Meta::run($meta,static fn()=>(new Transport())->request($method,'https://cap2-wire.invalid'.$path,[],[],false,['timeout'=>20,'connect_timeout'=>3])); }
         catch(Throwable $error) { $blocked=$error; }
-        k1b_assert($position<3 ? $blocked===null : $blocked instanceof App\Services\ApiBudgetExhaustedException,'shared_stage_admission_'.$source);
+        k1b_assert($position<3 ? $blocked===null : $blocked instanceof App\Services\ApiBudgetExhaustedException,'shared_stage_admission_'.$source.':'.($blocked?->getMessage()??'none'));
         k1b_assert(count(Wire::$calls)===$sharedBefore+min($position+1,3) && Budget::snapshot()['used']===min($position+1,3),'shared_stage_exact_total_'.$source);
     }
     Budget::clear(); Deadline::clear();
@@ -91,11 +91,11 @@ try {
         $pdo->exec("UPDATE queue_core_jobs SET state='running',lease_owner='cap2',lease_generation=1,lease_expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 5 MINUTE) WHERE id={$job} AND company_id=9001 AND meli_account_id=9011");
         $pdo->exec("INSERT INTO queue_core_attempts(job_id,company_id,meli_account_id,lease_owner,lease_generation,launcher) VALUES({$job},9001,9011,'cap2',1,'manual')");
         $attempt=(int)$pdo->lastInsertId();
-        $meta=['source'=>'queue_core','company_id'=>9001,'account_id'=>9011,'transport_request_id'=>'core-'.$case,'transport_operation_key'=>'order_exact',
+        $meta=['source'=>'queue_core','company_id'=>9001,'account_id'=>9011,'transport_request_id'=>bin2hex(random_bytes(20)),'transport_operation_key'=>'order_exact',
             'queue_core_launcher'=>'manual','queue_core_capability_launcher'=>'manual','queue_core_domain'=>'manual','queue_core_uses_api'=>1,'queue_core_max_remote_calls'=>1,
             'queue_core_expected_method'=>'GET','queue_core_expected_endpoint_pattern'=>'#^/orders/8101$#D','queue_core_expected_operation'=>'order_exact',
             'queue_core_job_id'=>$job,'queue_core_attempt_id'=>$attempt,'queue_core_lease_owner'=>'cap2','queue_core_lease_generation'=>1,'queue_core_work_type'=>'manual_exact'];
-        Clock::$now=1000.0; Deadline::start(45,43,20,3);$changed=false;
+        Clock::$now=1000.0; Deadline::start(45,43,20,3);Budget::start(1,'manual');$changed=false;
         Clock::$tick=static function()use($pdo,$attempt,$case,&$changed):void {
             if(!$changed && (int)$pdo->query("SELECT physical_http_calls FROM queue_core_attempts WHERE id={$attempt}")->fetchColumn()===1) {
                 $changed=true;if(in_array($case,['after','tenant_mismatch'],true))Clock::$now=1044.0;if($case==='short')Clock::$now=1038.0;
@@ -113,12 +113,12 @@ try {
             if($case==='short') k1b_assert(Options::$values[CURLOPT_TIMEOUT]<=4,'core_slow_fence_recalculates_timeout');
             k1b_assert(Meta::run($meta,static fn()=>App\QueueCore\QueueCoreDispatchFence::cancelBeforeCurl())===false,'core_sent_marker_never_refunded');
         }
-        Deadline::clear();echo 'PASS=core_'.$case."\n";
+        Budget::clear();Deadline::clear();echo 'PASS=core_'.$case."\n";
     }
     // Two NOT SENT requests for the same repair item each compensate their own marker exactly once.
     [$repair]=cap2_transport_context($pdo,'sales_repair');Budget::start(1);
     foreach([1,2] as $ordinal) {
-        $repair['transport_request_id']='repeat-repair-'.$ordinal;
+        $repair['transport_request_id']=bin2hex(random_bytes(20));
         Meta::run($repair,static function():void {
             App\QueueV4Clean\QueueV4CleanDispatchFence::immediatelyBeforeCurl('GET','/orders/8101');
             k1b_assert(App\QueueV4Clean\QueueV4CleanTransportJournal::cancelBeforeCurl(App\Core\Database::connectionFresh(),Meta::current()),'same_repair_new_request_compensates');
@@ -162,6 +162,9 @@ try {
     finally {App\Core\Database::setConnection($pdo);}
     $uncertainClientProtected=$error instanceof App\Services\RemoteResultUncertainException
         && Budget::snapshot()['used']===1
+        && Budget::snapshot()['physical_http_calls']===null
+        && Budget::snapshot()['physical_http_calls_certainty']==='UNKNOWN'
+        && Budget::snapshot()['known_physical_calls']===0
         && (int)$pdo->query("SELECT COUNT(*) FROM api_remote_permits WHERE company_id=9001 AND meli_account_id=9011 AND status='dispatched'")->fetchColumn()===1;
     Budget::clear();k1b_assert(count(Wire::$calls)===$before,'uncertain_client_test_never_enters_wire');
     $pdo->exec("UPDATE api_remote_permits SET expires_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE company_id=9001 AND meli_account_id=9011 AND status='dispatched'");
@@ -285,7 +288,7 @@ try {
 
 function cap2_transport_context(PDO $pdo,string $source):array
 {
-    $request='cap2-'.bin2hex(random_bytes(10));
+    $request=bin2hex(random_bytes(20));
     $meta=['company_id'=>9001,'account_id'=>9011,'transport_request_id'=>$request];
     if($source==='queue') {
         $pdo->prepare("INSERT INTO queue_v4_clean_jobs(company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,state,attempt_count,lease_owner,lease_generation,lease_expires_at) VALUES(9001,9011,'order_exact','8101',?,'{}','running',1,'cap2',1,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 5 MINUTE))")->execute([$request]);

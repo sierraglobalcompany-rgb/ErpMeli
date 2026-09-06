@@ -15,7 +15,11 @@ namespace App\QueueV4Clean {
         public static function consume(int $wanted = 1): int {
             $count = min($wanted, QueueV4CleanCycleBudget::remaining());
             for ($i = 0; $i < $count; $i++) {
-                QueueV4CleanCycleBudget::claim();
+                $id = bin2hex(random_bytes(20));
+                \App\Services\ApiExecutionMetadataContext::run(['source'=>'queue_v4_clean','transport_request_id'=>$id], static function () use ($id): void {
+                    QueueV4CleanCycleBudget::claim($id);
+                    QueueV4CleanCycleBudget::enteringTransport($id);
+                });
                 self::$calls++;
             }
             return $count;

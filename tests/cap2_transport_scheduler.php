@@ -3,7 +3,13 @@ declare(strict_types=1);
 // Dedicated orchestration proof: real scheduler/SQL leases/policy and budget,
 // isolated stage outcomes. Physical wire/fences are proven separately in cap2_transport_mysql.
 namespace App\QueueV4Clean {
-    final class Cap2TransportStages {public static string $stop='';public static int $repairs=0;}
+    final class Cap2TransportStages {
+        public static string $stop='';public static int $repairs=0;public static bool $cross=true;
+        public static function consume():void {
+            $id=bin2hex(random_bytes(20));
+            \App\Services\ApiExecutionMetadataContext::run(['source'=>'queue_v4_clean','transport_request_id'=>$id],static function()use($id):void{QueueV4CleanCycleBudget::claim($id);if(self::$cross)QueueV4CleanCycleBudget::enteringTransport($id);});
+        }
+    }
     final class QueueV4CleanOAuthOperationRepository {public function __construct(\PDO $pdo){}}
     final class QueueV4CleanOAuthSupervisor {public function __construct(\PDO $pdo,QueueV4CleanOAuthOperationRepository $r){}public function run(string $owner):array{return ['claimed'=>0];}}
     final class QueueV4CleanUncertainReadRecoveryService {public function __construct(\PDO $pdo){}public function recoverOne():array{return ['recovered'=>0];}}
@@ -13,12 +19,12 @@ namespace App\QueueV4Clean {
     final class QueueV4CleanWorker {
         public const DEFAULT_MAX_CALLS=1;
         public function __construct(\PDO $pdo,QueueV4CleanRepository $r){}
-        public function run(string $launcher,int $maxCalls,int $runtime):array{QueueV4CleanCycleBudget::claim();return ['claimed'=>1,'stop_reason'=>Cap2TransportStages::$stop];}
+        public function run(string $launcher,int $maxCalls,int $runtime):array{Cap2TransportStages::consume();return ['claimed'=>1,'stop_reason'=>Cap2TransportStages::$stop];}
     }
 }
 namespace App\Services {
     final class EmergencyControlService {public function automationStopped():bool{return false;}}
-    final class SalesAuditExactRepairService {public function processDue(int $limit):array{\App\QueueV4Clean\Cap2TransportStages::$repairs++;\App\QueueV4Clean\QueueV4CleanCycleBudget::claim();return ['jobs'=>1];}}
+    final class SalesAuditExactRepairService {public function processDue(int $limit):array{\App\QueueV4Clean\Cap2TransportStages::$repairs++;\App\QueueV4Clean\Cap2TransportStages::consume();return ['jobs'=>1];}}
 }
 namespace App\Work\Adapters {
     final class QueueCoreDrainAuthority {
@@ -46,6 +52,9 @@ namespace {
             k1b_assert(App\QueueV4Clean\Cap2TransportStages::$repairs===($protected?0:1),'scheduler_does_not_enter_repair_after_'.$stop);
             k1b_assert($result['http_budget']['used']===($protected?1:2),'shared_budget_retained_at_protected_stop');
         }
+        App\QueueV4Clean\Cap2TransportStages::$cross=false;App\QueueV4Clean\Cap2TransportStages::$stop='remote_result_uncertain';
+        $result=(new App\QueueV4Clean\QueueV4CleanScheduler($pdo))->run(5,45);
+        k1b_assert($result['physical_http_calls']===null&&($result['physical_http_calls_certainty']??'')==='UNKNOWN'&&($result['charged_calls']??null)===1,'scheduler_never_labels_unresolved_charge_as_certified_http');
         echo "CAP2_TRANSPORT_SCHEDULER_OK\n";
     } finally {$h->cleanup();}
 }

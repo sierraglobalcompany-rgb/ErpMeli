@@ -16,6 +16,7 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         bool $form,
         array $timeouts
     ): array {
+        \App\QueueV4Clean\QueueV4CleanCycleBudget::assertActive();
         if ((string) (ApiExecutionMetadataContext::current()['source'] ?? '') === MeliTransportSourcePolicy::QUEUE_V4_OAUTH) {
             $capabilities = (new MeliCliRuntimeCapabilityService())->inspect();
             if (!(new MeliCliRuntimeCapabilityService())->oauthReady($capabilities)) {
@@ -92,6 +93,8 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         if (!curl_setopt($ch,CURLOPT_NOPROGRESS,false)
             || !curl_setopt($ch,CURLOPT_XFERINFOFUNCTION,static function()use(&$lastHeartbeat,$executionSource):int{
                 if (CronDeadlineContext::remainingSeconds() <= 0.0) { return 1; }
+                $budgetDeadline = \App\QueueV4Clean\QueueV4CleanCycleBudget::snapshot()['deadline'];
+                if ($budgetDeadline !== null && microtime(true) >= $budgetDeadline) { return 1; }
                 if ($executionSource !== 'queue_core') { return 0; }
                 $now=microtime(true);
                 if($now-$lastHeartbeat<1.0)return 0;
@@ -102,7 +105,9 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             throw new RuntimeException('queue_v4_clean_curl_progress_option_rejected');
         }
         $prepared = false;
+        $requestId = (string) (ApiExecutionMetadataContext::current()['transport_request_id'] ?? '');
         try {
+        \App\QueueV4Clean\QueueV4CleanCycleBudget::reserve($requestId, $executionSource);
         if($executionSource==='queue_core'){
             // Persist the physical boundary only after cURL is fully prepared
             // and immediately before curl_exec.
@@ -137,13 +142,24 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         }
         // Fence/DB setup can be slow. Recalculate at the physical boundary,
         // preserving any shorter timeout supplied by the caller.
-        CronDeadlineContext::assertCanStartRemote(1.0);
+        $budgetDeadline = \App\QueueV4Clean\QueueV4CleanCycleBudget::snapshot()['deadline'];
+        CronDeadlineContext::assertCanStartRemote(1.0, $budgetDeadline);
         $freshTimeouts = CronDeadlineContext::curlTimeouts();
+        if ($budgetDeadline !== null) {
+            $remaining = max(1, (int) floor($budgetDeadline - microtime(true)));
+            $freshTimeouts['timeout'] = min($freshTimeouts['timeout'], $remaining);
+            $freshTimeouts['connect_timeout'] = min($freshTimeouts['connect_timeout'], $remaining);
+        }
         if (!curl_setopt_array($ch, [
             CURLOPT_TIMEOUT => max(1, min($timeouts['timeout'], $freshTimeouts['timeout'])),
             CURLOPT_CONNECTTIMEOUT => max(1, min($timeouts['connect_timeout'], $freshTimeouts['connect_timeout'])),
         ])) { throw new RuntimeException('queue_v4_clean_curl_final_timeout_rejected'); }
+        \App\QueueV4Clean\QueueV4CleanCycleBudget::enteringTransport($requestId);
         } catch (\Throwable $blocked) {
+            if ($blocked instanceof RemoteResultUncertainException) {
+                \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_result_uncertain');
+                throw $blocked;
+            }
             if ($prepared) {
                 try {
                     $cancelled = \App\QueueV4Clean\QueueV4CleanTransportJournal::cancelBeforeCurl(
@@ -156,6 +172,7 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
                     throw new RemoteResultUncertainException((string)(ApiExecutionMetadataContext::current()['transport_request_id']??''));
                 }
             }
+            \App\QueueV4Clean\QueueV4CleanCycleBudget::releaseBeforeTransport($requestId);
             throw $blocked;
         }
         $started = microtime(true);

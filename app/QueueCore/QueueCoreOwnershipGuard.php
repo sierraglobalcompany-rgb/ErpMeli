@@ -52,6 +52,7 @@ final class QueueCoreOwnershipGuard
         if ($source === 'queue_v4_clean_readiness'
             || $source === MeliTransportSourcePolicy::QUEUE_V4_SALES_REPAIR
             || MeliTransportSourcePolicy::requiresQueueV4ReadFence($source)
+            || MeliTransportSourcePolicy::authorizedTechnicalPath($source, $method, $path)
             || MeliTransportSourcePolicy::requiresCurrentOAuthFence($source)) {
             return;
         }

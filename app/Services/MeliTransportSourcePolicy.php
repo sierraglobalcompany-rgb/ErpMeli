@@ -51,6 +51,8 @@ final class MeliTransportSourcePolicy
     public static function assertAllowed(string $source, string $method, string $path): void
     {
         if (\App\QueueV4Clean\QueueV4CleanCycleBudget::snapshot()['limit'] > 0
+            && $source !== 'queue_core'
+            && !self::authorizedTechnicalPath($source, $method, $path)
             && !self::requiresQueueV4ReadFence($source) && !self::requiresCurrentOAuthFence($source)) {
             throw new RuntimeException('queue_v4_clean_cycle_transport_source_denied');
         }
@@ -89,6 +91,24 @@ final class MeliTransportSourcePolicy
         if (strtoupper($method) !== 'POST' || !hash_equals('/oauth/token', $path)) {
             throw new RuntimeException('queue_v4_clean_oauth_transport_capability_denied');
         }
+    }
+
+    public static function authorizedTechnicalPath(string $source, string $method, string $path): bool
+    {
+        if (ApiExecutionMetadataContext::technicalOperation() === 'oauth_profile') {
+            $meta = ApiExecutionMetadataContext::current();
+            if ((int)($meta['company_id'] ?? 0)<1 || (int)($meta['account_id'] ?? 0)<1) { return false; }
+        }
+        $expected = match (ApiExecutionMetadataContext::technicalOperation()) {
+            'readiness' => ['queue_v4_clean_readiness','GET','/users/me'],
+            'emergency_canary' => ['manual_emergency_canary','GET','/users/me'],
+            'emergency_oauth' => ['manual_emergency_oauth_refresh','POST','/oauth/token'],
+            'initial_oauth' => ['web','POST','/oauth/token'],
+            'oauth_profile' => ['web','GET','/users/me'],
+            default => null,
+        };
+        $path = '/' . ltrim((string) (parse_url($path, PHP_URL_PATH) ?: $path), '/');
+        return $expected !== null && $expected === [$source,strtoupper($method),$path];
     }
 
     /** Closed GET map; identity is supplied by the tenant-bound source row. */

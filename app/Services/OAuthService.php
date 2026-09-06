@@ -37,6 +37,14 @@ final class OAuthService
 
     public function complete(string $code, string $plainState): int
     {
+        return ManualPhysicalCallBudget::withinTechnical(
+            1,
+            fn (): int => $this->completeWithinBudget($code, $plainState)
+        );
+    }
+
+    private function completeWithinBudget(string $code, string $plainState): int
+    {
         self::assertConfigured();
         // No reclamar ni mutar el estado OAuth si el transporte está detenido.
         // Así el callback puede reintentarse cuando termine el mantenimiento.
@@ -150,8 +158,19 @@ final class OAuthService
                 throw new RuntimeException('El estado OAuth perdió su propiedad antes de guardar la cuenta.');
             }
             $pdo->commit();
+            // The authorization POST owns the same physical budget as its
+            // optional profile read. Never open another budget after commit.
+            if (\App\QueueV4Clean\QueueV4CleanCycleBudget::exhausted()) {
+                return $accountId;
+            }
             try {
-                $profile = (new MeliApiClient($accountId))->get('/users/me', [], ['job_type' => 'oauth']);
+                $profile = ApiExecutionMetadataContext::run(
+                    ['source'=>'web', 'job_type'=>'oauth', 'company_id'=>$companyId, 'account_id'=>$accountId],
+                    static fn (): array => ApiExecutionMetadataContext::withTechnicalOperation(
+                        'oauth_profile',
+                        static fn (): array => (new MeliApiClient($accountId))->get('/users/me')
+                    )
+                );
                 $pdo->prepare("UPDATE meli_accounts SET nickname=:nickname, site_id=:site, country_id=:country, status='conectado', last_error=NULL WHERE id=:id AND company_id=:company")
                     ->execute(['nickname' => $profile['nickname'] ?? null, 'site' => $profile['site_id'] ?? null, 'country' => $profile['country_id'] ?? null, 'id' => $accountId, 'company' => $companyId]);
             } catch (Throwable $profileError) {
@@ -205,10 +224,13 @@ final class OAuthService
         if (Database::connection()->inTransaction()) {
             throw new RuntimeException('El intercambio OAuth no puede ejecutarse dentro de una transacción MySQL.');
         }
-        return (new MeliApiClient(0))->exchangeOAuthToken($data, array_merge($metadata, [
-            'job_type' => 'oauth_authorization',
-            'source' => 'web',
-        ]));
+        return ApiExecutionMetadataContext::withTechnicalOperation(
+            'initial_oauth',
+            static fn (): array => (new MeliApiClient(0))->exchangeOAuthToken($data, array_merge($metadata, [
+                'job_type' => 'oauth_authorization',
+                'source' => 'web',
+            ]))
+        );
     }
 
     private function assertAuthorizedCompany(int $companyId, int $userId, PDO $pdo, bool $forUpdate = false): void

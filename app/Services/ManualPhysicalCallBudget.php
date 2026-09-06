@@ -8,6 +8,42 @@ use RuntimeException;
 /** Physical HTTP capacity is independent of resource batch sizes. */
 final class ManualPhysicalCallBudget
 {
+    /**
+     * Explicit technical launchers share the physical counter with any caller.
+     * A whole technical contract must fit before its callback can mutate state.
+     * @template T @param callable():T $callback @return T
+     */
+    public static function withinTechnical(int $necessaryCalls, callable $callback): mixed
+    {
+        if ($necessaryCalls < 1 || $necessaryCalls > 100) {
+            throw new RuntimeException('physical_budget_technical_contract_invalid');
+        }
+        $state = \App\QueueV4Clean\QueueV4CleanCycleBudget::snapshot();
+        $owned = $state['limit'] === 0;
+        $deadline = min(microtime(true) + 45, $state['deadline'] ?? INF, CronDeadlineContext::deadline() ?? INF);
+        if ($owned) {
+            $policy = (new CapacityPolicyService())->snapshot('manual');
+            $limit = min($necessaryCalls, (int) $policy['current'], (int) $policy['ceiling']);
+            if ($limit < $necessaryCalls) {
+                throw new RuntimeException('physical_budget_insufficient');
+            }
+            \App\QueueV4Clean\QueueV4CleanCycleBudget::start($limit, 'manual', $deadline);
+        }
+        try {
+            return CronDeadlineContext::within($deadline, static function () use ($necessaryCalls, $callback): mixed {
+                \App\QueueV4Clean\QueueV4CleanCycleBudget::assertActive();
+                if (\App\QueueV4Clean\QueueV4CleanCycleBudget::remaining() < $necessaryCalls) {
+                    throw new RuntimeException('physical_budget_insufficient');
+                }
+                return $callback();
+            });
+        } finally {
+            if ($owned) {
+                \App\QueueV4Clean\QueueV4CleanCycleBudget::clear();
+            }
+        }
+    }
+
     /** @return array{physical_api_call_budget:int,capacity_revision:string} */
     public static function previewConfiguration(array $configuration, array $policy): array
     {

@@ -12,6 +12,7 @@ use App\Services\AppVersionService;
 use App\Services\EmergencyControlService;
 use App\Services\InstalledVersionMarkerService;
 use App\Services\MeliApiClient;
+use App\Services\ManualPhysicalCallBudget;
 use App\Services\MeliReadClientInterface;
 use App\Services\Migrator;
 use PDO;
@@ -84,6 +85,17 @@ final class QueueV4CleanReadinessService
         if ($actorId < 1) {
             throw new RuntimeException('queue_v4_clean_actor_invalid');
         }
+        // Certification is one three-account operation, never three new budgets.
+        // Reject insufficient capacity before locks, run rows or partial results.
+        return ManualPhysicalCallBudget::withinTechnical(
+            3,
+            fn (): array => $this->certifyWithinBudget($actorId)
+        );
+    }
+
+    /** @return array<string,mixed> */
+    private function certifyWithinBudget(int $actorId): array
+    {
         $locked = (int) $this->pdo->query(
             "SELECT GET_LOCK('erp_meli_queue_v4_clean_readiness',0)"
         )->fetchColumn();
@@ -163,7 +175,10 @@ final class QueueV4CleanReadinessService
                             'account_id' => $accountId,
                             'bulk' => false,
                         ],
-                        static fn (): array => $client->get('/users/me')
+                        static fn (): array => ApiExecutionMetadataContext::withTechnicalOperation(
+                            'readiness',
+                            static fn (): array => $client->get('/users/me')
+                        )
                     )
                 );
                 if ((string) ($response['id'] ?? '') !== (string) $account['meli_user_id']) {

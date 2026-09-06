@@ -17,7 +17,7 @@ final class QueueV4CleanControlService
     }
 
     /** @return array<string,mixed> */
-    public function activate(int $actorId): array
+    public function activate(int $actorId, int $runId, string $token): array
     {
         if ($actorId < 1 || Env::bool('ML_WRITE_ENABLED', false)) {
             throw new RuntimeException('queue_v4_clean_activation_safety_invalid');
@@ -25,7 +25,9 @@ final class QueueV4CleanControlService
         if (!(new EmergencyControlService())->automationStopped()) {
             throw new RuntimeException('queue_v4_clean_activation_requires_automation_stop');
         }
-        $issues = (new QueueV4CleanReadinessService($this->pdo))->activationIssues();
+        $readiness = new QueueV4CleanReadinessService($this->pdo);
+        $readiness->assertActivationContext($actorId, $runId, $token);
+        $issues = $readiness->activationIssues();
         if ($issues !== []) {
             throw new RuntimeException('queue_v4_clean_activation_preconditions_invalid:' . implode(',', $issues));
         }
@@ -43,16 +45,9 @@ final class QueueV4CleanControlService
             ) {
                 throw new RuntimeException('queue_v4_clean_not_certified');
             }
-            $accounts = $this->pdo->query(
-                'SELECT ra.company_id,ra.meli_account_id
-                 FROM queue_v4_clean_readiness_accounts ra
-                 JOIN queue_v4_clean_readiness_runs rr
-                   ON rr.id=ra.readiness_run_id AND rr.state="CERTIFIED"
-                 WHERE ra.readiness_run_id=(
-                   SELECT MAX(id) FROM queue_v4_clean_readiness_runs WHERE state="CERTIFIED"
-                 ) AND ra.outcome="PASS"
-                 ORDER BY ra.company_id,ra.meli_account_id FOR UPDATE'
-            )->fetchAll(PDO::FETCH_ASSOC);
+            // No historical MAX(CERTIFIED) fallback: this exact fresh session must
+            // still own the globally newest run under the primary control lock.
+            $accounts = $readiness->assertActivationContext($actorId, $runId, $token)['accounts'];
             if (count($accounts) !== 3) {
                 throw new RuntimeException('queue_v4_clean_activation_account_set_invalid');
             }
@@ -123,12 +118,23 @@ final class QueueV4CleanControlService
         if ($actorId < 1) {
             throw new RuntimeException('queue_v4_clean_actor_invalid');
         }
-        $statement = $this->pdo->prepare(
-            "UPDATE queue_v4_clean_control
-             SET engine_state='STOPPED',scheduler_enabled=0,stopped_at=UTC_TIMESTAMP(3),updated_by=?
-             WHERE control_key='primary'"
-        );
-        $statement->execute([$actorId]);
+        $this->pdo->beginTransaction();
+        try {
+            (new QueueV4CleanRepository($this->pdo))->control(true);
+            // Stop never waits for the HTTP GET_LOCK. The control row fences
+            // finalization; any already transmitted response remains obsolete.
+            $runId = (int)$this->pdo->query('SELECT COALESCE(MAX(id),0) FROM queue_v4_clean_readiness_runs')->fetchColumn();
+            $this->pdo->prepare("UPDATE queue_v4_clean_readiness_runs SET state='FAILED',failure_class='stopped',finished_at=UTC_TIMESTAMP(3) WHERE id=? AND state='TESTING'")->execute([$runId]);
+            $this->pdo->prepare(
+                "UPDATE queue_v4_clean_control SET engine_state='STOPPED',scheduler_enabled=0,
+                 readiness_state='FAILED',readiness_passed_accounts=0,readiness_error_class='stopped',
+                 certified_at=NULL,stopped_at=UTC_TIMESTAMP(3),updated_by=? WHERE control_key='primary'"
+            )->execute([$actorId]);
+            $this->pdo->commit();
+        } catch (Throwable $error) {
+            if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+            throw $error;
+        }
         return ['ok' => true, 'state' => 'STOPPED', 'scheduler_enabled' => false];
     }
 }

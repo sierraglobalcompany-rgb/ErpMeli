@@ -68,6 +68,9 @@ cap2EvidenceWrite($qa . '/raw-source.php', "<?php echo 'raw';\n");
 cap2EvidenceWrite($qa . '/browser-config/automatic-desktop.png', "desktop\n");
 cap2EvidenceWrite($qa . '/browser-config/red-browser.log', "red\n");
 cap2EvidenceWrite($qa . '/browser-config/final-browser.log', "green\n");
+$browserEvidence = ['browser-config/review-rerun-browser.log', 'browser-step/setup.log', 'browser-step/final-browser.log', 'browser-step/php-server.log', 'browser-step/wire.jsonl', 'browser-step/normal-checkpoint-desktop.png', 'browser-step/protected-429-mobile.png', 'browser-step/post-checkpoint-failure-desktop.png', 'browser-step/continuation-result-mobile.png'];
+foreach ($browserEvidence as $name) cap2EvidenceWrite($qa . '/' . $name, "fixture evidence\n");
+cap2EvidenceWrite($qa . '/browser-step/fixture-meta.json', "private fixture\n");
 cap2EvidenceWrite($qa . '/browser-config/.playwright-cli/console.log', "profile cache\n");
 cap2EvidenceWrite($qa . '/package-prep/green-verification.log', "verified\n");
 cap2EvidenceWrite($qa . '/package-prep/round1-green-verification.log', "round one verified\n");
@@ -108,6 +111,8 @@ cap2EvidenceAssert(in_array('qa/browser-mobile.png', $names, true), 'screenshot_
 cap2EvidenceAssert(in_array('qa/browser-config/automatic-desktop.png', $names, true), 'nested_browser_screenshot_included');
 cap2EvidenceAssert(in_array('qa/browser-config/red-browser.log', $names, true), 'nested_browser_red_included');
 cap2EvidenceAssert(in_array('qa/browser-config/final-browser.log', $names, true), 'nested_browser_log_included');
+foreach ($browserEvidence as $name) cap2EvidenceAssert(in_array('qa/' . $name, $names, true), 'browser_evidence_included:' . $name);
+cap2EvidenceAssert(!in_array('qa/browser-step/fixture-meta.json', $names, true), 'browser_private_meta_excluded');
 cap2EvidenceAssert(in_array('qa/package-prep/green-verification.log', $names, true), 'package_verification_included');
 cap2EvidenceAssert(in_array('qa/package-prep/round1-green-verification.log', $names, true), 'package_round_verification_included');
 cap2EvidenceAssert(in_array('EVIDENCE_HASHES.json', $names, true), 'hash_inventory_included');

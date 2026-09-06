@@ -37,7 +37,16 @@ function cap2NestedQaEvidenceAllowed(string $relative): bool
             'browser-config/red-browser.log',
             'browser-config/green-browser.log',
             'browser-config/final-browser.log',
+            'browser-config/review-rerun-browser.log',
             'browser-config/php-server.log',
+            'browser-step/setup.log',
+            'browser-step/final-browser.log',
+            'browser-step/php-server.log',
+            'browser-step/wire.jsonl',
+            'browser-step/normal-checkpoint-desktop.png',
+            'browser-step/protected-429-mobile.png',
+            'browser-step/post-checkpoint-failure-desktop.png',
+            'browser-step/continuation-result-mobile.png',
         ], true);
 }
 
@@ -104,7 +113,7 @@ function cap2BuildEvidenceZip(string $workspace, string $qa, string $artifact, s
         }
         $files['qa/' . $entry->getFilename()] = (string) file_get_contents($entry->getPathname());
     }
-    foreach (['browser-config', 'package-prep'] as $subdir) {
+    foreach (['browser-config', 'browser-step', 'package-prep'] as $subdir) {
         $directory = $qa . '/' . $subdir;
         if (!is_dir($directory)) {
             continue;

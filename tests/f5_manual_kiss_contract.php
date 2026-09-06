@@ -24,8 +24,9 @@ $single = $read('app/Services/ManualSingleStepService.php');
 $launcher = $read('app/QueueCore/ManualQueueLauncher.php');
 $routes = $read('public/index.php');
 
-$assert(str_contains($single, 'function executeMany(string $previewToken, int $userId, int $limit)'), 'manual_amount_entrypoint');
-$assert(str_contains($single, 'array_slice($rows, 0, $limit)'), 'preview_bound_exact_subset');
+$assert(str_contains($single, 'function executePreview(string $previewToken, int $userId, int $requestedPhysicalCalls)'), 'manual_calls_only_entrypoint');
+$assert(str_contains($single, 'ManualCampaignPreviewService::PRESENTATION_LIMIT')
+    && !str_contains($single, 'array_slice($rows, 0, $limit)'), 'preview_bound_to_persisted_displayed_rows');
 $assert(str_contains($single, "'manual-explicit', \$previewToken, (string) \$userId,"), 'explicit_attempt_key_bound_to_preview');
 $assert(str_contains($single, '$items, $physicalCallBudget, CronDeadlineContext::deadline(),')
     && str_contains($single, '$previews->consume($previewToken, $userId);'), 'single_step_uses_preview_deadline_and_one_shot_admission');
@@ -36,8 +37,10 @@ $assert(str_contains($launcher, "'manual_step_no_background_continuation'"), 'no
 $assert(str_contains($launcher, "['manual_exact']"), 'manual_exact_runner_filter');
 $assert(str_contains($launcher, "'manual',\$jobId"), 'only_bound_job_id_run');
 
-$assert(str_contains($controller, 'executeMany('), 'controller_processes_user_limit');
-$assert(str_contains($controller, 'process_limit'), 'controller_reads_process_limit');
+$assert(str_contains($controller, 'executePreview('), 'controller_processes_http_call_budget');
+$assert(str_contains($controller, "foreach (['process_limit', 'block_size'")
+    && !str_contains($view, 'name="process_limit"')
+    && !str_contains($view, 'name="block_size"'), 'retired_resource_limits_rejected_and_not_rendered');
 $assert(!str_contains($controller, 'manualProcessingRetired'), 'retired_endpoint_handler_removed');
 $assert(!str_contains($controller, 'new \\App\\Services\\ManualDrainSessionService())->status'), 'manual_page_no_drain_status_load');
 $assert(!str_contains($controller, 'private function manualDrainJsonMutation'), 'drain_mutation_removed_from_controller');
@@ -59,7 +62,7 @@ $assert(str_contains($routes, "'manualProcessingPreview'"), 'manual_processing_p
 $assert(str_contains($routes, "'manualProcessingStart'"), 'manual_processing_start_route_kept');
 $assert(!str_contains($view, 'k10-manual-drain'), 'k10_panel_removed');
 $assert(!str_contains($view, 'data-k10'), 'k10_javascript_removed');
-$assert(str_contains($view, 'Máximo de llamadas API por paso') && str_contains($view, 'Elementos exactos a seleccionar'), 'kiss_physical_capacity_separate_from_selection');
+$assert(str_contains($view, 'Máximo de llamadas API por paso') && str_contains($view, 'data-selection-id='), 'kiss_http_capacity_and_visible_selection_identity');
 $assert(str_contains($view, 'PROCESAR SELECCIÓN'), 'kiss_process_button');
 $assert(str_contains($view, 'BACKGROUND_CONTINUATION=0'), 'no_background_claim_visible');
 $assert(str_contains($view, 'ACTIVE_DRAINERS_MAX=1'), 'single_drainer_claim_visible');

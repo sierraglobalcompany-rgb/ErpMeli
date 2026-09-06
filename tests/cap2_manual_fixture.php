@@ -35,12 +35,31 @@ function cap2_manual_database(): K1dSafeTestDatabase
 /** Durable preview fixture: only selection persistence, not replaced services or handlers. */
 function cap2_manual_preview(PDO $pdo,array $rows=[],array $overrides=[]): string
 {
-    $config=['preview_format'=>3,'scope'=>'recommended','account_id'=>9011,'block_size'=>30]
+    $config=['preview_format'=>4,'scope'=>'recommended','account_id'=>9011]
         + App\Services\ManualPhysicalCallBudget::previewConfiguration([], (new App\Services\CapacityPolicyService())->snapshot('manual'));
     $config=array_replace($config,$overrides); $token=bin2hex(random_bytes(20));
     $pdo->prepare('INSERT INTO manual_campaign_previews(preview_token,created_by_user_id,scope_key,meli_account_id,configuration_hash,configuration_json,summary_json,expires_at) VALUES(?,9007,?,9011,?,?,"{}",DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 10 MINUTE))')->execute([$token,$config['scope'],hash('sha256',$token),json_encode($config)]);
     $id=(int)$pdo->lastInsertId();
-    foreach($rows as $position=>$row) $pdo->prepare('INSERT INTO manual_campaign_preview_items(manual_campaign_preview_id,queue_key,source_id,meli_account_id,source_state,item_payload_json,position_no) VALUES(?,?,?,?,"ready",?,?)')->execute([$id,$row['queue_key'],$row['source_id'],$row['meli_account_id'],json_encode($row),$position+1]);
+    foreach($rows as $position=>$row) {
+        $queueKey=(string)$row['queue_key'];$sourceId=(string)$row['source_id'];$accountId=(int)$row['meli_account_id'];
+        $companyId=(int)$pdo->query('SELECT company_id FROM meli_accounts WHERE id='.$accountId)->fetchColumn();
+        $adapter=(new App\Services\ManualCampaignAdapterRegistry())->forQueue($queueKey);
+        if($adapter===null||!$adapter->supportsExact())throw new RuntimeException('fixture_exact_adapter_required');
+        $state=$adapter->inspect($sourceId,$accountId);
+        $authorityService=new App\QueueCore\ManualSourceAuthorityService();
+        $authority=$authorityService->inspect($queueKey,$sourceId,$accountId,$companyId,$state);
+        $snapshot=array_replace($row,[
+            'company_id'=>$companyId,
+            'selection_id'=>'exact:'.$queueKey.':'.$sourceId,
+            'source_authority_version'=>$authority->durableInputVersion,
+            'operation_key'=>$authority->operationKey,
+            'uses_api'=>$authority->usesApi,
+            'remote_contract'=>$authority->remoteContract,
+            'related_resource_ids'=>$authorityService->relatedResourceIds($queueKey,$sourceId,$accountId,$companyId),
+        ]);
+        $snapshot['selection_version']=App\Services\ManualCampaignPreviewService::exactSelectionVersion($snapshot);
+        $pdo->prepare('INSERT INTO manual_campaign_preview_items(manual_campaign_preview_id,queue_key,source_id,meli_account_id,source_state,item_payload_json,position_no) VALUES(?,?,?,?,"ready",?,?)')->execute([$id,$queueKey,$sourceId,$accountId,json_encode($snapshot),$position+1]);
+    }
     return $token;
 }
 function cap2_manual_state(PDO $pdo,string $token): string

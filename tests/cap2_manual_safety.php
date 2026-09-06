@@ -14,8 +14,10 @@ try {
     $other->exec("UPDATE app_settings SET setting_value='1' WHERE setting_key='manual.api_calls_per_step'");
     k1b_assert(cap2_manual_rejected(fn()=>(new ManualSingleStepService())->execute($token,9007)) && cap2_manual_state($pdo,$token)==='ready','reduction_invalidates_before_admission');
     $other->exec("UPDATE app_settings SET setting_value='3' WHERE setting_key='manual.api_calls_per_step'");
-    $foreign=array_replace($row,['meli_account_id'=>9012]);$token=cap2_manual_preview($pdo,[$foreign]);
-    k1b_assert(cap2_manual_rejected(fn()=>(new ManualSingleStepService())->execute($token,9007)) && cap2_manual_state($pdo,$token)==='ready','foreign_account_company_rejected_ready');
+    $token=cap2_manual_preview($pdo,[$row]);
+    $pdo->exec('DELETE FROM user_company_access WHERE user_id=9007 AND company_id=9001');
+    k1b_assert(cap2_manual_rejected(fn()=>(new ManualSingleStepService())->execute($token,9007)) && cap2_manual_state($pdo,$token)==='ready','revoked_company_access_rejected_ready');
+    $pdo->exec('INSERT INTO user_company_access(user_id,company_id) VALUES(9007,9001)');
     $context=new CampaignExecutionContext(0,0,9001,'queue_core_manual',1,microtime(true)+25,1,str_repeat('a',64));
     foreach([[],['source'=>'queue_core'],['source'=>'queue_core','company_id'=>9001,'account_id'=>9011,'queue_core_launcher'=>'manual','queue_core_work_type'=>'manual_exact','queue_core_job_id'=>999,'queue_core_attempt_id'=>999,'queue_core_lease_owner'=>'forged','queue_core_execution_owner'=>'forged']] as $meta) {
         $r=ApiExecutionMetadataContext::run($meta,fn()=>(new NotificationWorkItemService())->processExact((int)$row['source_id'],9011,$context,false));
@@ -55,13 +57,14 @@ try {
     k1b_assert(cap2_manual_state($pdo,$token)==='consumed' && count(Cap2DomainsWire::$calls)===1,'available_failure_terminal_and_zero_extra_http');
     k1b_assert(cap2_manual_rejected(fn()=>(new ManualSingleStepService())->execute($token,9007)),'available_replay_rejected');
 
-    // Real pause authority at an admitted handler: no background continuation or next selection.
+    // A global stop is revalidated before admission: the preview remains ready
+    // and neither confirmed source is touched or replaced.
     $later=cap2_manual_notification($pdo,'8602');
     (new App\Services\WorkQueueProjectionService())->refreshQueue('notification_fallback');
     $token=cap2_manual_preview($pdo,[$row,$later]);
     (new App\Services\EmergencyControlService())->stopApi('cap2-test','disposable fixture');
-    $r=(new ManualSingleStepService())->executeMany($token,9007,2);
-    k1b_assert($r['status']==='review' && $r['completed_count']===0 && $r['not_processed_count']===1 && count(Cap2DomainsWire::$calls)===1,'pause_stops_selection_without_false_complete:'.json_encode($r));
-    k1b_assert(cap2_manual_state($pdo,$token)==='consumed','admitted_pause_requires_new_preview');
+    $before=count(Cap2DomainsWire::$calls);
+    k1b_assert(cap2_manual_rejected(fn()=>(new ManualSingleStepService())->executeMany($token,9007,2)),'global_pause_blocks_before_admission');
+    k1b_assert(cap2_manual_state($pdo,$token)==='ready' && count(Cap2DomainsWire::$calls)===$before,'global_pause_preserves_preview_and_zero_http');
     echo "STATUS=PASS CAP2_MANUAL_SAFETY\nREAL_MELI_HTTP=0\n";
 } finally {$h->cleanup();}

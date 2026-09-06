@@ -21,7 +21,14 @@ putenv('DB_USER=root');
 putenv('DB_PASS=');
 putenv('DB_NAME=erp_meli_k1d_test_cap2_domains_' . bin2hex(random_bytes(4)));
 putenv('APP_KEY=cap2-disposable-test-only-not-a-real-secret');
-putenv('PRIVATE_STORAGE_PATH=D:/Codex/tmp/erp-meli/cap2-20260905/qa/domains-private');
+$fixtureRoot = 'D:/Codex/tmp/erp-meli/calls-20260906/domains-' . bin2hex(random_bytes(8));
+define('ERP_INSTALLATION_ROOT', $fixtureRoot . '/install');
+foreach ([ERP_INSTALLATION_ROOT, $fixtureRoot . '/private'] as $directory) {
+    if (!mkdir($directory, 0777, true) && !is_dir($directory)) {
+        throw new RuntimeException('cap2_domains_fixture_directory_unavailable');
+    }
+}
+putenv('PRIVATE_STORAGE_PATH=' . $fixtureRoot . '/private');
 putenv('MELI_API_BASE=https://cap2-wire.invalid');
 
 $harness = K1dSafeTestDatabase::createFromEnvironment();
@@ -169,7 +176,7 @@ function cap2_domains_negative_fences(PDO $pdo): void
     k1b_assert((int)$job['id']===$jobId,'negative_fixture_claims_real_attempt');
     $meta=['source'=>App\Services\MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT,'company_id'=>9001,'account_id'=>9011,
         'domain_resource_type'=>'question','domain_remote_resource_id'=>'8166','queue_v4_job_id'=>$jobId,
-        'queue_v4_attempt_id'=>$job['attempt_id'],'queue_v4_lease_owner'=>$job['lease_owner'],'queue_v4_lease_generation'=>$job['lease_generation'],'transport_request_id'=>'cap2-negative-request'];
+        'queue_v4_attempt_id'=>$job['attempt_id'],'queue_v4_lease_owner'=>$job['lease_owner'],'queue_v4_lease_generation'=>$job['lease_generation']];
     $before=count(Cap2DomainsWire::$calls);
     QueueV4CleanCycleBudget::start(3);
     try {
@@ -178,6 +185,10 @@ function cap2_domains_negative_fences(PDO $pdo): void
             [array_replace($meta,['queue_v4_lease_owner'=>'stale']),'/questions/8166'],
             [array_replace($meta,['queue_v4_lease_generation'=>99]),'/questions/8166'],
             [array_replace($meta,['account_id'=>9999]),'/questions/8166']] as [$context,$path]) {
+            // Each direct transport attempt needs the same fresh identity
+            // contract as MeliApiClient; otherwise an earlier guard masks the
+            // path/tenant/lease fence this negative case is meant to exercise.
+            $context['transport_request_id'] = bin2hex(random_bytes(20));
             $error=null;
             try {
                 App\Services\ApiExecutionMetadataContext::run($context,static fn() => (new App\Services\CurlMeliHttpTransport())->request('GET','https://cap2-wire.invalid'.$path,[],[],false,['timeout'=>5,'connect_timeout'=>2]));

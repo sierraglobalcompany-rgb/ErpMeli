@@ -674,6 +674,59 @@ final class QueueV4CleanRepository
         }
     }
 
+    /** Return a manual claim whose durable source changed before its effect boundary. */
+    public function releaseManualStaleClaim(array $job, int $runId): void
+    {
+        $companyId = (int) ($job['company_id'] ?? 0);
+        $accountId = (int) ($job['meli_account_id'] ?? 0);
+        $this->assertTenant($companyId, $accountId);
+        $this->pdo->beginTransaction();
+        try {
+            $pointer = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_jobs
+                 SET state='ready',lease_owner=NULL,lease_expires_at=NULL,
+                     attempt_count=GREATEST(attempt_count-1,0),last_error_class='manual_selection_source_changed'
+                 WHERE id=? AND company_id=? AND meli_account_id=?
+                   AND state='running' AND lease_owner=? AND lease_generation=? AND attempt_count=?"
+            );
+            $pointer->execute([
+                (int) $job['id'], $companyId, $accountId, (string) $job['lease_owner'],
+                (int) $job['lease_generation'], (int) $job['attempt_count'],
+            ]);
+            if ($pointer->rowCount() !== 1) {
+                throw new RuntimeException('queue_v4_clean_manual_stale_pointer_cas_lost');
+            }
+            $attempt = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_attempts
+                 SET outcome='lease_expired',error_class='manual_selection_source_changed',
+                     finished_at=UTC_TIMESTAMP(3),source_closed_at=UTC_TIMESTAMP(3)
+                 WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=?
+                   AND lease_owner=? AND lease_generation=? AND outcome='running'"
+            );
+            $attempt->execute([
+                (int) $job['attempt_id'], (int) $job['id'], $companyId, $accountId,
+                (string) $job['lease_owner'], (int) $job['lease_generation'],
+            ]);
+            if ($attempt->rowCount() !== 1) {
+                throw new RuntimeException('queue_v4_clean_manual_stale_attempt_cas_lost');
+            }
+            $run = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_runs SET jobs_claimed=GREATEST(jobs_claimed-1,0)
+                 WHERE id=? AND status='running'"
+            );
+            $run->execute([$runId]);
+            if ($run->rowCount() !== 1) {
+                throw new RuntimeException('queue_v4_clean_manual_stale_run_cas_lost');
+            }
+            $this->pdo->commit();
+        } catch (Throwable $error) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
     /**
      * Move every non-running financial Billing pointer behind the global
      * Billing gate without claiming it. This is intentionally global because

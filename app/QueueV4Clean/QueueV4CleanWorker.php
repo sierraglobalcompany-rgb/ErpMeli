@@ -17,6 +17,7 @@ use App\Services\MeliApiClient;
 use App\Services\MeliApiException;
 use App\Services\MeliReadClientInterface;
 use App\Services\MeliTransportSourcePolicy;
+use App\Services\ManualCampaignPreviewService;
 use App\Services\ManualRemoteCallLimitException;
 use App\Services\OAuthRefreshRequiredException;
 use App\Services\NotificationWorkItemService;
@@ -181,6 +182,12 @@ final class QueueV4CleanWorker
         $confirmedSelection = $confirmedSelection === null
             ? null
             : $this->repository->claimableConfirmedSelection($confirmedSelection, $authorizedAccountIds, $accountId);
+        if ($confirmedSelection !== null) {
+            $confirmedSelection = array_values(array_filter(
+                $confirmedSelection,
+                static fn (array $row): bool => ManualCampaignPreviewService::availableSourceIdentityMatches($row)
+            ));
+        }
         $staleOrBusySkipped = max(0, $selectedCount - count($confirmedSelection ?? []));
         $pointerSafetyLimit = $confirmedSelection === null
             ? max(self::POINTER_SAFETY_FLOOR, $maxCalls * self::POINTER_SAFETY_MULTIPLIER)
@@ -214,6 +221,24 @@ final class QueueV4CleanWorker
                 if ($job === null) {
                     $endReason = 'no_claimable_job';
                     break;
+                }
+                if ($confirmedSelection !== null) {
+                    $expected = null;
+                    foreach ($confirmedSelection as $selectionRow) {
+                        if ((int) ($selectionRow['queue_job_id'] ?? 0) === (int) $job['id']) {
+                            $expected = $selectionRow;
+                            break;
+                        }
+                    }
+                    if ($expected === null || !ManualCampaignPreviewService::availableSourceIdentityMatches($expected)) {
+                        $this->repository->releaseManualStaleClaim($job, $runId);
+                        $confirmedSelection = array_values(array_filter(
+                            $confirmedSelection,
+                            static fn (array $row): bool => (int) ($row['queue_job_id'] ?? 0) !== (int) $job['id']
+                        ));
+                        $staleOrBusySkipped++;
+                        continue;
+                    }
                 }
                 $claimed++;
                 $claimedJobIds[] = (int) $job['id'];

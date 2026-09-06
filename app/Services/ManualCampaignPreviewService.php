@@ -315,13 +315,20 @@ final class ManualCampaignPreviewService
 
         $ttl = max(60, min(3600, (new AppSettingsService())->int('manual_campaign.preview_ttl_seconds', 600)));
         $repository = new QueueV4CleanRepository($pdo);
+        $availableRows = [];
+        foreach ($repository->previewEligible(
+            self::PRESENTATION_LIMIT,
+            $allowedAccountIds,
+            $accountId > 0 ? $accountId : null
+        ) as $row) {
+            $bound = self::bindAvailableSourceIdentity($row);
+            if ($bound !== null) {
+                $availableRows[] = $bound;
+            }
+        }
         $preview = [
             'eligible_jobs' => $repository->eligibleCount($allowedAccountIds, $accountId > 0 ? $accountId : null),
-            'rows' => $repository->previewEligible(
-                self::PRESENTATION_LIMIT,
-                $allowedAccountIds,
-                $accountId > 0 ? $accountId : null
-            ),
+            'rows' => $availableRows,
             'excluded_jobs' => [],
             'excluded_summary' => [],
             'manual_queue_preview_matches_auto_eligibility' => 'PASS',
@@ -396,8 +403,81 @@ final class ManualCampaignPreviewService
             'source_alias','status_label','state_label','available_at','last_error_class',
             'selection_id','selection_version','source_authority_version','remote_contract',
             'related_resource_ids','queue_idempotency_key','queue_payload_hash',
+            'source_queue_key','source_selection_version',
         ];
         return array_intersect_key($row, array_flip($allowed));
+    }
+
+    /**
+     * Bind a Queue V4 pointer to the durable domain source visible now.
+     * Non-domain pointers are already fully identified by their queue payload.
+     *
+     * @param array<string,mixed> $row
+     * @return array<string,mixed>|null
+     */
+    public static function bindAvailableSourceIdentity(array $row): ?array
+    {
+        if ((string) ($row['job_type'] ?? '') !== 'domain_exact') {
+            return $row;
+        }
+        $queueKey = match ((string) ($row['capability'] ?? '')) {
+            'notification_work_item' => 'notification_fallback',
+            'financial_recalc' => 'financial_recalc',
+            'financial_reconciliation' => 'sale_financial_reconciliation',
+            'order_enrichment_pack' => 'order_enrichment',
+            default => null,
+        };
+        $sourceId = (string) ($row['resource_id'] ?? '');
+        $accountId = (int) ($row['meli_account_id'] ?? 0);
+        $companyId = (int) ($row['company_id'] ?? 0);
+        if ($queueKey === null || !ctype_digit($sourceId) || $accountId < 1 || $companyId < 1) {
+            return null;
+        }
+        $adapter = (new ManualCampaignAdapterRegistry())->forQueue($queueKey);
+        if ($adapter === null || !$adapter->supportsExact()) {
+            return null;
+        }
+        $state = $adapter->inspect($sourceId, $accountId);
+        if (!$state->exists || $state->terminal || !$state->eligible) {
+            return null;
+        }
+        $authorityService = new \App\QueueCore\ManualSourceAuthorityService();
+        $authority = $authorityService->inspect($queueKey, $sourceId, $accountId, $companyId, $state);
+        if ($authority->explicitlyUnsupported) {
+            return null;
+        }
+        $relatedIds = $authorityService->relatedResourceIds($queueKey, $sourceId, $accountId, $companyId);
+        $identity = [
+            'selection_id' => 'available-source:' . (int) ($row['queue_job_id'] ?? 0) . ':' . $queueKey . ':' . $sourceId,
+            'company_id' => $companyId,
+            'meli_account_id' => $accountId,
+            'source_authority_version' => $authority->durableInputVersion,
+            'operation_key' => $authority->operationKey,
+            'uses_api' => $authority->usesApi,
+            'remote_contract' => $authority->remoteContract,
+            'related_resource_ids' => $relatedIds,
+        ];
+        return array_replace($row, [
+            'source_queue_key' => $queueKey,
+            'source_authority_version' => $authority->durableInputVersion,
+            'related_resource_ids' => $relatedIds,
+            'source_selection_version' => self::exactSelectionVersion($identity),
+        ]);
+    }
+
+    /** @param array<string,mixed> $row */
+    public static function availableSourceIdentityMatches(array $row): bool
+    {
+        if ((string) ($row['job_type'] ?? '') !== 'domain_exact') {
+            return true;
+        }
+        $expected = (string) ($row['source_selection_version'] ?? '');
+        if (preg_match('/^[a-f0-9]{64}$/D', $expected) !== 1) {
+            return false;
+        }
+        $current = self::bindAvailableSourceIdentity($row);
+        return $current !== null
+            && hash_equals($expected, (string) ($current['source_selection_version'] ?? ''));
     }
 
     /** @param array<string,mixed> $row */

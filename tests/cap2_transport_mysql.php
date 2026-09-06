@@ -28,6 +28,19 @@ try {
     $pdo->exec("UPDATE queue_v4_clean_control SET engine_state='ACTIVE',readiness_state='CERTIFIED' WHERE control_key='primary'");
     $pdo->exec("UPDATE queue_engine_control SET active_engine='v4'");
     $repo=new Repo($pdo);
+    // One counter across real physical fences, without restarting between stages.
+    Clock::$now=1000.0; Deadline::start(45,43,20,3); Budget::start(3);
+    $sharedBefore=count(Wire::$calls);
+    foreach (['queue','oauth','sales_audit','sales_repair'] as $position=>$source) {
+        [$meta,$method,$path]=cap2_transport_context($pdo,$source);
+        Wire::$responses[$path]=[200,['id'=>8101]];
+        $blocked=null;
+        try { Meta::run($meta,static fn()=>(new Transport())->request($method,'https://cap2-wire.invalid'.$path,[],[],false,['timeout'=>20,'connect_timeout'=>3])); }
+        catch(Throwable $error) { $blocked=$error; }
+        k1b_assert($position<3 ? $blocked===null : $blocked instanceof App\Services\ApiBudgetExhaustedException,'shared_stage_admission_'.$source);
+        k1b_assert(count(Wire::$calls)===$sharedBefore+min($position+1,3) && Budget::snapshot()['used']===min($position+1,3),'shared_stage_exact_total_'.$source);
+    }
+    Budget::clear(); Deadline::clear();
     // Slow real SQL fence is simulated by advancing only the clock after its durable INSERT.
     foreach (['queue','oauth','sales_audit','sales_repair'] as $source) {
         foreach (['before','after','short','sent','uncertain','cancel_failure'] as $case) {

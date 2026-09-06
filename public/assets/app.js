@@ -528,11 +528,13 @@
   const safe = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
   const ownRun = () => Number.isInteger(snapshot?.run_id) && snapshot.run_id > 0
     && /^[a-f0-9]{64}$/.test(snapshot?.run_token || '');
-  const freshRun = () => {
+  const expiryTime = () => {
+    if (typeof snapshot?.expires_at === 'number') return snapshot.expires_at * 1000;
     const expiry = String(snapshot?.expires_at || '');
     const utc = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(expiry) ? expiry.replace(' ', 'T') + 'Z' : expiry;
-    return ownRun() && Date.parse(utc) > Date.now();
+    return Date.parse(utc);
   };
+  const freshRun = () => ownRun() && Number.isFinite(expiryTime()) && expiryTime() > Date.now();
   const syncButtons = () => {
     const hasPassword = Boolean(password?.value);
     actions.forEach((form) => {
@@ -569,7 +571,7 @@
             : 'Motor detenido. No se ha iniciado procesamiento automático.';
     const progress = root.querySelector('[data-qv4-progress]');
     if (progress) progress.textContent = ownRun()
-      ? `${Number(data.readiness_get_passed || 0)}/3 cuentas comprobadas. ${freshRun() ? `Vence: ${data.expires_at}.` : 'El intento venció; cancele y prepare nuevamente.'}`
+      ? `${Number(data.readiness_get_passed || 0)}/3 cuentas comprobadas. ${freshRun() ? `Vence: ${new Date(expiryTime()).toLocaleString('es-CO')}.` : 'El intento venció; cancele y prepare nuevamente.'}`
       : data.state === 'TESTING' ? 'Existe un intento sin contexto válido en esta sesión. Puede cancelarlo con confirmación administrativa.'
         : 'Sin comprobación preparada en esta sesión.';
     const accounts = root.querySelector('[data-qv4-selected-accounts]');
@@ -705,7 +707,7 @@
     button.disabled = true;
     button.textContent = 'Procesando…';
     try {
-      const response = await fetch(form.action, {
+      const response = await fetch(form.getAttribute('action'), {
         method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' }, body: payload
       });
       const data = await response.json().catch(() => ({}));

@@ -41,6 +41,7 @@ cap2GenerateHandoff($case);
 cap2HandoffAssert(is_file($case . '/verificar.ps1'), 'operator_created');
 cap2HandoffAssert(is_file($case . '/README.md'), 'guide_created');
 cap2HandoffAssert(str_contains(file_get_contents($case . '/README.md'), 'DEPLOY_APPROVED=NO'), 'guide_never_approves');
+cap2HandoffAssert(!str_contains(file_get_contents($case . '/README.md'), 'PACKAGE_STATUS='), 'guide_defers_package_status_to_control');
 
 $powershell = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
 $cases = [
@@ -51,6 +52,7 @@ $cases = [
     ['name' => 'bad-port', 'fixture' => '', 'fixture_exit' => 0, 'ssh_exit' => -1, 'process_exit' => 1, 'status' => 'FAIL', 'port' => '0'],
     ['name' => 'bad-port-text', 'fixture' => '', 'fixture_exit' => 0, 'ssh_exit' => -1, 'process_exit' => 1, 'status' => 'FAIL', 'port' => 'not-a-number'],
     ['name' => 'bad-host', 'fixture' => '', 'fixture_exit' => 0, 'ssh_exit' => -1, 'process_exit' => 1, 'status' => 'FAIL', 'host' => 'invalid host'],
+    ['name' => 'option-user', 'fixture' => $hash . "  app/a.php\n", 'fixture_exit' => 0, 'ssh_exit' => -1, 'process_exit' => 1, 'status' => 'FAIL', 'user' => '-Eoption'],
     ['name' => 'bad-root', 'fixture' => '', 'fixture_exit' => 0, 'ssh_exit' => -1, 'process_exit' => 1, 'status' => 'FAIL', 'remote_root' => 'relative/root'],
 ];
 foreach ($cases as $spec) {
@@ -65,7 +67,7 @@ foreach ($cases as $spec) {
     file_put_contents($runRoot . '/fixture.txt', $spec['fixture']);
     [$exit, $stdout, $stderr] = cap2HandoffRun([
         $powershell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runRoot . '/verificar.ps1',
-        '-Port', $spec['port'] ?? '22', '-HostName', $spec['host'] ?? 'example.invalid', '-UserName', 'fixture', '-RemoteRoot', $spec['remote_root'] ?? '/fixture',
+        '-Port', $spec['port'] ?? '22', '-HostName', $spec['host'] ?? 'example.invalid', '-UserName', $spec['user'] ?? 'fixture', '-RemoteRoot', $spec['remote_root'] ?? '/fixture',
         '-FixtureOutput', $runRoot . '/fixture.txt', '-FixtureExitCode', (string) $spec['fixture_exit'],
     ], $runRoot);
     cap2HandoffAssert($exit === $spec['process_exit'], $spec['name'] . '_exit:' . $stderr);

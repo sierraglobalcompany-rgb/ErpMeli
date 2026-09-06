@@ -55,7 +55,7 @@ try {
  if($Port -notmatch '^[0-9]{1,5}$' -or [int]$Port -lt 1 -or [int]$Port -gt 65535){throw 'INVALID_PORT'}
  $Port=[int]$Port
  if($HostName -notmatch '^[A-Za-z0-9.-]+$'){throw 'INVALID_HOST'}
- if($UserName -notmatch '^[A-Za-z0-9._-]+$'){throw 'INVALID_USER'}
+ if($UserName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$'){throw 'INVALID_USER'}
  if($RemoteRoot -notmatch '^/[A-Za-z0-9._/-]+$' -or $RemoteRoot.Contains('..')){throw 'INVALID_REMOTE_ROOT'}
  $target=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'target.json') -Raw | ConvertFrom-Json
  $paths=@($target.deploy_files.PSObject.Properties)
@@ -121,9 +121,9 @@ POWERSHELL;
 
     $remove = $added === [] ? '- Ninguno.' : implode("\n", array_map(static fn($path): string => '- `' . $path . '`', $added));
     $guide = <<<MARKDOWN
-# Entrega CAP2 (preparatoria)
+# Entrega CAP2
 
-`PACKAGE_STATUS=PREPARATORY_NOT_FOR_UPLOAD`
+El estado vigente del paquete está exclusivamente en CONTROL.txt.
 
 `DEPLOY_APPROVED=NO`
 

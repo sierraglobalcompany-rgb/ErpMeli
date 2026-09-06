@@ -1,5 +1,9 @@
 # Package preparation independent review
 
+## Final operator review correction
+
+Final independent review verified43deploy entries/hashes,1245appliedfiles,39rollbackbasefiles+4explicitremovals. It found option-like SSH username accepted and README duplicating PACKAGE_STATUS. Parent reproduced both failures (task7-operator-red.log, task7-operator-option-red.log), required alphanumeric username first and made CONTROL sole package-status authority. Actual generated-verifier regression -Eoption now exits1/FAIL withSSH_EXIT_CODE=-1 beforeSSH; allhandoff casesGREEN. Reviewer cap2_browser_resume scopedapproved two-filefix, lint2/0 anddiffcheckclean. Runtimeunchanged; old final/ artifacts superseded, newfinal2 rebuild required. NoSSH executed.
+
 ## Latest evidence export closure
 
 Exact browser-step-prep-report.md omission reproduced by cap2_package_evidence (task7 package-prep/step-report-red.log), corrected by a single exact allowlist entry, GREEN and independently approved by cap2_browser_resume. Commit4be5551. Final three package helper regressions all exit0 under qa/task7-final-cap2_package_*.php.log. No SSH executed; final artifact certification still separate.

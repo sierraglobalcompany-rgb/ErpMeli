@@ -8,7 +8,7 @@ require __DIR__ . '/_automation_nav.php';
 $originLabels = ['scheduled_cli' => 'Lanzador automático', 'manual_cli' => 'Ejecución administrativa', 'manual_web' => 'Comprobación desde el ERP'];
 $pages = max(1, (int) ceil(max(0, (int) $total) / max(1, (int) $perPage)));
 ?>
-<div class="page-head"><div><span class="eyebrow">Automatización</span><h1>Historial de ejecuciones</h1><p>Cada error real abre el ciclo, su diagnóstico seguro y el recurso que puede resolverse.</p></div></div>
+<div class="page-head"><div><span class="eyebrow">ARCHIVO HISTÓRICO</span><h1>Historial heredado V2/V3</h1><p>Estos registros no certifican el estado ni la capacidad actuales V4.</p><a class="btn" href="<?= View::e($base) ?>/settings/cron/history">Volver al historial actual V4</a></div></div>
 <?php if ((int) ($legacyNeedsDiagnosis ?? 0) > 0): ?>
 <section class="alert warning">
   <strong><?= number_format((int) $legacyNeedsDiagnosis, 0, ',', '.') ?> eventos legacy agrupados para diagnóstico local.</strong>

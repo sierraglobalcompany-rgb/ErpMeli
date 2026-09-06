@@ -89,7 +89,7 @@ final class FinancialRecalcController
     {
         Auth::requireRole('admin', 'operador');
         Csrf::validate($_POST['_token'] ?? null);
-        Session::flash('info', 'El recálculo se prepara desde Procesar ahora y lo ejecuta exclusivamente el lanzador CLI.');
+        Session::flash('info', 'Esta ruta no ejecutó el recálculo. En Procesar ahora puede confirmar un paso exacto, limitado por llamadas API y sin continuación en segundo plano.');
         $this->redirect('/settings/manual-processing?scope=finance&origin=financial_recalc');
     }
 

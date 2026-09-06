@@ -218,7 +218,7 @@ final class SyncController
     {
         // Contrato heredado retirado en 2.19.4:
         // processOne((int) ($_POST['chunk_id'] ?? 0) ?: null, (int) ($_POST['account_id'] ?? 0))
-        Auth::requireRole('admin', 'operador');
+        $this->requirePermanentManualAdmin();
         Csrf::validate($_POST['_token'] ?? null);
         Session::flash('info', 'El procesamiento desde el navegador fue trasladado al Centro seguro.');
         $query = http_build_query(array_filter([
@@ -233,8 +233,9 @@ final class SyncController
 
     public function processNowJson(): void
     {
-        Auth::requireRole('admin', 'operador');
+        $this->requirePermanentManualAdmin();
         Csrf::validate($_POST['_token'] ?? null);
+        http_response_code(410);
         header('Content-Type: application/json; charset=UTF-8');
         $query = http_build_query(array_filter([
             'scope' => 'sales',
@@ -242,9 +243,11 @@ final class SyncController
             'account_id' => max(0, (int) ($_POST['account_id'] ?? 0)) ?: null,
         ], static fn (mixed $value): bool => $value !== null));
         echo json_encode([
-            'ok' => true,
+            'ok' => false,
+            'retired' => true,
+            'processed' => false,
             'redirect' => '/settings/manual-processing?' . $query,
-            'message' => 'Abra el Centro de procesamiento manual para simular y ejecutar esta cola con seguridad.',
+            'message' => 'Esta ruta está retirada y no procesó nada. Abra Procesar ahora para calcular y confirmar fuentes exactas.',
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         exit;
     }
@@ -263,7 +266,7 @@ final class SyncController
 
     public function assistedStepJson(): void
     {
-        Auth::requireRole('admin', 'operador');
+        $this->requirePermanentManualAdmin();
         Csrf::validate($_POST['_token'] ?? null);
         http_response_code(410);
         header('Content-Type: application/json; charset=UTF-8');
@@ -279,6 +282,15 @@ final class SyncController
             'message' => 'El modo asistido anterior fue reemplazado por el Centro seguro.',
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         exit;
+    }
+
+    private function requirePermanentManualAdmin(): void
+    {
+        Auth::requireRole('admin');
+        if (Auth::isTemporary()) {
+            throw new \App\Core\HttpException(403, 'El procesamiento manual requiere una sesión administrativa permanente.');
+        }
+        \App\Core\SameOriginGuard::assertRequest(true);
     }
 
     public function assistedResume(): void

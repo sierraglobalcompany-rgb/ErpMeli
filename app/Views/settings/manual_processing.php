@@ -13,7 +13,6 @@ $scopeLabels = [
   'audits' => ['Auditorías', 'Revisión operativa.'],
   'products' => ['Productos', 'Publicaciones.'],
   'descriptions' => ['Descripciones', 'Contenido de publicaciones.'],
-  'modules' => ['Módulos', 'Capacidades aisladas.'],
   'all' => ['Todo lo elegible', 'Todo lo elegible.'],
 ];
 $scopeHelp = [
@@ -24,7 +23,6 @@ $scopeHelp = [
   'audits' => 'Filtra tareas de revisión operativa que pueden resolverse de forma acotada.',
   'products' => 'Filtra sincronización de publicaciones y datos de producto.',
   'descriptions' => 'Filtra descripciones; mantiene controles conservadores por ser una carga delicada.',
-  'modules' => 'Filtra capacidades aisladas sin iniciar procesos en segundo plano.',
   'all' => 'Muestra todos los pendientes exactos elegibles dentro del contexto autorizado actual.',
 ];
 $capacity = $capacity ?? (new CapacityPolicyService())->snapshot('manual');
@@ -51,7 +49,6 @@ $isAvailableQueuePreview = is_array($preview ?? null)
 $previewLimit = is_array($preview ?? null)
   ? (int) ($preview['configuration']['physical_api_call_budget'] ?? $configuredLimit)
   : $configuredLimit;
-$previewSelectionLimit = $isAvailableQueuePreview ? $previewLimit : min(count($previewRows), (int) ($preview['configuration']['block_size'] ?? 30));
 $previewStale = is_array($preview ?? null) && ($previewLimit > $configuredLimit
   || (string) ($preview['configuration']['capacity_revision'] ?? '') !== (string) $capacity['revision']);
 $manualAccountLabel = trim((string) ($manualAccountLabel ?? '')) ?: 'Todas las cuentas autorizadas';
@@ -89,7 +86,7 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
 
 <ol class="manual-stepper" aria-label="Etapas del procesamiento">
   <li class="<?= $preview === null ? 'active' : 'complete' ?>"><span>1</span> Qué procesar</li>
-  <li class="<?= $preview === null ? 'active' : 'complete' ?>"><span>2</span> Cantidad</li>
+  <li class="<?= $preview === null ? 'active' : 'complete' ?>"><span>2</span> Llamadas</li>
   <li class="<?= $preview !== null ? 'active' : '' ?>"><span>3</span> Previsualizar</li>
   <li><span>4</span> Procesar</li>
   <li class="<?= $hasAnyManualResult ? 'active' : '' ?>"><span>5</span> Resultado</li>
@@ -125,15 +122,14 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
   </div>
   <div class="panel-body">
     <div class="metric-grid manual-metric-grid">
-      <article><span>Llamadas API solicitadas</span><strong><?= (int) ($manualAvailableQueueResult['requested_api_calls'] ?? $manualAvailableQueueResult['requested_count'] ?? 0) ?></strong></article>
-      <article><span>Llamadas API usadas</span><strong><?= (int) ($manualAvailableQueueResult['api_calls_used'] ?? 0) ?></strong></article>
       <article><span>Elementos atendidos</span><strong><?= (int) ($manualAvailableQueueResult['processed_count'] ?? 0) ?></strong></article>
       <article><span>Elementos completados</span><strong><?= (int) ($manualAvailableQueueResult['completed_count'] ?? 0) ?></strong></article>
       <article><span>Elementos esperando</span><strong><?= (int) ($manualAvailableQueueResult['waiting_count'] ?? 0) ?></strong></article>
       <article><span>Elementos para revisión</span><strong><?= (int) ($manualAvailableQueueResult['review_error_count'] ?? 0) ?></strong></article>
       <article><span>No procesados</span><strong><?= (int) ($manualAvailableQueueResult['not_processed_count'] ?? max(0, (int) ($manualAvailableQueueResult['requested_count'] ?? 0) - (int) ($manualAvailableQueueResult['processed_count'] ?? 0))) ?></strong></article>
     </div>
-    <a class="btn primary" href="<?= View::e($base . '/settings/manual-processing?scope=available_queue') ?>">Procesar más</a>
+    <?php $callResult = $manualAvailableQueueResult; require __DIR__ . '/_calls_result.php'; ?>
+    <a class="btn primary" href="<?= View::e($base . '/settings/manual-processing?scope=available_queue') ?>">Volver a calcular</a>
   </div>
 </section>
 <?php endif; ?>
@@ -155,6 +151,7 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
       <article><span>Elementos para revisión</span><strong><?= (int) ($manualResult['review'] ?? 0) ?></strong></article>
       <article><span>Sin iniciar</span><strong><?= (int) ($manualResult['not_started'] ?? 0) ?></strong></article>
     </div>
+    <?php $callResult = $manualResult; require __DIR__ . '/_calls_result.php'; ?>
     <a class="btn primary" href="<?= View::e($base . '/settings/manual-processing') ?>">Volver a calcular</a>
   </div>
 </section>
@@ -172,16 +169,11 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
     <form method="post" action="<?= View::e($base . '/settings/manual-processing/preview') ?>" class="manual-config-form">
       <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
       <input type="hidden" name="origin" value="<?= View::e((string) ($origin ?? 'manual_center')) ?>">
-      <input type="hidden" name="interval_seconds" value="0">
-      <input type="hidden" name="block_pause_seconds" value="0">
-      <input type="hidden" name="max_blocks" value="0">
-      <input type="hidden" name="max_duration_minutes" value="0">
+      <input type="hidden" name="physical_api_call_budget" value="<?= $configuredLimit ?>">
       <input type="hidden" name="capacity_revision" value="<?= View::e($capacity['revision']) ?>">
-      <?php foreach ((array) ($originContext ?? []) as $key => $value): ?>
-        <?php if ($value !== '' && $value !== 0): ?>
-          <input type="hidden" name="<?= View::e((string) $key) ?>" value="<?= View::e((string) $value) ?>">
-        <?php endif; ?>
-      <?php endforeach; ?>
+      <?php if (!empty($originContext['year']) || !empty($originContext['month']) || !empty($originContext['date_from']) || !empty($originContext['date_to'])): ?>
+        <div class="alert warning">El periodo de la pantalla de origen no filtra este cálculo manual. Aquí se confirma exclusivamente la cuenta, el tipo de información y las filas mostradas. Revise sus identificadores antes de procesar.</div>
+      <?php endif; ?>
 
       <div class="manual-scope-grid manual-choice-grid">
         <?php foreach ($scopeLabels as $key => $meta): ?>
@@ -205,9 +197,6 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
           <small>La empresa y cuenta se toman del contexto global y se revalidan antes de procesar.</small>
         </div>
         <div class="manual-context-card"><strong>Máximo de llamadas API: <?= $configuredLimit ?></strong><p>El preview usa la capacidad manual guardada. La atención local puede avanzar sin gastar llamadas.</p><small>Para modificarla, guarde primero el formulario de capacidad.</small></div>
-        <?php if ($scope !== 'available_queue'): ?>
-          <label>Elementos exactos a seleccionar<input type="number" name="block_size" min="1" max="60" value="<?= max(1, min(60, (int) ($blockSize ?? 30))) ?>"><small>Selección de recursos, distinta del presupuesto físico.</small></label>
-        <?php endif; ?>
       </div>
 
       <div class="manual-actions">
@@ -230,15 +219,12 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
     <div>
       <p class="eyebrow">3 · Previsualizar</p>
       <h2>Qué se va a procesar</h2>
-      <?php if ($isAvailableQueuePreview): ?>
-        <p>Estos son los pendientes disponibles en este momento. Al procesar, el sistema vuelve a validar la elegibilidad y tomará hasta <?= $previewLimit ?> que continúen disponibles.</p>
-      <?php else: ?>
-        <p>Esta selección queda ligada al botón. Si procesa, sólo puede tomar estas filas y hasta <?= $previewSelectionLimit ?> elemento(s).</p>
-      <?php endif; ?>
+      <p>Sólo se podrán atender las filas mostradas aquí y con la versión confirmada. Las modificadas u ocupadas se omiten; nunca se sustituyen por otras. El presupuesto limita llamadas HTTP, no la cantidad de filas.</p>
     </div>
   </div>
   <div class="panel-body">
     <?php if ($previewStale): ?><div class="alert warning">La capacidad cambió. Vuelva a previsualizar antes de procesar.</div><?php endif; ?>
+    <?php if (!empty($preview['has_more'])): ?><div class="alert info">Hay más pendientes. Este cálculo muestra hasta 60 filas; las demás no quedan autorizadas. Vuelva a calcular para revisarlas.</div><?php endif; ?>
     <div class="metric-grid manual-metric-grid">
       <article><span>Elegibles ahora</span><strong><?= (int) ($preview['eligible_jobs'] ?? count($previewRows)) ?></strong></article>
       <article><span>Límite de llamadas API</span><strong><?= $previewLimit ?> llamada<?= $previewLimit === 1 ? '' : 's' ?></strong></article>
@@ -260,8 +246,8 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
             <thead><tr><th>#</th><th>Tipo / recurso</th><th>Cuenta</th><th>Por qué es elegible</th><th>Estado</th></tr></thead>
           <?php endif; ?>
           <tbody>
-            <?php foreach (array_slice($previewRows, 0, $previewLimit) as $index => $row): ?>
-              <tr>
+            <?php foreach ($previewRows as $index => $row): ?>
+              <tr data-selection-id="<?= View::e((string) ($row['selection_id'] ?? '')) ?>">
                 <?php if ($isAvailableQueuePreview): ?>
                   <td><?= $index + 1 ?></td>
                   <td><?= View::e((string) ($row['human_label'] ?? $row['label'] ?? 'Pendiente disponible')) ?></td>
@@ -285,7 +271,7 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
         <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
         <input type="hidden" name="preview_token" value="<?= View::e((string) ($preview['preview_token'] ?? '')) ?>">
         <input type="hidden" name="scope" value="<?= View::e((string) ($preview['configuration']['scope'] ?? $scope)) ?>">
-        <input type="hidden" name="process_limit" value="<?= $previewSelectionLimit ?>">
+        <input type="hidden" name="physical_api_call_budget" value="<?= $previewLimit ?>">
         <?php if ($isAvailableQueuePreview): ?>
           <p><strong>Confirmación:</strong> usar hasta <?= $previewLimit ?> llamada<?= $previewLimit === 1 ? '' : 's' ?> API en pendientes que continúen disponibles.</p>
         <?php else: ?>

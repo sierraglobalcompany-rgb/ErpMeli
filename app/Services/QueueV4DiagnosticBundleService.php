@@ -1169,12 +1169,10 @@ final class QueueV4DiagnosticBundleService
             'BILLING_429_LAST_SUCCESS_AT' => $billing429Backoff['last_success_at'] ?? null,
             'BILLING_429_RETRY_AFTER_SOURCE' => $billing429Backoff['retry_after_source'] ?? 'none',
             'BILLING_429_RETRY_AFTER_SECONDS' => (int) ($billing429Backoff['retry_after_seconds'] ?? 0),
-            'BILLING_429_RAW_EVENT_ROWS' => (int) ($billing429Backoff['raw_event_rows'] ?? 0),
-            'BILLING_429_UNIQUE_PHYSICAL_EVENTS' => (int) ($billing429Backoff['unique_physical_events'] ?? 0),
-            'BILLING_429_DUPLICATE_ROWS_DEDUPED' => (int) ($billing429Backoff['duplicate_rows_deduped'] ?? 0),
+            ...$this->billingEvidenceProjection($billing429Backoff),
             'BILLING_429_PHYSICAL_CORRELATION_KEY' => (string) ($billing429Backoff['physical_correlation_key'] ?? 'UNKNOWN'),
             'BILLING_429_CORRELATION_KEY_AVAILABLE' => !empty($billing429Backoff['correlation_key_available']) ? 'YES' : 'NO',
-            'BILLING_429_FALLBACK_DEDUPE_TOLERANCE_MS' => (int) ($billing429Backoff['fallback_dedupe_tolerance_ms'] ?? 3000),
+            'BILLING_429_FALLBACK_DEDUPE_TOLERANCE_MS' => 0,
             'API_REQUEST_LOGS_HAS_RETRY_AFTER_SECONDS' => !empty($billing429Backoff['api_request_logs_has_retry_after_seconds']) ? 'YES' : 'NO',
             'API_REMOTE_PERMITS_HAS_RETRY_AFTER_SECONDS' => !empty($billing429Backoff['api_remote_permits_has_retry_after_seconds']) ? 'YES' : 'NO',
             'API_REMOTE_PERMITS_RETRY_AFTER_FALLBACK' => (string) ($billing429Backoff['api_remote_permits_retry_after_fallback'] ?? 'UNKNOWN'),
@@ -1637,6 +1635,21 @@ final class QueueV4DiagnosticBundleService
     }
 
     /** @param array<string,mixed> $meta @return array<string,mixed> */
+    private function billingEvidenceProjection(array $evidence): array
+    {
+        $state = (string) ($evidence['status'] ?? 'UNKNOWN');
+        $number = static fn (string $key): ?int => isset($evidence[$key]) && is_int($evidence[$key])
+            && $evidence[$key] >= 0 ? $evidence[$key] : null;
+        return [
+            'BILLING_429_EVIDENCE_STATE' => in_array($state, ['OK', 'UNKNOWN', 'ERROR'], true) ? $state : 'UNKNOWN',
+            'BILLING_429_RAW_EVENT_ROWS' => $number('raw_event_rows'),
+            'BILLING_429_UNIQUE_PHYSICAL_EVENTS' => $state === 'OK' ? $number('unique_physical_events') : null,
+            'BILLING_429_KNOWN_PHYSICAL_EVENTS' => $number('known_physical_events'),
+            'BILLING_429_UNKNOWN_ROWS' => $number('unknown_rows'),
+            'BILLING_429_DUPLICATE_ROWS_DEDUPED' => $number('duplicate_rows_deduped'),
+        ];
+    }
+
     private function billing429BackoffStateForDiagnostic(array &$meta): array
     {
         try {

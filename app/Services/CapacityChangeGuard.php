@@ -52,7 +52,8 @@ final class CapacityChangeGuard
                 || (int) ($oauthStates['RECONNECT_REQUIRED'] ?? 0) > 0
                 || (int) ($oauthStates['FAILED'] ?? 0) > 0
                 || $this->hasAffectedOAuthBlocker()
-                || $this->hasRecentRemote429($scope);
+                || $this->hasRecentRemote429($scope)
+                || !$this->billingIncreaseAllowed((new ApiRhythmPolicyService())->billing429BackoffDiagnostic());
 
             return $blocked
                 ? ['allowed' => false, 'message' => 'No se pudo certificar una salud global completa para aumentar la capacidad.']
@@ -60,6 +61,13 @@ final class CapacityChangeGuard
         } catch (\Throwable) {
             return ['allowed' => false, 'message' => 'No se pudo certificar una salud global completa para aumentar la capacidad.'];
         }
+    }
+
+    private function billingIncreaseAllowed(array $evidence): bool
+    {
+        return in_array($evidence['status'] ?? null, ['OK', 'UNKNOWN'], true)
+            && ($evidence['backoff_active'] ?? null) === false
+            && ($evidence['increase_evidence_status'] ?? null) === 'OK';
     }
 
     private function hasUnauthorizedAffectedTenant(int $userId): bool

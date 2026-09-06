@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/k1b_bootstrap.php';
 require __DIR__ . '/K1dSafeTestDatabase.php';
+require __DIR__ . '/cap2_transport_legacy_fixture.php';
 
 use App\QueueV4Clean\QueueV4CleanCycleBudget;
 use App\QueueV4Clean\QueueV4CleanRepository;
@@ -27,6 +28,7 @@ $failure = '';
 try {
     $pdo = $harness->pdo();
     k1d_rc1_budget_install_schema($pdo);
+    cap2_transport_install_legacy_journal($pdo);
     AppSettingsService::clearCache();
 
     foreach ([1, 2, 3, 15, 55, 100] as $maxCalls) {
@@ -35,8 +37,9 @@ try {
             k1d_rc1_budget_reset_cycle($pdo, $maxCalls + 1, $cycle, $maxCalls);
             $calls = 0;
             $repository = new QueueV4CleanRepository($pdo);
-            $handler = static function (array $job) use (&$calls): void {
+            $handler = static function (array $job) use (&$calls,$pdo): void {
                 QueueV4CleanCycleBudget::claim();
+                cap2_transport_record_legacy_call($pdo,$job,200);
                 $calls++;
             };
             $worker = new QueueV4CleanWorker($pdo, $repository, null, null, $handler);
@@ -47,6 +50,7 @@ try {
                 QueueV4CleanCycleBudget::clear();
             }
             $maxTransportsPerCycle = max($maxTransportsPerCycle, $calls);
+            k1b_assert($result['physical_http_calls'] === $calls, 'CANONICAL_LEDGER_MATCHES_SIMULATED_TRANSPORTS');
             if ($calls > $maxCalls || (int) ($result['physical_http_calls'] ?? 0) > $maxCalls) {
                 $violations++;
             }
@@ -223,6 +227,7 @@ function k1d_rc1_budget_install_schema(PDO $pdo): void
 
 function k1d_rc1_budget_reset_cycle(PDO $pdo, int $jobCount, int $cycle, int $maxCalls): void
 {
+    $pdo->exec('DELETE FROM queue_v4_clean_transport_events');
     $pdo->exec('DELETE FROM queue_v4_clean_attempts');
     $pdo->exec('DELETE FROM queue_v4_clean_jobs');
     $pdo->exec('DELETE FROM queue_v4_clean_runs');

@@ -260,10 +260,10 @@ final class QueueCoreRepository
             if(!$this->lockFence($claim,'running')){$this->pdo->rollBack();return false;}
             $job=$this->pdo->prepare("UPDATE queue_core_jobs SET dispatch_state='NOT_DISPATCHED',updated_at=UTC_TIMESTAMP(3) WHERE id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND state='running' AND dispatch_state='DISPATCHED_RESULT_UNCERTAIN'");
             $job->execute([$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
-            $attempt=$this->pdo->prepare("UPDATE queue_core_attempts SET dispatch_state='NOT_DISPATCHED',physical_http_calls=0,physical_http_started_at=NULL WHERE id=? AND job_id=? AND lease_owner=? AND lease_generation=? AND dispatch_state='DISPATCHED_RESULT_UNCERTAIN' AND physical_http_calls=1 AND response_known_at IS NULL");
-            $attempt->execute([$attemptId,$claim->id,$claim->leaseOwner,$claim->leaseGeneration]);
-            $journal=$this->pdo->prepare("UPDATE queue_core_dispatch_journal SET state='cancelled_before_remote' WHERE attempt_id=? AND lease_owner=? AND lease_generation=? AND state='in_flight'");
-            $journal->execute([$attemptId,$claim->leaseOwner,$claim->leaseGeneration]);
+            $attempt=$this->pdo->prepare("UPDATE queue_core_attempts SET dispatch_state='NOT_DISPATCHED',physical_http_calls=0,physical_http_started_at=NULL,dispatch_reserved_at=NULL,error_class='cancelled_before_remote' WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND dispatch_state='DISPATCHED_RESULT_UNCERTAIN' AND physical_http_calls=1 AND response_known_at IS NULL");
+            $attempt->execute([$attemptId,$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
+            $journal=$this->pdo->prepare("UPDATE queue_core_dispatch_journal SET state='cancelled_before_remote' WHERE attempt_id=? AND job_id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND state='in_flight'");
+            $journal->execute([$attemptId,$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
             if($job->rowCount()!==1||$attempt->rowCount()!==1||$journal->rowCount()!==1){$this->pdo->rollBack();return false;}
             $this->pdo->commit();return true;
         }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}

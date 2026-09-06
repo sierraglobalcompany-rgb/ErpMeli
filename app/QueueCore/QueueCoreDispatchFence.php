@@ -11,6 +11,7 @@ use App\Services\MeliEmergencyStopService;
 use RuntimeException;
 final class QueueCoreDispatchFence
 {
+    private static ?array $prepared = null;
     public static function beforeTransport(string $method,string $endpoint): void
     {
         $m=ApiExecutionMetadataContext::current();
@@ -59,6 +60,7 @@ final class QueueCoreDispatchFence
         if(!(new QueueCoreRepository(Database::connectionFresh()))->physicalTransportStarted($claim,$attempt,$method,$endpoint)){
             throw new QueueCorePreRemoteBlockedException('Queue Core fencing denied the physical HTTP boundary.');
         }
+        self::$prepared = $m;
     }
 
     /**
@@ -88,8 +90,7 @@ final class QueueCoreDispatchFence
             }
             (new MeliEmergencyStopService())->assertTransportAllowed($method,$endpoint);
         }catch(\Throwable $blocked){
-            $cancelled=$attempt>0 && (new QueueCoreRepository(Database::connectionFresh()))
-                ->cancelPhysicalTransportBeforeCurl($claim,$attempt);
+            $cancelled=$attempt>0 && self::cancelBeforeCurl();
             if(!$cancelled){
                 throw new RuntimeException('Queue Core could not cancel a pre-cURL physical marker.',0,$blocked);
             }
@@ -101,6 +102,23 @@ final class QueueCoreDispatchFence
             }
             throw new QueueCorePreRemoteBlockedException('Queue Core stopped before cURL; no HTTP was sent.',0,$blocked);
         }
+    }
+
+    /** Process-local capability is consumed before physical execution, never after a response. */
+    public static function enteringCurl(): void
+    {
+        self::$prepared = null;
+    }
+
+    /** Cancel only this process's exact, not-yet-sent preparation. */
+    public static function cancelBeforeCurl(): bool
+    {
+        $meta = ApiExecutionMetadataContext::current();
+        if (($meta['source'] ?? '') !== 'queue_core' || self::$prepared !== $meta) { return false; }
+        self::$prepared = null;
+        return (new QueueCoreRepository(Database::connectionFresh()))->cancelPhysicalTransportBeforeCurl(
+            self::claim($meta), (int) ($meta['queue_core_attempt_id'] ?? 0)
+        );
     }
 
     /** True only when the exact current attempt has a persisted physical HTTP marker. */

@@ -158,7 +158,9 @@ final class QueueV4CleanScheduler
                 ? (new QueueV4CleanWorker($this->pdo, $repository))->run('scheduler', $availableWorkerCalls, $workerRuntime)
                 : ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
             $workerClaimed = (int) ($worker['claimed'] ?? 0);
-            $salesRepair = QueueV4CleanCycleBudget::remaining() > 0 && CronDeadlineContext::canAcceptWork(3)
+            $protectedStop = in_array((string) ($worker['stop_reason'] ?? ''), ['remote_result_uncertain', 'remote_429_global_pause'], true)
+                ? (string) $worker['stop_reason'] : null;
+            $salesRepair = $protectedStop === null && QueueV4CleanCycleBudget::remaining() > 0 && CronDeadlineContext::canAcceptWork(3)
                 ? (new SalesAuditExactRepairService())->processDue(1)
                 : ['processed' => 0, 'jobs' => 0, 'status' => 'deferred'];
             $repairClaimed = (int) ($salesRepair['jobs'] ?? 0);
@@ -170,8 +172,8 @@ final class QueueV4CleanScheduler
                 "UPDATE queue_v4_clean_control SET last_scheduler_at=UTC_TIMESTAMP(3) WHERE control_key='primary'"
             );
             return [
-                'ok' => true,
-                'status' => 'completed',
+                'ok' => $protectedStop === null,
+                'status' => $protectedStop ?? 'completed',
                 'oauth' => $oauth,
                 'recovery' => $recovery,
                 'maintenance' => $maintenance,

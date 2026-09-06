@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/k1b_bootstrap.php';
 require __DIR__ . '/K1dSafeTestDatabase.php';
+require __DIR__ . '/cap2_transport_legacy_fixture.php';
 
 use App\QueueV4Clean\QueueV4CleanCycleBudget;
 use App\QueueV4Clean\QueueV4CleanRepository;
@@ -27,18 +28,21 @@ $jobStates = [];
 try {
     $pdo = $harness->pdo();
     k1d_rc1_install_worker_schema($pdo);
+    cap2_transport_install_legacy_journal($pdo);
     AppSettingsService::clearCache();
 
     $repository = new QueueV4CleanRepository($pdo);
-    $handler = static function (array $job) use (&$calls): void {
+    $handler = static function (array $job) use (&$calls,$pdo): void {
         $calls++;
         QueueV4CleanCycleBudget::claim();
+        cap2_transport_record_legacy_call($pdo,$job,429);
         throw new MeliApiException('fixture remote 429', 429, 'fixture-request-' . $calls, ['retry_after' => null]);
     };
 
     $worker = new QueueV4CleanWorker($pdo, $repository, null, null, $handler);
     QueueV4CleanCycleBudget::start(100);
     $result = $worker->run('test', 100, 10, [2], 2);
+    k1b_assert($result['physical_http_calls']===1,'429_CANONICAL_PHYSICAL_LEDGER_ONE');
     k1b_assert(QueueV4CleanCycleBudget::remaining() === 99, '429_STOP_NOT_EXPLAINED_BY_EXHAUSTED_BUDGET');
     QueueV4CleanCycleBudget::clear();
 

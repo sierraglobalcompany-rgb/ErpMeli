@@ -88,15 +88,22 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             }
         }
 
-        if($executionSource==='queue_core'){
-            $lastHeartbeat=0.0;
-            curl_setopt($ch,CURLOPT_NOPROGRESS,false);
-            curl_setopt($ch,CURLOPT_XFERINFOFUNCTION,static function()use(&$lastHeartbeat):int{
+        $lastHeartbeat=0.0;
+        if (!curl_setopt($ch,CURLOPT_NOPROGRESS,false)
+            || !curl_setopt($ch,CURLOPT_XFERINFOFUNCTION,static function()use(&$lastHeartbeat,$executionSource):int{
+                if (CronDeadlineContext::remainingSeconds() <= 0.0) { return 1; }
+                if ($executionSource !== 'queue_core') { return 0; }
                 $now=microtime(true);
                 if($now-$lastHeartbeat<1.0)return 0;
                 $lastHeartbeat=$now;
-                return \App\QueueCore\QueueCoreDispatchFence::heartbeat()?0:1;
-            });
+                try { return \App\QueueCore\QueueCoreDispatchFence::heartbeat()?0:1; }
+                catch (\Throwable) { return 1; }
+            })) {
+            throw new RuntimeException('queue_v4_clean_curl_progress_option_rejected');
+        }
+        $prepared = false;
+        try {
+        if($executionSource==='queue_core'){
             // Persist the physical boundary only after cURL is fully prepared
             // and immediately before curl_exec.
             $emergency->assertTransportAllowed($method, $url);
@@ -118,6 +125,7 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
                 $method,
                 parse_url($url, PHP_URL_PATH) ?: '/'
             );
+            $prepared = true;
         }
         if (MeliTransportSourcePolicy::requiresQueueV4ReadFence($executionSource)) {
             $emergency->assertTransportAllowed($method, $url);
@@ -125,11 +133,37 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
                 $method,
                 parse_url($url, PHP_URL_PATH) ?: '/'
             );
+            $prepared = true;
+        }
+        // Fence/DB setup can be slow. Recalculate at the physical boundary,
+        // preserving any shorter timeout supplied by the caller.
+        CronDeadlineContext::assertCanStartRemote(1.0);
+        $freshTimeouts = CronDeadlineContext::curlTimeouts();
+        if (!curl_setopt_array($ch, [
+            CURLOPT_TIMEOUT => max(1, min($timeouts['timeout'], $freshTimeouts['timeout'])),
+            CURLOPT_CONNECTTIMEOUT => max(1, min($timeouts['connect_timeout'], $freshTimeouts['connect_timeout'])),
+        ])) { throw new RuntimeException('queue_v4_clean_curl_final_timeout_rejected'); }
+        } catch (\Throwable $blocked) {
+            if ($prepared) {
+                try {
+                    $cancelled = \App\QueueV4Clean\QueueV4CleanTransportJournal::cancelBeforeCurl(
+                        \App\Core\Database::connectionFresh(), ApiExecutionMetadataContext::current()
+                    );
+                } catch (\Throwable) { $cancelled = false; }
+                if (!$cancelled) { throw new RemoteResultUncertainException((string)(ApiExecutionMetadataContext::current()['transport_request_id']??'')); }
+            } elseif ($executionSource === 'queue_core' && \App\QueueCore\QueueCoreDispatchFence::physicalTransportRecorded()) {
+                if (!\App\QueueCore\QueueCoreDispatchFence::cancelBeforeCurl()) {
+                    throw new RemoteResultUncertainException((string)(ApiExecutionMetadataContext::current()['transport_request_id']??''));
+                }
+            }
+            throw $blocked;
         }
         $started = microtime(true);
         \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
             \App\QueueV4Clean\QueueV4CleanOAuthStageContext::CURL_EXEC
         );
+        \App\QueueV4Clean\QueueV4CleanTransportJournal::enteringCurl((string)(ApiExecutionMetadataContext::current()['transport_request_id']??''));
+        \App\QueueCore\QueueCoreDispatchFence::enteringCurl();
         $raw = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $wireBytes = defined('CURLINFO_SIZE_DOWNLOAD_T')

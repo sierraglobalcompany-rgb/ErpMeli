@@ -364,6 +364,11 @@ final class MeliApiClient implements MeliReadClientInterface
                     )
                 );
             } catch (Throwable $transportBlocked) {
+                // A failed certification cannot be downgraded by a later row
+                // read (for example a rollback whose acknowledgement was lost).
+                if ($transportBlocked instanceof RemoteResultUncertainException) {
+                    throw $transportBlocked;
+                }
                 if ($queueCoreContext) {
                     // Do not infer physical dispatch merely because control
                     // was handed to the transport object. curl_init, option
@@ -397,7 +402,7 @@ final class MeliApiClient implements MeliReadClientInterface
                         }
                         ApiExecutionMetadataContext::markRemoteBlocked();
                         if ($compensationFailure !== null) {
-                            throw $compensationFailure;
+                            throw new RemoteResultUncertainException($requestId);
                         }
                         throw $transportBlocked;
                     }
@@ -409,18 +414,26 @@ final class MeliApiClient implements MeliReadClientInterface
                         'meli_account_id' => (int) ($meta['account_id'] ?? 0),
                     ]);
                     if ($oauthFence['dispatch_state'] === 'NOT_DISPATCHED') {
-                        $budget->releaseReservation($budgetReservation, true);
-                        $rhythm->cancelBeforeTransport($rhythmPermit, true);
+                        try {
+                            $budget->releaseReservation($budgetReservation, true);
+                            $rhythm->cancelBeforeTransport($rhythmPermit, true);
+                        } catch (Throwable) { throw new RemoteResultUncertainException($requestId); }
                         ApiExecutionMetadataContext::markRemoteBlocked();
                         throw $transportBlocked;
                     }
                 }
                 if ($queueV4ReadContext) {
-                    $queueV4Fence = \App\QueueV4Clean\QueueV4CleanDispatchFence::state($meta);
+                    try {
+                        $queueV4Fence = \App\QueueV4Clean\QueueV4CleanDispatchFence::state($meta);
+                    } catch (Throwable) {
+                        $queueV4Fence = ['dispatch_state' => 'UNKNOWN', 'http_status' => null];
+                    }
                     $queueV4DispatchState = (string) ($queueV4Fence['dispatch_state'] ?? 'UNKNOWN');
                     if ($queueV4DispatchState === 'NOT_DISPATCHED') {
-                        $budget->releaseReservation($budgetReservation, true);
-                        $rhythm->cancelBeforeTransport($rhythmPermit, true);
+                        try {
+                            $budget->releaseReservation($budgetReservation, true);
+                            $rhythm->cancelBeforeTransport($rhythmPermit, true);
+                        } catch (Throwable) { throw new RemoteResultUncertainException($requestId); }
                         ApiExecutionMetadataContext::markRemoteBlocked();
                         if ($transportBlocked instanceof ApiRhythmDeferredException
                             || $transportBlocked instanceof ApiBudgetExhaustedException
@@ -432,49 +445,16 @@ final class MeliApiClient implements MeliReadClientInterface
                             gmdate('Y-m-d H:i:s', time() + 60)
                         );
                     }
-                    if (!in_array($queueV4DispatchState, ['PHYSICAL_STARTED', 'RESPONSE_KNOWN'], true)) {
-                        $budget->releaseReservation($budgetReservation, true);
-                        $rhythm->cancelBeforeTransport($rhythmPermit, true);
-                        ApiExecutionMetadataContext::markRemoteBlocked();
-                        $classification = [
-                            'type' => 'dispatch_authority_unknown',
-                            'outcome_class' => 'local_failure',
-                            'reached_remote' => false,
-                            'is_retryable' => true,
-                            'is_app_blocked_signal' => false,
-                            'dispatch_state' => $queueV4DispatchState,
-                            'recommendation' => 'Queue V4 repetirá este GET idempotente cuando el fence físico vuelva a tener identidad verificable.',
-                        ];
-                        if (!MeliTransportSourcePolicy::usesPrimaryRhythmAuthority($source)) {
-                            $budget->recordResult($this->accountId, $method, $path, null, null, $meta, $classification);
-                        }
-                        $guard->recordRequest(
-                            $this->accountId,
-                            $requestId,
-                            $method,
-                            $path,
-                            null,
-                            null,
-                            null,
-                            $attempt,
-                            false,
-                            'La lectura GET no cruzó la frontera física: Queue V4 no pudo confirmar identidad del fence.',
-                            $classification,
-                            'dispatch_authority_unknown',
-                            $meta
-                        );
-                        throw new QueueV4PreTransportDeferredException(
-                            gmdate('Y-m-d H:i:s', time() + 60)
-                        );
-                    }
+                    // Missing/failed authority cannot certify zero. Retain the
+                    // reservation and require review just like uncertain wire I/O.
                     ApiExecutionMetadataContext::markRemoteDispatched();
                     $classification = [
                         'type' => 'remote_result_uncertain',
-                        'outcome_class' => 'policy_delay',
+                        'outcome_class' => 'action_required',
                         'reached_remote' => true,
-                        'is_retryable' => true,
+                        'is_retryable' => false,
                         'is_app_blocked_signal' => false,
-                        'recommendation' => 'Queue V4 repetirá este GET idempotente en otra ventana segura.',
+                        'recommendation' => 'Revise el trabajo antes de autorizar otro intento.',
                     ];
                     if (!MeliTransportSourcePolicy::usesPrimaryRhythmAuthority($source)) {
                         $budget->recordResult($this->accountId, $method, $path, null, null, $meta, $classification);
@@ -578,11 +558,11 @@ final class MeliApiClient implements MeliReadClientInterface
             if ($queueV4ReadContext && ($status <= 0 || $curlError !== '')) {
                 $classification = [
                     'type' => 'remote_result_uncertain',
-                    'outcome_class' => 'policy_delay',
+                    'outcome_class' => 'action_required',
                     'reached_remote' => true,
-                    'is_retryable' => true,
+                    'is_retryable' => false,
                     'is_app_blocked_signal' => false,
-                    'recommendation' => 'Queue V4 repetirá este GET idempotente en otra ventana segura.',
+                    'recommendation' => 'Revise el trabajo antes de autorizar otro intento.',
                 ];
                 if (!MeliTransportSourcePolicy::usesPrimaryRhythmAuthority($source)) {
                     $budget->recordResult($this->accountId, $method, $path, null, null, $meta, $classification);

@@ -37,7 +37,7 @@ final class QueueV4CleanDispatchFence
                 self::startQueueAttempt($meta, $method, $path);
             }
         } catch (\Throwable $error) {
-            QueueV4CleanCycleBudget::releaseBeforeTransport();
+            QueueV4CleanTransportJournal::preparationFailed($meta);
             throw $error;
         }
     }
@@ -198,6 +198,7 @@ final class QueueV4CleanDispatchFence
         if ($ownsTransaction) {
             $pdo->beginTransaction();
         }
+        QueueV4CleanTransportJournal::preparationBegan((string) ($meta['transport_request_id'] ?? ''));
         try {
         $stmt = $pdo->prepare(
             "UPDATE queue_v4_clean_attempts a
@@ -240,6 +241,7 @@ final class QueueV4CleanDispatchFence
         } catch (\Throwable $error) {
             if ($ownsTransaction && $pdo->inTransaction()) {
                 $pdo->rollBack();
+                QueueV4CleanTransportJournal::preparationRolledBack((string) ($meta['transport_request_id'] ?? ''));
             }
             throw $error;
         }
@@ -253,6 +255,7 @@ final class QueueV4CleanDispatchFence
         if ($ownsTransaction) {
             $pdo->beginTransaction();
         }
+        QueueV4CleanTransportJournal::preparationBegan((string) ($meta['transport_request_id'] ?? ''));
         try {
         $stmt = $pdo->prepare(
             "UPDATE sync_sales_audit_jobs
@@ -288,6 +291,7 @@ final class QueueV4CleanDispatchFence
         } catch (\Throwable $error) {
             if ($ownsTransaction && $pdo->inTransaction()) {
                 $pdo->rollBack();
+                QueueV4CleanTransportJournal::preparationRolledBack((string) ($meta['transport_request_id'] ?? ''));
             }
             throw $error;
         }
@@ -301,6 +305,7 @@ final class QueueV4CleanDispatchFence
         if ($ownsTransaction) {
             $pdo->beginTransaction();
         }
+        QueueV4CleanTransportJournal::preparationBegan((string) ($meta['transport_request_id'] ?? ''));
         try {
             $stmt = $pdo->prepare(
                 "SELECT i.external_order_id FROM sync_sales_repair_job_items i
@@ -340,6 +345,7 @@ final class QueueV4CleanDispatchFence
         } catch (\Throwable $error) {
             if ($ownsTransaction && $pdo->inTransaction()) {
                 $pdo->rollBack();
+                QueueV4CleanTransportJournal::preparationRolledBack((string) ($meta['transport_request_id'] ?? ''));
             }
             throw $error;
         }

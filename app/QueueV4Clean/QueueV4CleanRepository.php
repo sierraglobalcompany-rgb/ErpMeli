@@ -130,11 +130,11 @@ final class QueueV4CleanRepository
              VALUES (?,?,?,?,?,?,?)
              ON DUPLICATE KEY UPDATE
                id=LAST_INSERT_ID(id),
-               completed_at=IF(state IN ("completed","review"),NULL,completed_at),
-               available_at=IF(state IN ("completed","review"),UTC_TIMESTAMP(3),available_at),
-               attempt_count=IF(state IN ("completed","review"),0,attempt_count),
-               last_error_class=IF(state IN ("completed","review"),NULL,last_error_class),
-               state=IF(state IN ("completed","review"),"ready",state)'
+               completed_at=IF(state IN ("completed","review") AND COALESCE(last_error_class,"") NOT IN ("remote_result_uncertain","remoteresultuncertainexception","remote_result_uncertain_safe_get"),NULL,completed_at),
+               available_at=IF(state IN ("completed","review") AND COALESCE(last_error_class,"") NOT IN ("remote_result_uncertain","remoteresultuncertainexception","remote_result_uncertain_safe_get"),UTC_TIMESTAMP(3),available_at),
+               attempt_count=IF(state IN ("completed","review") AND COALESCE(last_error_class,"") NOT IN ("remote_result_uncertain","remoteresultuncertainexception","remote_result_uncertain_safe_get"),0,attempt_count),
+               last_error_class=IF(state IN ("completed","review") AND COALESCE(last_error_class,"") NOT IN ("remote_result_uncertain","remoteresultuncertainexception","remote_result_uncertain_safe_get"),NULL,last_error_class),
+               state=IF(state IN ("completed","review") AND COALESCE(last_error_class,"") NOT IN ("remote_result_uncertain","remoteresultuncertainexception","remote_result_uncertain_safe_get"),"ready",state)'
         );
         $statement->execute([
             $companyId,
@@ -168,6 +168,7 @@ final class QueueV4CleanRepository
                  WHERE q.state='ready'
                    AND q.available_at<=UTC_TIMESTAMP(3)
                    AND NOT (" . $this->financialSourceFuturePredicate('q') . ")
+                   AND NOT (" . $this->unresolvedPhysicalPredicate('q') . ")
                    AND {$scopeSql}
                  ORDER BY available_at ASC,id ASC LIMIT 1 FOR UPDATE SKIP LOCKED"
             );
@@ -259,6 +260,7 @@ final class QueueV4CleanRepository
               WHERE q.state='ready'
                 AND q.available_at<=UTC_TIMESTAMP(3)
                 AND NOT (" . $this->financialSourceFuturePredicate('q') . ")
+                AND NOT (" . $this->unresolvedPhysicalPredicate('q') . ")
                 AND {$scopeSql}
               ORDER BY q.available_at ASC,q.id ASC
               LIMIT {$limit}"
@@ -284,6 +286,7 @@ final class QueueV4CleanRepository
               WHERE q.state='ready'
                 AND q.available_at<=UTC_TIMESTAMP(3)
                 AND NOT (" . $this->financialSourceFuturePredicate('q') . ")
+                AND NOT (" . $this->unresolvedPhysicalPredicate('q') . ")
                 AND {$scopeSql}"
         );
         $statement->execute($scopeParams);
@@ -362,6 +365,7 @@ final class QueueV4CleanRepository
                     AND st.meli_account_id=s.meli_account_id
                     AND st.sale_key=s.sale_key
                   WHERE q.state="ready"
+                    AND NOT (' . $this->unresolvedPhysicalPredicate('q') . ')
                     AND q.available_at<=UTC_TIMESTAMP(3)
                     AND (q.available_at>? OR (q.available_at=? AND q.id>?))
                   ORDER BY q.available_at ASC,q.id ASC
@@ -759,30 +763,32 @@ final class QueueV4CleanRepository
             $statement->execute($scopeParams);
             $expired = $statement->fetchAll(PDO::FETCH_ASSOC);
             foreach ($expired as $row) {
-                $classification = (string) $row['dispatch_state'] === 'NOT_DISPATCHED'
+                $notSent = (string) $row['dispatch_state'] === 'NOT_DISPATCHED';
+                $outcome = $notSent ? 'waiting' : 'review';
+                $classification = $notSent
                     ? 'pre_transport_lease_expired'
-                    : 'remote_result_uncertain_safe_get';
+                    : 'remote_result_uncertain';
                 $attempt = $this->pdo->prepare(
                     "UPDATE queue_v4_clean_attempts
-                     SET outcome='waiting',error_class=?,finished_at=UTC_TIMESTAMP(3),source_closed_at=UTC_TIMESTAMP(3)
+                     SET outcome=?,error_class=?,finished_at=UTC_TIMESTAMP(3),source_closed_at=UTC_TIMESTAMP(3)
                      WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=?
                        AND lease_owner=? AND lease_generation=? AND outcome='running'"
                 );
                 $attempt->execute([
-                    $classification, (int) $row['attempt_id'], (int) $row['id'],
+                    $outcome, $classification, (int) $row['attempt_id'], (int) $row['id'],
                     (int) $row['company_id'], (int) $row['meli_account_id'], (string) $row['lease_owner'],
                     (int) $row['lease_generation'],
                 ]);
                 $job = $this->pdo->prepare(
                     "UPDATE queue_v4_clean_jobs
-                     SET state='waiting',available_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 60 SECOND),
-                         attempt_count=GREATEST(attempt_count-1,0),lease_owner=NULL,lease_expires_at=NULL,
+                     SET state=?,available_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 60 SECOND),
+                         attempt_count=IF(?=1 AND attempt_count>0,attempt_count-1,attempt_count),lease_owner=NULL,lease_expires_at=NULL,
                          last_error_class=?
                      WHERE id=? AND company_id=? AND meli_account_id=? AND state='running'
                        AND lease_owner=? AND lease_generation=?"
                 );
                 $job->execute([
-                    $classification, (int) $row['id'], (int) $row['company_id'], (int) $row['meli_account_id'],
+                    $outcome, $notSent ? 1 : 0, $classification, (int) $row['id'], (int) $row['company_id'], (int) $row['meli_account_id'],
                     (string) $row['lease_owner'], (int) $row['lease_generation'],
                 ]);
             }
@@ -1114,12 +1120,23 @@ final class QueueV4CleanRepository
             AND {$sourceAlias}.next_run_at>UTC_TIMESTAMP(3)";
     }
 
+    /** Historical ready/waiting labels cannot authorize another unresolved physical request. */
+    private function unresolvedPhysicalPredicate(string $queueAlias): string
+    {
+        $this->assertSqlAlias($queueAlias);
+        return "EXISTS (SELECT 1 FROM queue_v4_clean_transport_events e
+            WHERE e.company_id={$queueAlias}.company_id AND e.meli_account_id={$queueAlias}.meli_account_id
+              AND e.source_kind='queue' AND e.work_id={$queueAlias}.id
+              AND e.dispatch_state='PHYSICAL_STARTED' AND e.response_known_at IS NULL)";
+    }
+
     private function financialWakeupCandidateWhere(string $queueAlias, string $sourceAlias, string $scopeSql): string
     {
         $this->assertSqlAlias($queueAlias);
         $this->assertSqlAlias($sourceAlias);
 
         return $this->financialWakeupTotalWhere($queueAlias, $sourceAlias, $scopeSql) . "
+            AND NOT (" . $this->unresolvedPhysicalPredicate($queueAlias) . ")
             AND {$queueAlias}.available_at<=UTC_TIMESTAMP(3)
             AND ({$queueAlias}.lease_owner IS NULL OR {$queueAlias}.lease_expires_at IS NULL OR {$queueAlias}.lease_expires_at<=UTC_TIMESTAMP(3))
             AND {$sourceAlias}.status IN ('pending','retry','ready','waiting','running','awaiting_remote')

@@ -223,6 +223,7 @@ final class QueueV4CleanWorker
                     }
                     continue;
                 } catch (ApiRhythmDeferredException $error) {
+                    $remote429 = $error->reachedRemote && $error->blockingScope === 'remote_429_global_pause';
                     $classification = 'rate_limit_deferred:' . $this->safeToken($error->blockingScope);
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
@@ -236,8 +237,12 @@ final class QueueV4CleanWorker
                             (int) ($job['id'] ?? 0),
                         );
                     }
-                    $receiptJobs[] = $this->cycleJobReceipt($job, 'waiting', $classification, $error->reachedRemote, null, null, $error->nextSafeAt);
+                    $receiptJobs[] = $this->cycleJobReceipt($job, 'waiting', $classification, $error->reachedRemote, $remote429 ? 429 : null, null, $error->nextSafeAt);
                     $deferred++;
+                    if ($remote429) {
+                        $endReason = 'remote_429_global_pause';
+                        break;
+                    }
                     if ($this->deferredCycleAction($error) === 'break') {
                         $endReason = 'deferred_break:' . $classification;
                         break;
@@ -300,20 +305,11 @@ final class QueueV4CleanWorker
                     }
                     continue;
                 } catch (RemoteResultUncertainException $error) {
-                    $nextSafeAt = gmdate('Y-m-d H:i:s', time() + 60);
-                    $this->repository->deferWithoutAttemptPenalty(
-                        $job,
-                        $runId,
-                        'remote_result_uncertain_safe_get',
-                        $nextSafeAt,
-                    );
-                    $receiptJobs[] = $this->cycleJobReceipt($job, 'waiting', 'remote_result_uncertain_safe_get', true, null, null, $nextSafeAt);
-                    $deferred++;
-                    if ($this->deferredCycleAction($error) === 'break') {
-                        $endReason = 'deferred_break:remote_result_uncertain_safe_get';
-                        break;
-                    }
-                    continue;
+                    $this->repository->review($job, $runId, 'remote_result_uncertain');
+                    $receiptJobs[] = $this->cycleJobReceipt($job, 'review', 'remote_result_uncertain', true, null, null, null);
+                    $reviewed++;
+                    $endReason = 'remote_result_uncertain';
+                    break;
                 } catch (ApiManualPauseException $error) {
                     $classification = 'manual_pause:' . $this->safeToken($error->scope);
                     $this->repository->deferWithoutAttemptPenalty(
@@ -426,7 +422,9 @@ final class QueueV4CleanWorker
                 $receiptJobs[] = $this->cycleJobReceipt($job, 'completed', 'completed', (bool) ($outcome['reached_remote'] ?? false), null, null, null);
                 $completed++;
             }
-            if ($endReason !== 'remote_429_global_pause' && QueueV4CleanCycleBudget::exhausted()) {
+            if (in_array($endReason, ['remote_429_global_pause', 'remote_result_uncertain'], true)) {
+                // Keep the protection that stopped work, even at a budget/time boundary.
+            } elseif (QueueV4CleanCycleBudget::exhausted()) {
                 $endReason = 'call_budget_exhausted';
             } elseif ($claimed >= $pointerSafetyLimit) {
                 $endReason = 'pointer_safety_limit_reached';
@@ -545,11 +543,11 @@ final class QueueV4CleanWorker
                 'claimed' => 0,
                 'completed' => 0,
                 'deferred' => 0,
-                'physical_http_calls' => 0,
+                'physical_http_calls' => null,
                 'classification' => 'receipt_not_available',
                 'http_status' => null,
                 'next_safe_at' => null,
-                'dispatch_state' => 'NOT_DISPATCHED',
+                'dispatch_state' => 'UNKNOWN',
             ];
         }
     }
@@ -560,32 +558,22 @@ final class QueueV4CleanWorker
             return 0;
         }
         try {
-            if ($this->hasTable('queue_v4_clean_transport_events')
-                && $this->hasColumn('queue_v4_clean_transport_events', 'attempt_id')) {
-                $events = $this->pdo->prepare(
+            // Schema 301 journal is the physical authority; an unavailable
+            // journal (including metadata failures) is never certified zero.
+            $events = $this->pdo->prepare(
                     "SELECT COUNT(DISTINCT e.request_id)
                      FROM queue_v4_clean_transport_events e
                      INNER JOIN queue_v4_clean_attempts a
-                       ON a.id=e.attempt_id
+                       ON a.id=e.attempt_id AND a.job_id=e.work_id AND e.source_kind='queue'
                       AND a.company_id=e.company_id
                       AND a.meli_account_id=e.meli_account_id
                      WHERE a.run_id=?
                        AND e.dispatch_state IN ('PHYSICAL_STARTED','RESPONSE_KNOWN')"
                 );
-                $events->execute([$runId]);
-                $count = (int) $events->fetchColumn();
-                if ($count > 0) {
-                    return $count;
-                }
-            }
-            $attempts = $this->pdo->prepare(
-                'SELECT COALESCE(SUM(physical_http_calls),0)
-                 FROM queue_v4_clean_attempts WHERE run_id=?'
-            );
-            $attempts->execute([$runId]);
-            return (int) $attempts->fetchColumn();
-        } catch (Throwable) {
-            return 0;
+            $events->execute([$runId]);
+            return (int) $events->fetchColumn();
+        } catch (Throwable $error) {
+            throw new RuntimeException('queue_v4_physical_metric_unavailable', 0, $error);
         }
     }
 
@@ -1161,9 +1149,6 @@ final class QueueV4CleanWorker
         if ($error instanceof CronDeadlineDeferredException
             || $error instanceof ManualRemoteCallLimitException) {
             return 'break';
-        }
-        if ($error instanceof RemoteResultUncertainException) {
-            return 'continue';
         }
         if ($error instanceof ApiManualPauseException) {
             return $this->manualPauseCycleAction($error);

@@ -686,6 +686,12 @@
     }
   };
   password?.addEventListener('input', syncButtons);
+  // Busy rendering can move the buttons. A second click in the same gesture
+  // must not become a different action (for example, Cancelar). Single clicks
+  // and keyboard activation remain available, including Stop during HTTP.
+  actions.forEach((form) => form.addEventListener('click', (event) => {
+    if (event.detail > 1) event.preventDefault();
+  }));
   actions.forEach((form) => form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const button = form.querySelector('button');

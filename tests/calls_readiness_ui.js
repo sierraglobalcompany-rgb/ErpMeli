@@ -57,6 +57,14 @@ async function scenario(state) {
   assert.equal(s.payloads[0].get('run_id'), '21');
   assert.equal(s.payloads[0].get('run_token'), 'a'.repeat(64));
   assert.equal(s.payloads[0].get('admin_password'), '');
+  for (const action of s.actions) {
+    assert.equal(typeof action.listeners.click, 'function', 'second click must not reach another readiness action after layout changes');
+    for (const detail of [0, 1, 2, 3]) {
+      let prevented = false;
+      action.listeners.click({ detail, preventDefault() { prevented = true; } });
+      assert.equal(prevented, detail > 1, 'single clicks and keyboard remain available; repeated gesture does not submit');
+    }
+  }
   const expired = await scenario({ ...state, expires_at: '2000-01-01T00:00:00Z' });
   assert.equal(expired.actions[0].button.disabled, true, 'expired context cannot dispatch');
   for (const expires_at of [1, null, 'invalid', Number.POSITIVE_INFINITY]) {

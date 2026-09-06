@@ -6,7 +6,7 @@ use App\Services\CapacityPolicyService;
 
 $base = rtrim(Env::get('APP_URL', ''), '/');
 $scopeLabels = [
-  'available_queue' => ['Pendientes disponibles ahora', 'Atiende directamente lo que el sistema tiene listo ahora.', (int) ($availableQueueCount ?? 0) . ' listos ahora'],
+  'available_queue' => ['Pendientes disponibles ahora', 'Atiende directamente lo que el sistema tiene listo ahora.', isset($availableQueueCount) ? (int) $availableQueueCount . ' listos ahora' : 'Disponibilidad no comprobada'],
   'recommended' => ['Recomendado', 'Lo más seguro para avanzar ahora.'],
   'sales' => ['Ventas', 'Órdenes y notificaciones.'],
   'finance' => ['Finanzas', 'Conciliación y cálculo.'],

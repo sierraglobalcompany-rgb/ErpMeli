@@ -18,4 +18,5 @@ k1b_assert(str_contains($html,'name="physical_api_call_budget"'), 'start_and_pre
 k1b_assert(str_contains($html,'confirmed-30'), 'display_stable_selection_identity');
 k1b_assert(str_contains($html,'Hay más pendientes'), 'snapshot_truncation_disclosed');
 k1b_assert(!str_contains($html,'name="scope" value="modules"'), 'unsupported_module_not_offered');
+k1b_assert(str_contains($html,'Disponibilidad no comprobada'), 'unknown_availability_became_zero');
 echo "PASS calls UI: full snapshot, calls-only inputs, stable selection, truncation\n";

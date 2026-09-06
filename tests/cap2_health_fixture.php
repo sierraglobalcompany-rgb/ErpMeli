@@ -31,6 +31,12 @@ function cap2_health_create_schema(PDO $pdo): void
     foreach ($statements as $sql) {
         $pdo->exec($sql);
     }
+    // Calls-plan health authority also reads physical billing evidence. These
+    // empty real tables represent complete absence, not a mocked healthy result.
+    $pdo->exec('ALTER TABLE api_request_logs ADD endpoint_path VARCHAR(255),ADD request_id VARCHAR(80),ADD retry_after_seconds INT');
+    $pdo->exec('CREATE TABLE api_remote_permits(id BIGINT AUTO_INCREMENT PRIMARY KEY,company_id BIGINT,meli_account_id BIGINT,endpoint_key VARCHAR(100),permit_token CHAR(40),http_status INT,retry_after_seconds INT,completed_at DATETIME(3),dispatched_at DATETIME(3))');
+    $pdo->exec('CREATE TABLE api_rhythm_penalties(scope_key VARCHAR(190) PRIMARY KEY,blocked_until DATETIME(3))');
+    $pdo->exec('CREATE TABLE api_rhythm_states(scope_key VARCHAR(190) PRIMARY KEY,next_allowed_at DATETIME(3),block_pause_until DATETIME(3))');
 }
 
 function cap2_health_seed(PDO $pdo): void

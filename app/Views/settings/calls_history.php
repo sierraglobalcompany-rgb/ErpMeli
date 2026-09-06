@@ -16,7 +16,7 @@ $automationTab='history'; require __DIR__.'/_automation_nav.php';
 </tbody></table></div>
 <?php if ($history['runs']===[]): ?><p>No hay registros actuales V4. Esto no prueba que el Cron esté apagado.</p><?php endif; ?>
 <nav class="pagination" aria-label="Historial V4">
-<?php if ($page>1): ?><a class="btn" href="?page=<?= $page-1 ?>">Anterior</a><?php endif; ?>
+<?php if ($page>1): ?><a class="btn" href="?<?= View::e(http_build_query(['page'=>$page-1,'per_page'=>$perPage])) ?>">Anterior</a><?php endif; ?>
 <span>Página <?= $page ?></span>
-<?php if ($page*$perPage<$history['total']): ?><a class="btn" href="?page=<?= $page+1 ?>">Siguiente</a><?php endif; ?>
+<?php if ($page*$perPage<$history['total']): ?><a class="btn" href="?<?= View::e(http_build_query(['page'=>$page+1,'per_page'=>$perPage])) ?>">Siguiente</a><?php endif; ?>
 </nav></div></section>

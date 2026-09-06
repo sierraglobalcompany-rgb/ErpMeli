@@ -1160,11 +1160,7 @@ final class QueueV4DiagnosticBundleService
             'BILLING_INTERVAL_BLOCK_ACTIVE' => $billingBlock['active'] ? 'YES' : 'NO',
             'BILLING_INTERVAL_BLOCK_UNTIL' => $billingBlock['until'],
             'BILLING_INTERVAL_BLOCK_REMAINING_SECONDS' => $billingBlock['remaining_seconds'],
-            'BILLING_429_STREAK' => (int) ($billing429Backoff['streak'] ?? 0),
-            'BILLING_429_BACKOFF_LEVEL' => (int) ($billing429Backoff['level'] ?? 0),
-            'BILLING_429_BACKOFF_SECONDS' => (int) ($billing429Backoff['backoff_seconds'] ?? 0),
             'BILLING_429_BACKOFF_UNTIL' => $billing429Backoff['backoff_until'] ?? null,
-            'BILLING_429_BACKOFF_ACTIVE' => !empty($billing429Backoff['backoff_active']) ? 'YES' : 'NO',
             'BILLING_429_LAST_REAL_AT' => $billing429Backoff['last_real_at'] ?? null,
             'BILLING_429_LAST_SUCCESS_AT' => $billing429Backoff['last_success_at'] ?? null,
             'BILLING_429_RETRY_AFTER_SOURCE' => $billing429Backoff['retry_after_source'] ?? 'none',
@@ -1642,6 +1638,11 @@ final class QueueV4DiagnosticBundleService
             && $evidence[$key] >= 0 ? $evidence[$key] : null;
         return [
             'BILLING_429_EVIDENCE_STATE' => in_array($state, ['OK', 'UNKNOWN', 'ERROR'], true) ? $state : 'UNKNOWN',
+            'BILLING_429_STREAK' => $state === 'OK' ? $number('streak') : null,
+            'BILLING_429_BACKOFF_LEVEL' => $state === 'OK' ? $number('level') : null,
+            'BILLING_429_BACKOFF_SECONDS' => $state !== 'ERROR' ? $number('backoff_seconds') : null,
+            'BILLING_429_BACKOFF_ACTIVE' => $state !== 'ERROR' && is_bool($evidence['backoff_active'] ?? null)
+                ? ($evidence['backoff_active'] ? 'YES' : 'NO') : 'UNKNOWN',
             'BILLING_429_RAW_EVENT_ROWS' => $number('raw_event_rows'),
             'BILLING_429_UNIQUE_PHYSICAL_EVENTS' => $state === 'OK' ? $number('unique_physical_events') : null,
             'BILLING_429_KNOWN_PHYSICAL_EVENTS' => $number('known_physical_events'),

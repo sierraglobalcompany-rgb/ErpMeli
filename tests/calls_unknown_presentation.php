@@ -8,6 +8,8 @@ foreach(['UNKNOWN','ERROR'] as $status) {
     k1b_assert($data['BILLING_429_UNIQUE_PHYSICAL_EVENTS']===null,'unknown_count_became_zero');
     k1b_assert($data['BILLING_429_EVIDENCE_STATE']===$status,'certainty_not_preserved');
     k1b_assert($data['BILLING_429_KNOWN_PHYSICAL_EVENTS']===2,'known_subset_lost');
+    k1b_assert(array_key_exists('BILLING_429_STREAK',$data) && $data['BILLING_429_STREAK']===null,'unknown_streak_became_zero');
+    k1b_assert(($data['BILLING_429_BACKOFF_ACTIVE']??null)==='UNKNOWN','missing_backoff_presented_safe');
 }
 $data=$projection->invoke($service,['status'=>'OK','unique_physical_events'=>0,'known_physical_events'=>0,'unknown_rows'=>0]);
 k1b_assert($data['BILLING_429_UNIQUE_PHYSICAL_EVENTS']===0,'certified_zero_lost');

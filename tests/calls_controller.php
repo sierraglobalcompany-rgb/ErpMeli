@@ -15,6 +15,7 @@ namespace App\Services {
     final class ManualSingleStepService {
         public function executePreview(string $token,int $user,int $calls): array {
             $GLOBALS['calls_admitted'] = [$token,$user,$calls];
+            if (($GLOBALS['mode']??'')==='missing') return [];
             return ['status'=>'deferred','selected_count'=>30,'processed_count'=>1,'not_processed_count'=>29,
                 'requested_api_calls'=>$calls,'effective_api_calls'=>$calls,'api_calls_used'=>1,'api_calls_remaining'=>0,
                 'evidence_state'=>'CERTIFIED','stop_reason'=>'call_budget_exhausted','results'=>[['status'=>'deferred']]];
@@ -30,6 +31,12 @@ $_POST=['_token'=>'qa-csrf','preview_token'=>str_repeat('a',40),'scope'=>'recomm
 if ($mode==='legacy') $_POST['process_limit']='30';
 if ($mode==='invalid') $_POST['physical_api_call_budget']='1.5';
 register_shutdown_function(static function() use ($mode): void {
+    if ($mode==='missing') {
+        $r=\App\Core\Session::get('manual_processing_result');
+        k1b_assert(($r['stop_reason']??'')==='unknown','missing_result_declared_completed');
+        k1b_assert(\App\Core\Session::flash('success')===null,'missing_result_flashes_success');
+        echo "PASS missing result is unknown\n"; return;
+    }
     if ($mode!=='valid') {
         k1b_assert(!isset($GLOBALS['calls_admitted']),'invalid_or_legacy_post_executed');
         echo "PASS calls controller rejects $mode\n"; return;

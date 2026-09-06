@@ -1178,19 +1178,20 @@ final class SettingsController
                 $manualAccountLabel = 'Cuenta autorizada';
             }
         }
-        $availableQueueCount = 0;
+        $availableQueueCount = null;
         if ($campaignReady && !$emergencyStop) {
             try {
                 $scopeContext = new BusinessScopeContext();
                 $authorizedAccountIds = $accountId > 0
                     ? [(int) $scopeContext->account($accountId, 0, $userId)['id']]
                     : $scopeContext->accountIds($userId);
+                $availableQueueCount = 0; // A certified empty authorized scope.
                 if ($authorizedAccountIds !== []) {
                     $availableQueueCount = (new \App\QueueV4Clean\QueueV4CleanRepository(Database::connection()))
                         ->eligibleCount($authorizedAccountIds, $accountId ?: null);
                 }
             } catch (\Throwable) {
-                $availableQueueCount = 0;
+                $availableQueueCount = null;
             }
         }
         $manualResult = Session::get('manual_processing_result');
@@ -1373,12 +1374,12 @@ final class SettingsController
                 (int) Auth::id(),
                 $limit
             );
-            $status = (string) ($result['status'] ?? 'completed');
+            $status = (string) ($result['status'] ?? 'unknown');
             if (!empty($result['manual_available_queue'])) {
                 Session::put('manual_available_queue_result', $result);
                 Session::flash(
                     $status !== 'completed' ? 'warning' : 'success',
-                    (string) ($result['message'] ?? 'Pendientes disponibles atendidos.')
+                    (string) ($result['message'] ?? 'La petición terminó; revise el resultado y la evidencia de llamadas.')
                 );
                 $this->redirect('/settings/manual-processing?scope=available_queue#resultado-proceso');
             }
@@ -1418,7 +1419,7 @@ final class SettingsController
             ]);
             Session::flash(
                 $status !== 'completed' ? 'warning' : 'success',
-                (string) ($result['message'] ?? ('Se proceso la seleccion exacta: ' . $selected . ' trabajo(s).'))
+                (string) ($result['message'] ?? 'La petición terminó; revise lo atendido, lo pendiente y la evidencia de llamadas.')
             );
             $this->redirect('/settings/manual-processing');
         } catch (\Throwable $error) {

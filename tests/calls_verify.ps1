@@ -20,7 +20,7 @@ $env:CALLS_QA_STORAGE_ROOT = Join-Path $out 'runtime'
 $cases = @{
     selftest = @('calls_verify_fixture fail','calls_verify_fixture pass')
     static = @(
-        'calls_verify_inputs','calls_readiness_transport','calls_readiness_ui.js',
+        'calls_verify_inputs','calls_migration_blobs','calls_readiness_transport','calls_readiness_ui.js',
         'calls_ui','calls_unknown_presentation','calls_history_ui','calls_increase_certainty',
         'calls_technical_budget','calls_technical_launchers','calls_technical_oauth',
         'calls_manual_contract','calls_manual_preview_projection','calls_manual_receipt_certainty','calls_transport_budget','calls_transport_sources','calls_billing_identity',

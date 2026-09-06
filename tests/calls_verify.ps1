@@ -45,7 +45,7 @@ $cases = @{
     transport = @('calls_transport_mysql','cap2_transport_mysql','cap2_domains_mysql','cap2_uncertain_recovery','calls_oauth_persistence_mysql','calls_domains_regression_mysql')
     readiness = @('calls_readiness_contract','calls_readiness_safety','calls_readiness_uncertain','calls_readiness_transport --mysql')
     entrypoints = @('calls_entrypoints_http_mysql')
-    package = @('calls_package_contract','cap2_package_handoff','cap2_package_evidence')
+    package = @('calls_package_contract','cap2_package_handoff','calls_package_evidence','cap2_package_evidence')
 }
 $httpCases = @('prepare','check','cancel','activate','stop','legacy','invalid-step','invalid-run','invalid-token','injected-scope',
     'run-zero','run-negative','run-overflow','run-array','step-zero','step-four','step-array','token-empty','token-short','token-nonhex',

@@ -48,7 +48,9 @@ k1b_assert(str_contains($rhythm, 'ORDERS_SEARCH_LOCAL_CEILING = 3'), 'orders_sea
 
 k1b_assert(substr_count($worker, 'remote_429_global_pause') >= 3, 'worker_global_429_scope');
 k1b_assert(str_contains($worker, '$endReason = \'remote_429_global_pause\';') && str_contains($worker, 'break;'), 'worker_429_breaks_cycle');
-k1b_assert(str_contains($worker, '$endReason !== \'remote_429_global_pause\' && QueueV4CleanCycleBudget::exhausted()'), 'worker_429_stop_reason_priority');
+$protectedReason = strpos($worker, "in_array(\$endReason, ['remote_429_global_pause', 'remote_result_uncertain'], true)");
+$budgetReason = strpos($worker, "\$endReason = 'call_budget_exhausted';");
+k1b_assert($protectedReason !== false && $budgetReason !== false && $protectedReason < $budgetReason, 'worker_429_stop_reason_priority');
 k1b_assert(str_contains($client, 'notifyCriticalApiIncident'), 'client_calls_email_alert');
 k1b_assert(substr_count($client, 'remote_429_global_pause') >= 2, 'client_429_global_scope');
 k1b_assert(str_contains($client, "\$meta['source']") && str_contains($client, "\$meta['job_type']") && str_contains($client, "\$meta['source_work_id']"), 'email_context_uses_canonical_meta');

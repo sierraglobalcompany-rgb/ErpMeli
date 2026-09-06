@@ -135,7 +135,7 @@ try {
     Cap2DomainsWire::$responses['/items/MCO8199'] = [429,['message'=>'rate limit','error'=>'too_many_requests','status'=>429]];
     Cap2DomainsWire::$responses['/questions/8198'] = [200,['id'=>8198,'text'=>'must not be called','status'=>'UNANSWERED']];
     $before=count(Cap2DomainsWire::$calls);
-    $limited=cap2_domains_run($pdo,3);
+    $limited=cap2_domains_run($pdo,100);
     k1b_assert(count(Cap2DomainsWire::$calls)===$before+1 && $limited['cycle_used']===1 && $limited['physical_http_calls']===1,'real_item_429_stops_remaining_cycle');
     k1b_assert((int)$pdo->query("SELECT COUNT(*) FROM queue_v4_clean_transport_events WHERE company_id=9001 AND meli_account_id=9011 AND source_kind='queue' AND work_id={$badJob} AND endpoint_key='item_exact' AND http_status=429 AND dispatch_state='RESPONSE_KNOWN'")->fetchColumn()===1,'item_429_durable_journal');
     k1b_assert($pdo->query("SELECT status FROM meli_notification_work_items WHERE id={$badItem}")->fetchColumn()!=='complete','item_429_not_complete');

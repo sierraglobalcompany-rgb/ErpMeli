@@ -590,7 +590,10 @@ final class NotificationWorkItemService
             return ['status'=>'protected','stop_reason'=>'api_manual_pause', 'processed' => 0, 'message' => 'La protección preventiva aplazó esta consulta.', 'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 300)];
         } catch (MeliApiException $error) {
             $diagnosticId = $this->reportWorkError($work, $error, 'api');
-            $this->deferApiError($work, $owner, $error, $diagnosticId);
+            if ($this->deferApiError($work, $owner, $error, $diagnosticId)) {
+                return ['status'=>'complete','processed'=>1,'result'=>'question_not_available',
+                    'message'=>'La pregunta ya no está disponible en Mercado Libre.'];
+            }
             return ['status'=>'protected','stop_reason'=>'remote_'.max(0,(int)$error->httpStatus),'http_status'=>$error->httpStatus, 'processed' => 0, 'message' => $this->safeMessage($error), 'diagnostic_id' => $diagnosticId];
         } catch (Throwable $error) {
             $diagnosticId = $this->reportWorkError($work, $error, 'processing');
@@ -691,7 +694,10 @@ final class NotificationWorkItemService
             return ['status' => 'deferred', 'processed' => 0, 'message' => 'La protección preventiva aplazó esta consulta.', 'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 300)];
         } catch (MeliApiException $error) {
             $diagnosticId = $this->reportWorkError($work, $error, 'api');
-            $this->deferApiError($work, $owner, $error, $diagnosticId);
+            if ($this->deferApiError($work, $owner, $error, $diagnosticId)) {
+                return ['status'=>'complete','processed'=>1,'result'=>'question_not_available',
+                    'message'=>'La pregunta ya no está disponible en Mercado Libre.'];
+            }
             throw $error;
         } catch (Throwable $error) {
             $diagnosticId = $this->reportWorkError($work, $error, 'processing');
@@ -965,13 +971,13 @@ final class NotificationWorkItemService
         }
     }
 
-    /** @param array<string,mixed> $work */
-    private function deferApiError(array $work, string $owner, MeliApiException $error, string $diagnosticId): void
+    /** @param array<string,mixed> $work @return bool True only after expected absence is durably closed. */
+    private function deferApiError(array $work, string $owner, MeliApiException $error, string $diagnosticId): bool
     {
         $statusCode = (int) $error->httpStatus;
         if ($statusCode === 404 && (string) ($work['resource_type'] ?? '') === 'question') {
             $this->completeExpectedAbsence($work, $owner, $diagnosticId);
-            return;
+            return true;
         }
         $minutes = $statusCode === 429
             ? max(1, $this->settings->int('notifications.cooldown_429_minutes', 30))
@@ -989,6 +995,7 @@ final class NotificationWorkItemService
             'api',
             !in_array($statusCode, [403, 429], true)
         );
+        return false;
     }
 
     /** @param array<string,mixed> $work */

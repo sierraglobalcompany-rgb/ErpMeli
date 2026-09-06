@@ -433,11 +433,7 @@ final class ManualCampaignPreviewService
         if ($queueKey === null || !ctype_digit($sourceId) || $accountId < 1 || $companyId < 1) {
             return null;
         }
-        $adapter = (new ManualCampaignAdapterRegistry())->forQueue($queueKey);
-        if ($adapter === null || !$adapter->supportsExact()) {
-            return null;
-        }
-        $state = $adapter->inspect($sourceId, $accountId);
+        $state = (new ManualCampaignSourceInspector())->inspect($queueKey, $sourceId, $accountId, $companyId);
         if (!$state->exists || $state->terminal || !$state->eligible) {
             return null;
         }

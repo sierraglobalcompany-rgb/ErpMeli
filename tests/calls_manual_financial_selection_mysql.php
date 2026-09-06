@@ -7,6 +7,7 @@ use App\QueueV4Clean\QueueV4CleanCycleBudget;
 use App\QueueV4Clean\QueueV4CleanRepository;
 use App\QueueV4Clean\QueueV4CleanWorker;
 use App\Services\Cap2DomainsWire;
+use App\Services\ManualCampaignPreviewService;
 use App\Services\SaleFinancialStateService;
 
 $assert = static function (bool $condition, string $label): void {
@@ -48,7 +49,10 @@ try {
     }
 
     $repository = new QueueV4CleanRepository($pdo);
-    $rows = $repository->previewEligible(60, [9011], 9011);
+    $rows = array_values(array_filter(array_map(
+        static fn(array $row):?array => ManualCampaignPreviewService::bindAvailableSourceIdentity($row),
+        $repository->previewEligible(60, [9011], 9011)
+    )));
     $assert(count($rows) === 2, 'two_contiguous_financial_pointers_previewed');
     $confirmed = [$rows[0]];
     Cap2DomainsWire::$responses['/billing/integration/group/ML/order/details'] = [200, []];

@@ -77,8 +77,16 @@ try {
         $pdo->exec('UPDATE sync_sales_repair_jobs SET lock_owner="replacement",lease_generation=lease_generation+1 WHERE id=' . $raceId);
         throw new RuntimeException('fixture_wire_owner_changed');
     };
+    // This is a new independent execution. The preceding uncertain response
+    // must keep its original outer cycle stopped, not leak a usable budget into
+    // the ownership-race fixture or prevent that fixture reaching its wire.
+    $check(QueueV4CleanCycleBudget::exhausted(), 'prior_uncertain_cycle_remains_stopped');
+    QueueV4CleanCycleBudget::clear();
+    QueueV4CleanCycleBudget::start(100);
+    $beforeRace = count(Cap2DomainsWire::$calls);
     usleep(2200000);
-    $uncertain(fn() => $repair->processDue(1));
+    $raceEscaped = $uncertain(fn() => $repair->processDue(1));
+    $check($raceEscaped && count(Cap2DomainsWire::$calls) === $beforeRace + 1, 'ownership_race_reaches_one_physical_wire');
     $check($pdo->query('SELECT status FROM sync_sales_repair_job_items WHERE sync_sales_repair_job_id=' . $raceId)->fetchColumn() === 'running', 'lost_owner_cannot_finish_repair_item');
     Cap2DomainsWire::$onWire = static function (): void { throw new RuntimeException('fixture_wire_response_lost'); };
     QueueV4CleanCycleBudget::clear();

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('static','database','manual','transport','readiness','package','selftest')][string]$Group = 'static'
+    [ValidateSet('static','database','manual','transport','readiness','entrypoints','package','selftest')][string]$Group = 'static'
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -42,8 +42,9 @@ $cases = @{
         'cap2_manual_outcomes','cap2_manual_busy','cap2_manual_items','cap2_manual_orphan',
         'cap2_manual_launcher','capacity_manual_runtime','capacity_manual_selection'
     )
-    transport = @('calls_transport_mysql','cap2_transport_mysql','cap2_domains_mysql','cap2_uncertain_recovery','calls_oauth_persistence_mysql')
-    readiness = @('calls_readiness_contract','calls_readiness_safety','calls_readiness_transport --mysql')
+    transport = @('calls_transport_mysql','cap2_transport_mysql','cap2_domains_mysql','cap2_uncertain_recovery','calls_oauth_persistence_mysql','calls_domains_regression_mysql')
+    readiness = @('calls_readiness_contract','calls_readiness_safety','calls_readiness_uncertain','calls_readiness_transport --mysql')
+    entrypoints = @('calls_entrypoints_http_mysql')
     package = @('calls_package_contract','cap2_package_handoff','cap2_package_evidence')
 }
 $httpCases = @('prepare','check','cancel','activate','stop','legacy','invalid-step','invalid-run','invalid-token','injected-scope',

@@ -1163,14 +1163,9 @@ final class QueueV4DiagnosticBundleService
             'BILLING_429_BACKOFF_UNTIL' => $billing429Backoff['backoff_until'] ?? null,
             'BILLING_429_LAST_REAL_AT' => $billing429Backoff['last_real_at'] ?? null,
             'BILLING_429_LAST_SUCCESS_AT' => $billing429Backoff['last_success_at'] ?? null,
-            'BILLING_429_RETRY_AFTER_SOURCE' => $billing429Backoff['retry_after_source'] ?? 'none',
-            'BILLING_429_RETRY_AFTER_SECONDS' => (int) ($billing429Backoff['retry_after_seconds'] ?? 0),
             ...$this->billingEvidenceProjection($billing429Backoff),
             'BILLING_429_PHYSICAL_CORRELATION_KEY' => (string) ($billing429Backoff['physical_correlation_key'] ?? 'UNKNOWN'),
-            'BILLING_429_CORRELATION_KEY_AVAILABLE' => !empty($billing429Backoff['correlation_key_available']) ? 'YES' : 'NO',
             'BILLING_429_FALLBACK_DEDUPE_TOLERANCE_MS' => 0,
-            'API_REQUEST_LOGS_HAS_RETRY_AFTER_SECONDS' => !empty($billing429Backoff['api_request_logs_has_retry_after_seconds']) ? 'YES' : 'NO',
-            'API_REMOTE_PERMITS_HAS_RETRY_AFTER_SECONDS' => !empty($billing429Backoff['api_remote_permits_has_retry_after_seconds']) ? 'YES' : 'NO',
             'API_REMOTE_PERMITS_RETRY_AFTER_FALLBACK' => (string) ($billing429Backoff['api_remote_permits_retry_after_fallback'] ?? 'UNKNOWN'),
             'STALE_12H_429_RECONCILIATION' => $this->lastStale429Reconciliation,
             'CURRENT_DUPLICATE_BACKOFF_CAN_BE_RELEASED' => (string) ($this->lastStale429Reconciliation['current_duplicate_backoff_can_be_released'] ?? 'NO'),
@@ -1636,6 +1631,8 @@ final class QueueV4DiagnosticBundleService
         $state = (string) ($evidence['status'] ?? 'UNKNOWN');
         $number = static fn (string $key): ?int => isset($evidence[$key]) && is_int($evidence[$key])
             && $evidence[$key] >= 0 ? $evidence[$key] : null;
+        $flag = static fn (string $key): string => $state !== 'ERROR' && is_bool($evidence[$key] ?? null)
+            ? ($evidence[$key] ? 'YES' : 'NO') : 'UNKNOWN';
         return [
             'BILLING_429_EVIDENCE_STATE' => in_array($state, ['OK', 'UNKNOWN', 'ERROR'], true) ? $state : 'UNKNOWN',
             'BILLING_429_STREAK' => $state === 'OK' ? $number('streak') : null,
@@ -1643,6 +1640,11 @@ final class QueueV4DiagnosticBundleService
             'BILLING_429_BACKOFF_SECONDS' => $state !== 'ERROR' ? $number('backoff_seconds') : null,
             'BILLING_429_BACKOFF_ACTIVE' => $state !== 'ERROR' && is_bool($evidence['backoff_active'] ?? null)
                 ? ($evidence['backoff_active'] ? 'YES' : 'NO') : 'UNKNOWN',
+            'BILLING_429_RETRY_AFTER_SOURCE' => $state !== 'ERROR' ? ($evidence['retry_after_source'] ?? 'UNKNOWN') : 'UNKNOWN',
+            'BILLING_429_RETRY_AFTER_SECONDS' => $state !== 'ERROR' ? $number('retry_after_seconds') : null,
+            'BILLING_429_CORRELATION_KEY_AVAILABLE' => $flag('correlation_key_available'),
+            'API_REQUEST_LOGS_HAS_RETRY_AFTER_SECONDS' => $flag('api_request_logs_has_retry_after_seconds'),
+            'API_REMOTE_PERMITS_HAS_RETRY_AFTER_SECONDS' => $flag('api_remote_permits_has_retry_after_seconds'),
             'BILLING_429_RAW_EVENT_ROWS' => $number('raw_event_rows'),
             'BILLING_429_UNIQUE_PHYSICAL_EVENTS' => $state === 'OK' ? $number('unique_physical_events') : null,
             'BILLING_429_KNOWN_PHYSICAL_EVENTS' => $number('known_physical_events'),

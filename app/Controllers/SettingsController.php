@@ -1412,6 +1412,10 @@ final class SettingsController
                 'requested_api_calls' => $result['requested_api_calls'] ?? $limit,
                 'effective_api_calls' => $result['effective_api_calls'] ?? null,
                 'api_calls_used' => $result['api_calls_used'] ?? $result['physical_http_calls'] ?? null,
+                'physical_http_calls' => array_key_exists('physical_http_calls', $result)
+                    ? $result['physical_http_calls'] : (($result['evidence_state'] ?? '') === 'CERTIFIED' ? ($result['api_calls_used'] ?? null) : null),
+                'known_physical_calls' => $result['known_physical_calls'] ?? null,
+                'unresolved_reservations' => $result['unresolved_reservations'] ?? null,
                 'api_calls_remaining' => $result['api_calls_remaining'] ?? null,
                 'evidence_state' => $result['evidence_state'] ?? 'UNKNOWN',
                 'stop_reason' => $result['stop_reason'] ?? $status,

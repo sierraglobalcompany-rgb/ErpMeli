@@ -35,10 +35,11 @@ try {
     $selectsAfter = (int) $pdo->query("SHOW SESSION STATUS LIKE 'Com_select'")->fetch(PDO::FETCH_ASSOC)['Value'];
     $guardSelects = $selectsAfter - $selectsBefore;
     k1b_assert($instrumentedGate['allowed'] === true, 'instrumented_healthy_fixture_must_allow');
-    // Calls adds five admission-only SELECTs: two schema probes, one UNION
-    // identity evidence read and two persisted rhythm/pause reads. None run
+    // Calls adds six admission-only SELECTs: two schema probes, one UNION
+    // identity evidence read, one historical uncertainty anchor aggregate,
+    // and two persisted rhythm/pause reads. None run
     // per physical call here; the pre-calls baseline for this fixture was 12.
-    k1b_assert($guardSelects <= 17, 'capacity_health_guard_select_budget_exceeded:' . $guardSelects);
+    k1b_assert($guardSelects <= 18, 'capacity_health_guard_select_budget_exceeded:' . $guardSelects);
 
     $pdo->exec("INSERT INTO companies VALUES (6,'OAuth inactiva',0)");
     $pdo->exec("INSERT INTO meli_accounts VALUES (66,6,'Cuenta OAuth 66','u66','conectado')");

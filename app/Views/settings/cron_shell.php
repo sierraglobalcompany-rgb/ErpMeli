@@ -158,7 +158,7 @@ $maxCalls = (int) $callBudget['max_calls'];
   <details class="technical-details cron-admin-actions">
     <summary><span>Acciones administrativas</span><span aria-hidden="true">⌄</span></summary>
     <div class="technical-details-body">
-      <p>Estas acciones conservan sesión administrativa, CSRF y contraseña.</p>
+      <p>Prepare sin llamadas y compruebe cada cuenta por separado: máximo una llamada por clic. La confirmación administrativa dura diez minutos; activar o detener conserva su confirmación independiente.</p>
       <label>Contraseña administrativa
         <input type="password" autocomplete="current-password" data-qv4-password>
       </label>
@@ -166,7 +166,13 @@ $maxCalls = (int) $callBudget['max_calls'];
         <form method="post" action="<?= View::e($base) ?>/settings/cron/queue-v4/readiness" data-qv4-action="readiness">
           <input type="hidden" name="_token" value="<?= View::e($csrfToken) ?>">
           <input type="hidden" name="admin_password" value="">
-          <button class="btn primary" type="submit" disabled>Comprobar y certificar</button>
+          <input type="hidden" name="action" value="prepare">
+          <button class="btn primary" type="submit" disabled>Preparar comprobación · sin llamadas</button>
+        </form>
+        <form method="post" action="<?= View::e($base) ?>/settings/cron/queue-v4/readiness" data-qv4-action="cancel">
+          <input type="hidden" name="_token" value="<?= View::e($csrfToken) ?>">
+          <input type="hidden" name="action" value="cancel">
+          <button class="btn" type="submit" disabled>Cancelar comprobación</button>
         </form>
         <form method="post" action="<?= View::e($base) ?>/settings/cron/queue-v4/activate" data-qv4-action="activate">
           <input type="hidden" name="_token" value="<?= View::e($csrfToken) ?>">
@@ -179,6 +185,8 @@ $maxCalls = (int) $callBudget['max_calls'];
           <button class="btn danger" type="submit" disabled>Detener</button>
         </form>
       </div>
+      <p class="muted mt-2" data-qv4-progress aria-live="polite">Sin comprobación preparada.</p>
+      <p class="muted" data-qv4-selected-accounts></p>
       <p class="muted mt-2" data-qv4-feedback aria-live="polite">Cargando estado sin mutaciones…</p>
     </div>
   </details>

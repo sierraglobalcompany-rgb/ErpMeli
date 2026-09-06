@@ -518,25 +518,44 @@
   const password = root.querySelector('[data-qv4-password]');
   const feedback = root.querySelector('[data-qv4-feedback]');
   let snapshot = null;
+  let refreshId = 0;
+  const busy = new Set();
   const actions = [...root.querySelectorAll('[data-qv4-action]')];
   const labels = {
     NOT_READY: 'No preparado', READY_TO_TEST: 'Listo para comprobar', TESTING: 'Comprobando',
     CERTIFIED: 'Certificado', FAILED: 'Falló la comprobación'
   };
   const safe = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
+  const ownRun = () => Number.isInteger(snapshot?.run_id) && snapshot.run_id > 0
+    && /^[a-f0-9]{64}$/.test(snapshot?.run_token || '');
+  const freshRun = () => {
+    const expiry = String(snapshot?.expires_at || '');
+    const utc = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(expiry) ? expiry.replace(' ', 'T') + 'Z' : expiry;
+    return ownRun() && Date.parse(utc) > Date.now();
+  };
   const syncButtons = () => {
     const hasPassword = Boolean(password?.value);
     actions.forEach((form) => {
       const action = form.dataset.qv4Action;
       const button = form.querySelector('button');
-      const enabled = action === 'readiness'
-        ? snapshot?.state === 'READY_TO_TEST'
-        : action === 'activate'
-          ? snapshot?.state === 'CERTIFIED'
-            && ['CERTIFIED', 'STOPPED'].includes(snapshot?.engine)
-            && (snapshot?.issues || []).length === 0
-          : snapshot?.engine === 'ACTIVE';
-      if (button) button.disabled = !(hasPassword && enabled);
+      const checking = snapshot?.state === 'TESTING';
+      const nextStep = Number(snapshot?.next_step);
+      let enabled = false;
+      if (action === 'readiness') {
+        enabled = checking
+          ? freshRun() && Number.isInteger(nextStep) && nextStep >= 1 && nextStep <= 3
+          : hasPassword && ['READY_TO_TEST', 'FAILED'].includes(snapshot?.state) && (snapshot?.issues || []).length === 0;
+        if (button && !busy.has(action)) button.textContent = checking
+          ? 'Comprobar siguiente cuenta · máximo 1 llamada' : 'Preparar comprobación · sin llamadas';
+      } else if (action === 'cancel') {
+        enabled = checking && Number(snapshot?.run_id || snapshot?.active_run_id) > 0 && (freshRun() || hasPassword);
+      } else if (action === 'activate') {
+        enabled = hasPassword && freshRun() && snapshot?.state === 'CERTIFIED'
+          && ['CERTIFIED', 'STOPPED'].includes(snapshot?.engine) && (snapshot?.issues || []).length === 0;
+      } else if (action === 'stop') {
+        enabled = hasPassword && (checking || ['ACTIVE', 'CERTIFIED'].includes(snapshot?.engine));
+      }
+      if (button) button.disabled = !enabled || busy.has(action);
     });
   };
   const render = (data) => {
@@ -544,7 +563,18 @@
     root.querySelector('[data-qv4-state]').textContent = labels[data.state] || data.state || 'No preparado';
     root.querySelector('[data-qv4-message]').textContent = (data.issues || []).length
       ? `Bloqueado: ${(data.issues || []).join(', ')}.`
-      : 'Automatización activa y sin atención crítica inmediata.';
+      : data.engine === 'ACTIVE' ? 'Motor activo. Compruebe su última señal y las protecciones.'
+        : data.state === 'CERTIFIED' ? 'Comprobación completada. La activación es una acción separada.'
+          : data.state === 'TESTING' ? 'Comprobación en curso: cada siguiente cuenta requiere su clic.'
+            : 'Motor detenido. No se ha iniciado procesamiento automático.';
+    const progress = root.querySelector('[data-qv4-progress]');
+    if (progress) progress.textContent = ownRun()
+      ? `${Number(data.readiness_get_passed || 0)}/3 cuentas comprobadas. ${freshRun() ? `Vence: ${data.expires_at}.` : 'El intento venció; cancele y prepare nuevamente.'}`
+      : data.state === 'TESTING' ? 'Existe un intento sin contexto válido en esta sesión. Puede cancelarlo con confirmación administrativa.'
+        : 'Sin comprobación preparada en esta sesión.';
+    const accounts = root.querySelector('[data-qv4-selected-accounts]');
+    if (accounts) accounts.textContent = ownRun() && Array.isArray(data.accounts)
+      ? data.accounts.map((account) => account.account_name || account.nickname || `Cuenta ${account.meli_account_id}`).join(' · ') : '';
     root.querySelector('[data-qv4-engine]').textContent = data.engine || 'STOPPED';
     root.querySelector('[data-qv4-oauth]').textContent = `${Number(data.accounts_oauth || 0)}/3`;
     root.querySelector('[data-qv4-readiness]').textContent = `${Number(data.readiness_get_passed || 0)}/3`;
@@ -620,7 +650,8 @@
     root.querySelector('[data-qv4-legacy]').textContent = data.legacy_state_consulted ? 'Error: legado consultado' : 'Legado no consultado';
     syncButtons();
   };
-  const refresh = async () => {
+  const refresh = async (report = true) => {
+    const requestId = ++refreshId;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), statusTimeoutMs);
     try {
@@ -636,14 +667,18 @@
       }
       const data = await response.json().catch(() => { throw new Error('Queue V4 devolvió JSON inválido.'); });
       if (!response.ok || data.ok === false) throw new Error(data.message || 'Queue V4 no disponible.');
+      if (requestId !== refreshId) return false;
       render(data);
-      feedback.textContent = 'Estado actualizado sin mutaciones.';
+      if (report) feedback.textContent = 'Estado actualizado sin mutaciones.';
+      return true;
     } catch (error) {
+      if (requestId !== refreshId) return false;
       snapshot = null;
       syncButtons();
       feedback.textContent = error?.name === 'AbortError'
         ? 'El backend Queue V4 agotó el tiempo de respuesta.'
         : (error?.message || 'No se pudo leer Queue V4.');
+      return false;
     } finally {
       clearTimeout(timeout);
     }
@@ -653,22 +688,42 @@
     event.preventDefault();
     const button = form.querySelector('button');
     if (!button || button.disabled) return;
-    form.querySelector('[name="admin_password"]').value = password.value;
+    const action = form.dataset.qv4Action;
+    if (busy.has(action)) return;
+    const operation = action === 'readiness' ? (snapshot?.state === 'TESTING' ? 'check' : 'prepare') : action;
+    const submittedPassword = password?.value || '';
+    const payload = new FormData(form);
+    payload.set('admin_password', submittedPassword);
+    if (action === 'readiness' || action === 'cancel') payload.set('action', operation);
+    if (['check', 'cancel', 'activate'].includes(operation)) {
+      payload.set('run_id', String(snapshot?.run_id || snapshot?.active_run_id || ''));
+      payload.set('run_token', ownRun() ? snapshot.run_token : '');
+    }
+    if (operation === 'check') payload.set('step_no', String(snapshot.next_step));
     const previous = button.textContent;
+    busy.add(action);
     button.disabled = true;
     button.textContent = 'Procesando…';
     try {
       const response = await fetch(form.action, {
-        method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' }, body: new FormData(form)
+        method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' }, body: payload
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.ok === false) throw new Error(data.message || 'Operación bloqueada.');
-      password.value = '';
-      feedback.textContent = data.state ? `Queue V4: ${data.state}.` : 'Operación completada.';
-      await refresh();
+      const updated = await refresh(false);
+      const calls = data.physical_http_calls_certainty === 'CERTIFIED' && Number.isInteger(data.physical_http_calls)
+        ? String(data.physical_http_calls) : 'sin cantidad certificada';
+      feedback.textContent = 'Acción respondida.'
+        + (Object.prototype.hasOwnProperty.call(data, 'physical_http_calls_certainty') ? ` Llamadas de esta petición: ${calls}.` : '')
+        + (data.replayed ? ' No se repitió la comprobación.' : '')
+        + (!updated ? ' No se pudo actualizar el estado; recargue antes de continuar.' : '');
     } catch (error) {
-      feedback.textContent = error?.message || 'La operación se bloqueó sin cambiar el motor.';
+      await refresh(false);
+      feedback.textContent = (error?.message || 'No se pudo confirmar el resultado de la petición.')
+        + ' No se ejecutará otra cuenta automáticamente.';
     } finally {
+      if (password?.value === submittedPassword) password.value = '';
+      busy.delete(action);
       button.textContent = previous;
       syncButtons();
     }

@@ -636,21 +636,67 @@ final class SettingsController
 
     private function queueV4CleanMutation(string $action): void
     {
+        $deadline = microtime(true) + 45.0;
         $this->requireAdminPermanent();
         $this->assertSameOrigin();
         Csrf::validate($_POST['_token'] ?? null);
-        (new \App\Services\AdministrativeReauthenticationService())->requirePassword(
-            (string) ($_POST['admin_password'] ?? '')
-        );
         try {
-            $pdo = Database::connectionFresh();
-            $actorId = (int) Auth::id();
-            $result = match ($action) {
-                'readiness' => (new \App\QueueV4Clean\QueueV4CleanReadinessService($pdo))->certify($actorId),
-                'activate' => (new \App\QueueV4Clean\QueueV4CleanControlService($pdo))->activate($actorId),
-                'stop' => (new \App\QueueV4Clean\QueueV4CleanControlService($pdo))->stop($actorId),
-                default => throw new \RuntimeException('queue_v4_clean_action_invalid'),
-            };
+            $operation = $action === 'readiness' ? ($_POST['action'] ?? null) : $action;
+            if (!is_string($operation) || !in_array($operation, ['prepare', 'check', 'cancel', 'activate', 'stop'], true)
+                || ($action === 'readiness' && !in_array($operation, ['prepare', 'check', 'cancel'], true))
+                || array_diff(array_keys($_POST), ['_token', 'admin_password', 'action', 'run_id', 'run_token', 'step_no']) !== []
+            ) {
+                throw new \RuntimeException('Vuelva a preparar la comprobación; la solicitud no es válida.');
+            }
+            $runId = 0;
+            $runToken = '';
+            $stepNo = 0;
+            if (in_array($operation, ['check', 'cancel', 'activate'], true)) {
+                $rawRun = $_POST['run_id'] ?? null;
+                $runToken = $_POST['run_token'] ?? '';
+                if ((!is_string($rawRun) && !is_int($rawRun))
+                    || preg_match('/^[1-9][0-9]*$/D', (string) $rawRun) !== 1
+                    || filter_var($rawRun, FILTER_VALIDATE_INT) === false
+                    || !is_string($runToken)
+                    || (!($operation === 'cancel' && $runToken === '') && preg_match('/^[a-f0-9]{64}$/D', $runToken) !== 1)
+                ) {
+                    throw new \RuntimeException('Vuelva a preparar la comprobación; su identificación no es válida.');
+                }
+                $runId = (int) $rawRun;
+            }
+            if ($operation === 'check') {
+                $rawStep = $_POST['step_no'] ?? null;
+                if ((!is_string($rawStep) && !is_int($rawStep)) || preg_match('/^[1-3]$/D', (string) $rawStep) !== 1) {
+                    throw new \RuntimeException('La comprobación solicitada no es válida.');
+                }
+                $stepNo = (int) $rawStep;
+            }
+            $password = $_POST['admin_password'] ?? '';
+            if (!is_string($password)) {
+                throw new \RuntimeException('La confirmación administrativa no es válida.');
+            }
+            $reauth = new \App\Services\AdministrativeReauthenticationService();
+            if (in_array($operation, ['check', 'cancel'], true)) {
+                // A password may refresh an expired confirmation or permit explicit orphan cancellation.
+                // It never extends the readiness manifest TTL.
+                if ($password !== '') {
+                    $reauth->requirePassword($password);
+                }
+                $reauth->requireRecent(600);
+            } else {
+                $reauth->requirePassword($password);
+            }
+            $result = \App\Services\CronDeadlineContext::within($deadline, static function () use ($operation, $runId, $runToken, $stepNo): array {
+                $pdo = Database::connectionFresh();
+                $actorId = (int) Auth::id();
+                return match ($operation) {
+                    'prepare' => (new \App\QueueV4Clean\QueueV4CleanReadinessService($pdo))->prepare($actorId),
+                    'check' => (new \App\QueueV4Clean\QueueV4CleanReadinessService($pdo))->check($actorId, $runId, $runToken, $stepNo),
+                    'cancel' => (new \App\QueueV4Clean\QueueV4CleanReadinessService($pdo))->cancel($actorId, $runId, $runToken),
+                    'activate' => (new \App\QueueV4Clean\QueueV4CleanControlService($pdo))->activate($actorId, $runId, $runToken),
+                    'stop' => (new \App\QueueV4Clean\QueueV4CleanControlService($pdo))->stop($actorId),
+                };
+            });
             $this->json($result);
         } catch (\Throwable $error) {
             http_response_code(409);

@@ -78,6 +78,23 @@
   ],
   "runtime_dependencies": [
     {
+      "id": "capacity-change-guard",
+      "path": "app/Services/CapacityChangeGuard.php",
+      "classification": "RUNTIME_REQUIRED",
+      "required_in_runtime_manifest": true,
+      "consumers": [
+        {
+          "source_path": "app/Controllers/SettingsController.php",
+          "symbol": "App\\Services\\CapacityChangeGuard",
+          "path_literal": "CapacityChangeGuard"
+        }
+      ],
+      "provenance": {
+        "kind": "tracked_php_autoload",
+        "generator": "capacity-config from main 191c5ee"
+      }
+    },
+    {
       "id": "capacity-policy",
       "path": "app/Services/CapacityPolicyService.php",
       "classification": "RUNTIME_REQUIRED",

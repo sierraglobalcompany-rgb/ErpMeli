@@ -54,6 +54,7 @@ final class QueueV4CleanWorker
     private ?\Closure $domainHandler;
     /** @var \Closure():SaleFinancialService */
     private \Closure $financialFactory;
+    private bool $confirmedManualSelectionActive = false;
 
     /**
      * @param null|callable(int):MeliReadClientInterface $clientFactory
@@ -93,7 +94,8 @@ final class QueueV4CleanWorker
         int $maxCalls = self::DEFAULT_MAX_CALLS,
         int $runtimeSeconds = 45,
         ?array $authorizedAccountIds = null,
-        ?int $accountId = null
+        ?int $accountId = null,
+        ?array $confirmedSelection = null
     ): array
     {
         $maxCalls = max(0, min(self::HARD_MAX_CALLS, $maxCalls));
@@ -175,34 +177,46 @@ final class QueueV4CleanWorker
                 'physical_http_calls' => 0,
             ];
         }
-        $pointerSafetyLimit = max(self::POINTER_SAFETY_FLOOR, $maxCalls * self::POINTER_SAFETY_MULTIPLIER);
+        $selectedCount = $confirmedSelection === null ? 0 : count($confirmedSelection);
+        $confirmedSelection = $confirmedSelection === null
+            ? null
+            : $this->repository->claimableConfirmedSelection($confirmedSelection, $authorizedAccountIds, $accountId);
+        $staleOrBusySkipped = max(0, $selectedCount - count($confirmedSelection ?? []));
+        $pointerSafetyLimit = $confirmedSelection === null
+            ? max(self::POINTER_SAFETY_FLOOR, $maxCalls * self::POINTER_SAFETY_MULTIPLIER)
+            : count($confirmedSelection);
         $deadline = microtime(true) + max(5, min(45, $runtimeSeconds));
         $owner = bin2hex(random_bytes(16));
         $runId = $this->repository->beginRun($launcher, $owner);
         $claimed = $completed = $deferred = 0;
         try {
-            $this->repository->expireLeases($authorizedAccountIds, $accountId);
-            try {
-                $this->repository->releaseDueWaiting($authorizedAccountIds, $accountId);
-            } catch (Throwable $error) {
-                if (method_exists($this->repository, 'lastFinanceWakeupRuntime')) {
-                    $financeWakeupRuntime = $this->repository->lastFinanceWakeupRuntime();
+            if ($confirmedSelection === null) {
+                $this->repository->expireLeases($authorizedAccountIds, $accountId);
+                try {
+                    $this->repository->releaseDueWaiting($authorizedAccountIds, $accountId);
+                } catch (Throwable $error) {
+                    if (method_exists($this->repository, 'lastFinanceWakeupRuntime')) {
+                        $financeWakeupRuntime = $this->repository->lastFinanceWakeupRuntime();
+                    }
+                    throw $error;
                 }
-                throw $error;
             }
             if (method_exists($this->repository, 'lastFinanceWakeupRuntime')) {
                 $financeWakeupRuntime = $this->repository->lastFinanceWakeupRuntime();
             }
+            $this->confirmedManualSelectionActive = $confirmedSelection !== null;
+            $claimedJobIds = [];
             while ($claimed < $pointerSafetyLimit
                 && !QueueV4CleanCycleBudget::exhausted()
                 && microtime(true) < $deadline - 2.0
                 && CronDeadlineContext::canAcceptWork(2)) {
-                $job = $this->repository->claim($runId, $owner, 60, $authorizedAccountIds, $accountId);
+                $job = $this->repository->claim($runId, $owner, 60, $authorizedAccountIds, $accountId, $confirmedSelection);
                 if ($job === null) {
                     $endReason = 'no_claimable_job';
                     break;
                 }
                 $claimed++;
+                $claimedJobIds[] = (int) $job['id'];
                 try {
                     $outcome = $this->handle($job);
                 } catch (OAuthRefreshRequiredException $error) {
@@ -442,12 +456,17 @@ final class QueueV4CleanWorker
                 'physical_http_calls' => $this->physicalHttpCallsForRun($runId),
                 'call_budget' => QueueV4CleanCycleBudget::snapshot(),
                 'stop_reason' => $endReason,
+                'selected_count' => $selectedCount,
+                'stale_or_busy_skipped' => $staleOrBusySkipped,
+                'claimed_job_ids' => $claimedJobIds,
+                'not_started_count' => max(0, count($confirmedSelection ?? []) - $claimed),
             ];
         } catch (Throwable $error) {
             $this->repository->finishRun($runId, 'failed');
             $endReason = 'worker_exception:' . $this->failureClass($error);
             throw $error;
         } finally {
+            $this->confirmedManualSelectionActive = false;
             $this->writeCycleAuditReceipt([
                 'started_at' => $receiptStartedText,
                 'ended_at' => gmdate('Y-m-d H:i:s'),
@@ -811,7 +830,7 @@ final class QueueV4CleanWorker
                 : $outcome;
         }
 
-        $batchSourceIds = $capability === 'financial_reconciliation'
+        $batchSourceIds = $capability === 'financial_reconciliation' && !$this->confirmedManualSelectionActive
             ? $this->repository->contiguousFinancialReconciliationSourceIds($job, 60)
             : [$sourceId];
         $batchOutcomes = [];

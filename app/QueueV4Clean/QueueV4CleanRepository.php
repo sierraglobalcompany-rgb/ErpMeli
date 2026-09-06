@@ -157,10 +157,12 @@ final class QueueV4CleanRepository
         string $owner,
         int $leaseSeconds = 60,
         ?array $authorizedAccountIds = null,
-        ?int $accountId = null
+        ?int $accountId = null,
+        ?array $confirmedSelection = null
     ): ?array
     {
         [$scopeSql, $scopeParams] = $this->accountScopeSql('q', $authorizedAccountIds, $accountId);
+        [$selectionSql, $selectionParams] = $this->confirmedSelectionSql('q', $confirmedSelection);
         $this->pdo->beginTransaction();
         try {
             $statement = $this->pdo->prepare(
@@ -170,9 +172,10 @@ final class QueueV4CleanRepository
                    AND NOT (" . $this->financialSourceFuturePredicate('q') . ")
                    AND NOT (" . $this->unresolvedPhysicalPredicate('q') . ")
                    AND {$scopeSql}
+                   AND {$selectionSql}
                  ORDER BY available_at ASC,id ASC LIMIT 1 FOR UPDATE SKIP LOCKED"
             );
-            $statement->execute($scopeParams);
+            $statement->execute(array_merge($scopeParams, $selectionParams));
             $row = $statement->fetch(PDO::FETCH_ASSOC);
             if (!is_array($row)) {
                 $this->pdo->commit();
@@ -247,6 +250,8 @@ final class QueueV4CleanRepository
                     q.meli_account_id,
                     q.job_type,
                     q.resource_id,
+                    q.idempotency_key,
+                    SHA2(CAST(q.payload_json AS CHAR),256) AS queue_payload_hash,
                     q.state,
                     q.available_at,
                     JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,'$.capability')) AS capability,
@@ -272,6 +277,36 @@ final class QueueV4CleanRepository
         }
 
         return $rows;
+    }
+
+    /**
+     * @param list<array<string,mixed>> $selection
+     * @param list<int>|null $authorizedAccountIds
+     * @return list<array<string,mixed>>
+     */
+    public function claimableConfirmedSelection(
+        array $selection,
+        ?array $authorizedAccountIds = null,
+        ?int $accountId = null
+    ): array {
+        [$scopeSql, $scopeParams] = $this->accountScopeSql('q', $authorizedAccountIds, $accountId);
+        [$selectionSql, $selectionParams] = $this->confirmedSelectionSql('q', $selection);
+        if ($selectionSql === '1=0') {
+            return [];
+        }
+        $statement = $this->pdo->prepare(
+            "SELECT q.id FROM queue_v4_clean_jobs q
+              WHERE q.state='ready' AND q.available_at<=UTC_TIMESTAMP(3)
+                AND NOT (" . $this->financialSourceFuturePredicate('q') . ")
+                AND NOT (" . $this->unresolvedPhysicalPredicate('q') . ")
+                AND {$scopeSql} AND {$selectionSql}"
+        );
+        $statement->execute(array_merge($scopeParams, $selectionParams));
+        $eligible = array_fill_keys(array_map('intval', $statement->fetchAll(PDO::FETCH_COLUMN)), true);
+        return array_values(array_filter(
+            $selection,
+            static fn (array $row): bool => isset($eligible[(int) ($row['queue_job_id'] ?? 0)])
+        ));
     }
 
     /**
@@ -922,6 +957,8 @@ final class QueueV4CleanRepository
             'queue_key' => 'available_queue',
             'source_id' => (string) ($row['queue_job_id'] ?? ''),
             'queue_job_id' => (int) ($row['queue_job_id'] ?? 0),
+            'selection_id' => 'qv4:' . (int) ($row['queue_job_id'] ?? 0),
+            'selection_version' => $this->queueSelectionVersion($row),
             'company_id' => (int) ($row['company_id'] ?? 0),
             'meli_account_id' => (int) ($row['meli_account_id'] ?? 0),
             'account_name' => (string) ($row['account_name'] ?? ''),
@@ -929,6 +966,8 @@ final class QueueV4CleanRepository
             'job_type' => $jobType,
             'capability' => $capability,
             'resource_id' => (string) ($row['resource_id'] ?? ''),
+            'queue_idempotency_key' => (string) ($row['idempotency_key'] ?? ''),
+            'queue_payload_hash' => (string) ($row['queue_payload_hash'] ?? ''),
             'available_at' => (string) ($row['available_at'] ?? ''),
             'position_no' => $position,
             'human_label' => $type,
@@ -940,6 +979,59 @@ final class QueueV4CleanRepository
             'status_label' => $status,
             'state_label' => $status,
         ];
+    }
+
+    /** @param array<string,mixed> $row */
+    private function queueSelectionVersion(array $row): string
+    {
+        return hash('sha256', json_encode([
+            'queue_job_id' => (int) ($row['queue_job_id'] ?? 0),
+            'company_id' => (int) ($row['company_id'] ?? 0),
+            'meli_account_id' => (int) ($row['meli_account_id'] ?? 0),
+            'job_type' => (string) ($row['job_type'] ?? ''),
+            'resource_id' => (string) ($row['resource_id'] ?? ''),
+            'capability' => (string) ($row['capability'] ?? ''),
+            'idempotency_key' => (string) ($row['idempotency_key'] ?? ''),
+            'payload_hash' => (string) ($row['queue_payload_hash'] ?? ''),
+        ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * @param list<array<string,mixed>>|null $selection
+     * @return array{0:string,1:list<mixed>}
+     */
+    private function confirmedSelectionSql(string $alias, ?array $selection): array
+    {
+        if ($selection === null) {
+            return ['1=1', []];
+        }
+        if (preg_match('/^[A-Za-z][A-Za-z0-9_]*$/', $alias) !== 1) {
+            throw new RuntimeException('queue_v4_clean_alias_invalid');
+        }
+        $clauses = [];
+        $params = [];
+        foreach (array_slice($selection, 0, self::HARD_PREVIEW_LIMIT) as $row) {
+            if (!is_array($row)
+                || (int) ($row['queue_job_id'] ?? 0) < 1
+                || preg_match('/^[a-f0-9]{64}$/', (string) ($row['selection_version'] ?? '')) !== 1
+                || preg_match('/^[a-f0-9]{64}$/', (string) ($row['queue_payload_hash'] ?? '')) !== 1
+                || (string) ($row['queue_idempotency_key'] ?? '') === '') {
+                continue;
+            }
+            $clauses[] = "({$alias}.id=? AND {$alias}.company_id=? AND {$alias}.meli_account_id=?
+                AND {$alias}.job_type=? AND COALESCE({$alias}.resource_id,'')=?
+                AND {$alias}.idempotency_key=? AND SHA2(CAST({$alias}.payload_json AS CHAR),256)=?)";
+            array_push($params,
+                (int) $row['queue_job_id'],
+                (int) ($row['company_id'] ?? 0),
+                (int) ($row['meli_account_id'] ?? 0),
+                (string) ($row['job_type'] ?? ''),
+                (string) ($row['resource_id'] ?? ''),
+                (string) $row['queue_idempotency_key'],
+                (string) $row['queue_payload_hash']
+            );
+        }
+        return $clauses === [] ? ['1=0', []] : ['(' . implode(' OR ', $clauses) . ')', $params];
     }
 
     private function humanQueueType(string $jobType, string $capability): string

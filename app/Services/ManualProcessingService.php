@@ -38,15 +38,22 @@ final class ManualProcessingService
             'audits' => ['sales_audit','sales_repair','order_date_repair'],
             'products' => ['items_sync'],
             'descriptions' => ['catalog_descriptions'],
-            'modules' => [],
             'local' => ['operational_maintenance','order_date_repair','financial_recalc'],
         ];
+    }
+
+    public function assertScope(string $scopeKey): string
+    {
+        if (!array_key_exists($scopeKey, $this->scopes())) {
+            throw new \RuntimeException('El alcance manual solicitado no es válido.');
+        }
+        return $scopeKey;
     }
 
     /** @return array<string,mixed> */
     public function preview(string $scopeKey, ?int $accountId = null): array
     {
-        $scopeKey = isset($this->scopes()[$scopeKey]) ? $scopeKey : 'all';
+        $scopeKey = $this->assertScope($scopeKey);
         $wanted = array_flip($this->scopes()[$scopeKey]);
         $maximum = max(100, min(10000, (new AppSettingsService())->int('manual_processing.preview_max_jobs', 5000)));
         $page = (new WorkQueueProjectionService())->all([

@@ -18,6 +18,58 @@ use Throwable;
  */
 final class ManualCampaignPreviewService
 {
+    public const PRESENTATION_LIMIT = 60;
+
+    public static function assertScope(string $scope): string
+    {
+        if ($scope === 'available_queue') {
+            return $scope;
+        }
+        return (new ManualProcessingService())->assertScope($scope);
+    }
+
+    /** @return array<string,list<string>> */
+    public static function schemaRequirements(string $scope): array
+    {
+        $scope = self::assertScope($scope);
+        $common = [
+            'manual_campaign_previews' => ['preview_token','configuration_json','summary_json','status','expires_at'],
+            'manual_campaign_preview_items' => ['manual_campaign_preview_id','queue_key','source_id','item_payload_json','position_no'],
+            'meli_accounts' => ['id','company_id'],
+            'user_company_access' => ['user_id','company_id'],
+        ];
+        if ($scope === 'available_queue') {
+            return $common + [
+                'queue_v4_clean_jobs' => ['id','company_id','meli_account_id','job_type','resource_id','idempotency_key','payload_json','state','available_at'],
+                'queue_v4_clean_runs' => ['id','launcher','status'],
+                'queue_v4_clean_attempts' => ['job_id','run_id','company_id','meli_account_id'],
+                'queue_v4_clean_control' => ['control_key','engine_state','readiness_state'],
+                'queue_core_execution_leases' => ['lease_key','launcher','owner_token','generation','expires_at'],
+            ];
+        }
+
+        $requirements = $common + [
+            'system_work_queue_projection' => ['queue_key','source_id','company_id','meli_account_id'],
+            'queue_core_jobs' => ['id','company_id','meli_account_id','work_type','resource_id','state'],
+            'queue_core_attempts' => ['job_id','company_id','meli_account_id','physical_http_calls'],
+            'queue_core_execution_leases' => ['lease_key','launcher','owner_token','generation','expires_at'],
+        ];
+        $sourceTables = [
+            'recommended' => ['meli_notification_work_items','sync_batch_chunks','order_resource_enrichment_jobs','sale_pack_reconciliation_jobs','order_financial_recalc_jobs','sale_financial_reconciliation_jobs','sync_sales_repair_jobs'],
+            'all' => ['meli_notification_work_items','sync_batch_chunks','order_resource_enrichment_jobs','sale_pack_reconciliation_jobs','order_financial_recalc_jobs','sale_financial_reconciliation_jobs','sync_sales_repair_jobs','sync_sales_audit_jobs','meli_item_sync_jobs','catalog_description_job_items','catalog_description_jobs'],
+            'sales' => ['meli_notification_work_items','sync_batch_chunks','order_resource_enrichment_jobs','sale_pack_reconciliation_jobs'],
+            'finance' => ['order_financial_recalc_jobs','sale_financial_reconciliation_jobs'],
+            'audits' => ['sync_sales_audit_jobs','sync_sales_repair_jobs'],
+            'products' => ['meli_item_sync_jobs'],
+            'descriptions' => ['catalog_description_job_items','catalog_description_jobs'],
+            'local' => ['order_financial_recalc_jobs'],
+        ];
+        foreach ($sourceTables[$scope] ?? [] as $table) {
+            $requirements[$table] = [];
+        }
+        return $requirements;
+    }
+
     /** @param array<string,mixed> $configuration @return array<string,mixed> */
     public function create(int $userId, array $configuration): array
     {
@@ -43,13 +95,52 @@ final class ManualCampaignPreviewService
 
         $preview = (new ManualCampaignService())->preview(
             (string) $configuration['scope'],
-            (int) $configuration['block_size'],
-            (int) $configuration['interval_ms'],
-            (int) $configuration['block_pause_ms'],
-            (int) $configuration['max_blocks'],
-            (int) $configuration['max_duration_minutes'],
+            self::PRESENTATION_LIMIT,
+            0,
+            0,
+            0,
+            0,
             (int) $configuration['account_id'] ?: null
         );
+        $snapshotRows = [];
+        $authorityService = new \App\QueueCore\ManualSourceAuthorityService();
+        foreach ((array) ($preview['rows'] ?? []) as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $queueKey = (string) ($row['queue_key'] ?? '');
+            $sourceId = (string) ($row['source_id'] ?? '');
+            $accountId = max(0, (int) ($row['meli_account_id'] ?? 0));
+            $account = (new BusinessScopeContext())->account($accountId, 0, $userId);
+            $companyId = (int) ($account['company_id'] ?? 0);
+            $adapter = (new ManualCampaignAdapterRegistry())->forQueue($queueKey);
+            if ($adapter === null || !$adapter->supportsExact()) {
+                continue;
+            }
+            $state = $adapter->inspect($sourceId, $accountId);
+            if (!$state->exists || $state->terminal || !$state->eligible) {
+                continue;
+            }
+            $authority = $authorityService->inspect($queueKey, $sourceId, $accountId, $companyId, $state);
+            if ($authority->explicitlyUnsupported) {
+                continue;
+            }
+            $relatedIds = $authorityService->relatedResourceIds($queueKey, $sourceId, $accountId, $companyId);
+            $row['company_id'] = $companyId;
+            $row['selection_id'] = 'exact:' . $queueKey . ':' . $sourceId;
+            $row['source_authority_version'] = $authority->durableInputVersion;
+            $row['operation_key'] = $authority->operationKey;
+            $row['uses_api'] = $authority->usesApi;
+            $row['remote_contract'] = $authority->remoteContract;
+            $row['related_resource_ids'] = $relatedIds;
+            $row['selection_version'] = self::exactSelectionVersion($row);
+            $snapshotRows[] = $row;
+        }
+        $eligibleCount = count($snapshotRows);
+        $preview['rows'] = array_slice($snapshotRows, 0, self::PRESENTATION_LIMIT);
+        $preview['eligible_jobs'] = $eligibleCount;
+        $preview['has_more'] = $eligibleCount > self::PRESENTATION_LIMIT;
+        $preview['truncated'] = $preview['has_more'];
         $ttl = max(60, min(3600, (new AppSettingsService())->int('manual_campaign.preview_ttl_seconds', 600)));
         $token = bin2hex(random_bytes(20));
         $summary = $preview;
@@ -122,6 +213,9 @@ final class ManualCampaignPreviewService
         }
         $summary = json_decode((string) $record['summary_json'], true);
         $configuration = json_decode((string) $record['configuration_json'], true);
+        if (!is_array($configuration) || (int) ($configuration['preview_format'] ?? 0) !== 4) {
+            throw new RuntimeException('El cálculo usa un formato anterior. Vuelva a calcular los trabajos disponibles.');
+        }
         $items = $pdo->prepare(
             'SELECT item_payload_json FROM manual_campaign_preview_items
              WHERE manual_campaign_preview_id=? ORDER BY position_no ASC'
@@ -199,15 +293,11 @@ final class ManualCampaignPreviewService
             $configuration,
             (new CapacityPolicyService())->snapshot('manual')
         );
+        $scope = preg_replace('/[^a-z_]/', '', (string) ($configuration['scope'] ?? 'recommended')) ?: 'recommended';
         return $capacity + [
-            'preview_format' => 3,
-            'scope' => preg_replace('/[^a-z_]/', '', (string) ($configuration['scope'] ?? 'recommended')) ?: 'recommended',
+            'preview_format' => 4,
+            'scope' => self::assertScope($scope),
             'account_id' => max(0, (int) ($configuration['account_id'] ?? 0)),
-            'block_size' => max(1, min(60, (int) ($configuration['block_size'] ?? 30))),
-            'interval_ms' => max(0, min(300000, (int) ($configuration['interval_ms'] ?? 2000))),
-            'block_pause_ms' => max(0, min(3600000, (int) ($configuration['block_pause_ms'] ?? 30000))),
-            'max_blocks' => max(0, min(10000, (int) ($configuration['max_blocks'] ?? 0))),
-            'max_duration_minutes' => max(0, min(10080, (int) ($configuration['max_duration_minutes'] ?? 0))),
         ];
     }
 
@@ -228,7 +318,7 @@ final class ManualCampaignPreviewService
         $preview = [
             'eligible_jobs' => $repository->eligibleCount($allowedAccountIds, $accountId > 0 ? $accountId : null),
             'rows' => $repository->previewEligible(
-                (int) $configuration['physical_api_call_budget'],
+                self::PRESENTATION_LIMIT,
                 $allowedAccountIds,
                 $accountId > 0 ? $accountId : null
             ),
@@ -241,6 +331,8 @@ final class ManualCampaignPreviewService
             'waiting_excluded' => 'PASS',
             'review_excluded' => 'PASS',
         ];
+        $preview['has_more'] = (int) $preview['eligible_jobs'] > count($preview['rows']);
+        $preview['truncated'] = $preview['has_more'];
         $preview['scope_label'] = 'Pendientes disponibles ahora';
         $preview['expires_in_seconds'] = $ttl;
         $token = bin2hex(random_bytes(20));
@@ -302,7 +394,24 @@ final class ManualCampaignPreviewService
             'requested_interval_ms','effective_interval_ms','block_size','block_pause_ms','source_state',
             'queue_job_id','company_id','job_type','capability','resource_id','resource_label',
             'source_alias','status_label','state_label','available_at','last_error_class',
+            'selection_id','selection_version','source_authority_version','remote_contract',
+            'related_resource_ids','queue_idempotency_key','queue_payload_hash',
         ];
         return array_intersect_key($row, array_flip($allowed));
+    }
+
+    /** @param array<string,mixed> $row */
+    public static function exactSelectionVersion(array $row): string
+    {
+        return hash('sha256', json_encode([
+            'selection_id' => (string) ($row['selection_id'] ?? ''),
+            'company_id' => (int) ($row['company_id'] ?? 0),
+            'meli_account_id' => (int) ($row['meli_account_id'] ?? 0),
+            'source_authority_version' => (string) ($row['source_authority_version'] ?? ''),
+            'operation_key' => (string) ($row['operation_key'] ?? ''),
+            'uses_api' => (bool) ($row['uses_api'] ?? false),
+            'remote_contract' => $row['remote_contract'] ?? null,
+            'related_resource_ids' => array_values((array) ($row['related_resource_ids'] ?? [])),
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
     }
 }

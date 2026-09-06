@@ -18,22 +18,26 @@ use Throwable;
 final class ManualSingleStepService
 {
     /** @return array<string,mixed> */
+    public function executePreview(string $previewToken, int $userId, int $requestedPhysicalCalls): array
+    {
+        CronDeadlineContext::start(45, 43, 8, 3);
+        try {
+            return $this->executeWithinRequest($previewToken, $userId, $requestedPhysicalCalls);
+        } finally {
+            CronDeadlineContext::clear();
+        }
+    }
+
+    /** @return array<string,mixed> */
     public function execute(string $previewToken, int $userId): array
     {
-        return $this->executeMany($previewToken, $userId, 1);
+        return $this->executePreview($previewToken, $userId, 1);
     }
 
     /** @return array<string,mixed> */
     public function executeMany(string $previewToken, int $userId, int $limit): array
     {
-        // The browser request owns one window, including preview loading,
-        // locks, scope checks and source inspection before either launcher.
-        CronDeadlineContext::start(45, 43, 8, 3);
-        try {
-            return $this->executeWithinRequest($previewToken, $userId, $limit);
-        } finally {
-            CronDeadlineContext::clear();
-        }
+        return $this->executePreview($previewToken, $userId, $limit);
     }
 
     private function executeWithinRequest(string $previewToken, int $userId, int $limit): array
@@ -51,6 +55,7 @@ final class ManualSingleStepService
             throw new RuntimeException('Ese trabajo ya se esta procesando. Espere el resultado.');
         }
 
+        $cycleStarted = false;
         try {
             $previews = new ManualCampaignPreviewService();
             $preview = $previews->load($previewToken, $userId);
@@ -58,11 +63,16 @@ final class ManualSingleStepService
             $isAvailableQueue = (string) ($configuration['scope'] ?? '') === 'available_queue';
             $physicalCallBudget = ManualPhysicalCallBudget::resolve(
                 $configuration,
-                // Available work uses an HTTP request cap. Exact selection
-                // uses process_limit only for resources, never for HTTP.
+                // The posted value is a physical HTTP cap in both modes.
                 $isAvailableQueue ? $limit : CapacityPolicyService::TECHNICAL_MAX,
                 (new CapacityPolicyService())->snapshot('manual')
             );
+            $safety = (new SystemSafetyStatusService())->status();
+            if (($safety['api'] ?? '') === 'stopped' || ($safety['automation'] ?? '') === 'stopped') {
+                throw new RuntimeException('El procesamiento está en mantenimiento. Vuelva a calcular cuando se reactive.');
+            }
+            QueueV4CleanCycleBudget::start($physicalCallBudget, 'manual', CronDeadlineContext::deadline());
+            $cycleStarted = true;
             if ($isAvailableQueue) {
                 return $this->executeAvailableQueue($pdo, $previews, $preview, $previewToken, $userId, $physicalCallBudget);
             }
@@ -74,12 +84,9 @@ final class ManualSingleStepService
                 throw new RuntimeException('El calculo no contiene trabajos exactos disponibles.');
             }
 
-            // Legacy previews can contain all eligible rows (max_blocks=0).
-            // The saved resource selection, not the larger physical budget
-            // or a forged POST, is the authority for this exact subset.
-            $limit = min($limit, max(1, min(60, (int) ($configuration['block_size'] ?? 30))));
-            $selectedRows = array_slice($rows, 0, $limit);
+            $selectedRows = array_slice($rows, 0, ManualCampaignPreviewService::PRESENTATION_LIMIT);
             $items = [];
+            $skipped = [];
             foreach ($selectedRows as $index => $row) {
                 if (!CronDeadlineContext::canAcceptWork(2)) {
                     throw new RuntimeException('Se agotó el tiempo para preparar el paso manual. Vuelva a calcular.');
@@ -102,7 +109,8 @@ final class ManualSingleStepService
                 }
                 $state = $adapter->inspect($sourceId, $accountId);
                 if (!$state->exists || $state->terminal || !$state->eligible) {
-                    throw new RuntimeException($state->message);
+                    $skipped[] = $this->skippedRow($row, 'source_changed');
+                    continue;
                 }
 
                 // El preview es solo una selección sanitizada. La identidad lógica,
@@ -116,10 +124,25 @@ final class ManualSingleStepService
                     $state
                 );
                 if ($authority->explicitlyUnsupported) {
-                    throw new RuntimeException(
-                        $authority->unsupportedReason
-                        ?? 'El trabajo exacto no tiene una capacidad Queue Core certificada.'
-                    );
+                    $skipped[] = $this->skippedRow($row, 'source_unsupported');
+                    continue;
+                }
+
+                $authorityService = new ManualSourceAuthorityService();
+                $relatedIds = $authorityService->relatedResourceIds($queueKey, $sourceId, $accountId, $companyId);
+                $currentSnapshot = array_replace($row, [
+                    'company_id' => $companyId,
+                    'selection_id' => 'exact:' . $queueKey . ':' . $sourceId,
+                    'source_authority_version' => $authority->durableInputVersion,
+                    'operation_key' => $authority->operationKey,
+                    'uses_api' => $authority->usesApi,
+                    'remote_contract' => $authority->remoteContract,
+                    'related_resource_ids' => $relatedIds,
+                ]);
+                if (preg_match('/^[a-f0-9]{64}$/', (string) ($row['selection_version'] ?? '')) !== 1
+                    || !hash_equals((string) $row['selection_version'], ManualCampaignPreviewService::exactSelectionVersion($currentSnapshot))) {
+                    $skipped[] = $this->skippedRow($row, 'source_version_changed');
+                    continue;
                 }
 
                 $inputVersion = ManualInputVersion::deriveFromSourceAuthority(
@@ -146,12 +169,32 @@ final class ManualSingleStepService
                     'source_authority_version' => $authority->durableInputVersion,
                     'explicit_attempt_key' => $explicitAttemptKey,
                     'remote_contract' => $authority->remoteContract,
+                    'related_resource_ids' => $relatedIds,
+                    'selection_id' => (string) $row['selection_id'],
+                    'selection_version' => (string) $row['selection_version'],
                 ];
             }
             // Manual and Cron V4 are launchers only. Manual confirms an exact,
             // preview-bound subset and the launcher processes only those rows
             // under a single global execution lease.
-            return (new ManualQueueLauncher())->runExactBatch(
+            if ($items === []) {
+                $previews->consume($previewToken, $userId);
+                return $this->capacityReceipt([
+                    'status' => 'waiting',
+                    'message' => 'La selección cambió; no se sustituyó ningún elemento. Vuelva a calcular.',
+                    'selected_count' => count($selectedRows),
+                    'processed_count' => 0,
+                    'completed_count' => 0,
+                    'deferred_count' => 0,
+                    'waiting_count' => 0,
+                    'review_error_count' => 0,
+                    'not_processed_count' => count($selectedRows),
+                    'stale_or_busy_skipped' => count($skipped),
+                    'results' => $skipped,
+                    'stop_reason' => 'selection_stale',
+                ], $configuration, $limit, $physicalCallBudget);
+            }
+            $result = (new ManualQueueLauncher())->runExactBatch(
                 $items, $physicalCallBudget, CronDeadlineContext::deadline(),
                 static function () use ($items, $configuration, $physicalCallBudget, $previews, $previewToken, $userId): void {
                     foreach ($items as $item) {
@@ -165,10 +208,25 @@ final class ManualSingleStepService
                         $authority = (new ManualSourceAuthorityService())->inspect(
                             $item['queue_key'], $item['source_id'], $item['account_id'], $item['company_id'], $state
                         );
+                        $relatedIds = (new ManualSourceAuthorityService())->relatedResourceIds(
+                            $item['queue_key'], $item['source_id'], $item['account_id'], $item['company_id']
+                        );
+                        $currentSnapshot = [
+                            'selection_id' => $item['selection_id'],
+                            'company_id' => $item['company_id'],
+                            'meli_account_id' => $item['account_id'],
+                            'source_authority_version' => $authority->durableInputVersion,
+                            'operation_key' => $authority->operationKey,
+                            'uses_api' => $authority->usesApi,
+                            'remote_contract' => $authority->remoteContract,
+                            'related_resource_ids' => $relatedIds,
+                        ];
                         if ($authority->explicitlyUnsupported
                             || !hash_equals($item['source_authority_version'], $authority->durableInputVersion)
                             || $item['uses_api'] !== $authority->usesApi
-                            || $item['remote_contract'] !== $authority->remoteContract) {
+                            || $item['remote_contract'] !== $authority->remoteContract
+                            || $item['related_resource_ids'] !== $relatedIds
+                            || !hash_equals($item['selection_version'], ManualCampaignPreviewService::exactSelectionVersion($currentSnapshot))) {
                             throw new ManualStaleSourceException();
                         }
                     }
@@ -179,7 +237,15 @@ final class ManualSingleStepService
                     $previews->consume($previewToken, $userId);
                 }
             );
+            $result['selected_count'] = count($selectedRows);
+            $result['stale_or_busy_skipped'] = count($skipped);
+            $result['not_processed_count'] = max(0, (int) ($result['not_processed_count'] ?? 0) + count($skipped));
+            $result['results'] = array_merge($skipped, (array) ($result['results'] ?? []));
+            return $this->capacityReceipt($result, $configuration, $limit, $physicalCallBudget);
         } finally {
+            if ($cycleStarted) {
+                QueueV4CleanCycleBudget::clear();
+            }
             try {
                 $release = $pdo->prepare('SELECT RELEASE_LOCK(?)');
                 $release->execute([$lockName]);
@@ -245,32 +311,50 @@ final class ManualSingleStepService
             ];
         }
 
-        QueueV4CleanCycleBudget::start($requested);
         try {
             // Recheck after prework/lease acquisition; a saved reduction must
             // never be bypassed by a previously posted or loaded preview.
             $requested = ManualPhysicalCallBudget::resolve(
                 $configuration, $requested, (new CapacityPolicyService())->snapshot('manual')
             );
-            QueueV4CleanCycleBudget::start($requested);
             $repository = new QueueV4CleanRepository($pdo);
-            $currentEligible = $repository->eligibleCount($allowedAccountIds, $accountId ?: null);
+            $control = $repository->control();
+            if ((string) ($control['engine_state'] ?? '') !== 'ACTIVE') {
+                throw new RuntimeException('El procesamiento automático está detenido; no se admitió el paso manual.');
+            }
+            $currentSelection = $repository->claimableConfirmedSelection($rows, $allowedAccountIds, $accountId ?: null);
             $workerLimit = min($requested, QueueV4CleanWorker::HARD_MAX_CALLS);
-            if ($currentEligible < 1 || !CronDeadlineContext::canAcceptWork(1)) {
-                throw new RuntimeException('El cálculo ya no tiene trabajo disponible en esta ventana. Vuelva a calcular.');
+            if (!CronDeadlineContext::canAcceptWork(1)) {
+                throw new RuntimeException('El cálculo ya no tiene tiempo seguro en esta ventana. Vuelva a calcular.');
+            }
+            if ($currentSelection === []) {
+                $previews->consume($previewToken, $userId);
+                return $this->capacityReceipt([
+                    'status' => 'waiting',
+                    'message' => 'Los pendientes confirmados cambiaron o ya están ocupados; no se sustituyó ninguno.',
+                    'manual_available_queue' => true,
+                    'selected_count' => $selected,
+                    'processed_count' => 0,
+                    'completed_count' => 0,
+                    'waiting_count' => 0,
+                    'review_error_count' => 0,
+                    'not_processed_count' => $selected,
+                    'stale_or_busy_skipped' => $selected,
+                    'results' => [],
+                    'stop_reason' => 'selection_stale_or_busy',
+                ], $configuration, $limit, $requested);
             }
             // Available work has no exact launcher: consume directly before
             // entering its worker, while holding the same global authority.
             $previews->consume($previewToken, $userId);
-            $workerResult = $currentEligible > 0
-                ? (new QueueV4CleanWorker($pdo, $repository))->run(
+            $workerResult = (new QueueV4CleanWorker($pdo, $repository))->run(
                     'manual',
                     $workerLimit,
                     max(0, (int) floor(CronDeadlineContext::remainingSeconds())),
                     $allowedAccountIds,
-                    $accountId ?: null
-                )
-                : ['run_id' => 0, 'claimed' => 0, 'completed' => 0, 'deferred' => 0];
+                    $accountId ?: null,
+                    $rows
+                );
             $runSummary = $repository->runOutcomeCounts((int) ($workerResult['run_id'] ?? 0));
             $claimed = (int) ($workerResult['claimed'] ?? 0);
             $apiCallsUsed = (int) ($workerResult['physical_http_calls'] ?? 0);
@@ -279,7 +363,7 @@ final class ManualSingleStepService
             $review = (int) ($runSummary['review'] ?? 0) + (int) ($runSummary['dead'] ?? 0);
             $notProcessed = max(0, count($rows) - $claimed);
 
-            return [
+            return $this->capacityReceipt([
                 'status' => $review > 0 ? 'review' : ($waiting > 0 ? 'deferred' : ($notProcessed > 0 ? 'waiting' : 'completed')),
                 'message' => sprintf(
                     'Pendientes disponibles: llamadas API solicitadas %d, llamadas usadas %d, elementos atendidos %d, completados %d, esperando %d, revisión/error %d, no procesados %d.',
@@ -302,19 +386,54 @@ final class ManualSingleStepService
                 'waiting_count' => $waiting,
                 'review_error_count' => $review,
                 'not_processed_count' => $notProcessed,
+                'stale_or_busy_skipped' => (int) ($workerResult['stale_or_busy_skipped'] ?? 0),
                 'run_id' => (int) ($workerResult['run_id'] ?? 0),
                 'active_drainers_max' => 1,
                 'manual_auto_shared_global_authority' => true,
                 'second_global_lease_acquire' => 0,
                 'background_continuation' => 0,
-            ];
+            ], $configuration, $limit, $requested);
         } finally {
-            QueueV4CleanCycleBudget::clear();
             try {
                 $leaseService->release($lease);
             } catch (Throwable) {
             }
         }
+    }
+
+    /** @param array<string,mixed> $row @return array<string,mixed> */
+    private function skippedRow(array $row, string $reason): array
+    {
+        return [
+            'status' => 'not_started',
+            'reason' => $reason,
+            'selection_id' => (string) ($row['selection_id'] ?? ''),
+            'queue_key' => (string) ($row['queue_key'] ?? ''),
+            'source_id' => (string) ($row['source_id'] ?? ''),
+            'remote_dispatches' => 0,
+            'processed' => 0,
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $result
+     * @param array<string,mixed> $configuration
+     * @return array<string,mixed>
+     */
+    private function capacityReceipt(array $result, array $configuration, int $requested, int $effective): array
+    {
+        $budget = QueueV4CleanCycleBudget::snapshot();
+        $used = max(0, (int) ($budget['used'] ?? $result['api_calls_used'] ?? 0));
+        return array_replace($result, [
+            'control_unit' => 'PHYSICAL_API_CALL',
+            'configured_api_calls' => (int) ($configuration['physical_api_call_budget'] ?? $effective),
+            'requested_api_calls' => $requested,
+            'effective_api_calls' => $effective,
+            'physical_http_calls' => $used,
+            'api_calls_used' => $used,
+            'api_calls_remaining' => max(0, $effective - $used),
+            'evidence_state' => 'CERTIFIED',
+        ]);
     }
 
 }

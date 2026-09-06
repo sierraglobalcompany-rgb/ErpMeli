@@ -6,6 +6,7 @@ namespace App\QueueCore;
 use App\Core\Database;
 use App\Services\CronDeadlineContext;
 use App\Services\CapacityPolicyService;
+use App\QueueV4Clean\QueueV4CleanCycleBudget;
 use PDO;
 use RuntimeException;
 
@@ -106,6 +107,11 @@ final class ManualQueueLauncher
             foreach($items as $item){
                 $freshPolicy=(new CapacityPolicyService())->snapshot('manual');
                 $physicalCallBudget=min($physicalCallBudget,(int)$freshPolicy['current'],(int)$freshPolicy['ceiling']);
+                if(QueueV4CleanCycleBudget::exhausted()){
+                    $budget=QueueV4CleanCycleBudget::snapshot();
+                    $stopReason=(string)($budget['stopped_reason']??'') ?: 'physical_call_budget';
+                    break;
+                }
                 if($usedCalls>=$physicalCallBudget){$stopReason='physical_call_budget';break;}
                 if(microtime(true)>=$requestDeadline-0.25 || !CronDeadlineContext::canAcceptWork(1)){$stopReason='request_deadline';break;}
                 $companyId=(int)($item['company_id']??0);

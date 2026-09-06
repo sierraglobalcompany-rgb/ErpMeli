@@ -25,7 +25,7 @@ final class ManualPhysicalCallBudget
 
     public static function resolve(array $configuration, int $requested, array $policy): int
     {
-        if ((int) ($configuration['preview_format'] ?? 0) < 3
+        if ((int) ($configuration['preview_format'] ?? 0) !== 4
             || !is_int($configuration['physical_api_call_budget'] ?? null)
             || !is_string($configuration['capacity_revision'] ?? null)
             || $configuration['capacity_revision'] === '') {

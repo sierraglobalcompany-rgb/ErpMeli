@@ -163,7 +163,9 @@ try {
     }
     $zero($before, 'detail_SQL_failure');
     echo "STATUS=PASS CALLS_ENTRYPOINTS_HTTP MYSQL_SCHEMA=301 AUTH=REAL ROUTER=REAL CSRF=REAL MELI_HTTP=0\n";
-    echo "LIMITS: cronTest success-path certification and full scope/adapter parity not covered by this matrix.\n";
+    echo "LIMITS: cronTest success-path certification not covered by this matrix.\n";
+    require __DIR__ . '/calls_scopes_matrix.php';
+    calls_scopes_matrix($pdo, $request, $login, $assert, $source);
 } finally {
     if (is_resource($server)) { proc_terminate($server); proc_close($server); }
     $database->cleanup();

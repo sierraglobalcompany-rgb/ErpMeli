@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('static','database','manual','transport','selftest')][string]$Group = 'static'
+    [ValidateSet('static','database','manual','transport','readiness','selftest')][string]$Group = 'static'
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -20,6 +20,7 @@ $env:CALLS_QA_STORAGE_ROOT = Join-Path $out 'runtime'
 $cases = @{
     selftest = @('calls_verify_fixture fail','calls_verify_fixture pass')
     static = @(
+        'calls_verify_inputs','calls_readiness_transport','calls_readiness_ui.js',
         'calls_ui','calls_unknown_presentation','calls_history_ui','calls_increase_certainty',
         'calls_technical_budget','calls_technical_launchers','calls_technical_oauth',
         'calls_manual_contract','calls_manual_preview_projection','calls_manual_receipt_certainty','calls_transport_budget','calls_transport_sources','calls_billing_identity',
@@ -42,16 +43,22 @@ $cases = @{
         'cap2_manual_launcher','capacity_manual_runtime','capacity_manual_selection'
     )
     transport = @('calls_transport_mysql','cap2_transport_mysql','cap2_domains_mysql','cap2_uncertain_recovery')
+    readiness = @('calls_readiness_contract','calls_readiness_safety','calls_readiness_transport --mysql')
 }
+$httpCases = @('prepare','check','cancel','activate','stop','legacy','invalid-step','invalid-run','invalid-token','injected-scope',
+    'run-zero','run-negative','run-overflow','run-array','step-zero','step-four','step-array','token-empty','token-short','token-nonhex',
+    'action-array','action-unknown','password-array','expired-confirmation','prepare-no-password','activate-no-password','stop-no-password',
+    'wrong-password','check-refresh','cancel-orphan')
+$cases.static += @($httpCases | ForEach-Object { 'calls_readiness_http_contract ' + $_ })
 Push-Location $root
 try {
     $head = (& git rev-parse HEAD).Trim()
     $dirty = @(& git status --short)
-    # Hash only runtime code in the task corpus, not private files or uploads.
+    # Seal product and test/fixture/schema inputs, not private files or uploads.
     # A concurrent edit invalidates certification even if every test exits zero.
     function Get-RuntimeInputs {
-        $paths = @(& git ls-files --cached --others --exclude-standard -- app jobs public resources) |
-            Where-Object { $_ -match '\.(php|js|css|json)$' } | Sort-Object -Unique
+        $paths = @(& git ls-files --cached --others --exclude-standard -- app jobs public resources tests database bootstrap.php composer.json composer.lock) |
+            Where-Object { $_ -match '\.(php|js|css|json|sql|ps1|lock)$' } | Sort-Object -Unique
         $inputs = foreach ($path in $paths) {
             if (Test-Path -LiteralPath $path -PathType Leaf) {
                 [pscustomobject]@{path=$path; sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLower()}
@@ -64,13 +71,15 @@ try {
     $results = @()
     foreach ($case in $cases[$Group]) {
         $parts = $case.Split(' ')
-        $file = 'tests/' + $parts[0] + '.php'
+        $isNode = $parts[0].EndsWith('.js')
+        $file = 'tests/' + $parts[0] + $(if ($isNode) { '' } else { '.php' })
+        $executable = if ($isNode) { (Get-Command node.exe -ErrorAction Stop).Source } else { $php }
         $arguments = @($file) + @($parts | Select-Object -Skip 1)
         $name = $case.Replace(' ','-')
         $timer = [Diagnostics.Stopwatch]::StartNew()
         # Native stderr is evidence, not a PowerShell terminating error. Capture
         # both streams and continue so even a failed suite gets a final receipt.
-        $process = Start-Process -FilePath $php -ArgumentList $arguments -WorkingDirectory $root `
+        $process = Start-Process -FilePath $executable -ArgumentList $arguments -WorkingDirectory $root `
             -WindowStyle Hidden -Wait -PassThru `
             -RedirectStandardOutput (Join-Path $out ($name + '.out.log')) `
             -RedirectStandardError (Join-Path $out ($name + '.err.log'))

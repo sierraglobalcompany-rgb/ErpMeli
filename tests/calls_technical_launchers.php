@@ -69,7 +69,7 @@ namespace {
         public function prepare(string $query, array $options = []): PDOStatement|false { return new TechnicalStatement(); }
         public function query(string $query, ?int $fetchMode = null, mixed ...$fetchModeArgs): PDOStatement|false {
             $this->queries++;
-            k1b_assert(B::snapshot()['limit'] === 3 && B::snapshot()['owner'] === 'manual', 'readiness_lock_requires_one_three_call_context');
+            throw new LogicException('retired_readiness_must_not_query');
             return new TechnicalStatement();
         }
     }
@@ -106,13 +106,14 @@ namespace {
     k1b_assert($canaryResult['http_status'] === 200 && $control->completed === 2, 'explicit_canary_still_completes');
     k1b_assert(B::snapshot()['limit'] === 0 && Metadata::technicalOperation() === null && App\Services\EmergencyCanaryTransportContext::reservationNonce() === '', 'canary_restores_all_contexts');
     $readiness = new App\QueueV4Clean\QueueV4CleanReadinessService($GLOBALS['technicalPdo']);
-    App\Services\CapacityPolicyService::$current = 1;
-    try { $readiness->certify(9); throw new LogicException('readiness_should_reject_insufficient'); }
-    catch (RuntimeException $error) { k1b_assert(str_contains($error->getMessage(), 'physical_budget_insufficient'), 'readiness_reports_budget_reason'); }
-    k1b_assert($GLOBALS['technicalPdo']->queries === 0 && B::snapshot()['limit'] === 0, 'insufficient_readiness_has_no_lock_or_partial_run');
-    App\Services\CapacityPolicyService::$current = 3;
-    try { $readiness->certify(9); throw new LogicException('readiness_should_reject_busy_fixture'); }
-    catch (RuntimeException $error) { k1b_assert($error->getMessage() === 'queue_v4_clean_readiness_busy', 'readiness_existing_lock_guard_preserved'); }
-    k1b_assert($GLOBALS['technicalPdo']->queries === 1 && B::snapshot()['limit'] === 0, 'readiness_scope_cleared_after_lock_rejection');
+    // Legacy bulk certification is retired, regardless of capacity. Real
+    // prepare/check locking and three explicit 1-call requests are exercised
+    // by calls_readiness_contract.php with schema 301 and a second PDO.
+    foreach ([1, 3, 100] as $current) {
+        App\Services\CapacityPolicyService::$current = $current;
+        try { $readiness->certify(9); throw new LogicException('bulk_readiness_must_reject'); }
+        catch (RuntimeException $error) { k1b_assert($error->getMessage() === 'queue_v4_clean_readiness_explicit_steps_required', 'readiness_requires_explicit_steps'); }
+        k1b_assert($GLOBALS['technicalPdo']->queries === 0 && B::snapshot()['limit'] === 0, 'retired_readiness_has_no_lock_or_partial_run');
+    }
     echo "CALLS_TECHNICAL_LAUNCHERS_OK\n";
 }

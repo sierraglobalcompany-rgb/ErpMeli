@@ -42,7 +42,7 @@ $cases = @{
         'cap2_manual_outcomes','cap2_manual_busy','cap2_manual_items','cap2_manual_orphan',
         'cap2_manual_launcher','capacity_manual_runtime','capacity_manual_selection'
     )
-    transport = @('calls_transport_mysql','cap2_transport_mysql','cap2_domains_mysql','cap2_uncertain_recovery')
+    transport = @('calls_transport_mysql','cap2_transport_mysql','cap2_domains_mysql','cap2_uncertain_recovery','calls_oauth_persistence_mysql')
     readiness = @('calls_readiness_contract','calls_readiness_safety','calls_readiness_transport --mysql')
 }
 $httpCases = @('prepare','check','cancel','activate','stop','legacy','invalid-step','invalid-run','invalid-token','injected-scope',

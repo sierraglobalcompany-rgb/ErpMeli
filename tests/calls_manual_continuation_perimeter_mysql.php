@@ -79,7 +79,13 @@ try {
     );
     $recalcPointerId = $insertPointer('financial_recalc', $recalcSourceId);
     $recalcRow = $confirmedRow($recalcPointerId);
+    $pdo->exec(
+        "UPDATE cron_v3_queue_ownership
+         SET owner_engine='v3',enabled=1,changed_by='calls-manual-continuation-test'
+         WHERE queue_key='financial_local_projection' AND lane='local'"
+    );
     $billingBefore = (int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs')->fetchColumn();
+    $cronV3Before = (int) $pdo->query("SELECT COUNT(*) FROM cron_v3_work WHERE work_type='financial_local_projection'")->fetchColumn();
     $wireBefore = count(Cap2DomainsWire::$calls);
     $recalcResult = $runConfirmed($recalcRow);
     $assert((int) $recalcResult['claimed'] === 1, 'manual_financial_recalc_claims_displayed_pointer');
@@ -88,6 +94,10 @@ try {
         'manual_financial_recalc_creates_no_unconfirmed_billing_successor',
     );
     $assert(count(Cap2DomainsWire::$calls) === $wireBefore, 'manual_financial_recalc_stays_local');
+    $assert(
+        (int) $pdo->query("SELECT COUNT(*) FROM cron_v3_work WHERE work_type='financial_local_projection'")->fetchColumn() === $cronV3Before,
+        'manual_financial_recalc_creates_no_unconfirmed_cron_v3_work',
+    );
 
     // The automatic service contract keeps its historical continuation default.
     $autoOrderId = $insertOrder('840002');
@@ -99,10 +109,15 @@ try {
         9007,
     );
     $automaticBillingBefore = (int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs')->fetchColumn();
+    $automaticCronV3Before = (int) $pdo->query("SELECT COUNT(*) FROM cron_v3_work WHERE work_type='financial_local_projection'")->fetchColumn();
     (new OrderFinancialRecalcJobService())->processExact($autoRecalcId, 9011, 1);
     $assert(
         (int) $pdo->query('SELECT COUNT(*) FROM sale_financial_reconciliation_jobs')->fetchColumn() === $automaticBillingBefore + 1,
         'automatic_financial_recalc_default_still_creates_successor',
+    );
+    $assert(
+        (int) $pdo->query("SELECT COUNT(*) FROM cron_v3_work WHERE work_type='financial_local_projection'")->fetchColumn() === $automaticCronV3Before + 1,
+        'automatic_financial_recalc_default_still_publishes_cron_v3_work',
     );
 
     // A pack can report child orders not present locally. Only the displayed pack

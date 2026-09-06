@@ -34,13 +34,15 @@ try {
     $pdo->prepare("UPDATE system_work_queue_projection SET human_label='FOREIGN-CONTENT-78102' WHERE queue_key='financial_recalc' AND source_id=?")->execute([(string) $foreignId]);
     $assert((int) $pdo->query("SELECT COUNT(*) FROM system_work_queue_projection WHERE human_label='FOREIGN-CONTENT-78102' AND company_id=9002 AND meli_account_id=9012")->fetchColumn() === 1, 'foreign_fixture_actually_exists');
     file_put_contents($root . '/wire.jsonl', '');
-    $port = 18143;
+    $browserRequested = in_array('--readiness-browser', $argv, true);
+    $port = $browserRequested ? 18145 : 18143;
     $probe = @stream_socket_server('tcp://127.0.0.1:' . $port, $errno, $error);
     $assert(is_resource($probe), 'exclusive_local_port_available');
     fclose($probe);
     putenv('APP_URL=http://127.0.0.1:' . $port);
     putenv('SESSION_SECURE=false');
     putenv('CALLS_ENTRYPOINTS_QA=1');
+    putenv('CALLS_READINESS_BROWSER=' . ($browserRequested ? '1' : '0'));
     putenv('CALLS_ENTRYPOINTS_INSTALL=' . ERP_INSTALLATION_ROOT);
     $server = proc_open([PHP_BINARY, '-S', '127.0.0.1:' . $port, __DIR__ . '/calls_entrypoints_router.php'],
         [0 => ['pipe','r'], 1 => ['file',$root . '/server.log','a'], 2 => ['file',$root . '/server-error.log','a']], $pipes,
@@ -166,6 +168,10 @@ try {
     echo "LIMITS: cronTest success-path certification not covered by this matrix.\n";
     require __DIR__ . '/calls_scopes_matrix.php';
     calls_scopes_matrix($pdo, $request, $login, $assert, $source);
+    if ($browserRequested) {
+        require __DIR__ . '/calls_entrypoints_readiness_browser.php';
+        calls_entrypoints_readiness_browser($pdo, $assert);
+    }
 } finally {
     if (is_resource($server)) { proc_terminate($server); proc_close($server); }
     $database->cleanup();

@@ -27,6 +27,23 @@ ini_set('session.save_path', $root . '/sessions');
 $pdo = K1dSafeTestDatabase::connectExistingFromEnvironment()->pdo();
 Session::start();
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$browserFixture = getenv('CALLS_READINESS_BROWSER') === '1';
+if ($browserFixture && $path === '/asset.php') {
+    $asset = (string) ($_GET['path'] ?? '');
+    if (!in_array($asset, ['app.css','catalog.css','ux.css','performance.css','app.js','catalog.js','ux.js','performance.js','icons.svg'], true)) {
+        http_response_code(404); exit;
+    }
+    header('Content-Type: ' . (str_ends_with($asset, '.js') ? 'application/javascript' : (str_ends_with($asset, '.svg') ? 'image/svg+xml' : 'text/css')));
+    readfile(dirname(__DIR__) . '/public/assets/' . $asset); exit;
+}
+if ($browserFixture && $path === '/__fixture/expire-readiness') {
+    if (isset($_SESSION['_queue_v4_clean_readiness'])) $_SESSION['_queue_v4_clean_readiness']['expires_at'] = time() - 1;
+    header('Content-Type: application/json'); echo '{"ok":true}'; exit;
+}
+if ($browserFixture && $path === '/__fixture/wire-count') {
+    $lines = file($root . '/wire.jsonl', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    header('Content-Type: application/json'); echo json_encode(['count' => count($lines ?: [])]); exit;
+}
 if ($path === '/__fixture/session') {
     $_SESSION = [];
     $kind = (string) ($_GET['kind'] ?? 'admin');
@@ -45,6 +62,9 @@ if ($path === '/__fixture/session') {
 // Fake physical boundary records even an unexpected call before returning.
 CallsBrowserStepWire::$responder = static function (string $url, string $path) use ($root): array {
     file_put_contents($root . '/wire.jsonl', json_encode(['path' => $path]) . "\n", FILE_APPEND | LOCK_EX);
+    if ($path === '/users/me' && getenv('CALLS_READINESS_BROWSER') === '1') {
+        return [200, ['id' => [1 => 99011, 2 => 99013, 3 => 99012][(int) ($_POST['step_no'] ?? 0)] ?? 0]];
+    }
     return [200, ['id' => 78101, 'status' => 'UNANSWERED', 'seller_id' => 99011]];
 };
 $router = new Router(null, new App\Repositories\RouteMetadataRepository());
@@ -53,6 +73,8 @@ $router = new Router(null, new App\Repositories\RouteMetadataRepository());
 $_SERVER['SCRIPT_NAME'] = '/index.php';
 // Read the actual route declarations: drift in production registration is tested.
 $wanted = ['/settings/manual-processing', '/settings/manual-processing/preview', '/settings/manual-processing/start', '/settings/cron/test', '/settings/cron/work'];
+if ($browserFixture) $wanted = array_merge($wanted, ['/settings/cron','/settings/cron/queue-v4.json','/settings/cron/api-risks.json',
+    '/settings/cron/queue-v4/readiness','/settings/cron/queue-v4/activate','/settings/cron/queue-v4/stop']);
 foreach (file(dirname(__DIR__) . '/public/index.php') as $line) {
     if (preg_match("~^\\\$router->(get|post)\\('([^']+)', \\[SettingsController::class, '([^']+)'\\]\\);~", trim($line), $match)
         && in_array($match[2], $wanted, true)) {

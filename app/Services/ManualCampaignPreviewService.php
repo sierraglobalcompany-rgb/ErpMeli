@@ -93,53 +93,15 @@ final class ManualCampaignPreviewService
             return $this->load($token, $userId);
         }
 
-        $preview = (new ManualCampaignService())->preview(
+        $preview = $this->currentPreview(
             (string) $configuration['scope'],
-            self::PRESENTATION_LIMIT,
-            0,
-            0,
-            0,
-            0,
-            (int) $configuration['account_id'] ?: null
+            (int) $configuration['account_id'] ?: null,
+            $userId,
         );
-        $snapshotRows = [];
-        $authorityService = new \App\QueueCore\ManualSourceAuthorityService();
-        foreach ((array) ($preview['rows'] ?? []) as $row) {
-            if (!is_array($row)) {
-                continue;
-            }
-            $queueKey = (string) ($row['queue_key'] ?? '');
-            $sourceId = (string) ($row['source_id'] ?? '');
-            $accountId = max(0, (int) ($row['meli_account_id'] ?? 0));
-            $account = (new BusinessScopeContext())->account($accountId, 0, $userId);
-            $companyId = (int) ($account['company_id'] ?? 0);
-            $adapter = (new ManualCampaignAdapterRegistry())->forQueue($queueKey);
-            if ($adapter === null || !$adapter->supportsExact()) {
-                continue;
-            }
-            $state = $adapter->inspect($sourceId, $accountId);
-            if (!$state->exists || $state->terminal || !$state->eligible) {
-                continue;
-            }
-            $authority = $authorityService->inspect($queueKey, $sourceId, $accountId, $companyId, $state);
-            if ($authority->explicitlyUnsupported) {
-                continue;
-            }
-            $relatedIds = $authorityService->relatedResourceIds($queueKey, $sourceId, $accountId, $companyId);
-            $row['company_id'] = $companyId;
-            $row['selection_id'] = 'exact:' . $queueKey . ':' . $sourceId;
-            $row['source_authority_version'] = $authority->durableInputVersion;
-            $row['operation_key'] = $authority->operationKey;
-            $row['uses_api'] = $authority->usesApi;
-            $row['remote_contract'] = $authority->remoteContract;
-            $row['related_resource_ids'] = $relatedIds;
-            $row['selection_version'] = self::exactSelectionVersion($row);
-            $snapshotRows[] = $row;
-        }
-        $eligibleCount = count($snapshotRows);
-        $preview['rows'] = array_slice($snapshotRows, 0, self::PRESENTATION_LIMIT);
+        $eligibleCount = count((array) ($preview['rows'] ?? []));
+        $preview['rows'] = array_slice((array) ($preview['rows'] ?? []), 0, self::PRESENTATION_LIMIT);
         $preview['eligible_jobs'] = $eligibleCount;
-        $preview['has_more'] = $eligibleCount > self::PRESENTATION_LIMIT;
+        $preview['has_more'] = $eligibleCount > self::PRESENTATION_LIMIT || !empty($preview['truncated']);
         $preview['truncated'] = $preview['has_more'];
         $ttl = max(60, min(3600, (new AppSettingsService())->int('manual_campaign.preview_ttl_seconds', 600)));
         $token = bin2hex(random_bytes(20));
@@ -189,6 +151,186 @@ final class ManualCampaignPreviewService
             throw $error;
         }
         return $this->load($token, $userId);
+    }
+
+    /** @return array<string,mixed> */
+    private function currentPreview(string $scope, ?int $accountId, int $userId): array
+    {
+        $base = (new ManualProcessingService())->preview($scope, $accountId);
+        $candidates = $this->expandDescriptionCandidates((array) ($base['rows'] ?? []), $userId);
+        $registry = new ManualCampaignAdapterRegistry();
+        $inspector = new ManualCampaignSourceInspector();
+        $authorityService = new \App\QueueCore\ManualSourceAuthorityService();
+        $scopeContext = new BusinessScopeContext();
+        $eligible = [];
+        $excluded = [];
+        $estimatedCalls = 0;
+
+        foreach ($candidates as $row) {
+            $queueKey = (string) ($row['queue_key'] ?? '');
+            $sourceId = (string) ($row['source_id'] ?? '');
+            $rowAccountId = max(0, (int) ($row['meli_account_id'] ?? 0));
+            $adapter = $registry->forQueue($queueKey);
+            if ($adapter === null || !$adapter->supportsExact() || $rowAccountId < 1) {
+                $excluded[] = $this->excludedRow(
+                    $row,
+                    'Todavía no tiene un adaptador exacto certificado.',
+                    'automatic_only',
+                );
+                continue;
+            }
+
+            $account = $scopeContext->account($rowAccountId, 0, $userId);
+            $companyId = (int) ($account['company_id'] ?? 0);
+            $state = $inspector->inspect($queueKey, $sourceId, $rowAccountId, $companyId);
+            if (!$state->exists || $state->terminal || !$state->eligible) {
+                $excluded[] = $this->excludedRow(
+                    $row,
+                    $state->message,
+                    $this->excludedState($state->sourceState),
+                    $state->nextEligibleAt,
+                );
+                continue;
+            }
+
+            $authority = $authorityService->inspect(
+                $queueKey,
+                $sourceId,
+                $rowAccountId,
+                $companyId,
+                $state,
+            );
+            if ($authority->explicitlyUnsupported) {
+                $excluded[] = $this->excludedRow(
+                    $row,
+                    'La fuente no tiene una autoridad exacta vigente.',
+                    'automatic_only',
+                );
+                continue;
+            }
+
+            $relatedIds = $authorityService->relatedResourceIds(
+                $queueKey,
+                $sourceId,
+                $rowAccountId,
+                $companyId,
+            );
+            $row['company_id'] = $companyId;
+            $row['selection_id'] = 'exact:' . $queueKey . ':' . $sourceId;
+            $row['source_authority_version'] = $authority->durableInputVersion;
+            $row['operation_key'] = $authority->operationKey;
+            $row['uses_api'] = $authority->usesApi;
+            $row['remote_contract'] = $authority->remoteContract;
+            $row['related_resource_ids'] = $relatedIds;
+            $row['estimated_api_calls'] = $authority->usesApi
+                ? max(1, $state->estimatedCalls)
+                : 0;
+            $row['item_count'] = max(1, $state->estimatedItems);
+            $row['source_state'] = $state->sourceState;
+            $row['selection_version'] = self::exactSelectionVersion($row);
+            $estimatedCalls += (int) $row['estimated_api_calls'];
+            $eligible[] = $row;
+        }
+
+        $excludedSummary = [];
+        foreach ($excluded as $item) {
+            $state = (string) ($item['state'] ?? 'automatic_only');
+            if (!isset($excludedSummary[$state])) {
+                $excludedSummary[$state] = [
+                    'state' => $state,
+                    'count' => 0,
+                    'reason' => (string) ($item['reason'] ?? ''),
+                ];
+            }
+            $excludedSummary[$state]['count']++;
+        }
+
+        return array_merge($base, [
+            'rows' => $eligible,
+            'eligible_jobs' => count($eligible),
+            'excluded_jobs' => $excluded,
+            'excluded_summary' => array_values($excludedSummary),
+            'estimated_calls' => $estimatedCalls,
+            'contains_descriptions' => count(array_filter(
+                $eligible,
+                static fn (array $row): bool => (string) ($row['queue_key'] ?? '') === 'catalog_descriptions',
+            )) > 0,
+        ]);
+    }
+
+    /** @param array<string,mixed> $row @return array<string,mixed> */
+    private function excludedRow(
+        array $row,
+        string $reason,
+        string $state,
+        ?string $nextEligibleAt = null,
+    ): array {
+        return [
+            'queue_key' => (string) ($row['queue_key'] ?? ''),
+            'source_id' => (string) ($row['source_id'] ?? ''),
+            'meli_account_id' => (int) ($row['meli_account_id'] ?? 0),
+            'account_name' => (string) ($row['account_name'] ?? ''),
+            'label' => (string) ($row['human_label'] ?? $row['queue_key'] ?? 'Trabajo'),
+            'reason' => $reason,
+            'state' => $state,
+            'next_eligible_at' => $nextEligibleAt,
+        ];
+    }
+
+    private function excludedState(string $sourceState): string
+    {
+        return match ($sourceState) {
+            'action_required' => 'action_required',
+            'future' => 'future',
+            'locked', 'running' => 'running',
+            'paused' => 'paused',
+            'completed', 'completed_elsewhere', 'missing' => 'completed',
+            default => 'automatic_only',
+        };
+    }
+
+    /** @param list<array<string,mixed>> $rows @return list<array<string,mixed>> */
+    private function expandDescriptionCandidates(array $rows, int $userId): array
+    {
+        $expanded = [];
+        $pdo = Database::connectionFresh();
+        $scopeContext = new BusinessScopeContext();
+        foreach ($rows as $row) {
+            if ((string) ($row['queue_key'] ?? '') !== 'catalog_descriptions'
+                || !ctype_digit((string) ($row['source_id'] ?? ''))) {
+                $expanded[] = $row;
+                continue;
+            }
+            $jobId = (int) $row['source_id'];
+            $rowAccountId = max(0, (int) ($row['meli_account_id'] ?? 0));
+            if ($jobId < 1 || $rowAccountId < 1) {
+                continue;
+            }
+            $account = $scopeContext->account($rowAccountId, 0, $userId);
+            $companyId = (int) ($account['company_id'] ?? 0);
+            $stmt = $pdo->prepare(
+                'SELECT i.id,i.meli_account_id,i.external_item_id
+                 FROM catalog_description_job_items i
+                 JOIN catalog_description_jobs j ON j.id=i.catalog_description_job_id
+                 JOIN meli_accounts a ON a.id=i.meli_account_id AND a.company_id=?
+                 WHERE j.id=? AND i.meli_account_id=? AND i.status="pending"
+                   AND (i.next_retry_at IS NULL OR i.next_retry_at<=UTC_TIMESTAMP())
+                 ORDER BY i.id ASC LIMIT 500'
+            );
+            $stmt->execute([$companyId, $jobId, $rowAccountId]);
+            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $item) {
+                $copy = $row;
+                $copy['source_id'] = $jobId . ':' . (int) $item['id'];
+                $copy['company_id'] = $companyId;
+                $copy['meli_account_id'] = (int) $item['meli_account_id'];
+                $copy['human_label'] = 'Descripción de ' . (string) $item['external_item_id'];
+                $copy['content_summary'] = 'Consulta individual de una descripción pendiente.';
+                $copy['item_count'] = 1;
+                $copy['estimated_api_calls'] = 1;
+                $expanded[] = $copy;
+            }
+        }
+        return $expanded;
     }
 
     /** @return array<string,mixed> */

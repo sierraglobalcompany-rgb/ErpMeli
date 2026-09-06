@@ -22,6 +22,37 @@ try {
     $pdo->exec("INSERT INTO meli_accounts(id,company_id,account_name,meli_user_id,status) VALUES(9011,9001,'Calls transport',99011,'conectado')");
     $pdo->prepare('INSERT INTO meli_tokens(meli_account_id,access_token_encrypted,refresh_token_encrypted,expires_at) VALUES(9011,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 DAY))')->execute([App\Core\Crypto::encrypt('test-access'),App\Core\Crypto::encrypt('test-refresh')]);
     $pdo->exec("UPDATE queue_v4_clean_control SET engine_state='ACTIVE',readiness_state='CERTIFIED' WHERE control_key='primary'");$pdo->exec("UPDATE queue_engine_control SET active_engine='v4'");
+    $pdo->exec("UPDATE app_settings SET setting_value='0' WHERE setting_key='alerts.email.enabled'");
+    // Real client, rhythm, tenant fences and cURL preparation for both outer
+    // owners. Larger configured capacities need not defeat an earlier real
+    // rhythm/deadline stop. Only curl_exec is replaced by the no-network fixture.
+    foreach(['manual','automatic'] as $owner) {
+        foreach([1,2,3,15,55,100] as $limit) {
+            $pdo->exec('DELETE FROM api_remote_permits');$pdo->exec('DELETE FROM api_request_logs');
+            $pdo->exec('DELETE FROM api_rhythm_penalties');
+            $pdo->exec("UPDATE api_rhythm_states SET next_allowed_at=NULL,block_pause_until=NULL,calls_in_block=0 WHERE scope_key='global'");
+            W::$responses['/orders/8101']=[200,['id'=>8101]];
+            $before=count(W::$calls);$stop=null;$started=microtime(true);
+            B::start($limit,$owner,$started+45);
+            for($n=0;$n<=$limit;$n++) {
+                $key=bin2hex(random_bytes(20));
+                $pdo->prepare("INSERT INTO queue_v4_clean_jobs(company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,state,lease_owner,lease_generation,lease_expires_at) VALUES(9001,9011,'order_exact','8101',?,'{}','running','calls-matrix',1,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 MINUTE))")->execute([$key]);$job=(int)$pdo->lastInsertId();
+                $pdo->prepare("INSERT INTO queue_v4_clean_attempts(job_id,run_id,company_id,meli_account_id,lease_owner,lease_generation) VALUES(?,9998,9001,9011,'calls-matrix',1)")->execute([$job]);$attempt=(int)$pdo->lastInsertId();
+                $meta=['source'=>'queue_v4_clean','company_id'=>9001,'account_id'=>9011,'queue_v4_job_id'=>$job,'queue_v4_attempt_id'=>$attempt,'queue_v4_lease_owner'=>'calls-matrix','queue_v4_lease_generation'=>1];
+                try {M::run($meta,static fn()=>(new App\Services\MeliApiClient(9011))->get('/orders/8101'));}
+                catch(Throwable $error){$stop=$error;break;}
+            }
+            $physical=count(W::$calls)-$before;$snapshot=B::snapshot();
+            calls_check($physical>0&&$physical<=$limit&&$snapshot['used']===$physical&&$snapshot['owner']===$owner&&$snapshot['limit']===$limit&&$snapshot['remaining']===$limit-$physical,'matrix_'.$owner.'_'.$limit.'_physical_within_capacity');
+            calls_check($snapshot['physical_http_calls']===$physical&&$snapshot['physical_http_calls_certainty']==='CERTIFIED','matrix_'.$owner.'_'.$limit.'_receipt');
+            calls_check($stop instanceof App\Services\ApiBudgetExhaustedException||$stop instanceof App\Services\ApiRhythmDeferredException||$stop instanceof App\Services\CronDeadlineDeferredException,'matrix_'.$owner.'_'.$limit.'_documented_stop:'.($stop?->getMessage()??'none'));
+            if($limit<=3)calls_check($physical===$limit,'matrix_'.$owner.'_'.$limit.'_exact_small_capacity');
+            echo 'PHYSICAL_MATRIX='.json_encode(['owner'=>$owner,'limit'=>$limit,'physical'=>$physical,'remaining'=>$snapshot['remaining'],'stop'=>$stop===null?null:$stop::class,'elapsed_ms'=>(int)((microtime(true)-$started)*1000)])."\n";
+            B::clear();
+        }
+    }
+    $pdo->exec('DELETE FROM api_remote_permits');$pdo->exec('DELETE FROM api_request_logs');$pdo->exec('DELETE FROM api_rhythm_penalties');
+    $pdo->exec("UPDATE api_rhythm_states SET next_allowed_at=NULL,block_pause_until=NULL,calls_in_block=0 WHERE scope_key='global'");
     // Supplemental technical profile retry proof, not a business-source escape:
     // authorized private capability, one outer limit2, real client/Curl/permit/log.
     $pdo->exec("UPDATE app_settings SET setting_value='0' WHERE setting_key IN ('api.guard.jitter_min_ms','api.guard.jitter_max_ms')");App\Services\AppSettingsService::clearCache();

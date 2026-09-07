@@ -97,12 +97,14 @@ final class SettingsController
         }
         $settings = new AppSettingsService();
         $billingBackoff = $this->billing429BackoffMinutesFromPost();
+        $previousBillingInterval = (new \App\Services\ApiRhythmPolicyService($settings))->billingMinIntervalSeconds();
+        $billingInterval = $this->billingMinIntervalSecondsFromPost($settings);
         $previousProfile = (string) $settings->get('api.rhythm.profile', '');
         $previousTarget = $settings->int('api.rhythm.target_http_per_minute', $target);
         $previousCurrent = $settings->int('api.rhythm.current_adaptive_limit', min(15, $target));
         $previousAdaptive = $settings->bool('api.rhythm.adaptive_enabled', true);
         $adaptiveEnabled = isset($_POST['adaptive_enabled']);
-        if ($target > $previousTarget) {
+        if ($target > $previousTarget || $billingInterval < $previousBillingInterval) {
             $gate = $this->queueV4RhythmIncreaseGate();
             if (empty($gate['allowed'])) {
                 Session::flash('error', 'No se subió el ritmo: ' . $gate['message']);
@@ -113,6 +115,7 @@ final class SettingsController
         $settings->set('api.rhythm.profile', $profile, 'api_rhythm');
         $settings->set('api.rhythm.target_http_per_minute', (string) $target, 'api_rhythm');
         $settings->set('api.rhythm.minimum_interval_ms', '1000', 'api_rhythm');
+        $settings->set('api.rhythm.billing_min_interval_seconds', (string) $billingInterval, 'api_rhythm');
         $settings->set('api.rhythm.rolling_window_seconds', '60', 'api_rhythm');
         // Al reducir, el nuevo límite entra inmediatamente. Al aumentar se
         // conserva el nivel actual y la rampa exige evidencia antes de subir.
@@ -147,6 +150,18 @@ final class SettingsController
         }
         Session::flash('success', 'Ritmo guardado. Los límites de Mercado Libre, cuenta, endpoint y presupuesto siguen prevaleciendo.');
         $this->redirect('/settings/cron/rhythm');
+    }
+
+    private function billingMinIntervalSecondsFromPost(AppSettingsService $settings): int
+    {
+        $raw = $_POST['billing_min_interval_seconds']
+            ?? $settings->get('api.rhythm.billing_min_interval_seconds', '300')
+            ?? '300';
+        try {
+            return (int) \App\Services\ApiRhythmPolicyService::normalizeBillingMinIntervalSeconds($raw);
+        } catch (\InvalidArgumentException $error) {
+            throw new \App\Core\HttpException(422, $error->getMessage());
+        }
     }
 
     public function saveCronCallBudget(): void

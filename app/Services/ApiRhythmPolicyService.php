@@ -21,7 +21,7 @@ final class ApiRhythmPolicyService
     private const ORDERS_SEARCH_LOCAL_CEILING = 3;
     private const BILLING_ENDPOINT = 'billing_orders';
     private const BILLING_PATH = '/billing/integration/group/ML/order/details';
-    private const BILLING_MIN_INTERVAL_SECONDS = 300;
+    private const BILLING_MIN_INTERVAL_SECONDS_DEFAULT = 300;
     private const BILLING_429_ESCALATION_WINDOW_HOURS = 72;
     private const BILLING_429_BACKOFF_MIN_MINUTES = 5;
     private const BILLING_429_BACKOFF_MAX_MINUTES = 720;
@@ -46,12 +46,14 @@ final class ApiRhythmPolicyService
 
     public function __construct(private readonly AppSettingsService $settings = new AppSettingsService()) {}
 
-    /** @return array{interval_seconds:int,scope:string,runtime_source:string,file_sha256:string|null} */
+    /** @return array{interval_seconds:int,label:string,scope:string,runtime_source:string,file_sha256:string|null} */
     public static function billingPacingDiagnosticPolicy(): array
     {
         $file = __FILE__;
+        $seconds = (new self())->billingMinIntervalSeconds();
         return [
-            'interval_seconds' => self::BILLING_MIN_INTERVAL_SECONDS,
+            'interval_seconds' => $seconds,
+            'label' => 'Ritmo Billing: 1 llamada cada ' . $seconds . ' segundos',
             'scope' => 'GLOBAL_ERP',
             'runtime_source' => self::class,
             'file_sha256' => is_file($file) ? hash_file('sha256', $file) : null,
@@ -551,6 +553,7 @@ final class ApiRhythmPolicyService
             'billing_429_backoff_2_minutes' => $billing429Backoff[2],
             'billing_429_backoff_3_minutes' => $billing429Backoff[3],
             'billing_429_backoff_max_minutes' => $billing429Backoff[4],
+            'billing_min_interval_seconds' => $this->billingMinIntervalSeconds(),
             // Compatibilidad de lectura con presentadores 2.28.15–2.28.30.
             'calls_per_block' => $target,
             'interval_ms' => $minimumInterval,
@@ -1032,7 +1035,7 @@ final class ApiRhythmPolicyService
 
         $lastDispatch = (float) ($row['last_dispatch_epoch'] ?? 0);
         if ($lastDispatch > 0) {
-            $next = $lastDispatch + self::BILLING_MIN_INTERVAL_SECONDS;
+            $next = $lastDispatch + $this->billingMinIntervalSeconds();
         }
 
         $billing429State = $this->billing429BackoffState($pdo, $currentRetryAfterSeconds);
@@ -1061,10 +1064,42 @@ final class ApiRhythmPolicyService
         return [
             'message' => $scope === 'billing_429_backoff'
                 ? 'Billing quedó aplazado por la protección progresiva posterior a HTTP 429.'
-                : 'Billing admite una salida física cada cinco minutos en toda la aplicación.',
+                : 'Billing admite una salida física cada ' . $this->billingMinIntervalSeconds() . ' segundos en toda la aplicación.',
             'next_safe_at' => $this->formatTimestamp($next),
             'scope' => $scope,
         ];
+    }
+
+    public function billingMinIntervalSeconds(): int
+    {
+        $raw = (string) $this->settings->get(
+            'api.rhythm.billing_min_interval_seconds',
+            (string) self::BILLING_MIN_INTERVAL_SECONDS_DEFAULT
+        );
+        if (!preg_match('/^[1-9][0-9]*$/D', $raw)) {
+            return self::BILLING_MIN_INTERVAL_SECONDS_DEFAULT;
+        }
+        $seconds = (int) $raw;
+        if ($seconds < 1 || $seconds > 3600) {
+            return self::BILLING_MIN_INTERVAL_SECONDS_DEFAULT;
+        }
+        return $seconds;
+    }
+
+    public static function normalizeBillingMinIntervalSeconds(mixed $value): string
+    {
+        if (!is_int($value) && !is_string($value)) {
+            throw new \InvalidArgumentException('Ritmo Billing debe ser un entero entre 1 y 3600 segundos.');
+        }
+        $raw = is_int($value) ? (string) $value : $value;
+        if (!preg_match('/^[1-9][0-9]*$/D', $raw)) {
+            throw new \InvalidArgumentException('Ritmo Billing debe ser un entero entre 1 y 3600 segundos.');
+        }
+        $seconds = (int) $raw;
+        if ($seconds < 1 || $seconds > 3600) {
+            throw new \InvalidArgumentException('Ritmo Billing debe estar entre 1 y 3600 segundos.');
+        }
+        return (string) $seconds;
     }
 
     /** @return array<string,mixed> */

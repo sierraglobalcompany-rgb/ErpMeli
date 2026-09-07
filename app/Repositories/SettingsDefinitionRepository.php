@@ -76,6 +76,11 @@ final class SettingsDefinitionRepository
                 $this->number('api.rhythm.billing_429_backoff_2_minutes', 'Billing 429 · segunda pausa', 120, 5, 720, 'min', 'Sólo para Billing 429 remoto real; Retry-After de Mercado Libre prevalece.', true),
                 $this->number('api.rhythm.billing_429_backoff_3_minutes', 'Billing 429 · tercera pausa', 360, 5, 720, 'min', 'Sólo para Billing 429 remoto real; Retry-After de Mercado Libre prevalece.', true),
                 $this->number('api.rhythm.billing_429_backoff_max_minutes', 'Billing 429 · pausa máxima', 720, 5, 720, 'min', 'Sólo para Billing 429 remoto real; Retry-After de Mercado Libre prevalece.', true),
+                $this->managed(
+                    $this->number('api.rhythm.billing_min_interval_seconds', 'Ritmo Billing · intervalo mínimo', 300, 1, 3600, 'seg', 'Ritmo Billing: 1 llamada cada N segundos. Compartido por automático y manual; no cambia presupuestos ni acorta pausas 429.', true),
+                    '/settings/cron/rhythm',
+                    'Cambiar en Automatización y seguridad API'
+                ),
                 $this->number('api.rhythm.shared_429_backoff_seconds', '429 remoto · pausa global compartida', 1800, 300, 86400, 'seg', 'Barrera simple para todas las fuentes automáticas cuando Mercado Libre responde 429 sin Retry-After.', true),
                 $this->number('api.rhythm.orders_search_requests_per_15m', 'Búsqueda de órdenes · techo local', 3, 1, 30, 'llamadas / 15 min', 'Límite específico de /orders/search; no reemplaza el máximo total por ciclo.', true),
                 $this->managed(

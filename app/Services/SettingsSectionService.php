@@ -106,6 +106,10 @@ final class SettingsSectionService
 
     private function numberValue(array $field, mixed $raw): string
     {
+        if (($field['key'] ?? '') === 'api.rhythm.billing_min_interval_seconds') {
+            return ApiRhythmPolicyService::normalizeBillingMinIntervalSeconds($raw);
+        }
+
         if (!is_numeric($raw)) {
             throw new InvalidArgumentException('El valor de “' . $field['label'] . '” debe ser numérico.');
         }

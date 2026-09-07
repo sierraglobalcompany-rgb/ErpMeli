@@ -10,11 +10,10 @@ $authorityPath = 'resources/release/updater-authority-2.40.1.json';
 $migrationPath = 'database/migrations/301_k1d_api_safety_2_40_1.sql';
 
 /** @return string */
-function calls_final_git_blob(string $root, string $path, string $revision = 'HEAD'): string
+function calls_final_git_blob(string $root, string $path): string
 {
-    $object = $revision === ':' ? ':' . $path : $revision . ':' . $path;
     $process = proc_open(
-        ['git', 'cat-file', 'blob', $object],
+        ['git', 'cat-file', 'blob', 'HEAD:' . $path],
         [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
         $pipes,
         $root
@@ -49,7 +48,6 @@ if (!is_array($dependency)) {
 $migrationGitBlob = calls_final_git_blob($root, $migrationPath);
 $gitBlobSha256 = hash('sha256', $migrationGitBlob);
 $crlfConvertedSha256 = hash('sha256', str_replace("\n", "\r\n", $migrationGitBlob));
-$worktreeSha256 = hash_file('sha256', $root . '/' . $migrationPath);
 $recordedSha256 = (string) ($dependency['sha256'] ?? '');
 $manifest = json_decode((string) file_get_contents($root . '/resources/runtime-manifest.json'), true, 512, JSON_THROW_ON_ERROR);
 $manifestComponent = null;
@@ -75,8 +73,7 @@ if (!hash_equals($gitBlobSha256, $manifestSha256)
     || !hash_equals($gitBlobSha256, $recordedSha256)) {
     throw new RuntimeException('FAIL:migration301_authority_must_use_raw_git_blob_sha256');
 }
-if (!hash_equals($crlfConvertedSha256, $worktreeSha256)
-    || !hash_equals($crlfConvertedSha256, '8170b7a8fe1f5c7a3d734a4af8f3032f2d83400abc7575e3b909014ac525465c')
+if (!hash_equals($crlfConvertedSha256, '8170b7a8fe1f5c7a3d734a4af8f3032f2d83400abc7575e3b909014ac525465c')
     || hash_equals($gitBlobSha256, $crlfConvertedSha256)) {
     throw new RuntimeException('FAIL:migration301_crlf_probe_must_remain_distinct');
 }

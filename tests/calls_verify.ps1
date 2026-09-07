@@ -17,6 +17,20 @@ $env:TEMP = $out
 $env:TMP = $out
 $env:CAP2_MANUAL_QA_ROOT = Join-Path $qa 'manual-fixtures'
 $env:CALLS_QA_STORAGE_ROOT = Join-Path $out 'runtime'
+function Get-Sha256Hex {
+    param([Parameter(Mandatory=$true)][string]$LiteralPath)
+    $stream = [System.IO.File]::Open($LiteralPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+        } finally {
+            $sha.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
 $cases = @{
     selftest = @('calls_verify_fixture fail','calls_verify_fixture pass')
     static = @(
@@ -63,7 +77,7 @@ try {
             Where-Object { $_ -match '\.(php|js|css|json|sql|ps1|lock)$' } | Sort-Object -Unique
         $inputs = foreach ($path in $paths) {
             if (Test-Path -LiteralPath $path -PathType Leaf) {
-                [pscustomobject]@{path=$path; sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLower()}
+                [pscustomobject]@{path=$path; sha256=(Get-Sha256Hex -LiteralPath $path)}
             }
         }
         return ($inputs | ConvertTo-Json -Depth 3 -Compress)
@@ -87,7 +101,7 @@ try {
             -RedirectStandardError (Join-Path $out ($name + '.err.log'))
         $code = $process.ExitCode
         $timer.Stop()
-        $results += [pscustomobject]@{test=$case; exit=$code; ms=$timer.ElapsedMilliseconds; sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLower()}
+        $results += [pscustomobject]@{test=$case; exit=$code; ms=$timer.ElapsedMilliseconds; sha256=(Get-Sha256Hex -LiteralPath $file)}
         Write-Output ($case + ' EXIT=' + $code)
     }
     $failed = @($results | Where-Object { $_.exit -ne 0 })

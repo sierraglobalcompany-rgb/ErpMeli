@@ -29,7 +29,7 @@ function cap2_manual_database(): K1dSafeTestDatabase
     $s=new App\Services\AppSettingsService();
     foreach(['notifications.debounce_seconds'=>'0','items.hybrid_notification_updates_enabled'=>'0','api.rhythm.burst_size'=>'100','manual.api_calls_per_step'=>'3','manual.api_calls_ceiling'=>'55'] as $key=>$value) $s->set($key,$value,'manual');
     App\Services\AppSettingsService::clearCache();
-    App\Core\Session::put('user',['id'=>9007,'role'=>'admin','session_generation'=>(new App\Services\SessionGenerationService())->current()]);
+    App\Core\Session::put('user',['id'=>9007,'role'=>'admin','session_generation'=>(new App\Services\SessionGenerationService())->rotate()]);
     return $h;
 }
 

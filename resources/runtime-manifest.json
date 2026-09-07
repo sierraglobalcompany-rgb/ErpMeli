@@ -2982,8 +2982,8 @@
         },
         "runtime_app_services_queuev4diagnosticbundleservice_php": {
             "path": "app/Services/QueueV4DiagnosticBundleService.php",
-            "sha256": "5ab80874cc528a2507f6698b2d1254f9de301f87d2494644dbe1a11010e67131",
-            "sha256_lf": "5ab80874cc528a2507f6698b2d1254f9de301f87d2494644dbe1a11010e67131",
+            "sha256": "e6480712fb8d1531b99c09c476b926f8e00eebf59d4e6c2a254e3af16667648e",
+            "sha256_lf": "e6480712fb8d1531b99c09c476b926f8e00eebf59d4e6c2a254e3af16667648e",
             "text": true
         },
         "runtime_app_services_queuev4pretransportdeferredexception_php": {

@@ -20,7 +20,12 @@ function curl_exec(\CurlHandle $handle): string
     if (!isset(Cap2DomainsWire::$responses[$path])) {
         throw new \RuntimeException('UNEXPECTED_WIRE_PATH:' . $path);
     }
-    Cap2DomainsWire::$calls[] = ['path' => $path, 'meta' => ApiExecutionMetadataContext::current()];
+    parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+    Cap2DomainsWire::$calls[] = [
+        'path' => $path,
+        'query' => $query,
+        'meta' => ApiExecutionMetadataContext::current(),
+    ];
     [Cap2DomainsWire::$status, $body] = Cap2DomainsWire::$responses[$path];
     Cap2DomainsWire::$raw = json_encode($body, JSON_THROW_ON_ERROR);
     if (Cap2DomainsWire::$onWire !== null) { (Cap2DomainsWire::$onWire)(); }

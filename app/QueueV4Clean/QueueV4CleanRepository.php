@@ -169,6 +169,7 @@ final class QueueV4CleanRepository
                 "SELECT q.* FROM queue_v4_clean_jobs q
                  WHERE q.state='ready'
                    AND q.available_at<=UTC_TIMESTAMP(3)
+                   AND (q.lease_owner IS NULL OR q.lease_expires_at IS NULL OR q.lease_expires_at<=UTC_TIMESTAMP(3))
                    AND NOT (" . $this->financialSourceFuturePredicate('q') . ")
                    AND NOT (" . $this->unresolvedPhysicalPredicate('q') . ")
                    AND {$scopeSql}
@@ -190,7 +191,8 @@ final class QueueV4CleanRepository
                 "UPDATE queue_v4_clean_jobs
                  SET state='running',lease_owner=?,lease_expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND),
                      lease_generation=?,attempt_count=attempt_count+1
-                 WHERE id=? AND company_id=? AND meli_account_id=? AND state='ready' AND lease_generation=?"
+                 WHERE id=? AND company_id=? AND meli_account_id=? AND state='ready' AND lease_generation=?
+                   AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at<=UTC_TIMESTAMP(3))"
             );
             $update->execute([
                 $owner, max(10, min(300, $leaseSeconds)), $generation,
@@ -264,6 +266,7 @@ final class QueueV4CleanRepository
                  ON c.id=q.company_id
               WHERE q.state='ready'
                 AND q.available_at<=UTC_TIMESTAMP(3)
+                AND (q.lease_owner IS NULL OR q.lease_expires_at IS NULL OR q.lease_expires_at<=UTC_TIMESTAMP(3))
                 AND NOT (" . $this->financialSourceFuturePredicate('q') . ")
                 AND NOT (" . $this->unresolvedPhysicalPredicate('q') . ")
                 AND {$scopeSql}
@@ -297,6 +300,7 @@ final class QueueV4CleanRepository
         $statement = $this->pdo->prepare(
             "SELECT q.id FROM queue_v4_clean_jobs q
               WHERE q.state='ready' AND q.available_at<=UTC_TIMESTAMP(3)
+                AND (q.lease_owner IS NULL OR q.lease_expires_at IS NULL OR q.lease_expires_at<=UTC_TIMESTAMP(3))
                 AND NOT (" . $this->financialSourceFuturePredicate('q') . ")
                 AND NOT (" . $this->unresolvedPhysicalPredicate('q') . ")
                 AND {$scopeSql} AND {$selectionSql}"
@@ -320,6 +324,7 @@ final class QueueV4CleanRepository
                FROM queue_v4_clean_jobs q
               WHERE q.state='ready'
                 AND q.available_at<=UTC_TIMESTAMP(3)
+                AND (q.lease_owner IS NULL OR q.lease_expires_at IS NULL OR q.lease_expires_at<=UTC_TIMESTAMP(3))
                 AND NOT (" . $this->financialSourceFuturePredicate('q') . ")
                 AND NOT (" . $this->unresolvedPhysicalPredicate('q') . ")
                 AND {$scopeSql}"
@@ -379,65 +384,80 @@ final class QueueV4CleanRepository
             $cursorAvailableAt = $availableAt;
             $cursorJobId = $jobId;
             while ($remaining > 0) {
-            $statement = $this->pdo->prepare(
-                'SELECT q.id queue_job_id,q.available_at queue_available_at,
-                        q.company_id queue_company_id,q.meli_account_id queue_account_id,
-                        q.job_type queue_job_type,
-                        JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability")) queue_capability,
-                        s.id source_id,s.status source_status,s.sale_key,s.input_version,s.safe_message,
-                        st.input_version state_input_version,COALESCE(st.official_status,"missing") official_status,
-                        (SELECT COUNT(*)
-                           FROM meli_orders o
-                          WHERE o.meli_account_id=s.meli_account_id
-                            AND CONCAT(IF(o.external_pack_id IS NULL,"O:","P:"),COALESCE(o.external_pack_id,o.external_order_id))=s.sale_key) order_count
-                   FROM queue_v4_clean_jobs q
-                   LEFT JOIN sale_financial_reconciliation_jobs s
-                     ON s.id=CAST(q.resource_id AS UNSIGNED)
-                    AND s.company_id=q.company_id
-                    AND s.meli_account_id=q.meli_account_id
-                   LEFT JOIN sale_financial_state st
-                     ON st.company_id=s.company_id
-                    AND st.meli_account_id=s.meli_account_id
-                    AND st.sale_key=s.sale_key
-                  WHERE q.state="ready"
-                    AND NOT (' . $this->unresolvedPhysicalPredicate('q') . ')
-                    AND q.available_at<=UTC_TIMESTAMP(3)
-                    AND (q.available_at>? OR (q.available_at=? AND q.id>?))
-                  ORDER BY q.available_at ASC,q.id ASC
-                  LIMIT 240'
-            );
-            $statement->execute([$cursorAvailableAt, $cursorAvailableAt, $cursorJobId]);
-            $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
-            foreach ($rows as $row) {
-                $cursorAvailableAt = (string) ($row['queue_available_at'] ?? $cursorAvailableAt);
-                $cursorJobId = (int) ($row['queue_job_id'] ?? $cursorJobId);
-                if ((int) ($row['queue_company_id'] ?? 0) !== $companyId
-                    || (int) ($row['queue_account_id'] ?? 0) !== $accountId
-                    || (string) ($row['queue_job_type'] ?? '') !== 'domain_exact'
-                    || (string) ($row['queue_capability'] ?? '') !== 'financial_reconciliation') {
-                    break;
-                }
-                if (!in_array((string) ($row['source_status'] ?? ''), ['pending', 'retry', 'awaiting_remote'], true)
-                    || !str_starts_with((string) ($row['sale_key'] ?? ''), 'O:')
-                    || (int) ($row['order_count'] ?? 0) !== 1
-                    || (string) ($row['official_status'] ?? 'missing') === 'complete'
-                    || preg_match('/^[a-f0-9]{64}$/', (string) ($row['input_version'] ?? '')) !== 1
-                    || !hash_equals((string) ($row['input_version'] ?? ''), (string) ($row['state_input_version'] ?? ''))
-                    || str_starts_with((string) ($row['safe_message'] ?? ''), 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED')) {
-                    continue;
-                }
-                $rowSourceId = (int) ($row['source_id'] ?? 0);
-                if ($rowSourceId > 0) {
-                    $sourceIds[] = $rowSourceId;
-                    $remaining--;
-                    if ($remaining < 1) {
+                $statement = $this->pdo->prepare(
+                    'SELECT q.id queue_job_id,q.available_at queue_available_at,
+                            q.company_id queue_company_id,q.meli_account_id queue_account_id,
+                            q.job_type queue_job_type,q.lease_owner queue_lease_owner,
+                            q.lease_expires_at queue_lease_expires_at,
+                            JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability")) queue_capability,
+                            s.id source_id,s.status source_status,s.sale_key,s.input_version,s.safe_message,
+                            s.next_run_at source_next_run_at,s.lock_owner source_lock_owner,
+                            s.lease_expires_at source_lease_expires_at,
+                            (' . $this->financialSourceManualReservationPredicate('s') . ') source_reserved_by_manual,
+                            st.input_version state_input_version,COALESCE(st.official_status,"missing") official_status,
+                            (SELECT COUNT(*)
+                               FROM meli_orders o
+                              WHERE o.meli_account_id=s.meli_account_id
+                                AND CONCAT(IF(o.external_pack_id IS NULL,"O:","P:"),COALESCE(o.external_pack_id,o.external_order_id))=s.sale_key) order_count
+                       FROM queue_v4_clean_jobs q
+                       LEFT JOIN sale_financial_reconciliation_jobs s
+                         ON s.id=CAST(q.resource_id AS UNSIGNED)
+                        AND s.company_id=q.company_id
+                        AND s.meli_account_id=q.meli_account_id
+                       LEFT JOIN sale_financial_state st
+                         ON st.company_id=s.company_id
+                        AND st.meli_account_id=s.meli_account_id
+                        AND st.sale_key=s.sale_key
+                      WHERE q.state="ready"
+                        AND NOT (' . $this->unresolvedPhysicalPredicate('q') . ')
+                        AND q.available_at<=UTC_TIMESTAMP(3)
+                        AND (q.available_at>? OR (q.available_at=? AND q.id>?))
+                      ORDER BY q.available_at ASC,q.id ASC
+                      LIMIT 240'
+                );
+                $statement->execute([$cursorAvailableAt, $cursorAvailableAt, $cursorJobId]);
+                $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+                $boundaryReached = false;
+                foreach ($rows as $row) {
+                    $cursorAvailableAt = (string) ($row['queue_available_at'] ?? $cursorAvailableAt);
+                    $cursorJobId = (int) ($row['queue_job_id'] ?? $cursorJobId);
+                    if ((int) ($row['queue_company_id'] ?? 0) !== $companyId
+                        || (int) ($row['queue_account_id'] ?? 0) !== $accountId
+                        || (string) ($row['queue_job_type'] ?? '') !== 'domain_exact'
+                        || (string) ($row['queue_capability'] ?? '') !== 'financial_reconciliation') {
+                        $boundaryReached = true;
                         break;
                     }
+                    $leaseOwner = trim((string) ($row['queue_lease_owner'] ?? ''));
+                    $leaseExpiresAt = strtotime((string) ($row['queue_lease_expires_at'] ?? '') . ' UTC');
+                    $sourceLockOwner = trim((string) ($row['source_lock_owner'] ?? ''));
+                    $sourceLeaseExpiresAt = strtotime((string) ($row['source_lease_expires_at'] ?? '') . ' UTC');
+                    $sourceNextRunAt = strtotime((string) ($row['source_next_run_at'] ?? '') . ' UTC');
+                    if (($leaseOwner !== '' && ($leaseExpiresAt === false || $leaseExpiresAt > time()))
+                        || ($sourceLockOwner !== '' && ($sourceLeaseExpiresAt === false || $sourceLeaseExpiresAt > time()))
+                        || ($sourceNextRunAt !== false && $sourceNextRunAt > time())
+                        || (int) ($row['source_reserved_by_manual'] ?? 0) === 1
+                        || !in_array((string) ($row['source_status'] ?? ''), ['pending', 'retry', 'awaiting_remote'], true)
+                        || !str_starts_with((string) ($row['sale_key'] ?? ''), 'O:')
+                        || (int) ($row['order_count'] ?? 0) !== 1
+                        || (string) ($row['official_status'] ?? 'missing') === 'complete'
+                        || preg_match('/^[a-f0-9]{64}$/', (string) ($row['input_version'] ?? '')) !== 1
+                        || !hash_equals((string) ($row['input_version'] ?? ''), (string) ($row['state_input_version'] ?? ''))
+                        || str_starts_with((string) ($row['safe_message'] ?? ''), 'BILLING_BATCH_EXACT_FALLBACK_REQUIRED')) {
+                        continue;
+                    }
+                    $rowSourceId = (int) ($row['source_id'] ?? 0);
+                    if ($rowSourceId > 0) {
+                        $sourceIds[] = $rowSourceId;
+                        $remaining--;
+                        if ($remaining < 1) {
+                            break;
+                        }
+                    }
                 }
-            }
-            if (count($rows) < 240) {
-                break;
-            }
+                if ($boundaryReached || count($rows) < 240) {
+                    break;
+                }
             }
         } catch (Throwable) {
             return $sourceIds;
@@ -500,23 +520,26 @@ final class QueueV4CleanRepository
         $complete = $this->pdo->prepare(
             'UPDATE queue_v4_clean_jobs
              SET state="completed",completed_at=UTC_TIMESTAMP(3),last_error_class=NULL
-             WHERE company_id=? AND meli_account_id=? AND resource_id=? AND state="ready"
-               AND job_type="domain_exact"
-               AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="financial_reconciliation"'
+              WHERE company_id=? AND meli_account_id=? AND resource_id=? AND state="ready"
+                AND job_type="domain_exact"
+                AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at<=UTC_TIMESTAMP(3))
+                AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="financial_reconciliation"'
         );
         $waiting = $this->pdo->prepare(
             'UPDATE queue_v4_clean_jobs
              SET state="waiting",available_at=?,completed_at=NULL,last_error_class=?
-             WHERE company_id=? AND meli_account_id=? AND resource_id=? AND state="ready"
-               AND job_type="domain_exact"
-               AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="financial_reconciliation"'
+              WHERE company_id=? AND meli_account_id=? AND resource_id=? AND state="ready"
+                AND job_type="domain_exact"
+                AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at<=UTC_TIMESTAMP(3))
+                AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="financial_reconciliation"'
         );
         $review = $this->pdo->prepare(
             'UPDATE queue_v4_clean_jobs
              SET state="review",completed_at=NULL,last_error_class=?
-             WHERE company_id=? AND meli_account_id=? AND resource_id=? AND state="ready"
-               AND job_type="domain_exact"
-               AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="financial_reconciliation"'
+              WHERE company_id=? AND meli_account_id=? AND resource_id=? AND state="ready"
+                AND job_type="domain_exact"
+                AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at<=UTC_TIMESTAMP(3))
+                AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="financial_reconciliation"'
         );
         foreach ($outcomesBySourceId as $sourceId => $outcome) {
             $sourceId = (int) $sourceId;
@@ -742,15 +765,18 @@ final class QueueV4CleanRepository
                   available_at=IF(available_at IS NULL OR available_at < ?, ?, available_at)
               WHERE q.job_type='domain_exact'
                 AND q.state IN ('ready','waiting')
-                AND q.resource_id REGEXP '^[0-9]+$'
-                AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.capability'))='financial_reconciliation'
+                 AND q.resource_id REGEXP '^[0-9]+$'
+                 AND (q.lease_owner IS NULL OR q.lease_expires_at IS NULL OR q.lease_expires_at<=UTC_TIMESTAMP(3))
+                 AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.capability'))='financial_reconciliation'
                 AND EXISTS (
                     SELECT 1
                       FROM sale_financial_reconciliation_jobs s
                      WHERE s.id=CAST(q.resource_id AS UNSIGNED)
                        AND s.company_id=q.company_id
                        AND s.meli_account_id=q.meli_account_id
-                )"
+                       AND (s.lock_owner IS NULL OR s.lease_expires_at IS NULL OR s.lease_expires_at<=UTC_TIMESTAMP(3))
+                       AND NOT (" . $this->financialSourceManualReservationPredicate('s') . ")
+                 )"
             . $whereExcept
         );
         $parameters = [$availableAt, $availableAt];
@@ -1207,6 +1233,8 @@ final class QueueV4CleanRepository
                    AND s.meli_account_id={$queueAlias}.meli_account_id
                    AND (
                        (s.next_run_at IS NOT NULL AND s.next_run_at>UTC_TIMESTAMP(3))
+                       OR (s.lock_owner IS NOT NULL AND (s.lease_expires_at IS NULL OR s.lease_expires_at>UTC_TIMESTAMP(3)))
+                       OR (" . $this->financialSourceManualReservationPredicate('s') . ")
                        OR (
                            s.sale_key LIKE 'P:%'
                            AND COALESCE((
@@ -1219,6 +1247,27 @@ final class QueueV4CleanRepository
                        )
                    )
             )";
+    }
+
+    private function financialSourceManualReservationPredicate(string $sourceAlias): string
+    {
+        $this->assertSqlAlias($sourceAlias);
+        if (!$this->hasTable('manual_campaign_reservations') || !$this->hasTable('manual_campaigns')) {
+            return '0=1';
+        }
+
+        return "EXISTS (
+            SELECT 1
+              FROM manual_campaign_reservations mcr
+              JOIN manual_campaigns mc ON mc.id=mcr.manual_campaign_id
+             WHERE mcr.queue_key='sale_financial_reconciliation'
+               AND mcr.source_id=CAST({$sourceAlias}.id AS CHAR)
+               AND mcr.company_id={$sourceAlias}.company_id
+               AND mcr.meli_account_id={$sourceAlias}.meli_account_id
+               AND mcr.status='active'
+               AND mcr.expires_at>UTC_TIMESTAMP(3)
+               AND mc.status IN ('active','pausing','paused')
+        )";
     }
 
     /**

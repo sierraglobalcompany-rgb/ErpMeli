@@ -164,7 +164,6 @@ final class SaleFinancialService
         foreach (array_slice($sourceIds, 0, self::BILLING_MAX_ORDER_IDS) as $sourceId) {
             $job = $this->claimSpecificBillingJob($sourceId, $companyId, $accountId);
             if ($job === null) {
-                $outcomes[$sourceId] = $this->sourceOutcome($sourceId, $companyId, $accountId);
                 continue;
             }
             $jobs[] = $job;

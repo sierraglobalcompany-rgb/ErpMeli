@@ -583,7 +583,11 @@ final class QueueV4CleanRepository
         $in = implode(',', array_fill(0, count($sourceIds), '?'));
         $statement = $this->pdo->prepare(
             'SELECT id,status,next_run_at FROM sale_financial_reconciliation_jobs
-             WHERE company_id=? AND meli_account_id=? AND id IN (' . $in . ')'
+             WHERE company_id=? AND meli_account_id=? AND id IN (' . $in . ')
+             AND status IN ("pending","retry","awaiting_remote")
+             AND next_run_at<=UTC_TIMESTAMP(3)
+             AND (lock_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at<=UTC_TIMESTAMP(3))
+             AND NOT (' . $this->financialSourceManualReservationPredicate('sale_financial_reconciliation_jobs') . ')'
         );
         $statement->execute(array_merge([$companyId, $accountId], $sourceIds));
         $outcomes = [];

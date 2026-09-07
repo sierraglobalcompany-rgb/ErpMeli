@@ -96,14 +96,6 @@ final class CapacityPolicyService
         return ['current' => $current, 'ceiling' => $ceiling];
     }
 
-    public function requiresManualAdoptionForRhythm(string $profile, int $target): bool
-    {
-        if ($target < 1 || $target > 300) {
-            throw new InvalidArgumentException('El ritmo debe estar entre 1 y 300.');
-        }
-        return false;
-    }
-
     private function integer(mixed $value): int
     {
         if ((!is_int($value) && !is_string($value))

@@ -34,11 +34,34 @@ try {
         $settings->set('api.rhythm.profile', $profile);
         $settings->set('api.rhythm.target_http_per_minute', $target);
         k1b_assert($policy->snapshot('manual')['current'] === 1, 'legacy_rhythm_not_capacity_' . $profile . '_' . $target);
-        k1b_assert(!$policy->requiresManualAdoptionForRhythm($profile, $target === null ? 30 : max(1, (int) $target)), 'legacy_rhythm_never_requires_call_adoption_' . $profile);
+        k1b_assert(!method_exists($policy, 'requiresManualAdoptionForRhythm'), 'legacy_rhythm_adoption_hook_removed_' . $profile);
     }
     $settings->set('manual_campaign.default_block_size', '2');
     k1b_assert($policy->snapshot('manual')['current'] === 1, 'legacy_manual_block_size_not_capacity');
     k1b_assert($policy->snapshot('automation')['revision'] === $auto['revision'], 'modules_independent_before_save');
+    foreach (['automation', 'manual'] as $module) {
+        $other = $module === 'automation' ? 'manual' : 'automation';
+        $otherBefore = $policy->snapshot($other);
+        foreach ([[60, 50], [50, 45], [100, 40], [100, 50], [100, 90]] as [$ceiling, $current]) {
+            $before = $policy->snapshot($module);
+            $saved = $policy->save(
+                $module,
+                $current,
+                $ceiling,
+                $before['revision'],
+                static fn (): array => ['allowed' => true, 'message' => '']
+            );
+            $reloaded = $policy->snapshot($module);
+            k1b_assert(
+                $saved['current'] === $current && $saved['ceiling'] === $ceiling
+                && $reloaded['current'] === $current && $reloaded['ceiling'] === $ceiling,
+                'exact_pair_persisted_and_reloaded_' . $module . '_' . $ceiling . '_' . $current
+            );
+            k1b_assert($policy->snapshot($other) === $otherBefore, 'exact_pair_zero_cross_writes_' . $module . '_' . $ceiling . '_' . $current);
+        }
+    }
+    $pdo->exec("DELETE FROM app_settings WHERE setting_key IN ('manual.api_calls_per_step','manual.api_calls_ceiling')");
+    AppSettingsService::clearCache();
     $gateCalls = 0;
     $allow = static function () use (&$gateCalls): array { $gateCalls++; return ['allowed'=>true,'message'=>'']; };
     foreach ([1,2,3,15,55,100] as $value) {

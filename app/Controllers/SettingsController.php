@@ -102,10 +102,6 @@ final class SettingsController
         $previousCurrent = $settings->int('api.rhythm.current_adaptive_limit', min(15, $target));
         $previousAdaptive = $settings->bool('api.rhythm.adaptive_enabled', true);
         $adaptiveEnabled = isset($_POST['adaptive_enabled']);
-        if ((new CapacityPolicyService())->requiresManualAdoptionForRhythm($profile, $target)) {
-            Session::flash('error', 'Antes de cambiar este ritmo, guarde explícitamente la capacidad manual actual y su techo en Procesar ahora.');
-            $this->redirect('/settings/cron/rhythm');
-        }
         if ($target > $previousTarget) {
             $gate = $this->queueV4RhythmIncreaseGate();
             if (empty($gate['allowed'])) {

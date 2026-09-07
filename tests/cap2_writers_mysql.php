@@ -142,8 +142,7 @@ try {
     AppSettingsService::clearCache();
     $legacyManual = $policy->snapshot('manual');
     k1b_assert(($legacyManual['legacy_derived'] ?? null) === false && $legacyManual['current'] === 1, 'manual_legacy_not_capacity');
-    k1b_assert(!$policy->requiresManualAdoptionForRhythm('conservative', 10), 'legacy_rhythm_no_longer_requires_adoption');
-    k1b_assert(!$policy->requiresManualAdoptionForRhythm('fast', 30), 'same_legacy_rhythm_no_longer_requires_adoption');
+    k1b_assert(!method_exists($policy, 'requiresManualAdoptionForRhythm'), 'legacy_rhythm_adoption_hook_removed');
 
     $adopted = $policy->save('manual', 15, 55, $legacyManual['revision'], static fn (): array => ['allowed' => true, 'message' => '']);
     k1b_assert(($adopted['legacy_derived'] ?? null) === false, 'manual_pair_not_marked_adopted');
@@ -153,7 +152,7 @@ try {
     AppSettingsService::clearCache();
     $afterRhythm = $policy->snapshot('manual');
     k1b_assert($afterRhythm['current'] === 15 && $afterRhythm['revision'] === $adoptedRevision, 'adopted_revision_depends_on_legacy_rhythm');
-    k1b_assert(!$policy->requiresManualAdoptionForRhythm('maximum', 40), 'adopted_manual_still_requires_legacy_adoption');
+    k1b_assert(!method_exists($policy, 'requiresManualAdoptionForRhythm'), 'adopted_manual_has_no_legacy_adoption_hook');
 
     echo "STATUS=PASS CAP2_WRITERS_MYSQL REAL_DEFINITIONS=YES REAL_SERVICES=YES REAL_MELI_HTTP=0\n";
 } finally {

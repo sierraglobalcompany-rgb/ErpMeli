@@ -23,8 +23,15 @@ final class QueueV4CleanRepository
         'errors' => 0,
     ];
 
-    public function __construct(private readonly PDO $pdo)
+    /** @var null|\Closure():void Test-only/local fixture seam. */
+    private ?\Closure $afterFinancialRecoverySourcesRead;
+
+    /** @param null|callable():void $afterFinancialRecoverySourcesRead Test-only/local fixture seam. */
+    public function __construct(private readonly PDO $pdo, ?callable $afterFinancialRecoverySourcesRead = null)
     {
+        $this->afterFinancialRecoverySourcesRead = $afterFinancialRecoverySourcesRead !== null
+            ? \Closure::fromCallable($afterFinancialRecoverySourcesRead)
+            : null;
     }
 
     /** @return array<string,mixed> */
@@ -518,28 +525,31 @@ final class QueueV4CleanRepository
     ): void {
         $this->assertTenant($companyId, $accountId);
         $complete = $this->pdo->prepare(
-            'UPDATE queue_v4_clean_jobs
+            'UPDATE queue_v4_clean_jobs q
              SET state="completed",completed_at=UTC_TIMESTAMP(3),last_error_class=NULL
-              WHERE company_id=? AND meli_account_id=? AND resource_id=? AND state="ready"
-                AND job_type="domain_exact"
-                AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at<=UTC_TIMESTAMP(3))
-                AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="financial_reconciliation"'
+              WHERE q.company_id=? AND q.meli_account_id=? AND q.resource_id=? AND q.state="ready"
+                AND q.job_type="domain_exact"
+                AND (q.lease_owner IS NULL OR q.lease_expires_at IS NULL OR q.lease_expires_at<=UTC_TIMESTAMP(3))
+                AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability"))="financial_reconciliation"
+                AND (' . $this->readyFinancialReconciliationPointerSourcePredicate('q') . ')'
         );
         $waiting = $this->pdo->prepare(
-            'UPDATE queue_v4_clean_jobs
+            'UPDATE queue_v4_clean_jobs q
              SET state="waiting",available_at=?,completed_at=NULL,last_error_class=?
-              WHERE company_id=? AND meli_account_id=? AND resource_id=? AND state="ready"
-                AND job_type="domain_exact"
-                AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at<=UTC_TIMESTAMP(3))
-                AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="financial_reconciliation"'
+              WHERE q.company_id=? AND q.meli_account_id=? AND q.resource_id=? AND q.state="ready"
+                AND q.job_type="domain_exact"
+                AND (q.lease_owner IS NULL OR q.lease_expires_at IS NULL OR q.lease_expires_at<=UTC_TIMESTAMP(3))
+                AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability"))="financial_reconciliation"
+                AND (' . $this->readyFinancialReconciliationPointerSourcePredicate('q') . ')'
         );
         $review = $this->pdo->prepare(
-            'UPDATE queue_v4_clean_jobs
+            'UPDATE queue_v4_clean_jobs q
              SET state="review",completed_at=NULL,last_error_class=?
-              WHERE company_id=? AND meli_account_id=? AND resource_id=? AND state="ready"
-                AND job_type="domain_exact"
-                AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at<=UTC_TIMESTAMP(3))
-                AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="financial_reconciliation"'
+              WHERE q.company_id=? AND q.meli_account_id=? AND q.resource_id=? AND q.state="ready"
+                AND q.job_type="domain_exact"
+                AND (q.lease_owner IS NULL OR q.lease_expires_at IS NULL OR q.lease_expires_at<=UTC_TIMESTAMP(3))
+                AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability"))="financial_reconciliation"
+                AND (' . $this->readyFinancialReconciliationPointerSourcePredicate('q') . ')'
         );
         foreach ($outcomesBySourceId as $sourceId => $outcome) {
             $sourceId = (int) $sourceId;
@@ -591,28 +601,19 @@ final class QueueV4CleanRepository
         );
         $statement->execute(array_merge([$companyId, $accountId], $sourceIds));
         $outcomes = [];
-        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            $status = strtolower((string) ($row['status'] ?? ''));
+        $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        if ($this->afterFinancialRecoverySourcesRead !== null) {
+            ($this->afterFinancialRecoverySourcesRead)();
+        }
+        foreach ($rows as $row) {
             $sourceId = (int) ($row['id'] ?? 0);
             if ($sourceId < 1) {
                 continue;
             }
-            if ($status === 'complete') {
-                $outcomes[$sourceId] = ['state' => 'completed'];
-                continue;
-            }
-            if (in_array($status, ['pending', 'running', 'retry', 'awaiting_remote'], true)) {
-                $next = trim((string) ($row['next_run_at'] ?? ''));
-                $outcomes[$sourceId] = [
-                    'state' => 'waiting',
-                    'classification' => 'domain_source_waiting:financial_reconciliation',
-                    'next_safe_at' => $next !== '' ? $next : gmdate('Y-m-d H:i:s', time() + 60),
-                ];
-                continue;
-            }
             $outcomes[$sourceId] = [
-                'state' => 'review',
-                'classification' => 'domain_source_' . substr($status !== '' ? $status : 'unknown', 0, 70),
+                'state' => 'waiting',
+                'classification' => 'domain_source_waiting:financial_reconciliation',
+                'next_safe_at' => (string) ($row['next_run_at'] ?? ''),
             ];
         }
         $this->alignReadyFinancialReconciliationPointers($companyId, $accountId, $outcomes, $exceptSourceId);
@@ -1251,6 +1252,24 @@ final class QueueV4CleanRepository
                        )
                    )
             )";
+    }
+
+    private function readyFinancialReconciliationPointerSourcePredicate(string $queueAlias): string
+    {
+        $this->assertSqlAlias($queueAlias);
+        $sourceIdSql = $this->financialSourceIdExpression($queueAlias);
+
+        return "EXISTS (
+            SELECT 1
+              FROM sale_financial_reconciliation_jobs s
+             WHERE s.id={$sourceIdSql}
+               AND s.company_id={$queueAlias}.company_id
+               AND s.meli_account_id={$queueAlias}.meli_account_id
+               AND s.status IN ('pending','retry','awaiting_remote')
+               AND s.next_run_at<=UTC_TIMESTAMP(3)
+               AND (s.lock_owner IS NULL OR s.lease_expires_at IS NULL OR s.lease_expires_at<=UTC_TIMESTAMP(3))
+               AND NOT (" . $this->financialSourceManualReservationPredicate('s') . ")
+        )";
     }
 
     private function financialSourceManualReservationPredicate(string $sourceAlias): string

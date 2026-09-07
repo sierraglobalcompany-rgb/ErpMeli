@@ -142,6 +142,47 @@ try {
         $assert($after['pointer'] === $afterSelectionMutation['pointer'], $case . '_NEIGHBOR_POINTER_MUTATIONS=0', ['before' => $afterSelectionMutation['pointer'], 'after' => $after['pointer']]);
     }
 
+    foreach ($cases as $case => $makeIneligible) {
+        Cap2DomainsWire::$calls = [];
+        $primary = $seed(990000 + random_int(1, 10000));
+        $neighbor = $seed(995000 + random_int(1, 10000));
+        $afterRecoveryReadMutation = null;
+        $recoveryReadCount = 0;
+        $factoryCalls = 0;
+
+        $repo = new QueueV4CleanRepository(
+            $pdo,
+            static function () use ($pdo, $neighbor, $makeIneligible, $snapshot, &$afterRecoveryReadMutation, &$recoveryReadCount): void {
+                $recoveryReadCount++;
+                $makeIneligible($pdo, $neighbor);
+                $afterRecoveryReadMutation = $snapshot($neighbor);
+            },
+        );
+        $worker = new QueueV4CleanWorker(
+            $pdo,
+            $repo,
+            financialFactory: static function () use (&$factoryCalls): SaleFinancialService {
+                $factoryCalls++;
+                throw new RuntimeException('test_financial_recovery_after_selection');
+            },
+        );
+        QueueV4CleanCycleBudget::start(1, 'automatic', microtime(true) + 45);
+        try {
+            $result = $worker->run('test', 1, 40);
+        } finally {
+            QueueV4CleanCycleBudget::clear();
+        }
+
+        $after = $snapshot($neighbor);
+        $attemptsDelta = (int) $after['source']['attempts'] - (int) $afterRecoveryReadMutation['source']['attempts'];
+        $assert($factoryCalls === 1, 'recovery_' . $case . '_selected_before_exception', ['factory_calls' => $factoryCalls, 'result' => $result]);
+        $assert($recoveryReadCount === 1, 'recovery_' . $case . '_read_before_mutation', ['recovery_reads' => $recoveryReadCount]);
+        $assert(Cap2DomainsWire::$calls === [], 'recovery_' . $case . '_NEIGHBOR_HTTP=0', ['calls' => Cap2DomainsWire::$calls]);
+        $assert($attemptsDelta === 0, 'recovery_' . $case . '_NEIGHBOR_CLAIM=0', ['attempts_delta' => $attemptsDelta]);
+        $assert($after['source'] === $afterRecoveryReadMutation['source'], 'recovery_' . $case . '_NEIGHBOR_SOURCE_MUTATIONS=0', ['before' => $afterRecoveryReadMutation['source'], 'after' => $after['source']]);
+        $assert($after['pointer'] === $afterRecoveryReadMutation['pointer'], 'recovery_' . $case . '_NEIGHBOR_POINTER_MUTATIONS=0', ['before' => $afterRecoveryReadMutation['pointer'], 'after' => $after['pointer']]);
+    }
+
     echo "STATUS=PASS CALLS_FINAL_FINANCIAL_POST_SELECTION_RACE MYSQL=REAL REAL_MELI_HTTP=0\n";
 } finally {
     QueueV4CleanCycleBudget::clear();

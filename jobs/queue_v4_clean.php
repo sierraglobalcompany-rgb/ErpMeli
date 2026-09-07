@@ -20,7 +20,6 @@ require dirname(__DIR__) . '/bootstrap.php';
 
 $options = getopt('', ['runtime::', 'max-jobs::', 'max-calls::']);
 $runtime = max(5, min(45, (int) ($options['runtime'] ?? 45)));
-$hasLegacyMaxJobs = array_key_exists('max-jobs', $options);
 $hasCanonicalMaxCalls = array_key_exists('max-calls', $options);
 
 try {
@@ -39,7 +38,6 @@ try {
     Database::useProfile('cli');
     $budget = (new AutomationCallBudgetService())->resolve(
         $capacityArgs['max_calls'],
-        $capacityArgs['legacy_max_jobs'],
     );
     $requestedMaxCalls = (int) $budget['requested_max_calls'];
     CronDeadlineContext::start($runtime, max(1, $runtime - 5), 8, 3);
@@ -47,8 +45,6 @@ try {
     $result['control_unit'] = 'PHYSICAL_API_CALL';
     $result['max_calls_source'] = $budget['max_calls_source'];
     $result['canonical_max_calls_input_used'] = $hasCanonicalMaxCalls;
-    $result['legacy_max_jobs_compat_input_used'] = $hasLegacyMaxJobs;
-    $result['legacy_max_jobs_normalized_to_calls'] = $hasLegacyMaxJobs && !$hasCanonicalMaxCalls;
     echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
     exit(!empty($result['ok']) ? 0 : 1);
 } catch (Throwable $error) {

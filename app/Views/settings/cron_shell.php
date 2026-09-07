@@ -6,7 +6,7 @@ use App\Services\AutomationCallBudgetService;
 
 $base = rtrim(Env::get('APP_URL', ''), '/');
 $csrfToken = Csrf::token();
-$callBudget = (new AutomationCallBudgetService())->resolve(null, null);
+$callBudget = (new AutomationCallBudgetService())->resolve();
 $maxCalls = (int) $callBudget['max_calls'];
 ?>
 <div class="page-head cron-page-head">

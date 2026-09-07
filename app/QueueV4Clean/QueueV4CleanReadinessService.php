@@ -47,7 +47,7 @@ final class QueueV4CleanReadinessService
     {
         $repository = new QueueV4CleanRepository($this->pdo);
         $control = $repository->control();
-        $budget = (new AutomationCallBudgetService())->resolve(null, null);
+        $budget = (new AutomationCallBudgetService())->resolve();
         $observability = $repository->operationalObservability();
         $review = (new QueueV4CleanReviewService($this->pdo))->summary();
         $oauth = (new QueueV4CleanOAuthOperationRepository($this->pdo))->observability();

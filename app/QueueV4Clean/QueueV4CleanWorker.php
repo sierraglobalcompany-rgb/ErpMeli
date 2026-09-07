@@ -36,10 +36,6 @@ final class QueueV4CleanWorker
 {
     public const DEFAULT_MAX_CALLS = 1;
     public const HARD_MAX_CALLS = CapacityPolicyService::TECHNICAL_MAX;
-    /** @deprecated Temporary Hostinger/hPanel compatibility input alias. */
-    public const DEFAULT_MAX_JOBS = self::DEFAULT_MAX_CALLS;
-    /** @deprecated Temporary Hostinger/hPanel compatibility input alias. */
-    public const HARD_MAX_JOBS = self::HARD_MAX_CALLS;
     private const POINTER_SAFETY_MULTIPLIER = 20;
     private const POINTER_SAFETY_FLOOR = 15;
     private const FINANCIAL_RECONCILIATION_STALE_RECHECK_SECONDS = 900;
@@ -151,7 +147,6 @@ final class QueueV4CleanWorker
                 'runtime_seconds' => $runtimeSeconds,
                 'control_unit' => 'PHYSICAL_API_CALL',
                 'max_calls' => $maxCalls,
-                'max_jobs' => $maxCalls,
                 'ready_before' => $readyBefore,
                 'waiting_before' => $waitingBefore,
                 'review_before' => $reviewBefore,
@@ -500,7 +495,6 @@ final class QueueV4CleanWorker
                 'runtime_seconds' => $runtimeSeconds,
                 'control_unit' => 'PHYSICAL_API_CALL',
                 'max_calls' => $maxCalls,
-                'max_jobs' => $maxCalls,
                 'call_budget' => QueueV4CleanCycleBudget::snapshot(),
                 'ready_before' => $readyBefore,
                 'waiting_before' => $waitingBefore,

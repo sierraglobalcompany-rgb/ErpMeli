@@ -17,7 +17,7 @@ final class AutomationCallBudgetService
     ) {}
 
     /** @return array{max_calls:int,requested_max_calls:int,configured_max_calls:int,ceiling:int,max_calls_source:string,control_unit:string} */
-    public function resolve(?int $cliMaxCalls = null, ?int $legacyMaxJobs = null): array
+    public function resolve(?int $cliMaxCalls = null): array
     {
         $policy = ($this->policy ?? new CapacityPolicyService())->snapshot('automation');
         $configured = $policy['current'];

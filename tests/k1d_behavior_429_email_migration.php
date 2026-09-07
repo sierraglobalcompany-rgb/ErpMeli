@@ -118,7 +118,11 @@ try {
     AppSettingsService::clearCache();
 
     $rhythm = new ApiRhythmPolicyService();
-    $permitA = $rhythm->reserve(2, 'GET', '/orders/search', ['job_type' => 'sales', 'source_work_id' => 'source-a']);
+    $permitA = $rhythm->reserve(2, 'GET', '/orders/search', [
+        'job_type' => 'sales',
+        'source_work_id' => 'source-a',
+        'transport_request_id' => str_repeat('a', 40),
+    ]);
     k1b_assert(!empty($permitA['enabled']), 'SOURCE_A_RESERVATION_GRANTED');
     k1b_assert($rhythm->dispatched($permitA), 'SOURCE_A_DISPATCHED');
     k1b_assert($rhythm->finalizeKnownResult($permitA, 429, null), 'FIRST_REMOTE_429_KNOWN_RESULT_FINALIZED');
@@ -127,7 +131,11 @@ try {
     k1b_assert($noRetryDelta >= 1700, 'NO_RETRY_AFTER_DELTA_SECONDS_GE_1800_APPROX');
 
     try {
-        $rhythm->reserve(2, 'GET', '/orders/search', ['job_type' => 'sales', 'source_work_id' => 'source-b']);
+        $rhythm->reserve(2, 'GET', '/orders/search', [
+            'job_type' => 'sales',
+            'source_work_id' => 'source-b',
+            'transport_request_id' => str_repeat('b', 40),
+        ]);
     } catch (ApiRhythmDeferredException $deferred) {
         $sourceBBlockingScope = $deferred->blockingScope;
     }
@@ -144,7 +152,7 @@ try {
     foreach ([1, 2, 15] as $maxCalls) {
         $settings->set('automation.max_api_calls_per_cycle', (string) $maxCalls, 'automation');
         AppSettingsService::clearCache();
-        $resolved = (new AutomationCallBudgetService())->resolve(null, null);
+        $resolved = (new AutomationCallBudgetService())->resolve();
         k1b_assert($resolved['max_calls'] === $maxCalls, 'CALL_BUDGET_RESOLVES_' . $maxCalls);
         for ($cycle = 0; $cycle < 1000; $cycle++) {
             $started = 0;

@@ -72,8 +72,7 @@ try {
     k1b_assert($ceilingOnly['current'] === 1 && $ceilingOnly['ceiling'] === 100, 'ceiling_only_keeps_current');
     $small = $policy->save('automation',2,3,$ceilingOnly['revision'],$allow);
     k1b_assert((new AutomationCallBudgetService())->resolve(100)['max_calls'] === 2, 'cli_override_cannot_raise_current');
-    k1b_assert((new AutomationCallBudgetService())->resolve(null,100)['max_calls'] === 2
-        && (new AutomationCallBudgetService())->resolve(null,100)['max_calls_source'] !== 'LEGACY_MAX_JOBS_OVERRIDE', 'cli_legacy_jobs_ignored_by_budget_service');
+    k1b_assert((new ReflectionMethod(AutomationCallBudgetService::class, 'resolve'))->getNumberOfParameters() === 1, 'budget_service_has_no_legacy_jobs_parameter');
     $pdo->exec('CREATE TABLE queue_v4_clean_control (control_key VARCHAR(32) PRIMARY KEY,engine_state VARCHAR(20),scheduler_enabled TINYINT) ENGINE=InnoDB');
     $pdo->exec("INSERT INTO queue_v4_clean_control VALUES ('primary','STOPPED',0)");
     $stopped = (new App\QueueV4Clean\QueueV4CleanScheduler($pdo))->run(100);

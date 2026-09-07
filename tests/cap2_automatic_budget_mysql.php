@@ -56,20 +56,15 @@ try {
 
     $save(1, 55);
     $canonicalLegacySixty = $budget->resolve(60);
-    $aliasLegacyHundred = $budget->resolve(null, 100);
     k1b_assert($canonicalLegacySixty['requested_max_calls'] === 60 && $canonicalLegacySixty['max_calls'] === 1,
         'canonical_legacy_override_cannot_raise_saved_one');
-    k1b_assert($aliasLegacyHundred['requested_max_calls'] === 1 && $aliasLegacyHundred['max_calls'] === 1,
-        'removed_legacy_alias_ignored_and_cannot_raise_saved_one');
 
     $save(15, 55);
     k1b_assert($budget->resolve(60)['max_calls'] === 15, 'canonical_legacy_override_cannot_raise_saved_fifteen');
-    k1b_assert($budget->resolve(null, 100)['max_calls'] === 15, 'removed_legacy_alias_cannot_raise_saved_fifteen');
     k1b_assert($budget->resolve(2)['max_calls'] === 2, 'canonical_override_can_reduce_saved_current');
-    k1b_assert($budget->resolve(null, 3)['max_calls'] === 15, 'removed_legacy_alias_cannot_reduce_or_change_current');
 
     $parser = new AutomationCliCapacityArgumentParser();
-    k1b_assert($parser->parse(['max-calls' => '3']) === ['max_calls' => 3, 'legacy_max_jobs' => null], 'cli_max_calls_supported');
+    k1b_assert($parser->parse(['max-calls' => '3']) === ['max_calls' => 3], 'cli_max_calls_supported');
     $legacyRejected = false;
     try {
         $parser->parse(['max-jobs' => '3']);

@@ -11,17 +11,17 @@ use App\Services\AutomationCliCapacityArgumentParser;
 $parser = new AutomationCliCapacityArgumentParser();
 
 $cases = [
-    [[], null, null],
-    [['max-calls' => '3'], 3, null],
-    [['max-calls' => '0'], 1, null],
-    [['max-calls' => '99'], 99, null],
-    [['max-calls' => '101'], 100, null],
+    [[], null],
+    [['max-calls' => '3'], 3],
+    [['max-calls' => '0'], 1],
+    [['max-calls' => '99'], 99],
+    [['max-calls' => '101'], 100],
 ];
 
-foreach ($cases as [$input, $expectedCalls, $expectedJobs]) {
+foreach ($cases as [$input, $expectedCalls]) {
     $actual = $parser->parse($input);
     k1b_assert($actual['max_calls'] === $expectedCalls, 'parse_max_calls_' . json_encode($input));
-    k1b_assert($actual['legacy_max_jobs'] === $expectedJobs, 'parse_max_jobs_' . json_encode($input));
+    k1b_assert(array_keys($actual) === ['max_calls'], 'parse_only_max_calls_' . json_encode($input));
 }
 
 foreach ([['max-calls' => 'abc'], ['max-calls' => ''], ['max-calls' => false], ['max-calls' => true], ['max-calls' => ['1','2']], ['max-calls'=>1.0], ['max-calls'=>'-1'], ['max-calls'=>'1e2']] as $input) {

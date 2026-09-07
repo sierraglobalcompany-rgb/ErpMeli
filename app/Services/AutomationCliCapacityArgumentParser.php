@@ -10,7 +10,7 @@ final class AutomationCliCapacityArgumentParser
 {
     /**
      * @param array<string,mixed> $options
-     * @return array{max_calls:?int,legacy_max_jobs:?int}
+     * @return array{max_calls:?int}
      */
     public function parse(array $options): array
     {
@@ -23,7 +23,6 @@ final class AutomationCliCapacityArgumentParser
 
         return [
             'max_calls' => $hasMaxCalls ? $this->parseOne($options['max-calls']) : null,
-            'legacy_max_jobs' => null,
         ];
     }
 

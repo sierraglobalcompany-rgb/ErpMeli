@@ -11,7 +11,15 @@ async function main() {
     throw new Error('browser_script_missing');
   }
 
-  const toolingPackage = 'C:/codex/ERP-BDM/.tooling/playwright-runner/package.json';
+  const toolingPackage = [
+    process.env.CALLS_PLAYWRIGHT_PACKAGE_JSON,
+    path.resolve(process.cwd(), '.tooling/playwright-runner/package.json'),
+    path.resolve(process.cwd(), '../..', '.tooling/playwright-runner/package.json'),
+    'C:/codex/ERP-BDM/.tooling/playwright-runner/package.json',
+  ].filter(Boolean).find(candidate => fs.existsSync(candidate));
+  if (!toolingPackage) {
+    throw new Error('calls_playwright_tooling_missing');
+  }
   const req = Module.createRequire(toolingPackage);
   const { chromium } = req('playwright');
   const source = fs.readFileSync(scriptPath, 'utf8');

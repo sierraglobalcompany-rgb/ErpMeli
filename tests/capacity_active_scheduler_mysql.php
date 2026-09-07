@@ -12,7 +12,15 @@ namespace App\QueueV4Clean {
             $before = QueueV4CleanCycleBudget::snapshot();
             $count = min($wanted, QueueV4CleanCycleBudget::remaining());
             for ($i = 0; $i < $count; $i++) {
-                QueueV4CleanCycleBudget::claim();
+                $attemptId = bin2hex(random_bytes(20));
+                \App\Services\ApiExecutionMetadataContext::run([
+                    'source' => 'scheduler_capacity_fixture',
+                    'transport_request_id' => $attemptId,
+                    'scheduler_stage' => $stage,
+                ], static function () use ($attemptId): void {
+                    QueueV4CleanCycleBudget::claim($attemptId);
+                    QueueV4CleanCycleBudget::enteringTransport($attemptId);
+                });
                 self::$transports++;
             }
             self::$events[] = ['stage'=>$stage,'before'=>$before,'calls'=>$count,'after'=>QueueV4CleanCycleBudget::snapshot()];
@@ -105,7 +113,11 @@ namespace {
             k1b_assert($result['status'] === 'completed', 'active_scheduler_completed_' . $budget);
             k1b_assert($result['max_calls'] === $budget, 'active_scheduler_ceiling_' . $budget);
             k1b_assert($result['physical_http_calls'] === $budget && SchedulerCapacityFixture::$transports === $budget, 'active_scheduler_shared_physical_total_' . $budget);
-            k1b_assert($result['http_budget'] === ['limit'=>$budget,'used'=>$budget,'remaining'=>0], 'active_scheduler_final_budget_' . $budget);
+            k1b_assert(($result['http_budget']['limit'] ?? null) === $budget, 'active_scheduler_final_budget_limit_' . $budget);
+            k1b_assert(($result['http_budget']['used'] ?? null) === $budget, 'active_scheduler_final_budget_used_' . $budget);
+            k1b_assert(($result['http_budget']['remaining'] ?? null) === 0, 'active_scheduler_final_budget_remaining_' . $budget);
+            k1b_assert(($result['http_budget']['physical_http_calls'] ?? null) === $budget, 'active_scheduler_final_budget_physical_' . $budget);
+            k1b_assert(($result['http_budget']['physical_http_calls_certainty'] ?? null) === 'CERTIFIED', 'active_scheduler_final_budget_certainty_' . $budget);
             k1b_assert(SchedulerCapacityFixture::$workerArgument === ($budget > 2 ? $budget - 2 : null), 'worker_skipped_when_prior_stages_exhausted_' . $budget);
             $stages = array_column(SchedulerCapacityFixture::$events, 'stage');
             k1b_assert($stages === ($budget <= 2 ? ['oauth','audit'] : ($budget === 3 ? ['oauth','audit','worker'] : ['oauth','audit','worker','repair'])), 'active_scheduler_stage_order_' . $budget);

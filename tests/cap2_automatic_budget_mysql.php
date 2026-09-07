@@ -7,6 +7,7 @@ require __DIR__ . '/K1dSafeTestDatabase.php';
 
 use App\Services\AppSettingsService;
 use App\Services\AutomationCallBudgetService;
+use App\Services\AutomationCliCapacityArgumentParser;
 use App\Services\CapacityPolicyService;
 
 putenv('APP_ENV=test');
@@ -58,14 +59,24 @@ try {
     $aliasLegacyHundred = $budget->resolve(null, 100);
     k1b_assert($canonicalLegacySixty['requested_max_calls'] === 60 && $canonicalLegacySixty['max_calls'] === 1,
         'canonical_legacy_override_cannot_raise_saved_one');
-    k1b_assert($aliasLegacyHundred['requested_max_calls'] === 100 && $aliasLegacyHundred['max_calls'] === 1,
-        'legacy_alias_cannot_raise_saved_one');
+    k1b_assert($aliasLegacyHundred['requested_max_calls'] === 1 && $aliasLegacyHundred['max_calls'] === 1,
+        'removed_legacy_alias_ignored_and_cannot_raise_saved_one');
 
     $save(15, 55);
     k1b_assert($budget->resolve(60)['max_calls'] === 15, 'canonical_legacy_override_cannot_raise_saved_fifteen');
-    k1b_assert($budget->resolve(null, 100)['max_calls'] === 15, 'legacy_alias_cannot_raise_saved_fifteen');
+    k1b_assert($budget->resolve(null, 100)['max_calls'] === 15, 'removed_legacy_alias_cannot_raise_saved_fifteen');
     k1b_assert($budget->resolve(2)['max_calls'] === 2, 'canonical_override_can_reduce_saved_current');
-    k1b_assert($budget->resolve(null, 3)['max_calls'] === 3, 'legacy_alias_can_reduce_saved_current');
+    k1b_assert($budget->resolve(null, 3)['max_calls'] === 15, 'removed_legacy_alias_cannot_reduce_or_change_current');
+
+    $parser = new AutomationCliCapacityArgumentParser();
+    k1b_assert($parser->parse(['max-calls' => '3']) === ['max_calls' => 3, 'legacy_max_jobs' => null], 'cli_max_calls_supported');
+    $legacyRejected = false;
+    try {
+        $parser->parse(['max-jobs' => '3']);
+    } catch (\InvalidArgumentException $error) {
+        $legacyRejected = $error->getMessage() === 'legacy_capacity_argument_removed';
+    }
+    k1b_assert($legacyRejected, 'cli_max_jobs_rejected');
 
     $save(3, 100);
     $three = $budget->resolve(50);
@@ -74,6 +85,7 @@ try {
         'erp_current_wins_over_cli_fifty');
 
     echo "STATUS=PASS CAP2_AUTOMATIC_BUDGET_MYSQL\nREAL_MELI_HTTP=0\nREAL_EMAIL_SENT=0\n";
+    echo "CLI_MAX_JOBS_ACCEPTED=NO\nCLI_MAX_CALLS_CAN_ELEVATE_ERP=NO\n";
 } finally {
     AppSettingsService::clearCache();
     $harness->cleanup();

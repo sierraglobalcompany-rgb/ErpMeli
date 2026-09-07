@@ -9,6 +9,7 @@ require __DIR__ . '/cap2_transport_legacy_fixture.php';
 use App\QueueV4Clean\QueueV4CleanCycleBudget;
 use App\QueueV4Clean\QueueV4CleanRepository;
 use App\QueueV4Clean\QueueV4CleanWorker;
+use App\Services\ApiExecutionMetadataContext;
 use App\Services\AppSettingsService;
 use App\Services\MeliApiException;
 
@@ -34,8 +35,21 @@ try {
     $repository = new QueueV4CleanRepository($pdo);
     $handler = static function (array $job) use (&$calls,$pdo): void {
         $calls++;
-        QueueV4CleanCycleBudget::claim();
-        cap2_transport_record_legacy_call($pdo,$job,429);
+        $requestId = bin2hex(random_bytes(20));
+        ApiExecutionMetadataContext::run([
+            'source' => 'queue_v4_clean',
+            'transport_request_id' => $requestId,
+            'company_id' => (int) $job['company_id'],
+            'account_id' => (int) $job['meli_account_id'],
+            'queue_v4_job_id' => (int) $job['id'],
+            'queue_v4_attempt_id' => (int) $job['attempt_id'],
+            'queue_v4_lease_owner' => (string) $job['lease_owner'],
+            'queue_v4_lease_generation' => (int) $job['lease_generation'],
+        ], static function () use ($requestId,$pdo,$job): void {
+            QueueV4CleanCycleBudget::claim($requestId);
+            QueueV4CleanCycleBudget::enteringTransport($requestId);
+            cap2_transport_record_legacy_call($pdo,$job,429,$requestId);
+        });
         throw new MeliApiException('fixture remote 429', 429, 'fixture-request-' . $calls, ['retry_after' => null]);
     };
 

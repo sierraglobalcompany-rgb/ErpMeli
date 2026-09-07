@@ -10,9 +10,9 @@ function cap2_transport_install_legacy_journal(PDO $pdo):void
 }
 
 /** These old tests isolate worker control flow; mirror its simulated call in the real journal. */
-function cap2_transport_record_legacy_call(PDO $pdo,array $job,int $status):void
+function cap2_transport_record_legacy_call(PDO $pdo,array $job,int $status,?string $request=null):void
 {
-    $request='legacy-'.bin2hex(random_bytes(12));
+    $request ??= bin2hex(random_bytes(20));
     App\QueueV4Clean\QueueV4CleanTransportJournal::started($pdo,(int)$job['company_id'],(int)$job['meli_account_id'],'queue',(int)$job['id'],(int)$job['attempt_id'],(int)$job['lease_generation'],$request,'GET','order_exact');
     App\QueueV4Clean\QueueV4CleanTransportJournal::enteringCurl($request);
     App\QueueV4Clean\QueueV4CleanTransportJournal::responseKnown($pdo,(int)$job['company_id'],(int)$job['meli_account_id'],'queue',$request,$status);

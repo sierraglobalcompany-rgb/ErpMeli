@@ -853,9 +853,9 @@ final class QueueV4CleanWorker
                 : $outcome;
         }
 
-        $batchSourceIds = $capability === 'financial_reconciliation' && !$this->confirmedManualSelectionActive
-            ? $this->repository->contiguousFinancialReconciliationSourceIds($job, 60)
-            : [$sourceId];
+        // Billing automático es estrictamente una venta por GET. Nunca se
+        // admiten fuentes vecinas ni se alinean sus punteros en esta ruta.
+        $batchSourceIds = [$sourceId];
         $batchOutcomes = [];
 
         try {
@@ -892,23 +892,7 @@ final class QueueV4CleanWorker
                 }
             );
         } catch (Throwable $error) {
-            if ($capability === 'financial_reconciliation' && count($batchSourceIds) > 1) {
-                $this->repository->alignReadyFinancialReconciliationPointersFromSources(
-                    $companyId,
-                    $accountId,
-                    $batchSourceIds,
-                    $sourceId,
-                );
-            }
             throw $error;
-        }
-        if ($capability === 'financial_reconciliation' && $batchOutcomes !== []) {
-            $this->repository->alignReadyFinancialReconciliationPointers(
-                $companyId,
-                $accountId,
-                $batchOutcomes,
-                $sourceId,
-            );
         }
 
         $source = $this->domainSource($capability, $sourceId, $companyId, $accountId);

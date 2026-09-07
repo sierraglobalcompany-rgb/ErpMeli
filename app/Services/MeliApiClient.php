@@ -72,6 +72,7 @@ final class MeliApiClient implements MeliReadClientInterface
     public function request(string $method, string $path, array $data = [], bool $mutation = false, array $meta = []): array
     {
         MeliEndpointRegistry::assertDocumented($method, $path);
+        $this->assertBillingOrderDetailsCardinality($method, $path, $data);
         $mutation = $mutation || strtoupper($method) !== 'GET';
         WriteGuard::assertAllowed($mutation);
         $meta = array_replace($meta, ApiExecutionMetadataContext::current());
@@ -81,6 +82,22 @@ final class MeliApiClient implements MeliReadClientInterface
         $token = $this->validToken();
         $url = rtrim(Env::get('MELI_API_BASE', 'https://api.mercadolibre.com'), '/') . '/' . ltrim($path, '/');
         return $this->send($method, $url, $data, ['Authorization: Bearer ' . $token], $mutation, false, $meta);
+    }
+
+    /** @param array<string,mixed> $data */
+    private function assertBillingOrderDetailsCardinality(string $method, string $path, array $data): void
+    {
+        if (strtoupper($method) !== 'GET'
+            || rtrim($path, '/') !== '/billing/integration/group/ML/order/details') {
+            return;
+        }
+
+        $orderId = $data['order_ids'] ?? null;
+        if (!is_string($orderId)
+            || $orderId !== trim($orderId)
+            || preg_match('/^[0-9]+$/', trim($orderId)) !== 1) {
+            throw new RuntimeException('Billing order_ids debe contener un único ID válido.');
+        }
     }
 
     private function validToken(): string

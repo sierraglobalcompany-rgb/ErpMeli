@@ -144,9 +144,8 @@ final class SaleFinancialService
     }
 
     /**
-     * The caller determines FIFO-contiguous admission and passes only source
-     * IDs. This service claims and processes financial sources, without
-     * reading or mutating scheduler state.
+     * The caller passes the claimed source. This service processes only that
+     * source, without reading or mutating scheduler state for neighbors.
      *
      * @param list<int> $sourceIds
      * @return array{summary:array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string},outcomes:array<int,array{state:string,classification?:string,next_safe_at?:?string}>}
@@ -159,6 +158,21 @@ final class SaleFinancialService
         if ($sourceIds === []) {
             return ['summary' => $summary, 'outcomes' => $outcomes];
         }
+
+        // Queue V4 automatic admission is one financial source per Billing
+        // request. Do not claim adjacent sources as a transport batch.
+        $job = $this->claimSpecificBillingJob($sourceIds[0], $companyId, $accountId);
+        if ($job === null) {
+            return ['summary' => $summary, 'outcomes' => $outcomes];
+        }
+        $result = $this->captureAndReconcile($job, $allowSuccessor, true);
+        $outcomes[(int) $job['id']] = $this->sourceOutcome(
+            (int) $job['id'],
+            (int) $job['company_id'],
+            (int) $job['meli_account_id'],
+        );
+        $this->summarizeTerminal($summary, $result['status'] === 'reconciled' ? 'complete' : $result['status']);
+        return ['summary' => $summary, 'outcomes' => $outcomes];
 
         $jobs = [];
         foreach (array_slice($sourceIds, 0, self::BILLING_MAX_ORDER_IDS) as $sourceId) {
@@ -985,19 +999,20 @@ final class SaleFinancialService
                 'finalized' => false,
             ];
         }
-        $captureId = $this->beginCapture($job, $externalOrderIds);
+        $requestedOrderIds = [(string) $externalOrderIds[0]];
+        $captureId = $this->beginCapture($job, $requestedOrderIds);
         $api = ($this->clientFactory)((int) $job['meli_account_id']);
-        $response = $api->get(self::ENDPOINT, ['order_ids' => implode(',', $externalOrderIds)], [
+        $response = $api->get(self::ENDPOINT, ['order_ids' => $requestedOrderIds[0]], [
             'job_type' => 'billing',
             'source' => 'cron',
-            'bulk' => true,
-            'estimated_total' => count($externalOrderIds),
+            'bulk' => false,
+            'estimated_total' => 1,
             'response_count_strategy' => 'billing_orders',
-            'expected_resource_ids' => implode(',', $externalOrderIds),
+            'expected_resource_ids' => $requestedOrderIds[0],
         ]);
         $metadata = $api->lastResponseMetadata() ?? ['status' => 200, 'headers' => [], 'request_id' => ''];
         $httpStatus = (int) $metadata['status'];
-        $lines = (new SaleBillingParser())->parse($response, $externalOrderIds);
+        $lines = (new SaleBillingParser())->parse($response, $requestedOrderIds);
         $items = $this->items((int) $job['meli_account_id'], $orderIds);
         $calculationItems = array_map(static fn(array $item): array => [
             'id' => (int) $item['id'],

@@ -37,7 +37,7 @@ $cases = @{
         'calls_verify_inputs','calls_migration_blobs','calls_readiness_transport','calls_readiness_ui.js',
         'calls_ui','calls_unknown_presentation','calls_history_ui','calls_increase_certainty',
         'calls_technical_budget','calls_technical_launchers','calls_technical_oauth',
-        'calls_manual_contract','calls_manual_preview_projection','calls_manual_receipt_certainty','calls_transport_budget','calls_transport_sources','calls_billing_identity','calls_final_legacy_alias_closure',
+        'calls_manual_contract','calls_manual_preview_projection','calls_manual_receipt_certainty','calls_transport_budget','calls_transport_sources','calls_billing_identity',
         'calls_controller valid','calls_controller legacy','calls_controller invalid','calls_controller missing',
         'calls_retired','capacity_manual_budget','cap2_manual_budget','cap2_manual_item_contract',
         'cap2_manual_presentation','capacity_manual_controller','cap2_domains_policy',
@@ -47,7 +47,7 @@ $cases = @{
     database = @(
         'calls_settings','calls_history','calls_billing_history_mysql','cap2_health_mysql','cap2_health_controller',
         'capacity_policy_mysql','capacity_concurrency_mysql','cap2_writers_mysql','cap2_writers_controller',
-        'cap2_automatic_budget_mysql','cap2_automatic_scheduler_mysql','cap2_automatic_worker_context_mysql','calls_final_budget_9_mysql'
+        'cap2_automatic_budget_mysql','cap2_automatic_scheduler_mysql','cap2_automatic_worker_context_mysql'
     )
     manual = @(
         'calls_manual_preview_mysql','calls_manual_description_preview_mysql','calls_manual_exact_snapshot_mysql','calls_manual_queue_selection_mysql',

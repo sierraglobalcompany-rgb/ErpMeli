@@ -182,7 +182,7 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
       <div class="alert info">
         <strong>El cron recomendado queda:</strong>
         <code>jobs/queue_v4_clean.php --runtime=45</code>
-        <small>Overrides técnicos disponibles sólo para soporte avanzado: <code>--max-calls=N</code> y alias temporal <code>--max-jobs=N</code>.</small>
+        <small>Overrides técnicos disponibles sólo para soporte avanzado: <code>--max-calls=N</code> puede reducir lo configurado. La unidad <code>--max-jobs</code> fue retirada; configure llamadas físicas en el ERP.</small>
       </div>
       <div class="page-actions mt-2">
         <button class="btn primary" type="submit">Revisar y guardar presupuesto</button>

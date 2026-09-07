@@ -30,12 +30,12 @@ k1b_assert(str_contains($budget, 'public const DEFAULT = 1'), 'budget_default_1'
 k1b_assert(str_contains($budget, 'public const MIN = 1'), 'budget_min_1');
 k1b_assert(str_contains($budget, 'public const HARD_MAX = CapacityPolicyService::TECHNICAL_MAX'), 'budget_shared_technical_max');
 k1b_assert(str_contains($budget, 'CLI_MAX_CALLS_OVERRIDE'), 'cli_override_source');
-k1b_assert(str_contains($budget, 'LEGACY_MAX_JOBS_OVERRIDE'), 'legacy_override_source');
+k1b_assert(!str_contains($budget, 'LEGACY_MAX_JOBS_OVERRIDE'), 'legacy_jobs_not_capacity_source');
 k1b_assert(str_contains($budget, 'ERP_SETTINGS'), 'settings_source');
 k1b_assert(str_contains($budget, 'SAFE_DEFAULT'), 'safe_default_source');
 
 k1b_assert(str_contains($job, "Database::useProfile('cli');") && strpos($job, "Database::useProfile('cli');") < strpos($job, '$budget ='), 'cli_profile_before_settings');
-k1b_assert(str_contains($parser, 'dual_capacity_arguments') && str_contains($job, 'AutomationCliCapacityArgumentParser'), 'dual_capacity_fails_closed');
+k1b_assert(str_contains($parser, 'legacy_capacity_argument_removed') && str_contains($job, 'AutomationCliCapacityArgumentParser'), 'legacy_jobs_fails_closed');
 k1b_assert(str_contains($parser, 'invalid_capacity_argument') && str_contains($parser, "preg_match('/^\\d+$/"), 'invalid_cli_fails_closed');
 k1b_assert(str_contains($job, "'control_unit' =") || str_contains($job, '$result[\'control_unit\'] = \'PHYSICAL_API_CALL\''), 'job_control_unit');
 

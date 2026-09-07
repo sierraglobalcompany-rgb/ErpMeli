@@ -115,9 +115,9 @@ try {
     $seed->execute(['automation.max_api_calls_per_cycle', '60', 'seed']);
     AppSettingsService::clearCache();
     $rawLegacy = $policy->snapshot('automation');
-    k1b_assert($rawLegacy['current'] === 15 && $rawLegacy['ceiling'] === 55, 'raw60_did_not_preserve_effective15');
+    k1b_assert($rawLegacy['current'] === 55 && $rawLegacy['ceiling'] === 55, 'explicit_raw60_bounded_by_default_ceiling');
     $ceilingOnly = $policy->save('automation', $rawLegacy['current'], 100, $rawLegacy['revision'], static fn (): array => throw new RuntimeException('ceiling_only_must_not_gate'));
-    k1b_assert($ceilingOnly['current'] === 15 && $ceilingOnly['ceiling'] === 100, 'ceiling_only_changed_effective15');
+    k1b_assert($ceilingOnly['current'] === 55 && $ceilingOnly['ceiling'] === 100, 'ceiling_only_changed_current');
 
     foreach ([[0, 1], [1, 101], [3, 2], ['02', 55], ['2.5', 55], [true, 55]] as [$current, $ceiling]) {
         $rejected = false;
@@ -141,9 +141,9 @@ try {
     }
     AppSettingsService::clearCache();
     $legacyManual = $policy->snapshot('manual');
-    k1b_assert(($legacyManual['legacy_derived'] ?? null) === true && $legacyManual['current'] === 15, 'manual_legacy_origin_not_exposed');
-    k1b_assert($policy->requiresManualAdoptionForRhythm('conservative', 10), 'derived_current_change_did_not_require_adoption');
-    k1b_assert(!$policy->requiresManualAdoptionForRhythm('fast', 30), 'same_derived_current_incorrectly_requires_adoption');
+    k1b_assert(($legacyManual['legacy_derived'] ?? null) === false && $legacyManual['current'] === 1, 'manual_legacy_not_capacity');
+    k1b_assert(!$policy->requiresManualAdoptionForRhythm('conservative', 10), 'legacy_rhythm_no_longer_requires_adoption');
+    k1b_assert(!$policy->requiresManualAdoptionForRhythm('fast', 30), 'same_legacy_rhythm_no_longer_requires_adoption');
 
     $adopted = $policy->save('manual', 15, 55, $legacyManual['revision'], static fn (): array => ['allowed' => true, 'message' => '']);
     k1b_assert(($adopted['legacy_derived'] ?? null) === false, 'manual_pair_not_marked_adopted');

@@ -17,13 +17,13 @@ final class AutomationCliCapacityArgumentParser
         $hasMaxCalls = array_key_exists('max-calls', $options);
         $hasMaxJobs = array_key_exists('max-jobs', $options);
 
-        if ($hasMaxCalls && $hasMaxJobs) {
-            throw new InvalidArgumentException('dual_capacity_arguments');
+        if ($hasMaxJobs) {
+            throw new InvalidArgumentException('legacy_capacity_argument_removed');
         }
 
         return [
             'max_calls' => $hasMaxCalls ? $this->parseOne($options['max-calls']) : null,
-            'legacy_max_jobs' => $hasMaxJobs ? $this->parseOne($options['max-jobs']) : null,
+            'legacy_max_jobs' => null,
         ];
     }
 

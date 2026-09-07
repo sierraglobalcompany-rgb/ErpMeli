@@ -24,19 +24,20 @@ try {
     $auto = $policy->snapshot('automation');
     $manual = $policy->snapshot('manual');
     k1b_assert($auto['current'] === 1 && $auto['ceiling'] === 55, 'preserve_default_auto_one');
-    k1b_assert($manual['current'] === 15 && $manual['ceiling'] === 55, 'preserve_legacy_manual_effective_fifteen');
+    k1b_assert($manual['current'] === 1 && $manual['ceiling'] === 55 && !$manual['legacy_derived'], 'missing_manual_calls_defaults_to_one');
     k1b_assert((int) $pdo->query('SELECT COUNT(*) FROM app_settings')->fetchColumn() === 0, 'reads_do_not_install_settings');
     $settings->set('automation.max_api_calls_per_cycle','99');
-    k1b_assert($policy->snapshot('automation')['current'] === 15, 'legacy_out_of_range_auto_does_not_increase_on_install');
+    k1b_assert($policy->snapshot('automation')['current'] === 55, 'explicit_auto_calls_bounded_by_default_ceiling');
     $pdo->exec("DELETE FROM app_settings WHERE setting_key='automation.max_api_calls_per_cycle'");
     AppSettingsService::clearCache();
-    foreach ([['conservative', null, 10], ['maximum', null, 15], ['custom', '3', 3], ['custom', '0', 1], ['fast', '3', 15]] as [$profile,$target,$want]) {
+    foreach ([['conservative', null], ['maximum', null], ['custom', '3'], ['custom', '0'], ['fast', '3']] as [$profile,$target]) {
         $settings->set('api.rhythm.profile', $profile);
         $settings->set('api.rhythm.target_http_per_minute', $target);
-        k1b_assert($policy->snapshot('manual')['current'] === $want, 'legacy_rhythm_' . $profile . '_' . $target);
+        k1b_assert($policy->snapshot('manual')['current'] === 1, 'legacy_rhythm_not_capacity_' . $profile . '_' . $target);
+        k1b_assert(!$policy->requiresManualAdoptionForRhythm($profile, $target === null ? 30 : max(1, (int) $target)), 'legacy_rhythm_never_requires_call_adoption_' . $profile);
     }
     $settings->set('manual_campaign.default_block_size', '2');
-    k1b_assert($policy->snapshot('manual')['current'] === 2, 'legacy_manual_saved_two');
+    k1b_assert($policy->snapshot('manual')['current'] === 1, 'legacy_manual_block_size_not_capacity');
     k1b_assert($policy->snapshot('automation')['revision'] === $auto['revision'], 'modules_independent_before_save');
     $gateCalls = 0;
     $allow = static function () use (&$gateCalls): array { $gateCalls++; return ['allowed'=>true,'message'=>'']; };
@@ -71,12 +72,13 @@ try {
     k1b_assert($ceilingOnly['current'] === 1 && $ceilingOnly['ceiling'] === 100, 'ceiling_only_keeps_current');
     $small = $policy->save('automation',2,3,$ceilingOnly['revision'],$allow);
     k1b_assert((new AutomationCallBudgetService())->resolve(100)['max_calls'] === 2, 'cli_override_cannot_raise_current');
-    k1b_assert((new AutomationCallBudgetService())->resolve(null,100)['max_calls'] === 2, 'cli_legacy_alias_cannot_raise_current');
+    k1b_assert((new AutomationCallBudgetService())->resolve(null,100)['max_calls'] === 2
+        && (new AutomationCallBudgetService())->resolve(null,100)['max_calls_source'] !== 'LEGACY_MAX_JOBS_OVERRIDE', 'cli_legacy_jobs_ignored_by_budget_service');
     $pdo->exec('CREATE TABLE queue_v4_clean_control (control_key VARCHAR(32) PRIMARY KEY,engine_state VARCHAR(20),scheduler_enabled TINYINT) ENGINE=InnoDB');
     $pdo->exec("INSERT INTO queue_v4_clean_control VALUES ('primary','STOPPED',0)");
     $stopped = (new App\QueueV4Clean\QueueV4CleanScheduler($pdo))->run(100);
     k1b_assert($stopped['max_calls'] === 2 && $stopped['status'] === 'stopped', 'scheduler_entry_uses_configured_current');
-    k1b_assert($policy->snapshot('manual')['current'] === 2 && $policy->snapshot('manual')['ceiling'] === 55, 'manual_unmodified_by_automation');
+    k1b_assert($policy->snapshot('manual')['current'] === 1 && $policy->snapshot('manual')['ceiling'] === 55, 'manual_unmodified_by_automation');
     $manual = $policy->snapshot('manual');
     $savedManual = $policy->save('manual',55,55,$manual['revision'],$allow);
     $settings->set('api.rhythm.target_http_per_minute','1');

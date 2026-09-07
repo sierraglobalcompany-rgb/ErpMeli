@@ -13,7 +13,6 @@ $parser = new AutomationCliCapacityArgumentParser();
 $cases = [
     [[], null, null],
     [['max-calls' => '3'], 3, null],
-    [['max-jobs' => '2'], null, 2],
     [['max-calls' => '0'], 1, null],
     [['max-calls' => '99'], 99, null],
     [['max-calls' => '101'], 100, null],
@@ -35,10 +34,10 @@ foreach ([['max-calls' => 'abc'], ['max-calls' => ''], ['max-calls' => false], [
 }
 
 try {
-    $parser->parse(['max-calls' => '2', 'max-jobs' => '2']);
-    k1b_assert(false, 'dual_capacity_arguments');
+    $parser->parse(['max-jobs' => '2']);
+    k1b_assert(false, 'legacy_capacity_argument_removed');
 } catch (InvalidArgumentException $error) {
-    k1b_assert($error->getMessage() === 'dual_capacity_arguments', 'dual_capacity_arguments');
+    k1b_assert($error->getMessage() === 'legacy_capacity_argument_removed', 'legacy_capacity_argument_removed');
 }
 
 $cron = file_get_contents(__DIR__ . '/../app/Services/CronHealthService.php');
@@ -54,7 +53,7 @@ $index = file_get_contents(__DIR__ . '/../public/index.php');
 
 k1b_assert(!str_contains($cron, '--runtime=45 --max-calls='), 'PRIMARY_RECOMMENDED_COMMAND_CONTAINS_MAX_CALLS_NO');
 k1b_assert(!str_contains($cron, '--runtime=45 --max-jobs='), 'PRIMARY_RECOMMENDED_COMMAND_CONTAINS_MAX_JOBS_NO');
-k1b_assert(str_contains($calibration, 'Overrides técnicos') && str_contains($calibration, '--max-calls=N') && str_contains($calibration, '--max-jobs=N'), 'ADVANCED_OVERRIDE_DOCUMENTED');
+k1b_assert(str_contains($calibration, 'Overrides técnicos') && str_contains($calibration, '--max-calls=N') && !str_contains($calibration, '--max-jobs=N'), 'ADVANCED_OVERRIDE_DOCUMENTED');
 k1b_assert(substr_count($calibration, '<form') === substr_count($calibration, '</form>'), 'FORM_TAGS_BALANCED');
 k1b_assert(!str_contains($calibration, 'critical-email-test-form') && !str_contains($calibration, '/settings/api-health/email-test'), 'EMAIL_TEST_NOT_IN_CALIBRATION');
 k1b_assert(str_contains($apiHealth, '/settings/api-health/email-settings') && str_contains($apiHealth, '/settings/api-health/email-test'), 'EMAIL_SETTINGS_AND_TEST_IN_API_HEALTH');

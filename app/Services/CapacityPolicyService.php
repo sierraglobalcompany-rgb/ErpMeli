@@ -21,10 +21,6 @@ final class CapacityPolicyService
         'automation' => ['automation.max_api_calls_per_cycle', 'automation.api_calls_ceiling'],
         'manual' => ['manual.api_calls_per_step', 'manual.api_calls_ceiling'],
     ];
-    private const LEGACY_MANUAL_KEYS = [
-        'manual_campaign.default_block_size', 'api.rhythm.mode',
-        'api.rhythm.profile', 'api.rhythm.target_http_per_minute',
-    ];
 
     public function __construct(private readonly ?PDO $pdo = null) {}
 
@@ -105,17 +101,7 @@ final class CapacityPolicyService
         if ($target < 1 || $target > 300) {
             throw new InvalidArgumentException('El ritmo debe estar entre 1 y 300.');
         }
-        $pdo = $this->pdo ?? Database::connectionFresh();
-        $before = $this->read($pdo, 'manual');
-        if (!$before['legacy_derived']) {
-            return false;
-        }
-        $after = $this->read($pdo, 'manual', false, [
-            'api.rhythm.mode' => $profile,
-            'api.rhythm.profile' => $profile,
-            'api.rhythm.target_http_per_minute' => (string) $target,
-        ]);
-        return $after['current'] !== $before['current'];
+        return false;
     }
 
     private function integer(mixed $value): int
@@ -134,7 +120,7 @@ final class CapacityPolicyService
         if (!isset(self::KEYS[$module])) {
             throw new InvalidArgumentException('Módulo de capacidad no válido.');
         }
-        return $module === 'manual' ? [...self::KEYS[$module], ...self::LEGACY_MANUAL_KEYS] : self::KEYS[$module];
+        return self::KEYS[$module];
     }
 
     /** @return array{module:string,ceiling:int,current:int,revision:string,legacy_derived:bool} */
@@ -164,22 +150,9 @@ final class CapacityPolicyService
             }
         }
         [$currentKey, $ceilingKey] = self::KEYS[$module];
-        $legacyDerived = $module === 'manual' && $values[$currentKey] === null;
+        $legacyDerived = false;
         $ceiling = max(1, min(self::TECHNICAL_MAX, $this->legacyInt($values[$ceilingKey], self::DEFAULT_CEILING)));
-        if ($module === 'automation') {
-            $current = $this->legacyInt($values[$currentKey], 1);
-            // Before explicit adoption, preserve the old effective 15-call cap.
-            if ($values[$ceilingKey] === null) {
-                $current = min(15, $current);
-            }
-        } else {
-            $current = $legacyDerived
-                ? min(15, max(1, $this->legacyInt($values['manual_campaign.default_block_size'], 30)), $this->legacyRhythmTarget($values))
-                : $this->legacyInt($values[$currentKey], 1);
-        }
-        if (!$legacyDerived && $module === 'manual') {
-            $raw = array_intersect_key($raw, array_flip(self::KEYS['manual']));
-        }
+        $current = $this->legacyInt($values[$currentKey], 1);
         return ['module'=>$module, 'ceiling'=>$ceiling, 'current'=>max(1, min($ceiling, $current)),
             'revision'=>hash('sha256', json_encode([$module, $raw], JSON_THROW_ON_ERROR)),
             'legacy_derived'=>$legacyDerived];
@@ -190,23 +163,4 @@ final class CapacityPolicyService
         return is_numeric($value) ? (int) $value : $default;
     }
 
-    /** Mirrors the legacy calls_per_block target, not the adaptive pacing limit. */
-    private function legacyRhythmTarget(array $values): int
-    {
-        $profiles = ['conservative'=>10, 'balanced'=>20, 'fast'=>30, 'maximum'=>40];
-        $profile = (string) ($values['api.rhythm.profile'] ?? '');
-        if ($profile === '') {
-            $profile = match ((string) ($values['api.rhythm.mode'] ?? 'recovery')) {
-                'conservative'=>'conservative', 'balanced'=>'balanced', 'recovery'=>'maximum', default=>'fast',
-            };
-        }
-        if (!isset($profiles[$profile]) && $profile !== 'custom') {
-            $profile = 'fast';
-        }
-        $target = $this->legacyInt($values['api.rhythm.target_http_per_minute'], $profile === 'custom' ? 40 : $profiles[$profile]);
-        if ($profile !== 'custom' && !in_array($target, array_values($profiles), true)) {
-            $target = $profiles[$profile];
-        }
-        return max(1, $target);
-    }
 }

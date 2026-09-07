@@ -126,7 +126,7 @@ $maxCalls = (int) $callBudget['max_calls'];
       <section class="cron-truth-grid" aria-label="Detalles internos">
         <article><span>Readiness GET</span><strong data-qv4-readiness>0/3</strong><p>GET /users/me por cuenta.</p></article>
         <article><span>Programador</span><strong data-qv4-scheduler>Inactivo</strong><p>Estado configurado, no acción manual.</p></article>
-        <article><span>Comando</span><strong>queue_v4_clean.php --runtime=45</strong><p>Entrada canónica. Los overrides <code>--max-calls</code> y <code>--max-jobs</code> quedan sólo para soporte técnico avanzado.</p></article>
+        <article><span>Comando</span><strong>queue_v4_clean.php --runtime=45</strong><p>Entrada canónica. <code>--max-calls</code> queda sólo como reductor técnico; <code>--max-jobs</code> fue retirado.</p></article>
         <article><span>Legado consultado</span><strong data-qv4-legacy>No</strong><p>Debe permanecer fuera de autoridad.</p></article>
       </section>
       <section class="cron-truth-grid" aria-label="OAuth técnico" data-qv4-oauth-operations>

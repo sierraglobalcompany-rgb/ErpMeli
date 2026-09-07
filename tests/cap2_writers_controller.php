@@ -63,11 +63,9 @@ namespace {
 
         [$exit, $stdout, $stderr] = $run('conservative');
         k1b_assert($exit === 0, 'legacy_change_process_failed:' . $stdout . $stderr);
-        k1b_assert($pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='api.rhythm.profile'")->fetchColumn() === 'maximum', 'legacy_derived_current_changed_without_manual_adoption');
+        k1b_assert($pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='api.rhythm.profile'")->fetchColumn() === 'conservative', 'legacy_rhythm_change_blocked_as_capacity');
 
-        [$exit, $stdout, $stderr] = $run('fast');
-        k1b_assert($exit === 0, 'same_derived_process_failed:' . $stdout . $stderr);
-        k1b_assert($pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='api.rhythm.profile'")->fetchColumn() === 'fast', 'same_derived_current_change_was_blocked');
+        k1b_assert((int) ($pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='manual.api_calls_per_step'")->fetchColumn() ?: 1) === 1, 'legacy_rhythm_changed_manual_calls');
 
         $seed->execute(['api.rhythm.mode', 'maximum']);
         $seed->execute(['api.rhythm.profile', 'maximum']);

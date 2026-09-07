@@ -26,10 +26,6 @@ final class AutomationCallBudgetService
             return $this->result($cliMaxCalls, 'CLI_MAX_CALLS_OVERRIDE', $configured, $ceiling);
         }
 
-        if ($legacyMaxJobs !== null) {
-            return $this->result($legacyMaxJobs, 'LEGACY_MAX_JOBS_OVERRIDE', $configured, $ceiling);
-        }
-
         $rawConfigured = $this->settings->get(self::SETTING_KEY, null);
         if ($rawConfigured !== null && is_numeric($rawConfigured)) {
             return $this->result($configured, 'ERP_SETTINGS', $configured, $ceiling);

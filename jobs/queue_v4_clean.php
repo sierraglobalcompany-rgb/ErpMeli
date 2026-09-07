@@ -27,6 +27,10 @@ try {
     $capacityArgs = (new AutomationCliCapacityArgumentParser())->parse($options);
 } catch (\InvalidArgumentException $error) {
     fwrite(STDERR, "QUEUE_V4_CLEAN_FAILED\n");
+    if ($error->getMessage() === 'legacy_capacity_argument_removed') {
+        fwrite(STDERR, "safe_error=La unidad trabajos fue retirada; configure llamadas físicas en el ERP.\n");
+        exit(2);
+    }
     fwrite(STDERR, 'safe_error=' . $error->getMessage() . PHP_EOL);
     exit(2);
 }

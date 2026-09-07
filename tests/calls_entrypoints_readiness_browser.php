@@ -23,7 +23,7 @@ function calls_entrypoints_readiness_browser(PDO $pdo, Closure $assert): void
     };
     $before = $counts();
     $root = 'D:/Codex/tmp/erp-meli/calls-20260906/entrypoints';
-    $node = proc_open(['node', 'D:/Codex/tmp/erp-meli/calls-20260906/run-browser.cjs',
+    $node = proc_open(['node', str_replace('\\', '/', __DIR__ . '/calls_browser_runner.cjs'),
         str_replace('\\', '/', __DIR__ . '/calls_entrypoints_readiness_browser.js')],
         [0 => ['pipe','r'], 1 => ['file',$root . '/browser.log','w'], 2 => ['file',$root . '/browser-error.log','w']],
         $pipes, dirname(__DIR__), null, ['bypass_shell' => true, 'create_no_window' => true]);

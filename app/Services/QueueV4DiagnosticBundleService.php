@@ -3019,14 +3019,14 @@ final class QueueV4DiagnosticBundleService
             throw new \RuntimeException('csv_open_failed');
         }
         $columns = ['id_hash','company_id_hash','meli_account_id_hash','job_type','work_type','source_table','source_id_hash','state','available_at','attempt_count','last_error_class','reason','reason_code','reason_human','exit_condition_human','created_at','updated_at'];
-        fputcsv($fp, $columns);
+        fputcsv($fp, $columns, ',', '"', '\\', "\n");
         foreach ($rows as $row) {
             $line = [];
             foreach ($columns as $col) {
                 $value = $row[$col] ?? '';
                 $line[] = is_scalar($value) || $value === null ? (string) $value : json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
             }
-            fputcsv($fp, $line);
+            fputcsv($fp, $line, ',', '"', '\\', "\n");
         }
         fclose($fp);
     }

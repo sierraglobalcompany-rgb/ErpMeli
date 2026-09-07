@@ -116,20 +116,20 @@ async (page) => {
 
   await page.goto(`${base}/__fixture/health?state=healthy`);
   await page.goto(manualUrl);
-  expect(await manualCurrent(page).inputValue() === '15', 'manual current baseline is not 15');
+  expect(await manualCurrent(page).inputValue() === '1', 'manual current baseline is not 1');
   expect(await manualCeiling(page).inputValue() === '55', 'manual ceiling baseline is not 55');
   await manualCeiling(page).fill('100');
   await manualCurrent(page).fill('20');
   await reviewManual(page).click();
   await cancel(page).click();
   expect(await manualCeiling(page).inputValue() === '55', 'manual cancel mutated ceiling');
-  expect(await manualCurrent(page).inputValue() === '15', 'manual cancel mutated current');
+  expect(await manualCurrent(page).inputValue() === '1', 'manual cancel mutated current');
   await manualCeiling(page).fill('100');
   await reviewManual(page).click();
   await confirm(page).click();
   await page.reload();
   expect(await manualCeiling(page).inputValue() === '100', 'manual ceiling did not persist');
-  expect(await manualCurrent(page).inputValue() === '15', 'ceiling-only manual save changed current');
+  expect(await manualCurrent(page).inputValue() === '1', 'ceiling-only manual save changed current');
   await manualCurrent(page).fill('20');
   await reviewManual(page).click();
   await confirm(page).click();

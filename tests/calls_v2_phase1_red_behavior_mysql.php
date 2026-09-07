@@ -28,6 +28,9 @@ $red = static function (bool $condition, string $label): void {
     if ($condition) { echo "PASS={$label}\n"; return; }
     echo "RED={$label}\n";
 };
+$f1RequestId = str_repeat('a', 40);
+$f2RequestId = str_repeat('b', 40);
+$f2AuditRequestId = str_repeat('c', 40);
 $h = cap2_manual_database();
 try {
     $pdo = $h->pdo();
@@ -58,7 +61,7 @@ try {
     $job = (int)$pdo->lastInsertId();
     $pdo->prepare('INSERT INTO queue_v4_clean_attempts(job_id,run_id,company_id,meli_account_id,lease_owner,lease_generation) VALUES(?,?,9001,9011,\'phase1\',1)')->execute([$job,$run]);
     $attempt = (int)$pdo->lastInsertId();
-    $pdo->prepare("INSERT INTO queue_v4_clean_transport_events(company_id,meli_account_id,source_kind,work_id,attempt_id,lease_generation,request_id,method,endpoint_key,physical_started_at) VALUES(9001,9011,'queue',?,?,1,'phase1-f1','GET','order_exact',UTC_TIMESTAMP(3))")->execute([$job,$attempt]);
+    $pdo->prepare("INSERT INTO queue_v4_clean_transport_events(company_id,meli_account_id,source_kind,work_id,attempt_id,lease_generation,request_id,method,endpoint_key,physical_started_at) VALUES(9001,9011,'queue',?,?,1,?,'GET','order_exact',UTC_TIMESTAMP(3))")->execute([$job,$attempt,$f1RequestId]);
     $receipt = (new QueueV4CleanWorker($pdo, new QueueV4CleanRepository($pdo)))->receiptForRun($run);
     $red(($receipt['physical_http_calls'] ?? null) === null, 'f1_pre_curl_marker_is_unknown_not_exact_physical_call');
 
@@ -67,12 +70,30 @@ try {
     $fault = new CallsV2KnownStatusFaultPdo('mysql:host=127.0.0.1;port=33079;dbname='.getenv('DB_NAME').';charset=utf8mb4','root','',[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
     $fault->setAttribute(PDO::ATTR_STATEMENT_CLASS, [CallsV2KnownStatusFaultStatement::class]);
     $fault->exec("SET time_zone='+00:00'");
-    $meta = ['source'=>'queue_v4_clean','company_id'=>9001,'account_id'=>9011,'transport_request_id'=>'phase1-f2','queue_v4_job_id'=>$job,'queue_v4_attempt_id'=>$attempt,'queue_v4_lease_owner'=>'phase1','queue_v4_lease_generation'=>1];
+    $meta = ['source'=>'queue_v4_clean','company_id'=>9001,'account_id'=>9011,'transport_request_id'=>$f2RequestId,'queue_v4_job_id'=>$job,'queue_v4_attempt_id'=>$attempt,'queue_v4_lease_owner'=>'phase1','queue_v4_lease_generation'=>1];
     Cap2DomainsWire::$responses['/orders/880001'] = [200, ['id'=>880001]];
     Database::setConnection($fault); QueueV4CleanCycleBudget::start(1, 'automatic', microtime(true) + 45); CronDeadlineContext::start(45,40,8,3);
     try { ApiExecutionMetadataContext::run($meta, static fn() => (new CurlMeliHttpTransport())->request('GET','https://cap2-wire.invalid/orders/880001',[],[],false,['timeout'=>5,'connect_timeout'=>2])); } catch (Throwable) {} finally { Database::setConnection($pdo); QueueV4CleanCycleBudget::clear(); CronDeadlineContext::clear(); }
-    $known = $pdo->query("SELECT http_status FROM queue_v4_clean_transport_events WHERE request_id='phase1-f2' ORDER BY id DESC LIMIT 1")->fetchColumn();
+    $knownStmt = $pdo->prepare('SELECT http_status FROM queue_v4_clean_transport_events WHERE request_id=? ORDER BY id DESC LIMIT 1');
+    $knownStmt->execute([$f2RequestId]);
+    $known = $knownStmt->fetchColumn();
     $red((int)$known === 200, 'f2_known_http_status_survives_local_journal_failure');
+
+    $pdo->exec("INSERT INTO sync_sales_audit_runs(company_id,meli_account_id,period_year,period_month,timezone_used,normalizer_version,local_from,local_to,utc_from,utc_to) VALUES(9001,9011,2026,9,'UTC','test','2026-09-01','2026-09-30','2026-09-01','2026-09-30')");
+    $auditRun = (int)$pdo->lastInsertId();
+    $pdo->prepare("INSERT INTO sync_sales_audit_jobs(sync_sales_audit_run_id,company_id,meli_account_id,status,locked_by,lease_generation,lock_expires_at) VALUES(?,9001,9011,'running','phase1',1,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 5 MINUTE))")->execute([$auditRun]);
+    $auditJob = (int)$pdo->lastInsertId();
+    $auditFault = new CallsV2KnownStatusFaultPdo('mysql:host=127.0.0.1;port=33079;dbname='.getenv('DB_NAME').';charset=utf8mb4','root','',[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
+    $auditFault->setAttribute(PDO::ATTR_STATEMENT_CLASS, [CallsV2KnownStatusFaultStatement::class]);
+    $auditFault->exec("SET time_zone='+00:00'");
+    $auditMeta = ['source'=>'queue_v4_clean_sales_audit','company_id'=>9001,'account_id'=>9011,'transport_request_id'=>$f2AuditRequestId,'sales_audit_job_id'=>$auditJob,'sales_audit_lease_owner'=>'phase1','sales_audit_lease_generation'=>1];
+    Cap2DomainsWire::$responses['/orders/search'] = [200, ['results'=>[]]];
+    Database::setConnection($auditFault); QueueV4CleanCycleBudget::start(1, 'automatic', microtime(true) + 45); CronDeadlineContext::start(45,40,8,3);
+    try { ApiExecutionMetadataContext::run($auditMeta, static fn() => (new CurlMeliHttpTransport())->request('GET','https://cap2-wire.invalid/orders/search',[],[],false,['timeout'=>5,'connect_timeout'=>2])); } catch (Throwable) {} finally { Database::setConnection($pdo); QueueV4CleanCycleBudget::clear(); CronDeadlineContext::clear(); }
+    $auditKnownStmt = $pdo->prepare('SELECT http_status FROM queue_v4_clean_transport_events WHERE request_id=? ORDER BY id DESC LIMIT 1');
+    $auditKnownStmt->execute([$f2AuditRequestId]);
+    $auditKnown = $auditKnownStmt->fetchColumn();
+    $red((int)$auditKnown === 200, 'f2_sales_audit_known_status_survives_local_journal_failure');
 
     // Verify the full existing storage model against the migrated DB. The
     // capture itself is real and scoped, contains exactly one requested order,

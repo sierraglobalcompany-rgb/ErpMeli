@@ -466,6 +466,7 @@ final class QueueV4CleanWorker
                 $endReason = 'runtime_deadline_reached';
             }
             $this->repository->finishRun($runId, 'completed');
+            $physicalReceipt = $this->physicalHttpReceiptForRun($runId);
             return [
                 'run_id' => $runId,
                 'claimed' => $claimed,
@@ -473,7 +474,11 @@ final class QueueV4CleanWorker
                 'deferred' => $deferred,
                 'control_unit' => 'PHYSICAL_API_CALL',
                 'max_calls' => $maxCalls,
-                'physical_http_calls' => $this->physicalHttpCallsForRun($runId),
+                'physical_http_calls' => $physicalReceipt['physical_http_calls'],
+                'physical_http_calls_certainty' => $physicalReceipt['physical_http_calls_certainty'],
+                'known_physical_calls' => $physicalReceipt['known_physical_calls'],
+                'unresolved_dispatches' => $physicalReceipt['unresolved_dispatches'],
+                'possible_physical_calls_max' => $physicalReceipt['possible_physical_calls_max'],
                 'call_budget' => QueueV4CleanCycleBudget::snapshot(),
                 'stop_reason' => $endReason,
                 'selected_count' => $selectedCount,
@@ -561,13 +566,18 @@ final class QueueV4CleanWorker
             if (($attemptRow['job_state'] ?? '') === 'waiting') {
                 $nextSafeAt = $attemptRow['job_available_at'] ?? null;
             }
+            $physicalReceipt = $this->physicalHttpReceiptForRun($runId);
 
             return [
                 'run_id' => $runId,
                 'claimed' => (int) ($runRow['jobs_claimed'] ?? 0),
                 'completed' => (int) ($runRow['jobs_completed'] ?? 0),
                 'deferred' => (int) ($runRow['jobs_deferred'] ?? 0),
-                'physical_http_calls' => $this->physicalHttpCallsForRun($runId),
+                'physical_http_calls' => $physicalReceipt['physical_http_calls'],
+                'physical_http_calls_certainty' => $physicalReceipt['physical_http_calls_certainty'],
+                'known_physical_calls' => $physicalReceipt['known_physical_calls'],
+                'unresolved_dispatches' => $physicalReceipt['unresolved_dispatches'],
+                'possible_physical_calls_max' => $physicalReceipt['possible_physical_calls_max'],
                 'classification' => $classification !== '' ? $classification : 'no_work',
                 'http_status' => isset($attemptRow['http_status']) ? (int) $attemptRow['http_status'] : null,
                 'next_safe_at' => $nextSafeAt,
@@ -582,6 +592,10 @@ final class QueueV4CleanWorker
                 'completed' => 0,
                 'deferred' => 0,
                 'physical_http_calls' => null,
+                'physical_http_calls_certainty' => 'UNKNOWN',
+                'known_physical_calls' => 0,
+                'unresolved_dispatches' => 0,
+                'possible_physical_calls_max' => null,
                 'classification' => 'receipt_not_available',
                 'http_status' => null,
                 'next_safe_at' => null,
@@ -590,29 +604,43 @@ final class QueueV4CleanWorker
         }
     }
 
-    private function physicalHttpCallsForRun(int $runId): int
+    /** @return array{physical_http_calls:?int,physical_http_calls_certainty:string,known_physical_calls:int,unresolved_dispatches:int,possible_physical_calls_max:int} */
+    private function physicalHttpReceiptForRun(int $runId): array
     {
         if ($runId < 1) {
-            return 0;
+            return [
+                'physical_http_calls' => 0,
+                'physical_http_calls_certainty' => 'CERTIFIED',
+                'known_physical_calls' => 0,
+                'unresolved_dispatches' => 0,
+                'possible_physical_calls_max' => 0,
+            ];
         }
-        try {
-            // Schema 301 journal is the physical authority; an unavailable
-            // journal (including metadata failures) is never certified zero.
-            $events = $this->pdo->prepare(
-                    "SELECT COUNT(DISTINCT e.request_id)
-                     FROM queue_v4_clean_transport_events e
-                     INNER JOIN queue_v4_clean_attempts a
-                       ON a.id=e.attempt_id AND a.job_id=e.work_id AND e.source_kind='queue'
-                      AND a.company_id=e.company_id
-                      AND a.meli_account_id=e.meli_account_id
-                     WHERE a.run_id=?
-                       AND e.dispatch_state IN ('PHYSICAL_STARTED','RESPONSE_KNOWN')"
-                );
-            $events->execute([$runId]);
-            return (int) $events->fetchColumn();
-        } catch (Throwable $error) {
-            throw new RuntimeException('queue_v4_physical_metric_unavailable', 0, $error);
-        }
+
+        $events = $this->pdo->prepare(
+            "SELECT
+                    COUNT(DISTINCT CASE WHEN e.dispatch_state='RESPONSE_KNOWN' THEN e.request_id END) known_calls,
+                    COUNT(DISTINCT CASE WHEN e.dispatch_state='PHYSICAL_STARTED'
+                         AND e.response_known_at IS NULL AND e.http_status IS NULL THEN e.request_id END) unresolved_dispatches
+             FROM queue_v4_clean_transport_events e
+             INNER JOIN queue_v4_clean_attempts a
+               ON a.id=e.attempt_id AND a.job_id=e.work_id AND e.source_kind='queue'
+              AND a.company_id=e.company_id
+              AND a.meli_account_id=e.meli_account_id
+             WHERE a.run_id=?"
+        );
+        $events->execute([$runId]);
+        $row = $events->fetch(PDO::FETCH_ASSOC) ?: [];
+        $known = max(0, (int) ($row['known_calls'] ?? 0));
+        $unresolved = max(0, (int) ($row['unresolved_dispatches'] ?? 0));
+
+        return [
+            'physical_http_calls' => $unresolved > 0 ? null : $known,
+            'physical_http_calls_certainty' => $unresolved > 0 ? 'UNKNOWN' : 'CERTIFIED',
+            'known_physical_calls' => $known,
+            'unresolved_dispatches' => $unresolved,
+            'possible_physical_calls_max' => $known + $unresolved,
+        ];
     }
 
     private function hasTable(string $table): bool

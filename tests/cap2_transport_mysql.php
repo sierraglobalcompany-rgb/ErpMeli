@@ -261,8 +261,6 @@ try {
     if($repo->releaseDueWaiting([9011],9011)!==2)$newFailures[]='financial_wakeup_excludes_uncertain_preserves_known_and_not_sent';
     $q=$pdo->prepare('SELECT state,last_error_class FROM queue_v4_clean_jobs WHERE id=?');$q->execute([$historical['uncertain']]);$row=$q->fetch(PDO::FETCH_ASSOC);
     if($row['state']!=='waiting'||$row['last_error_class']!=='remote_result_uncertain_safe_get')$newFailures[]='financial_wakeup_preserves_uncertain_diagnostics';
-    // Break caught: mixed source IDs and a mismatched work_id inflated a queue run's count.
-    $metric=new ReflectionMethod(Worker::class,'physicalHttpCallsForRun');
     $worker=new Worker($pdo,$repo);
     [$metricMeta]=cap2_transport_context($pdo,'queue');
     $attempt=$metricMeta['queue_v4_attempt_id'];$job=$metricMeta['queue_v4_job_id'];
@@ -270,16 +268,25 @@ try {
     foreach([['queue',$job],['sales_repair',$job],['queue',$job+100]] as [$kind,$work]) {
         $pdo->prepare("INSERT INTO queue_v4_clean_transport_events(company_id,meli_account_id,source_kind,work_id,attempt_id,lease_generation,request_id,method,endpoint_key,physical_started_at) VALUES(9001,9011,?,?,?,1,?,'GET','order_exact',UTC_TIMESTAMP(3))")->execute([$kind,$work,$attempt,'metric-'.bin2hex(random_bytes(8))]);
     }
-    k1b_assert($metric->invoke($worker,9999)===1,'metric_counts_only_queue_and_matching_work_id');
+    $metricReceipt=$worker->receiptForRun(9999);
+    k1b_assert($metricReceipt['physical_http_calls']===null
+        && $metricReceipt['physical_http_calls_certainty']==='UNKNOWN'
+        && $metricReceipt['known_physical_calls']===0
+        && $metricReceipt['unresolved_dispatches']===1
+        && $metricReceipt['possible_physical_calls_max']===1,
+        'metric_counts_only_queue_and_matching_work_id_without_exact_pre_curl_count');
     $fault=new Cap2TransportMetricPdo('mysql:host=127.0.0.1;port=33079;dbname='.getenv('DB_NAME').';charset=utf8mb4','root','',[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_EMULATE_PREPARES=>false]);
-    $failed=false;
-    try {$metric->invoke(new Worker($fault,new Repo($fault)),9997);}catch(Throwable){$failed=true;}
-    if(!$failed)$newFailures[]='metric_probe_failure_cannot_fall_back_to_zero';
+    $faultReceipt=(new Worker($fault,new Repo($fault)))->receiptForRun(9997);
+    if($faultReceipt['physical_http_calls']!==null
+        || $faultReceipt['physical_http_calls_certainty']!=='UNKNOWN'
+        || $faultReceipt['possible_physical_calls_max']!==null)$newFailures[]='metric_probe_failure_cannot_fall_back_to_zero';
     $pdo->exec('RENAME TABLE queue_v4_clean_attempts TO cap2_hidden_attempts');
     try {
-        $failed=false;
-        try {$metric->invoke($worker,9999);}catch(Throwable){$failed=true;}
-        k1b_assert($failed,'metric_read_failure_is_not_certified_zero');
+        $hiddenReceipt=$worker->receiptForRun(9999);
+        k1b_assert($hiddenReceipt['physical_http_calls']===null
+            && $hiddenReceipt['physical_http_calls_certainty']==='UNKNOWN'
+            && $hiddenReceipt['possible_physical_calls_max']===null,
+            'metric_read_failure_is_not_certified_zero');
     } finally {$pdo->exec('RENAME TABLE cap2_hidden_attempts TO queue_v4_clean_attempts');}
     foreach($newFailures as $failure)echo 'EXPECTED_RED='.$failure."\n";
     k1b_assert($newFailures===[],'transport_recovery_metric_authority_regressions');

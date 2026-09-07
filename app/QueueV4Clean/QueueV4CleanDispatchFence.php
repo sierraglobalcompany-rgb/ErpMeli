@@ -74,7 +74,7 @@ final class QueueV4CleanDispatchFence
             $stmt = $pdo->prepare(
                 "SELECT id FROM queue_v4_clean_transport_events
                  WHERE company_id=? AND meli_account_id=? AND source_kind='sales_repair'
-                   AND work_id=? AND attempt_id=? AND lease_generation=? AND request_id=?
+                   AND work_id=? AND attempt_id <=> ? AND lease_generation=? AND request_id=?
                    AND dispatch_state='PHYSICAL_STARTED' LIMIT 1 FOR UPDATE"
             );
             $stmt->execute([
@@ -125,7 +125,77 @@ final class QueueV4CleanDispatchFence
             if ($ownsTransaction && $pdo->inTransaction()) {
                 $pdo->rollBack();
             }
+            self::preserveKnownResponseBestEffort($source, $meta, $status);
             throw $error;
+        }
+    }
+
+    private static function preserveKnownResponseBestEffort(string $source, array $meta, int $status): void
+    {
+        $pdo = null;
+        try {
+            $pdo = Database::reconnect();
+            if ($pdo->inTransaction()) {
+                return;
+            }
+            if ($source === MeliTransportSourcePolicy::QUEUE_V4_SALES_AUDIT) {
+                $stmt = $pdo->prepare(
+                    "UPDATE sync_sales_audit_jobs
+                     SET remote_dispatch_state='RESPONSE_KNOWN',response_known_at=UTC_TIMESTAMP(3),last_http_status=?
+                     WHERE id=? AND company_id=? AND meli_account_id=? AND status='running'
+                       AND locked_by=? AND lease_generation=? AND remote_dispatch_state='PHYSICAL_STARTED'
+                       AND last_request_id=?"
+                );
+                $stmt->execute([
+                    self::status($status), (int) ($meta['sales_audit_job_id'] ?? 0),
+                    (int) ($meta['company_id'] ?? 0), (int) ($meta['account_id'] ?? 0),
+                    (string) ($meta['sales_audit_lease_owner'] ?? ''),
+                    (int) ($meta['sales_audit_lease_generation'] ?? 0),
+                    (string) ($meta['transport_request_id'] ?? ''),
+                ]);
+            } elseif ($source === MeliTransportSourcePolicy::QUEUE_V4_SALES_REPAIR) {
+                // Sales repair has no separate attempt row; its durable physical
+                // evidence is the transport event updated below.
+            } else {
+                $stmt = $pdo->prepare(
+                "UPDATE queue_v4_clean_attempts a
+                 INNER JOIN queue_v4_clean_jobs j
+                   ON j.id=a.job_id AND j.company_id=a.company_id AND j.meli_account_id=a.meli_account_id
+                 SET a.dispatch_state='RESPONSE_KNOWN',a.response_known_at=UTC_TIMESTAMP(3),a.http_status=?
+                 WHERE a.id=? AND a.job_id=? AND a.company_id=? AND a.meli_account_id=?
+                   AND a.lease_owner=? AND a.lease_generation=?
+                   AND a.outcome='running' AND a.dispatch_state='PHYSICAL_STARTED'
+                   AND j.state='running' AND j.lease_owner=? AND j.lease_generation=?"
+            );
+            $stmt->execute([
+                self::status($status), (int) ($meta['queue_v4_attempt_id'] ?? 0),
+                (int) ($meta['queue_v4_job_id'] ?? 0), (int) ($meta['company_id'] ?? 0),
+                (int) ($meta['account_id'] ?? 0), (string) ($meta['queue_v4_lease_owner'] ?? ''),
+                (int) ($meta['queue_v4_lease_generation'] ?? 0),
+                (string) ($meta['queue_v4_lease_owner'] ?? ''),
+                (int) ($meta['queue_v4_lease_generation'] ?? 0),
+            ]);
+            }
+        } catch (\Throwable) {
+            // Preserve the transport event below when the attempt row cannot be updated.
+        }
+        try {
+            $event = $pdo->prepare(
+                "UPDATE queue_v4_clean_transport_events
+                 SET http_status=?,response_known_at=UTC_TIMESTAMP(3),dispatch_state='RESPONSE_KNOWN'
+                 WHERE company_id=? AND meli_account_id=? AND source_kind=?
+                   AND work_id=? AND attempt_id <=> ? AND lease_generation=? AND request_id=?
+                   AND dispatch_state='PHYSICAL_STARTED'"
+            );
+            $event->execute([
+                self::status($status), (int) ($meta['company_id'] ?? 0),
+                (int) ($meta['account_id'] ?? 0), self::journalSource($source),
+                self::journalWorkId($source, $meta), self::journalAttemptId($source, $meta),
+                self::journalGeneration($source, $meta),
+                (string) ($meta['transport_request_id'] ?? ''),
+            ]);
+        } catch (\Throwable) {
+            // Preserve the original failure. Complete DB loss remains fail-closed.
         }
     }
 
@@ -357,6 +427,36 @@ final class QueueV4CleanDispatchFence
             MeliTransportSourcePolicy::QUEUE_V4_SALES_AUDIT => 'sales_audit',
             MeliTransportSourcePolicy::QUEUE_V4_SALES_REPAIR => 'sales_repair',
             default => 'queue',
+        };
+    }
+
+    /** @param array<string,mixed> $meta */
+    private static function journalWorkId(string $source, array $meta): int
+    {
+        return match ($source) {
+            MeliTransportSourcePolicy::QUEUE_V4_SALES_AUDIT => (int) ($meta['sales_audit_job_id'] ?? 0),
+            MeliTransportSourcePolicy::QUEUE_V4_SALES_REPAIR => (int) ($meta['sales_repair_job_id'] ?? 0),
+            default => (int) ($meta['queue_v4_job_id'] ?? 0),
+        };
+    }
+
+    /** @param array<string,mixed> $meta */
+    private static function journalAttemptId(string $source, array $meta): ?int
+    {
+        return match ($source) {
+            MeliTransportSourcePolicy::QUEUE_V4_SALES_AUDIT => null,
+            MeliTransportSourcePolicy::QUEUE_V4_SALES_REPAIR => (int) ($meta['sales_repair_item_id'] ?? 0),
+            default => (int) ($meta['queue_v4_attempt_id'] ?? 0),
+        };
+    }
+
+    /** @param array<string,mixed> $meta */
+    private static function journalGeneration(string $source, array $meta): int
+    {
+        return match ($source) {
+            MeliTransportSourcePolicy::QUEUE_V4_SALES_AUDIT => (int) ($meta['sales_audit_lease_generation'] ?? 0),
+            MeliTransportSourcePolicy::QUEUE_V4_SALES_REPAIR => (int) ($meta['sales_repair_lease_generation'] ?? 0),
+            default => (int) ($meta['queue_v4_lease_generation'] ?? 0),
         };
     }
 

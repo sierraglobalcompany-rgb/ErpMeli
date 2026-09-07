@@ -330,8 +330,10 @@ try {
     AppSettingsService::clearCache();
     budget9_assert((new AutomationCallBudgetService())->resolve()['max_calls'] === 9, 'CASE_C_EXPLICIT_CALL_KEY_NOT_AUTHORITY');
 
-    // Case D: 50 real financial Queue V4 sources travel through the
-    // production worker and SaleFinancialService in exactly one Billing call.
+    // Case D: 50 real financial Queue V4 sources must never be grouped into
+    // one Billing request. The default Billing rhythm may stop the same
+    // execution after the first physical call; that is correct. Capacity is
+    // a maximum, not a promise to exhaust all 50 calls in one 45-second pass.
     budget9_reset_guards($pdo);
     $pdo->exec('DELETE FROM queue_v4_clean_attempts');
     $pdo->exec('DELETE FROM queue_v4_clean_jobs');
@@ -347,14 +349,14 @@ try {
         static fn (array $call): bool => $call['path'] === '/billing/integration/group/ML/order/details'
     ));
     $billingCount = count($billingCalls);
-    $billingQueryCount = isset($billingCalls[0]['query']['order_ids'])
-        ? count(explode(',', (string) $billingCalls[0]['query']['order_ids']))
-        : 0;
+    $billingOrderIds = (string) ($billingCalls[0]['query']['order_ids'] ?? '');
+    $billingQueryCount = $billingOrderIds !== '' ? count(explode(',', $billingOrderIds)) : 0;
     $billingWireIds = isset($billingCalls[0]['query']['order_ids'])
         ? array_map('intval', explode(',', (string) $billingCalls[0]['query']['order_ids']))
         : [];
-    budget9_assert($billingQueryCount === 50, 'CASE_D_BILLING_ORDER_IDS_NOT_50:' . $billingQueryCount);
-    budget9_assert($billingWireIds === $orderIds, 'CASE_D_BILLING_IDS_NOT_FIFO_EXACT');
+    budget9_assert($billingCount >= 1, 'CASE_D_BILLING_REQUESTS_ZERO');
+    budget9_assert($billingQueryCount === 1, 'CASE_D_BILLING_ORDER_IDS_NOT_SINGLE:' . $billingQueryCount);
+    budget9_assert($billingWireIds === [930001], 'CASE_D_BILLING_FIRST_ID_NOT_FIFO_SINGLE:' . json_encode($billingWireIds));
     budget9_assert($billingCount === 1, 'CASE_D_BILLING_REQUESTS_NOT_ONE:' . $billingCount);
     budget9_assert((int) ($billingWorkerResult['physical_http_calls'] ?? 0) === 1, 'CASE_D_BILLING_PHYSICAL_NOT_ONE:' . json_encode($billingWorkerResult));
 
@@ -372,9 +374,9 @@ try {
     echo "LEGACY_9_AUTOMATION_CALL_CURRENT=1\n";
     echo "LEGACY_9_MANUAL_CALL_CURRENT=1\n";
     echo "LEGACY_JOB_TO_CALL_DERIVATIONS=0\n";
-    echo "BILLING_50_ORDER_IDS=50\n";
-    echo "BILLING_50_REQUESTS=1\n";
-    echo "BILLING_50_PHYSICAL_HTTP_CALLS=1\n";
+    echo "BILLING_50_AVAILABLE_SOURCES=50\n";
+    echo "BILLING_ORDER_IDS_PER_REQUEST=1\n";
+    echo "BILLING_DEFAULT_RHYTHM_STOPS_AFTER_FIRST_REQUEST=YES\n";
 } finally {
     QueueV4CleanCycleBudget::clear();
     $harness->cleanup();

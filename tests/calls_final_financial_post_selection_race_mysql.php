@@ -146,16 +146,15 @@ try {
         Cap2DomainsWire::$calls = [];
         $primary = $seed(990000 + random_int(1, 10000));
         $neighbor = $seed(995000 + random_int(1, 10000));
-        $afterRecoveryReadMutation = null;
+        $makeIneligible($pdo, $neighbor);
+        $beforeNeighbor = $snapshot($neighbor);
         $recoveryReadCount = 0;
         $factoryCalls = 0;
 
         $repo = new QueueV4CleanRepository(
             $pdo,
-            static function () use ($pdo, $neighbor, $makeIneligible, $snapshot, &$afterRecoveryReadMutation, &$recoveryReadCount): void {
+            static function () use (&$recoveryReadCount): void {
                 $recoveryReadCount++;
-                $makeIneligible($pdo, $neighbor);
-                $afterRecoveryReadMutation = $snapshot($neighbor);
             },
         );
         $worker = new QueueV4CleanWorker(
@@ -174,13 +173,13 @@ try {
         }
 
         $after = $snapshot($neighbor);
-        $attemptsDelta = (int) $after['source']['attempts'] - (int) $afterRecoveryReadMutation['source']['attempts'];
+        $attemptsDelta = (int) $after['source']['attempts'] - (int) $beforeNeighbor['source']['attempts'];
         $assert($factoryCalls === 1, 'recovery_' . $case . '_selected_before_exception', ['factory_calls' => $factoryCalls, 'result' => $result]);
-        $assert($recoveryReadCount === 1, 'recovery_' . $case . '_read_before_mutation', ['recovery_reads' => $recoveryReadCount]);
+        $assert($recoveryReadCount === 0, 'recovery_' . $case . '_NO_NEIGHBOR_SWEEP', ['recovery_reads' => $recoveryReadCount]);
         $assert(Cap2DomainsWire::$calls === [], 'recovery_' . $case . '_NEIGHBOR_HTTP=0', ['calls' => Cap2DomainsWire::$calls]);
         $assert($attemptsDelta === 0, 'recovery_' . $case . '_NEIGHBOR_CLAIM=0', ['attempts_delta' => $attemptsDelta]);
-        $assert($after['source'] === $afterRecoveryReadMutation['source'], 'recovery_' . $case . '_NEIGHBOR_SOURCE_MUTATIONS=0', ['before' => $afterRecoveryReadMutation['source'], 'after' => $after['source']]);
-        $assert($after['pointer'] === $afterRecoveryReadMutation['pointer'], 'recovery_' . $case . '_NEIGHBOR_POINTER_MUTATIONS=0', ['before' => $afterRecoveryReadMutation['pointer'], 'after' => $after['pointer']]);
+        $assert($after['source'] === $beforeNeighbor['source'], 'recovery_' . $case . '_NEIGHBOR_SOURCE_MUTATIONS=0', ['before' => $beforeNeighbor['source'], 'after' => $after['source']]);
+        $assert($after['pointer'] === $beforeNeighbor['pointer'], 'recovery_' . $case . '_NEIGHBOR_POINTER_MUTATIONS=0', ['before' => $beforeNeighbor['pointer'], 'after' => $after['pointer']]);
     }
 
     $pdo->exec("UPDATE queue_v4_clean_jobs SET state='completed',lease_owner=NULL,lease_expires_at=NULL");

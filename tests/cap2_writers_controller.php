@@ -18,6 +18,14 @@ namespace {
     use App\Core\Database;
     use App\Services\AppSettingsService;
 
+    putenv('APP_ENV=test');
+    putenv('ML_WRITE_ENABLED=false');
+    putenv('DB_HOST=127.0.0.1');
+    putenv('DB_PORT=' . (getenv('DB_PORT') ?: '33079'));
+    putenv('DB_USER=root');
+    putenv('DB_PASS=');
+    putenv('DB_NAME=' . (getenv('DB_NAME') ?: 'erp_meli_k1d_test_cap2_writer_controller_' . bin2hex(random_bytes(4))));
+
     if (isset($argv[1])) {
         $_ENV['APP_URL'] = 'https://local.test';
         $_SERVER['HTTP_ORIGIN'] = 'https://local.test';
@@ -30,13 +38,6 @@ namespace {
         (new App\Controllers\SettingsController())->saveCronRhythm();
     }
 
-    putenv('APP_ENV=test');
-    putenv('ML_WRITE_ENABLED=false');
-    putenv('DB_HOST=127.0.0.1');
-    putenv('DB_PORT=' . (getenv('DB_PORT') ?: '33079'));
-    putenv('DB_USER=root');
-    putenv('DB_PASS=');
-    putenv('DB_NAME=erp_meli_k1d_test_cap2_writer_controller_' . bin2hex(random_bytes(4)));
     $db = K1dSafeTestDatabase::createFromEnvironment();
     try {
         $pdo = $db->pdo();

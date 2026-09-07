@@ -399,8 +399,13 @@ final class QueueV4CleanWorker
                     continue;
                 } catch (RuntimeException $error) {
                     $this->functionalFailure($job, $runId, $error);
-                    $receiptJobs[] = $this->cycleJobReceipt($job, 'waiting', $this->failureClass($error), false, null, null, null);
+                    $failureClass = $this->failureClass($error);
+                    $receiptJobs[] = $this->cycleJobReceipt($job, 'waiting', $failureClass, false, null, null, null);
                     $deferred++;
+                    if ($this->jobCapability($job) === 'financial_reconciliation') {
+                        $endReason = 'deferred_break:' . $failureClass;
+                        break;
+                    }
                     continue;
                 }
                 if (($outcome['state'] ?? '') === 'waiting') {
@@ -1398,6 +1403,14 @@ final class QueueV4CleanWorker
         }
         $payload = is_array($job['payload'] ?? null) ? $job['payload'] : [];
         return (string) ($payload['capability'] ?? '') === 'financial_reconciliation';
+    }
+
+    /** @param array<string,mixed> $job */
+    private function jobCapability(array $job): string
+    {
+        $payload = is_array($job['payload'] ?? null) ? $job['payload'] : [];
+
+        return (string) ($payload['capability'] ?? '');
     }
 
     /** @param array<string,mixed> $job @return array<string,mixed> */

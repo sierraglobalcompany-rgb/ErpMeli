@@ -7,13 +7,17 @@ require __DIR__ . '/K1dSafeTestDatabase.php';
 require __DIR__ . '/calls_transport_wire_fixture.php';
 
 use App\Core\Crypto;
+use App\QueueV4Clean\QueueV4CleanRepository;
 use App\QueueV4Clean\QueueV4CleanCycleBudget;
+use App\QueueV4Clean\QueueV4CleanWorker;
 use App\Services\ApiExecutionMetadataContext;
 use App\Services\AppSettingsService;
 use App\Services\AutomationCallBudgetService;
 use App\Services\Cap2DomainsWire;
 use App\Services\CapacityPolicyService;
+use App\Services\CronDeadlineContext;
 use App\Services\MeliApiClient;
+use App\Services\SaleFinancialStateService;
 
 function budget9_assert(bool $condition, string $label): void
 {
@@ -33,6 +37,18 @@ function budget9_seed_scope(PDO $pdo): void
     $pdo->exec("UPDATE queue_v4_clean_control SET engine_state='ACTIVE',readiness_state='CERTIFIED' WHERE control_key='primary'");
     $pdo->exec("UPDATE queue_engine_control SET active_engine='v4'");
     $pdo->exec("UPDATE app_settings SET setting_value='0' WHERE setting_key IN ('alerts.email.enabled','api.guard.jitter_min_ms','api.guard.jitter_max_ms')");
+    $settings = new AppSettingsService();
+    foreach ([
+        'api.rhythm.pause_ms' => '0',
+        'api.rhythm.burst_size' => '100',
+        'api.rhythm.minimum_interval_ms' => '0',
+        'api.rhythm.current_adaptive_limit' => '100',
+        'api.rhythm.shared_429_backoff_seconds' => '1800',
+        'api.rhythm.shared_429_jitter_seconds' => '0',
+        'sales_financial.commercial_pipeline_enabled' => '1',
+    ] as $key => $value) {
+        $settings->set($key, $value, 'calls-final-budget9');
+    }
     AppSettingsService::clearCache();
 }
 
@@ -46,6 +62,96 @@ function budget9_reset_guards(PDO $pdo): void
     Cap2DomainsWire::$responses = [];
     Cap2DomainsWire::$onWire = null;
     QueueV4CleanCycleBudget::clear();
+    CronDeadlineContext::clear();
+}
+
+/** @return array<string,mixed> */
+function budget9_order_payload(int $externalOrderId): array
+{
+    return [
+        'id' => $externalOrderId,
+        'date_created' => '2026-09-01T00:00:00.000Z',
+        'date_closed' => '2026-09-01T00:01:00.000Z',
+        'last_updated' => '2026-09-01T00:02:00.000Z',
+        'status' => 'paid',
+        'status_detail' => null,
+        'total_amount' => 100,
+        'paid_amount' => 100,
+        'currency_id' => 'COP',
+        'buyer' => ['id' => 990000 + $externalOrderId, 'nickname' => 'buyer-' . $externalOrderId],
+        'shipping' => ['id' => null],
+        'tags' => [],
+        'order_items' => [[
+            'item' => [
+                'id' => 'ITEM-' . $externalOrderId,
+                'title' => 'Budget item ' . $externalOrderId,
+                'seller_sku' => 'SKU-' . $externalOrderId,
+                'listing_type_id' => 'gold_special',
+            ],
+            'quantity' => 1,
+            'unit_price' => 100,
+            'full_unit_price' => 100,
+            'sale_fee' => 0,
+        ]],
+        'payments' => [],
+    ];
+}
+
+function budget9_seed_ready_order_job(PDO $pdo, int $externalOrderId): int
+{
+    $path = '/orders/' . $externalOrderId;
+    Cap2DomainsWire::$responses[$path] = [200, budget9_order_payload($externalOrderId)];
+    $pdo->prepare(
+        "INSERT INTO queue_v4_clean_jobs
+         (company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,state,available_at)
+         VALUES(9001,9011,'order_exact',?,?,'{}','ready','2000-01-01')"
+    )->execute([
+        (string) $externalOrderId,
+        'budget9-worker-order-' . $externalOrderId . '-' . bin2hex(random_bytes(4)),
+    ]);
+    return (int) $pdo->lastInsertId();
+}
+
+function budget9_seed_financial_source(PDO $pdo, int $externalOrderId): int
+{
+    $pdo->prepare(
+        "INSERT INTO meli_orders
+         (meli_account_id,external_order_id,status,total_amount,paid_amount,currency_id,synced_at)
+         VALUES (9011,?,'paid',100,100,'COP',UTC_TIMESTAMP())"
+    )->execute([(string) $externalOrderId]);
+    $state = (new SaleFinancialStateService())->projectSale(9001, 9011, 'O:' . $externalOrderId);
+    $pdo->prepare(
+        "INSERT INTO sale_financial_reconciliation_jobs
+         (company_id,meli_account_id,sale_key,external_sale_id,input_version,status,next_run_at)
+         VALUES (9001,9011,?,?,?,'pending','2000-01-01')"
+    )->execute(['O:' . $externalOrderId, (string) $externalOrderId, $state['input_version']]);
+    $sourceId = (int) $pdo->lastInsertId();
+    $pdo->prepare(
+        "INSERT INTO queue_v4_clean_jobs
+         (company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,state,available_at)
+         VALUES (9001,9011,'domain_exact',?,? ,?,'ready','2000-01-01')"
+    )->execute([
+        (string) $sourceId,
+        'budget9-billing-source-' . $sourceId . '-' . bin2hex(random_bytes(4)),
+        json_encode(['capability' => 'financial_reconciliation', 'source_id' => $sourceId], JSON_THROW_ON_ERROR),
+    ]);
+    return $sourceId;
+}
+
+function budget9_run_worker(PDO $pdo, int $budget): array
+{
+    CronDeadlineContext::start(45, 40, 8, 3);
+    QueueV4CleanCycleBudget::start($budget, 'automatic', microtime(true) + 45);
+    try {
+        return (new QueueV4CleanWorker($pdo, new QueueV4CleanRepository($pdo)))->run(
+            'test',
+            $budget,
+            40
+        );
+    } finally {
+        QueueV4CleanCycleBudget::clear();
+        CronDeadlineContext::clear();
+    }
 }
 
 /** @return array{job:int,attempt:int,meta:array<string,mixed>} */
@@ -136,35 +242,30 @@ try {
     (new App\Services\Migrator($pdo, __DIR__ . '/../database/migrations'))->run(301);
     budget9_seed_scope($pdo);
 
-    // Case A: 20 work records exist, but a physical call budget of 9 stops
-    // the tenth wire attempt before curl_exec.
+    // Case A: 20 real Queue V4 work records exist before the cycle starts.
+    // The integrated worker/scheduler path may claim the tenth record, but a
+    // physical call budget of 9 must stop its wire attempt before curl_exec.
     budget9_reset_guards($pdo);
-    QueueV4CleanCycleBudget::start(9, 'automatic', microtime(true) + 45);
-    $nPlusOneRejected = false;
-    for ($i = 1; $i <= 10; $i++) {
-        try {
-            budget9_get_order($pdo, 910000 + $i, 200, 'budget9-case-a');
-        } catch (App\Services\ApiBudgetExhaustedException $error) {
-            $nPlusOneRejected = $i === 10;
-            break;
-        }
+    for ($i = 1; $i <= 20; $i++) {
+        budget9_seed_ready_order_job($pdo, 910000 + $i);
     }
-    $snapshot = QueueV4CleanCycleBudget::snapshot();
-    $workRecords = (int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE lease_owner='budget9-case-a'")->fetchColumn();
+    $workRecords = (int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE job_type='order_exact'")->fetchColumn();
+    $workerResult = budget9_run_worker($pdo, 9);
     $wireCalls = count(Cap2DomainsWire::$calls);
-    budget9_assert($workRecords >= 10, 'CASE_A_WORK_RECORDS_NOT_CREATED');
+    $wirePaths = array_column(Cap2DomainsWire::$calls, 'path');
+    $nPlusOneRejected = !in_array('/orders/910010', $wirePaths, true);
+    $notCompleted = (int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE job_type='order_exact' AND state<>'completed'")->fetchColumn();
+    budget9_assert($workRecords === 20, 'CASE_A_WORK_RECORDS_NOT_20:' . $workRecords);
     budget9_assert($wireCalls === 9, 'CASE_A_WIRE_CALLS_NOT_NINE:' . $wireCalls);
     budget9_assert($nPlusOneRejected, 'CASE_A_N_PLUS_ONE_NOT_REJECTED');
-    budget9_assert($snapshot['used'] === 9 && $snapshot['remaining'] === 0, 'CASE_A_BUDGET_NOT_EXHAUSTED');
-    QueueV4CleanCycleBudget::clear();
-
-    // Add the rest of the prepared workload after the strict proof above so
-    // the fixture demonstrates surplus records without consuming transport.
-    for ($i = 11; $i <= 20; $i++) {
-        budget9_queue_attempt($pdo, 910000 + $i, 'budget9-case-a-surplus');
-    }
-    $workRecords = (int) $pdo->query("SELECT COUNT(*) FROM queue_v4_clean_jobs WHERE lease_owner IN ('budget9-case-a','budget9-case-a-surplus')")->fetchColumn();
-    budget9_assert($workRecords >= 20, 'CASE_A_WORK_RECORDS_LT_20');
+    budget9_assert($notCompleted === 11, 'CASE_A_REMAINING_WORK_NOT_11:' . $notCompleted);
+    budget9_assert((int) ($workerResult['physical_http_calls'] ?? 0) === 9, 'CASE_A_WORKER_RECEIPT_NOT_NINE:' . json_encode($workerResult));
+    budget9_assert((string) ($workerResult['stop_reason'] ?? '') === 'call_budget_exhausted', 'CASE_A_STOP_REASON_NOT_CALL_BUDGET:' . json_encode($workerResult));
+    budget9_assert(
+        (int) ($workerResult['call_budget']['used'] ?? -1) === 9
+            && (int) ($workerResult['call_budget']['remaining'] ?? -1) === 0,
+        'CASE_A_WORKER_BUDGET_SNAPSHOT_NOT_EXHAUSTED:' . json_encode($workerResult)
+    );
 
     // Case B: a first 429 at the third physical call stops all further wires,
     // and a second PHP process over the same DB fails closed before transport.
@@ -229,22 +330,18 @@ try {
     AppSettingsService::clearCache();
     budget9_assert((new AutomationCallBudgetService())->resolve()['max_calls'] === 9, 'CASE_C_EXPLICIT_CALL_KEY_NOT_AUTHORITY');
 
-    // Case D: 50 Billing order ids travel in exactly one physical HTTP call.
+    // Case D: 50 real financial Queue V4 sources travel through the
+    // production worker and SaleFinancialService in exactly one Billing call.
     budget9_reset_guards($pdo);
+    $pdo->exec('DELETE FROM queue_v4_clean_attempts');
+    $pdo->exec('DELETE FROM queue_v4_clean_jobs');
+    $pdo->exec('DELETE FROM sale_financial_reconciliation_jobs');
     $orderIds = range(930001, 930050);
+    foreach ($orderIds as $orderId) {
+        budget9_seed_financial_source($pdo, $orderId);
+    }
     Cap2DomainsWire::$responses['/billing/integration/group/ML/order/details'] = [200, []];
-    QueueV4CleanCycleBudget::start(9, 'automatic', microtime(true) + 45);
-    $attempt = budget9_queue_attempt($pdo, 930001, 'budget9-case-d');
-    $meta = $attempt['meta'];
-    $meta['source'] = 'queue_v4_clean_domain_exact';
-    $meta['job_type'] = 'domain_exact';
-    ApiExecutionMetadataContext::run(
-        $meta,
-        static fn (): array => (new MeliApiClient(9011))->get(
-            '/billing/integration/group/ML/order/details',
-            ['order_ids' => implode(',', $orderIds)]
-        )
-    );
+    $billingWorkerResult = budget9_run_worker($pdo, 9);
     $billingCalls = array_values(array_filter(
         Cap2DomainsWire::$calls,
         static fn (array $call): bool => $call['path'] === '/billing/integration/group/ML/order/details'
@@ -253,11 +350,13 @@ try {
     $billingQueryCount = isset($billingCalls[0]['query']['order_ids'])
         ? count(explode(',', (string) $billingCalls[0]['query']['order_ids']))
         : 0;
-    $billingSnapshot = QueueV4CleanCycleBudget::snapshot();
+    $billingWireIds = isset($billingCalls[0]['query']['order_ids'])
+        ? array_map('intval', explode(',', (string) $billingCalls[0]['query']['order_ids']))
+        : [];
     budget9_assert($billingQueryCount === 50, 'CASE_D_BILLING_ORDER_IDS_NOT_50:' . $billingQueryCount);
+    budget9_assert($billingWireIds === $orderIds, 'CASE_D_BILLING_IDS_NOT_FIFO_EXACT');
     budget9_assert($billingCount === 1, 'CASE_D_BILLING_REQUESTS_NOT_ONE:' . $billingCount);
-    budget9_assert($billingSnapshot['used'] === 1 && $billingSnapshot['physical_http_calls'] === 1, 'CASE_D_BILLING_PHYSICAL_NOT_ONE');
-    QueueV4CleanCycleBudget::clear();
+    budget9_assert((int) ($billingWorkerResult['physical_http_calls'] ?? 0) === 1, 'CASE_D_BILLING_PHYSICAL_NOT_ONE:' . json_encode($billingWorkerResult));
 
     echo "STATUS=PASS CALLS_FINAL_BUDGET_9 MYSQL=REAL REAL_MELI_HTTP=0\n";
     echo "BUDGET_9_WORK_RECORDS={$workRecords}\n";

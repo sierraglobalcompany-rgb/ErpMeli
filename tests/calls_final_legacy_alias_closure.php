@@ -62,7 +62,7 @@ foreach ($tracked as $relative) {
     if (str_contains($contents, 'LEGACY_MAX_JOBS_OVERRIDE')) {
         $overrideMatches[] = $relative;
     }
-    if (preg_match('/[\'"]max_jobs[\'"]\s*=>/', $contents) === 1) {
+    if (preg_match('/[\'"]max_jobs[\'"]\s*(?:=>|=|\])|DEFAULT_MAX_JOBS|HARD_MAX_JOBS/', $contents) === 1) {
         $maxJobsFieldMatches[] = $relative;
     }
 }

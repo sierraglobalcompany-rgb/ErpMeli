@@ -87,6 +87,7 @@ $billing429First = max(5, min(720, (int) ($billing429Backoff[1] ?? $rhythm['bill
 $billing429Second = max($billing429First, max(5, min(720, (int) ($billing429Backoff[2] ?? $rhythm['billing_429_backoff_2_minutes'] ?? 120))));
 $billing429Third = max($billing429Second, max(5, min(720, (int) ($billing429Backoff[3] ?? $rhythm['billing_429_backoff_3_minutes'] ?? 360))));
 $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff[4] ?? $rhythm['billing_429_backoff_max_minutes'] ?? 720))));
+$billingIntervalSeconds = max(1, min(3600, (int) ($rhythm['billing_min_interval_seconds'] ?? 300)));
 ?>
 <div class="page-head cron-page-head">
   <div>
@@ -112,9 +113,9 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
     <p>Techo configurado: <?= (int) $capacity['ceiling'] ?> llamadas físicas por ciclo.</p>
   </article>
   <article>
-    <span>Frecuencia física</span>
-    <strong>Cada minuto</strong>
-    <p>El cron recomendado no lleva presupuesto en la línea de comando.</p>
+    <span>Ritmo Billing</span>
+    <strong>1 llamada cada <?= $billingIntervalSeconds ?> segundos</strong>
+    <p>Compartido por automático y manual; no cambia los presupuestos.</p>
   </article>
   <article>
     <span>Máximo teórico de 15 minutos</span>
@@ -259,11 +260,16 @@ $billing429Max = max($billing429Third, max(5, min(720, (int) ($billing429Backoff
       <div class="rhythm-panel-head">
         <div>
           <span class="eyebrow">BILLING 429</span>
-          <h3>Protección ante errores peligrosos de Mercado Libre</h3>
-          <p>Estas pausas sólo aplican a Billing 429 remoto real. No ejecutan recovery, no prueban Billing y no cambian el ritmo del Cron.</p>
+          <h3>Ritmo Billing y protección ante errores peligrosos</h3>
+          <p>El intervalo controla cuándo puede salir el siguiente GET de Billing. Las pausas 429 y Retry-After siempre prevalecen.</p>
         </div>
         <a class="btn" href="<?= View::e($base) ?>/settings/api-health/protection">Ver salud API</a>
       </div>
+      <label class="field">
+        <span>Ritmo Billing: 1 llamada cada N segundos</span>
+        <span class="input-with-unit"><input type="number" name="billing_min_interval_seconds" min="1" max="3600" value="<?= $billingIntervalSeconds ?>" required><em>seg</em></span>
+        <small>Default: 300. Reducirlo exige salud certificada. No modifica el techo ni el presupuesto de trabajo.</small>
+      </label>
       <div class="rhythm-wizard-grid">
         <article class="rhythm-wizard-card">
           <span class="step-pill">1</span>

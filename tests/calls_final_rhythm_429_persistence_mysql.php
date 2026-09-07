@@ -14,6 +14,7 @@ require __DIR__ . '/calls_transport_wire_fixture.php';
 use App\Core\Database;
 use App\QueueV4Clean\QueueV4CleanCycleBudget;
 use App\Services\ApiExecutionMetadataContext;
+use App\Services\ApiRhythmDeferredException;
 use App\Services\AppSettingsService;
 use App\Services\Cap2DomainsWire;
 use App\Services\MeliApiClient;
@@ -126,14 +127,20 @@ function calls_final_rhythm_429_child(string $mode): void
         $real->exec("SET time_zone='+00:00'");
         $permit = $real->query("SELECT CONCAT(status,':',COALESCE(http_status,'NULL')) FROM api_remote_permits ORDER BY id DESC LIMIT 1")->fetchColumn();
         calls_final_rhythm_429_assert(count(Cap2DomainsWire::$calls) === 1, 'FIRST_PROCESS_WIRE_NOT_ONE');
-        calls_final_rhythm_429_assert(CallsFinalRhythm429Fault::$failedTransactions >= 1, 'FIRST_PERSISTENCE_FAILURE_NOT_CONTROLLED');
+        calls_final_rhythm_429_assert(CallsFinalRhythm429Fault::$failedTransactions === 2, 'FIRST_PRIMARY_AND_FALLBACK_PAUSES_NOT_BOTH_FAILED:' . CallsFinalRhythm429Fault::$failedTransactions);
         calls_final_rhythm_429_assert($permit === 'dispatched:429', 'FIRST_SENT_PERMIT_NOT_RECONCILABLE:' . (string) $permit);
         calls_final_rhythm_429_assert((string) $real->query("SELECT COALESCE(block_pause_until,'') FROM api_rhythm_states WHERE scope_key='global'")->fetchColumn() === '', 'FIRST_PAUSE_UNEXPECTEDLY_PERSISTED');
+        calls_final_rhythm_429_assert($error instanceof ApiRhythmDeferredException
+            && $error->blockingScope === 'remote_429_global_pause'
+            && $error->reachedRemote, 'FIRST_429_SAFE_DEFER_MISSING:' . ($error ? $error::class : 'none'));
         $real->exec("UPDATE api_remote_permits SET expires_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE status='dispatched' AND http_status=429");
         echo "FIRST_PROCESS_WIRE=1\nFIRST_STATUS=429\n";
         return;
     }
 
+    calls_final_rhythm_429_assert($error instanceof ApiRhythmDeferredException
+        && $error->blockingScope === 'retry_after'
+        && !$error->reachedRemote, 'SECOND_DURABLE_PENALTY_DEFER_MISSING:' . ($error ? $error::class . ':' . ($error->blockingScope ?? '') : 'none'));
     calls_final_rhythm_429_assert(count(Cap2DomainsWire::$calls) === 0, 'SECOND_PROCESS_WIRE_NOT_ZERO:' . ($error?->getMessage() ?? 'none'));
     echo "SECOND_PROCESS_WIRE=0\n";
 }
@@ -168,6 +175,8 @@ try {
         $output = implode("\n", $lines);
         if ($mode === 'first') {
             calls_final_rhythm_429_assert(str_contains($output, 'FIRST_PROCESS_WIRE=1') && str_contains($output, 'FIRST_STATUS=429'), 'FIRST_PROCESS_OUTPUT:' . $output);
+            $penalty = $pdo->query("SELECT scope_key,reason FROM api_rhythm_penalties WHERE scope_key LIKE 'endpoint:%' AND reason='http_429' AND blocked_until>UTC_TIMESTAMP(3) ORDER BY scope_key LIMIT 1")->fetch(PDO::FETCH_ASSOC) ?: [];
+            calls_final_rhythm_429_assert(str_starts_with((string) ($penalty['scope_key'] ?? ''), 'endpoint:') && ($penalty['reason'] ?? '') === 'http_429', 'FIRST_DURABLE_ENDPOINT_PENALTY_MISSING');
         } else {
             calls_final_rhythm_429_assert(str_contains($output, 'SECOND_PROCESS_WIRE=0'), 'SECOND_PROCESS_OUTPUT:' . $output);
         }

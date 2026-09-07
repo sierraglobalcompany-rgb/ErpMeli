@@ -362,6 +362,12 @@ final class ApiRhythmPolicyService
             } catch (Throwable) {
                 // La respuesta 429 ya es conocida. Se intenta abajo conservar
                 // al menos la pausa global compartida sin volver incierto el HTTP.
+                try {
+                    $this->openSharedRateLimitPause($retryAfterSeconds);
+                } catch (Throwable) {
+                    // Si incluso la autoridad global falla, el caller seguirá
+                    // fallando cerrado; nunca se devuelve capacidad enviada.
+                }
             }
 
             $this->recordRateLimitPenalty($permit, $httpStatus, $retryAfterSeconds);

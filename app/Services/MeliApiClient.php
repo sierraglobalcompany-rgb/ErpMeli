@@ -570,17 +570,35 @@ final class MeliApiClient implements MeliReadClientInterface
             // contra cortes vive en el journal persistido antes de la llamada.
             ApiExecutionMetadataContext::markRemoteDispatched();
             $status = (int) $transportResult['status'];
-            if ($status === 429) { \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_429_global_pause'); }
             $curlError = (string) $transportResult['curl_error'];
-            if ($queueCoreContext && $status > 0 && $curlError === '') {
-                \App\QueueCore\QueueCoreDispatchFence::responseKnown($status);
-            }
             $durationMs = (int) $transportResult['duration_ms'];
             $decoded = $transportResult['body'];
             $responseHeaders = $transportResult['headers'];
             $wireBytes = max(0, $transportResult['wire_bytes']);
             $decodedBytes = max(0, $transportResult['decoded_bytes']);
             $retryAfter = HttpRetryAfterParser::seconds($responseHeaders['retry-after'] ?? null);
+            $rhythmKnownResultHandled = false;
+            if ($status === 429) { \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_429_global_pause'); }
+            if ($queueCoreContext && $status > 0 && $curlError === '') {
+                $rhythmKnownResultHandled = true;
+                $rhythm->finalizeKnownResult($rhythmPermit, $status, $retryAfter);
+                try {
+                    \App\QueueCore\QueueCoreDispatchFence::responseKnown($status);
+                } catch (Throwable $coreKnownFailure) {
+                    $this->handleQueueCoreKnownResponseFailure(
+                        $coreKnownFailure,
+                        $rhythm,
+                        $status,
+                        $retryAfter,
+                        $requestId,
+                        $method,
+                        $path,
+                        $durationMs,
+                        $attempt,
+                        $meta
+                    );
+                }
+            }
             if ($status <= 0 || $curlError !== '') {
                 $classification = [
                     'type' => 'remote_result_uncertain',
@@ -630,7 +648,9 @@ final class MeliApiClient implements MeliReadClientInterface
                 if (!MeliTransportSourcePolicy::usesPrimaryRhythmAuthority($source)) {
                     $budget->recordResult($this->accountId, $method, $path, $status, $retryAfter, $meta);
                 }
-                $rhythm->finalizeKnownResult($rhythmPermit, $status, $retryAfter);
+                if (!$rhythmKnownResultHandled) {
+                    $rhythm->finalizeKnownResult($rhythmPermit, $status, $retryAfter);
+                }
                 return $decoded;
             }
             $safeMessage = mb_substr(Logger::redactString((string) ($decoded['message'] ?? $curlError ?: 'Error de Mercado Libre API')), 0, 1000);
@@ -703,7 +723,9 @@ final class MeliApiClient implements MeliReadClientInterface
             if (!MeliTransportSourcePolicy::usesPrimaryRhythmAuthority($source)) {
                 $budget->recordResult($this->accountId, $method, $path, $status ?: null, $retryAfter, $meta, $classification);
             }
-            $rhythm->finalizeKnownResult($rhythmPermit, $status ?: null, $retryAfter);
+            if (!$rhythmKnownResultHandled) {
+                $rhythm->finalizeKnownResult($rhythmPermit, $status ?: null, $retryAfter);
+            }
             $nextSafeAtForAlert = $status === 429 ? $rhythm->rateLimitNextSafeAt($rhythmPermit, $retryAfter) : null;
             $this->notifyCriticalApiIncident(
                 $method,
@@ -890,6 +912,101 @@ final class MeliApiClient implements MeliReadClientInterface
             'CANARY_CURL_ERROR' => 'La prueba canaria no pudo confirmar una respuesta HTTP.',
             default => 'La prueba canaria recibió una respuesta HTTP no aprobada.',
         };
+    }
+
+    /** @param array<string,mixed> $meta */
+    private function handleQueueCoreKnownResponseFailure(
+        Throwable $failure,
+        ApiRhythmPolicyService $rhythm,
+        int $status,
+        ?int $retryAfter,
+        string $requestId,
+        string $method,
+        string $path,
+        int $durationMs,
+        int $attempt,
+        array $meta
+    ): never {
+        $guard = new ApiGuardService();
+        if ($status === 429) {
+            \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_429_global_pause');
+            try {
+                $nextSafeAt = $rhythm->openSharedRateLimitPause($retryAfter);
+            } catch (Throwable) {
+                $nextSafeAt = $rhythm->conservativeRateLimitNextSafeAt();
+            }
+            $classification = [
+                'type' => 'remote_429_global_pause',
+                'outcome_class' => 'policy_delay',
+                'reached_remote' => true,
+                'is_retryable' => true,
+                'is_app_blocked_signal' => true,
+                'recommendation' => 'Espere la próxima ventana segura antes de reintentar.',
+                'next_safe_at' => $nextSafeAt,
+                'blocking_scope' => 'remote_429_global_pause',
+            ];
+            try {
+                $guard->recordRequest(
+                    $this->accountId,
+                    $requestId,
+                    $method,
+                    $path,
+                    429,
+                    $durationMs,
+                    $retryAfter,
+                    $attempt,
+                    false,
+                    'Mercado Libre respondió 429; Queue Core no pudo cerrar su recibo local.',
+                    $classification,
+                    'remote_429_global_pause',
+                    $meta
+                );
+            } catch (Throwable) {
+                // La pausa compartida ya es la autoridad de seguridad. No se
+                // expone el fallo de housekeeping como una excepción PDO cruda.
+            }
+            throw new ApiRhythmDeferredException(
+                'La cola respetará la autoridad durable del bloqueo remoto.',
+                $nextSafeAt,
+                'remote_429_global_pause',
+                true
+            );
+        }
+
+        \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_result_uncertain');
+        $classification = [
+            'type' => 'remote_result_uncertain',
+            'outcome_class' => 'action_required',
+            'reached_remote' => true,
+            'is_retryable' => false,
+            'is_app_blocked_signal' => false,
+            'recommendation' => 'Revise el trabajo exacto antes de autorizar otro intento.',
+        ];
+        try {
+            $guard->recordRequest(
+                $this->accountId,
+                $requestId,
+                $method,
+                $path,
+                $status,
+                $durationMs,
+                $retryAfter,
+                $attempt,
+                false,
+                'La respuesta HTTP fue conocida, pero Queue Core no pudo cerrar su recibo local.',
+                $classification,
+                'remote_result_uncertain',
+                $meta
+            );
+        } catch (Throwable) {
+            // El transporte físico ya fue contabilizado por Rhythm. Si la
+            // bitácora secundaria falla, mantenemos la parada segura.
+        }
+        Logger::write('warning', 'Queue Core no pudo persistir una respuesta HTTP conocida.', [
+            'http_status' => $status,
+            'failure_class' => $failure::class,
+        ]);
+        throw new RemoteResultUncertainException($requestId);
     }
 
     /** @param array<string,mixed>|list<mixed> $decoded @param array<string,mixed> $meta */

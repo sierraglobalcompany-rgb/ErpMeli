@@ -28,7 +28,6 @@ const CALLS_BROWSER_STEP_WIRE = CALLS_BROWSER_STEP_ROOT . '/wire.jsonl';
 if (!defined('ERP_INSTALLATION_ROOT')) {
     define('ERP_INSTALLATION_ROOT', CALLS_BROWSER_STEP_INSTALL);
 }
-
 require __DIR__ . '/k1b_bootstrap.php';
 require __DIR__ . '/K1dSafeTestDatabase.php';
 require __DIR__ . '/calls_browser_step_wire_fixture.php';
@@ -316,4 +315,3 @@ try {
     CallsBrowserStepWire::$onWire = null;
     CallsBrowserStepWire::$responder = null;
 }
-

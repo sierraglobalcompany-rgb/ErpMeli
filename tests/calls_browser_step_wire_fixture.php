@@ -19,7 +19,6 @@ final class CallsBrowserStepWire
     public static string $raw = '';
     public static ?\Closure $onWire = null;
 }
-
 function curl_exec(\CurlHandle $handle): string
 {
     $url = (string) \curl_getinfo($handle, CURLINFO_EFFECTIVE_URL);
@@ -56,4 +55,3 @@ function curl_error(\CurlHandle $handle): string
 {
     return '';
 }
-

@@ -28,7 +28,6 @@ if ((string) getenv('DB_PORT') !== '33079'
     || preg_match('/^erp_meli_k1d_test_calls_browser_step_[a-z0-9_]+$/', $dbName) !== 1) {
     throw new RuntimeException('CALLS_BROWSER_STEP_DB_GUARD=FAIL');
 }
-
 if (($argv[1] ?? '') === '--cleanup') {
     $admin = new PDO(
         'mysql:host=127.0.0.1;port=33079;charset=utf8mb4',
@@ -166,4 +165,3 @@ try {
     $database->cleanup();
     throw $error;
 }
-

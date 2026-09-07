@@ -520,7 +520,7 @@
         },
         {
             "path": "database/migrations/301_k1d_api_safety_2_40_1.sql",
-            "sha256": "8170b7a8fe1f5c7a3d734a4af8f3032f2d83400abc7575e3b909014ac525465c"
+            "sha256": "dd0908ab4e05ece3e6c2d0950c3dc18fefa89390cfe68d8d626c26da610ed84a"
         },
         {
             "path": "jobs/_retired_job.php",

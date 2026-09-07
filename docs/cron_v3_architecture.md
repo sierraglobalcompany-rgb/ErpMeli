@@ -66,7 +66,7 @@ Un reintento crea una fila en cron_v3_attempts, no otro trabajo activo.
 | question_exact | GET /questions/{id} | 1 pregunta |
 | claims_search_page | GET /post-purchase/v1/claims/search | 1 pagina de 20 |
 | claim_exact | GET /post-purchase/v1/claims/{id} | 1 reclamo |
-| sale_billing_capture | GET /billing/integration/group/ML/order/details | 1 venta, maximo 60 ordenes |
+| sale_billing_capture | GET /billing/integration/group/ML/order/details | 1 venta, 1 order_id por llamada fisica |
 | sale_fiscal_capture | GET /orders/billing-info/{site}/{id} | 1 venta |
 | items_discovery_page | GET /users/{id}/items/search | 20 IDs |
 | item_exact | GET /items/{id} | 1 publicacion |
@@ -101,8 +101,9 @@ evidencia inmutable por fuente y captura. Al guardar una orden se proyecta de
 inmediato con orden, items, pagos embebidos y logistica disponible. El neto
 oficial aparece solo despues de sale_billing_capture.
 
-Una captura Billing agrupa exclusivamente ordenes de la misma venta. Si una
-venta supera 60 IDs pasa a review. No existe recaptura diaria: una nueva
+Una captura Billing procesa una orden de la venta por llamada fisica. Si una
+venta tiene varias ordenes, conserva checkpoints por orden y publica la venta
+cuando todas las ordenes vigentes tienen evidencia. No existe recaptura diaria: una nueva
 input_version se crea solo por cambio de entradas, evidencia faltante o
 reparacion explicita.
 

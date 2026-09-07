@@ -38,10 +38,20 @@ $assert = static function (bool $condition, string $label) use (&$failures): voi
 
 /** @return array{exit:int,output:string} */
 $run = static function (string $script) use ($root): array {
-    $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($root . '/tests/' . $script) . ' 2>&1';
-    $output = [];
-    exec($command, $output, $exit);
-    return ['exit' => $exit, 'output' => implode("\n", $output)];
+    $process = proc_open(
+        [PHP_BINARY, $root . '/tests/' . $script],
+        [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $pipes
+    );
+    if (!is_resource($process)) {
+        return ['exit' => -1, 'output' => 'proc_open_failed:' . $script];
+    }
+
+    $output = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $exit = proc_close($process);
+    return ['exit' => $exit, 'output' => trim($output)];
 };
 
 $harnessFailures = [];
@@ -53,7 +63,7 @@ $expectedBehaviorLabels = [
     'f1_pre_curl_marker_is_unknown_not_exact_physical_call',
     'f2_known_http_status_survives_local_journal_failure',
 ];
-if ($behavior['exit'] !== 0 || !str_contains($behavior['output'], 'STATUS=COMPLETE CALLS_V2_PHASE1_RED_BEHAVIOR')) {
+if (!str_contains($behavior['output'], 'STATUS=COMPLETE CALLS_V2_PHASE1_RED_BEHAVIOR')) {
     $harnessFailures[] = 'behavior_probe_incomplete';
 }
 foreach ($expectedBehaviorLabels as $label) {

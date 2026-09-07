@@ -760,8 +760,8 @@
         "expected_type": "array",
         "nullable": false,
         "example": "[]",
-        "local_target": "meli_order_billing_details.* / meli_order_financials.*",
-        "service": "OrderBillingImportService",
+        "local_target": "sale_financial_evidence / meli_sale_financials",
+        "service": "SaleFinancialService",
         "normalizer": "casting defensivo según tipo",
         "timezone_rule": "No aplica.",
         "data_kind": "financiero_historico",
@@ -771,7 +771,7 @@
         ],
         "contains_sensitive_data": false,
         "duplicate_risk": "alto",
-        "recommendation": "Parser actual es heurístico; validar estructura oficial y clasificaciones."
+        "recommendation": "Billing activo envía un único order_id por GET; no reactivar importación agrupada."
     },
     {
         "endpoint": "/missed_feeds",

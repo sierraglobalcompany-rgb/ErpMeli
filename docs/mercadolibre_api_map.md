@@ -26,7 +26,7 @@
 | Orden exacta | `GET /orders/{order_id}` | Webhook-First y recuperación exacta | Documentación de órdenes |
 | Datos fiscales | `GET /orders/billing-info/{site_id}/{billing_info_id}` | Preparación fiscal cifrada | Documentación de Billing Info |
 | Pack | `GET /packs/{pack_id}` | Relación de órdenes y envío | Documentación de órdenes |
-| Billing agrupado | `GET /billing/integration/group/ML/order/details` | Cargos oficiales de una o varias órdenes de la misma venta | Contrato materializado de Billing |
+| Billing por orden | `GET /billing/integration/group/ML/order/details` | Cargos oficiales de una orden por llamada física | Contrato materializado de Billing |
 | Billing por período | `GET /billing/integration/periods/key/{key}/group/ML/details` | Reparación histórica secuencial con `document_type`, `limit` y `from_id` | Buenas prácticas oficiales de reportes de facturación |
 | Envío | `GET /shipments/{shipment_id}` | Seguimiento local | Documentación de Mercado Envíos |
 | Preguntas | `GET /questions/search` | Búsqueda de preguntas | Documentación de preguntas |
@@ -67,8 +67,8 @@ circuitos y telemetría, y nunca registra `client_secret`, códigos ni tokens.
   agrupada.
 - `GET /packs/{pack_id}` se usa gradualmente para comprobar la lista esperada
   de órdenes y recuperar únicamente las hijas que falten.
-- Billing agrupado se captura desde CLI. HTTP 206, documentos en procesamiento
-  o conceptos desconocidos impiden aprobar el neto.
+- Billing se captura desde CLI con un `order_id` por GET. HTTP 206,
+  documentos en procesamiento o conceptos desconocidos impiden aprobar el neto.
 - Los cargos compartidos se contabilizan una sola vez por venta. Su reparto por
   producto es un cálculo analítico del ERP y se etiqueta como tal.
 
@@ -100,9 +100,10 @@ fan-out y escrituras locales. Una descripción individual puede consumir una
 sola llamada y ser más pesada que otras operaciones.
 
 El máximo de 60 `order_ids` documentado para billing agrupado es el tamaño de
-ese lote, no un límite universal de 60 solicitudes HTTP por minuto. El ERP no
-debe deducir una tasa fija de ese valor: presupuesto, telemetría, respuesta
-429 y `Retry-After` siempre prevalecen sobre el techo administrativo.
+payload que admite ese endpoint, no un límite universal de 60 solicitudes HTTP
+por minuto. Calls V2 no usa esa agrupación como capacidad: el ERP envía un
+`order_id` por GET y controla el trabajo por intentos HTTP físicos, telemetría,
+respuesta 429 y `Retry-After`.
 
 Fuentes:
 

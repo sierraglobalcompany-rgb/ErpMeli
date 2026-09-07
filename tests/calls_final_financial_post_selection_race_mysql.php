@@ -183,6 +183,16 @@ try {
         $assert($after['pointer'] === $afterRecoveryReadMutation['pointer'], 'recovery_' . $case . '_NEIGHBOR_POINTER_MUTATIONS=0', ['before' => $afterRecoveryReadMutation['pointer'], 'after' => $after['pointer']]);
     }
 
+    $pdo->exec("UPDATE queue_v4_clean_jobs SET state='completed',lease_owner=NULL,lease_expires_at=NULL");
+    $primary = $seed(965000 + random_int(1, 10000));
+    $neighbor = $seed(966000 + random_int(1, 10000));
+    $repo = new QueueV4CleanRepository($pdo);
+    $pdo->prepare("UPDATE sale_financial_reconciliation_jobs SET status='complete',next_run_at=UTC_TIMESTAMP(3) WHERE id=?")->execute([$neighbor['source']]);
+    $repo->alignReadyFinancialReconciliationPointers(9001, 9011, [$neighbor['source'] => ['state' => 'completed']], $primary['source']);
+    $normalNeighbor = $snapshot($neighbor);
+    $assert((string) $normalNeighbor['source']['status'] === 'complete', 'normal_neighbor_processed_completed', ['source' => $normalNeighbor['source']]);
+    $assert((string) $normalNeighbor['pointer']['state'] === 'completed', 'normal_neighbor_pointer_aligned_completed', ['pointer' => $normalNeighbor['pointer']]);
+
     echo "STATUS=PASS CALLS_FINAL_FINANCIAL_POST_SELECTION_RACE MYSQL=REAL REAL_MELI_HTTP=0\n";
 } finally {
     QueueV4CleanCycleBudget::clear();

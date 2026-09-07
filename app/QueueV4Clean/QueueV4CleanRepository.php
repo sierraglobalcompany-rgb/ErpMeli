@@ -522,16 +522,20 @@ final class QueueV4CleanRepository
         int $accountId,
         array $outcomesBySourceId,
         int $exceptSourceId,
+        bool $requireCurrentEligibility = false,
     ): void {
         $this->assertTenant($companyId, $accountId);
+        $currentEligibility = $requireCurrentEligibility
+            ? ' AND (' . $this->readyFinancialReconciliationPointerSourcePredicate('q') . ')'
+            : '';
         $complete = $this->pdo->prepare(
             'UPDATE queue_v4_clean_jobs q
              SET state="completed",completed_at=UTC_TIMESTAMP(3),last_error_class=NULL
               WHERE q.company_id=? AND q.meli_account_id=? AND q.resource_id=? AND q.state="ready"
                 AND q.job_type="domain_exact"
                 AND (q.lease_owner IS NULL OR q.lease_expires_at IS NULL OR q.lease_expires_at<=UTC_TIMESTAMP(3))
-                AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability"))="financial_reconciliation"
-                AND (' . $this->readyFinancialReconciliationPointerSourcePredicate('q') . ')'
+                AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability"))="financial_reconciliation"'
+                . $currentEligibility
         );
         $waiting = $this->pdo->prepare(
             'UPDATE queue_v4_clean_jobs q
@@ -539,8 +543,8 @@ final class QueueV4CleanRepository
               WHERE q.company_id=? AND q.meli_account_id=? AND q.resource_id=? AND q.state="ready"
                 AND q.job_type="domain_exact"
                 AND (q.lease_owner IS NULL OR q.lease_expires_at IS NULL OR q.lease_expires_at<=UTC_TIMESTAMP(3))
-                AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability"))="financial_reconciliation"
-                AND (' . $this->readyFinancialReconciliationPointerSourcePredicate('q') . ')'
+                AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability"))="financial_reconciliation"'
+                . $currentEligibility
         );
         $review = $this->pdo->prepare(
             'UPDATE queue_v4_clean_jobs q
@@ -548,8 +552,8 @@ final class QueueV4CleanRepository
               WHERE q.company_id=? AND q.meli_account_id=? AND q.resource_id=? AND q.state="ready"
                 AND q.job_type="domain_exact"
                 AND (q.lease_owner IS NULL OR q.lease_expires_at IS NULL OR q.lease_expires_at<=UTC_TIMESTAMP(3))
-                AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability"))="financial_reconciliation"
-                AND (' . $this->readyFinancialReconciliationPointerSourcePredicate('q') . ')'
+                AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability"))="financial_reconciliation"'
+                . $currentEligibility
         );
         foreach ($outcomesBySourceId as $sourceId => $outcome) {
             $sourceId = (int) $sourceId;
@@ -616,7 +620,7 @@ final class QueueV4CleanRepository
                 'next_safe_at' => (string) ($row['next_run_at'] ?? ''),
             ];
         }
-        $this->alignReadyFinancialReconciliationPointers($companyId, $accountId, $outcomes, $exceptSourceId);
+        $this->alignReadyFinancialReconciliationPointers($companyId, $accountId, $outcomes, $exceptSourceId, true);
     }
 
     public function complete(array $job, int $runId): void

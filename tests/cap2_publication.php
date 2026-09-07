@@ -7,6 +7,7 @@ use App\Services\ManagedRuntimePublicationPolicy;
 foreach (['.superpowers/sdd/2026-09-05-cap2/task-5-report.md', '.superpowers/sdd/2026-09-05-cap2/review.diff'] as $path) {
     k1b_assert(ManagedRuntimePublicationPolicy::trackedPathClassification($path) === 'NON_RUNTIME', 'workflow_evidence_is_non_runtime:' . $path);
 }
+k1b_assert(ManagedRuntimePublicationPolicy::trackedPathClassification('qa/calls-final/call-path-inventory.csv') === 'NON_RUNTIME', 'qa_evidence_is_non_runtime');
 k1b_assert(ManagedRuntimePublicationPolicy::trackedPathClassification('.unknown/file.php') === 'UNCLASSIFIED', 'unknown_hidden_paths_stay_closed');
 k1b_assert(ManagedRuntimePublicationPolicy::trackedPathClassification('.superpowers/.env') === 'PROTECTED_EXTERNAL_STATE', 'secret_rule_retains_priority');
 $entries = ManagedRuntimePublicationPolicy::packageEntries(dirname(__DIR__));

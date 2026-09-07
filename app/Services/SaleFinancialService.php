@@ -16,8 +16,7 @@ final class SaleFinancialService
 {
     private const ENDPOINT = '/billing/integration/group/ML/order/details';
     private const PACK_INCOMPLETE_RECHECK_MINUTES = 60;
-    private const BILLING_ORDER_IDS_PER_CALL = 50;
-    private const BILLING_MAX_ORDER_IDS = self::BILLING_ORDER_IDS_PER_CALL;
+    private const BILLING_ORDER_IDS_PER_CALL = 1;
     private const FINANCIAL_RECONCILIATION_STALE_RECHECK_SECONDS = 900;
 
     /** @var \Closure(int):MeliApiClient */
@@ -420,14 +419,6 @@ final class SaleFinancialService
             ];
         }
         $externalOrderIds = array_map(static fn(array $row): string => (string) $row['external_order_id'], $orderRows);
-        if (count($externalOrderIds) > self::BILLING_MAX_ORDER_IDS) {
-            return [
-                'ready' => false,
-                'status' => 'review',
-                'message' => 'La venta reúne más de 60 órdenes API. Debe dividirse en capturas verificables antes de consultar billing.',
-                'finalized' => false,
-            ];
-        }
         return [
             'ready' => true,
             'job' => $job,
@@ -766,14 +757,27 @@ final class SaleFinancialService
         }
         $externalOrderIds = array_map(static fn(array $row): string => (string) $row['external_order_id'], $orderRows);
         $orderIds = array_map(static fn(array $row): int => (int) $row['id'], $orderRows);
-        if (count($externalOrderIds) > self::BILLING_ORDER_IDS_PER_CALL) {
+        $completedCheckpoints = $this->completedBillingOrderCheckpoints($job, $externalOrderIds);
+        if (count($completedCheckpoints) === count($externalOrderIds)) {
+            $this->publishCompletedBillingCheckpoints($job, $orderIds, $completedCheckpoints);
             return [
-                'status' => 'review',
-                'message' => 'La venta reúne más de 50 órdenes API. Debe dividirse en capturas verificables antes de consultar billing.',
-                'finalized' => false,
+                'status' => 'reconciled',
+                'message' => 'La venta ya reúne checkpoints Billing exactos para todas sus órdenes; se publicó sin repetir HTTP.',
+                'finalized' => true,
             ];
         }
-        $requestedOrderIds = [(string) $externalOrderIds[0]];
+        $nextExternalOrderId = $this->nextBillingOrderId($externalOrderIds, $completedCheckpoints);
+        $requestedOrderIds = [$nextExternalOrderId];
+        $requestedLocalOrderIds = [];
+        foreach ($orderRows as $row) {
+            if ((string) $row['external_order_id'] === $nextExternalOrderId) {
+                $requestedLocalOrderIds[] = (int) $row['id'];
+                break;
+            }
+        }
+        if ($requestedLocalOrderIds === []) {
+            throw new \RuntimeException('La orden Billing pendiente no pertenece a la venta vigente.');
+        }
         $captureId = $this->beginCapture($job, $requestedOrderIds);
         $api = ($this->clientFactory)((int) $job['meli_account_id']);
         $response = $api->get(self::ENDPOINT, ['order_ids' => $requestedOrderIds[0]], [
@@ -787,7 +791,7 @@ final class SaleFinancialService
         $metadata = $api->lastResponseMetadata() ?? ['status' => 200, 'headers' => [], 'request_id' => ''];
         $httpStatus = (int) $metadata['status'];
         $lines = (new SaleBillingParser())->parse($response, $requestedOrderIds);
-        $items = $this->items((int) $job['meli_account_id'], $orderIds);
+        $items = $this->items((int) $job['meli_account_id'], $requestedLocalOrderIds);
         $calculationItems = array_map(static fn(array $item): array => [
             'id' => (int) $item['id'],
             'gross' => (float) $item['unit_price'] * (int) $item['quantity'],
@@ -796,7 +800,7 @@ final class SaleFinancialService
         $totals = $this->calculate($calculationItems, $lines);
         $legacyEstimate = $this->legacyEstimate((int) $job['meli_account_id'], $orderIds);
         $partial = $httpStatus === 206;
-        $processing = $this->containsProcessingStatus($response, $externalOrderIds);
+        $processing = $this->containsProcessingStatus($response, $requestedOrderIds);
         $missingFields = $this->missingFields($metadata);
         $missingContent = $missingFields !== [];
         $hasOfficialLines = $lines !== [];
@@ -823,23 +827,216 @@ final class SaleFinancialService
             ? 'processing'
             : (($partial || $missingContent) ? 'partial' : ($hasOfficialLines ? 'complete' : 'unavailable'));
         $terminal = $jobStatus === 'reconciled' ? 'complete' : $jobStatus;
-        $this->persistResult(
+        foreach ($lines as &$line) {
+            $line['capture_id'] = $captureId;
+        }
+        unset($line);
+        if ($terminal !== 'complete') {
+            $this->persistBillingOrderCheckpoint(
+                $job,
+                $captureId,
+                $httpStatus,
+                $response,
+                $lines,
+                $requestedOrderIds[0],
+                $financialStatus,
+                $message,
+                $responseClass,
+                $metadata,
+                $terminal
+            );
+            return ['status' => $jobStatus, 'message' => $message, 'finalized' => true];
+        }
+
+        $this->persistBillingOrderCheckpoint(
             $job,
             $captureId,
             $httpStatus,
             $response,
             $lines,
-            $items,
-            $totals,
+            $requestedOrderIds[0],
             $financialStatus,
             $message,
             $responseClass,
             $metadata,
-            $legacyEstimate,
-            $terminal,
-            $responseClass
+            'running'
         );
-        return ['status' => $jobStatus, 'message' => $message, 'finalized' => true];
+        $completedCheckpoints = $this->completedBillingOrderCheckpoints($job, $externalOrderIds);
+        if (count($completedCheckpoints) < count($externalOrderIds)) {
+            $this->finish($job, 'awaiting_remote', sprintf(
+                'Billing exacto guardó %d de %d órdenes; continuará con la siguiente llamada permitida.',
+                count($completedCheckpoints),
+                count($externalOrderIds)
+            ));
+            return ['status' => 'awaiting_remote', 'message' => 'Billing exacto guardó un checkpoint y conserva pendientes.', 'finalized' => true];
+        }
+        $this->publishCompletedBillingCheckpoints($job, $orderIds, $completedCheckpoints);
+        return ['status' => 'reconciled', 'message' => 'Venta conciliada con checkpoints Billing por orden.', 'finalized' => true];
+    }
+
+    /**
+     * @param list<string> $externalOrderIds
+     * @return array<string,array<string,mixed>>
+     */
+    private function completedBillingOrderCheckpoints(array $job, array $externalOrderIds): array
+    {
+        $known = array_fill_keys($externalOrderIds, true);
+        $stmt = Database::connectionFresh()->prepare(
+            'SELECT source_id,evidence_status,evidence_json,captured_at
+             FROM sale_financial_evidence
+             WHERE company_id=? AND meli_account_id=? AND sale_key=? AND input_version=?
+               AND evidence_type="billing_capture"
+             ORDER BY id'
+        );
+        $stmt->execute([
+            (int) $job['company_id'],
+            (int) $job['meli_account_id'],
+            (string) $job['sale_key'],
+            (string) $job['input_version'],
+        ]);
+        $checkpoints = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $payload = json_decode((string) ($row['evidence_json'] ?? ''), true);
+            if (!is_array($payload)
+                || (string) ($payload['format'] ?? '') !== 'billing_order_v2'
+                || (string) ($row['evidence_status'] ?? '') !== 'reconciled') {
+                continue;
+            }
+            $orderId = (string) ($payload['order_id'] ?? '');
+            if (!isset($known[$orderId])) {
+                continue;
+            }
+            $captureId = (int) ($payload['capture_id'] ?? 0);
+            if ($captureId <= 0 || $captureId !== (int) ($row['source_id'] ?? 0)) {
+                continue;
+            }
+            $lines = is_array($payload['lines'] ?? null) ? $payload['lines'] : [];
+            $checkpoints[$orderId] = [
+                'capture_id' => $captureId,
+                'lines' => array_values(array_filter($lines, static fn (mixed $line): bool => is_array($line))),
+                'captured_at' => (string) ($row['captured_at'] ?? ''),
+            ];
+        }
+        return $checkpoints;
+    }
+
+    /** @param list<string> $externalOrderIds @param array<string,array<string,mixed>> $completed */
+    private function nextBillingOrderId(array $externalOrderIds, array $completed): string
+    {
+        foreach ($externalOrderIds as $externalOrderId) {
+            if (!isset($completed[$externalOrderId])) {
+                return $externalOrderId;
+            }
+        }
+        throw new \RuntimeException('No hay una orden Billing pendiente para la venta.');
+    }
+
+    /**
+     * @param list<array<string,mixed>> $lines
+     * @param array<string,mixed> $response
+     * @param array<string,mixed> $metadata
+     */
+    private function persistBillingOrderCheckpoint(
+        array $job,
+        int $captureId,
+        int $httpStatus,
+        array $response,
+        array $lines,
+        string $orderId,
+        string $status,
+        string $message,
+        string $responseClass,
+        array $metadata,
+        string $jobStatus
+    ): void {
+        $pdo = Database::connectionFresh();
+        $pdo->beginTransaction();
+        try {
+            $this->assertLeaseInTransaction($pdo, $job);
+            $missingFields = $this->missingFields($metadata);
+            $responseHash = hash(
+                'sha256',
+                json_encode(Logger::redact($response), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+            );
+            $pdo->prepare(
+                'UPDATE meli_billing_capture_runs
+                 SET http_status=?,response_class=?,response_hash=?,missing_fields_json=?,
+                     safe_message=?,captured_at=UTC_TIMESTAMP()
+                 WHERE id=? AND meli_account_id=?'
+            )->execute([
+                $httpStatus, $responseClass,
+                $responseHash,
+                json_encode($missingFields, JSON_UNESCAPED_UNICODE),
+                $message, $captureId, (int) $job['meli_account_id'],
+            ]);
+            (new SaleFinancialStateService())->recordBillingOrderCheckpoint(
+                $pdo,
+                $job,
+                $captureId,
+                $orderId,
+                $lines,
+                $status,
+                $message,
+                $responseHash,
+                $httpStatus,
+                $responseClass,
+                $metadata
+            );
+            if ($jobStatus !== 'running') {
+                $this->finishInTransaction($pdo, $job, $jobStatus, $message, $responseClass);
+            }
+            $pdo->commit();
+        } catch (Throwable $error) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
+    /** @param list<int> $orderIds @param array<string,array<string,mixed>> $checkpoints */
+    private function publishCompletedBillingCheckpoints(array $job, array $orderIds, array $checkpoints): void
+    {
+        $lines = [];
+        $latestCaptureId = 0;
+        foreach ($checkpoints as $checkpoint) {
+            $latestCaptureId = max($latestCaptureId, (int) ($checkpoint['capture_id'] ?? 0));
+            foreach ($checkpoint['lines'] as $line) {
+                $lines[] = $line;
+            }
+        }
+        if ($latestCaptureId <= 0) {
+            throw new \RuntimeException('La publicación Billing requiere checkpoints completos.');
+        }
+        $items = $this->items((int) $job['meli_account_id'], $orderIds);
+        $calculationItems = array_map(static fn(array $item): array => [
+            'id' => (int) $item['id'],
+            'gross' => (float) $item['unit_price'] * (int) $item['quantity'],
+            'units' => (int) $item['quantity'],
+        ], $items);
+        $totals = $this->calculate($calculationItems, $lines);
+        $legacyEstimate = $this->legacyEstimate((int) $job['meli_account_id'], $orderIds);
+        $status = $totals['unknown_amount'] > 0.009 ? 'review' : 'reconciled';
+        $message = $status === 'reconciled'
+            ? 'Venta conciliada con checkpoints Billing exactos por orden.'
+            : 'Billing por orden contiene conceptos desconocidos. El total queda en revisión.';
+        $this->persistResult(
+            $job,
+            $latestCaptureId,
+            200,
+            ['checkpoint_aggregate' => true],
+            $lines,
+            $items,
+            $totals,
+            $status,
+            $message,
+            'complete',
+            ['status' => 200, 'headers' => [], 'request_id' => '', 'response_item_count' => count($lines)],
+            $legacyEstimate,
+            $status === 'reconciled' ? 'complete' : 'review',
+            'complete',
+            false
+        );
     }
 
     /** @param list<string> $orderIds */
@@ -878,7 +1075,8 @@ final class SaleFinancialService
         array $metadata,
         ?float $legacyEstimate,
         string $jobStatus,
-        string $remoteState
+        string $remoteState,
+        bool $updateCapture = true
     ): void
     {
         $pdo = Database::connectionFresh();
@@ -890,17 +1088,19 @@ final class SaleFinancialService
                 'sha256',
                 json_encode(Logger::redact($response), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
             );
-            $pdo->prepare(
-                'UPDATE meli_billing_capture_runs
-                 SET http_status=?,response_class=?,response_hash=?,missing_fields_json=?,
-                     safe_message=?,captured_at=UTC_TIMESTAMP()
-                 WHERE id=? AND meli_account_id=?'
-            )->execute([
-                $httpStatus, $responseClass,
-                $responseHash,
-                json_encode($missingFields, JSON_UNESCAPED_UNICODE),
-                $message, $captureId, (int) $job['meli_account_id'],
-            ]);
+            if ($updateCapture) {
+                $pdo->prepare(
+                    'UPDATE meli_billing_capture_runs
+                     SET http_status=?,response_class=?,response_hash=?,missing_fields_json=?,
+                         safe_message=?,captured_at=UTC_TIMESTAMP()
+                     WHERE id=? AND meli_account_id=?'
+                )->execute([
+                    $httpStatus, $responseClass,
+                    $responseHash,
+                    json_encode($missingFields, JSON_UNESCAPED_UNICODE),
+                    $message, $captureId, (int) $job['meli_account_id'],
+                ]);
+            }
             $stateApplied = (new SaleFinancialStateService())->recordBillingResult(
                 $pdo,
                 $job,
@@ -971,8 +1171,12 @@ final class SaleFinancialService
                      VALUES (?,?,?,?,?,?,?,?,?,?,?, ?,?,?)'
                 );
                 foreach ($lines as $line) {
+                    $lineCaptureId = (int) ($line['capture_id'] ?? $captureId);
+                    if ($lineCaptureId <= 0) {
+                        $lineCaptureId = $captureId;
+                    }
                     $lineStmt->execute([
-                        $financialId, $captureId, $line['external_order_id'], $line['detail_id'],
+                        $financialId, $lineCaptureId, $line['external_order_id'], $line['detail_id'],
                         $line['line_group'], $line['line_type'], $line['line_subtype'],
                         mb_substr((string) $line['description'], 0, 500), $line['amount'],
                         $line['direction'], $line['is_shared'],

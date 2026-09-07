@@ -706,8 +706,12 @@ $test('2.7.3 muestra cola financiera inteligente con billing automatico', static
     $registry = (string) file_get_contents($root . '/app/Services/MeliEndpointRegistry.php');
     $assert(str_contains($registry, '/billing/integration/group/ML/order/details'), 'Falta registrar endpoint billing 2.7.3');
     $billingImporter = (string) file_get_contents($root . '/app/Services/OrderBillingImportService.php');
-    foreach (['importForOrderIds', 'billing_reconciled_net_amount', 'tax_reteiva', 'buyer_shipping_paid'] as $needle) {
-        $assert(str_contains($billingImporter, $needle), 'Falta importador billing 2.7.3: ' . $needle);
+    foreach (['importForOrderIds', 'importación Billing agrupada fue retirada', 'un order_id por llamada física'] as $needle) {
+        $assert(str_contains($billingImporter, $needle), 'Importador billing retirado debe conservar barrera: ' . $needle);
+    }
+    $saleFinancial = (string) file_get_contents($root . '/app/Services/SaleFinancialService.php');
+    foreach (['billingOrderIdsPerCallLimit', 'BILLING_ORDER_IDS_PER_CALL = 1', 'billing_order_v2'] as $needle) {
+        $assert(str_contains($saleFinancial, $needle), 'Billing activo debe operar un order_id por GET: ' . $needle);
     }
     $financialQueue = (string) file_get_contents($root . '/app/Services/OrderFinancialRecalcJobService.php');
     foreach (['processBillingPhase', 'billing_import', 'auto_billing_for_missing', 'No hay recalculos financieros pendientes'] as $needle) {
@@ -1307,7 +1311,8 @@ $test('2.9.1 aplica correcciones API desde documentación materializada', static
     $items = (string) file_get_contents($root . '/app/Services/MeliItemSyncService.php') . (string) file_get_contents($root . '/app/Services/MeliProductUpdateReviewService.php');
     $assert(str_contains($items, "'search_type' => 'scan'") && str_contains($items, "'scroll_id'") && str_contains($items, "'offset' => \$offset"), 'Productos deben soportar offset y scan sin mezclar scroll_id con offset.');
     $billing = (string) file_get_contents($root . '/app/Services/OrderBillingImportService.php');
-    $assert(str_contains($billing, "'other' => 0.0") && str_contains($billing, 'revision_manual'), 'Billing ambiguo debe quedar en revisión manual.');
+    $saleFinancial = (string) file_get_contents($root . '/app/Services/SaleFinancialService.php');
+    $assert(str_contains($billing, 'importación Billing agrupada fue retirada') && str_contains($saleFinancial, "'other' => 0.0") && str_contains($saleFinancial, 'review'), 'Billing ambiguo debe quedar en revisión y el importador agrupado retirado.');
     $stock = (string) file_get_contents($root . '/app/Services/MeliItemStockService.php');
     $assert(str_contains($stock, 'permission_required') && str_contains($stock, 'Detalle no disponible') === false && str_contains($stock, 'MeliApiCapabilityService'), 'Stock 403 debe registrar capacidad y no inventar stock.');
     $routes = (string) file_get_contents($root . '/public/index.php');

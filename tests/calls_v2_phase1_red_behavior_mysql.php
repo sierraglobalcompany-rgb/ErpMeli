@@ -76,8 +76,9 @@ try {
 
     // Verify the full existing storage model against the migrated DB. The
     // capture itself is real and scoped, contains exactly one requested order,
-    // known status and hash. Certification additionally requires an immutable
-    // evidence row with the compatible billing_order_v2 enum member.
+    // known status and hash. The immutable checkpoint uses the existing
+    // billing_capture enum plus evidence_json.format=billing_order_v2; no
+    // schema migration or new enum member is required.
     $pdo->prepare("INSERT INTO meli_billing_capture_runs(company_id,meli_account_id,sale_key,external_sale_id,http_status,response_class,requested_order_ids_json,response_hash,captured_at) VALUES(9001,9011,'O:771101','771101',200,'complete',?, ?,UTC_TIMESTAMP())")
         ->execute([json_encode(['771101'], JSON_THROW_ON_ERROR), hash('sha256', 'phase1-one-order')]);
     $captureId = (int)$pdo->lastInsertId();
@@ -88,8 +89,41 @@ try {
         && (int)($capture['http_status'] ?? 0) === 200
         && is_string($capture['response_hash'] ?? null) && strlen((string)$capture['response_hash']) === 64
         && is_array($requested) && $requested === ['771101'];
-    $type = (string)($pdo->query("SHOW COLUMNS FROM sale_financial_evidence LIKE 'evidence_type'")->fetch(PDO::FETCH_ASSOC)['Type'] ?? '');
-    $compatibleEvidenceType = str_contains($type, "'billing_order_v2'");
+    (new SaleFinancialStateService())->recordBillingOrderCheckpoint(
+        $pdo,
+        ['company_id'=>9001,'meli_account_id'=>9011,'sale_key'=>'O:771101','input_version'=>str_repeat('a',64)],
+        $captureId,
+        '771101',
+        [[
+            'capture_id'=>$captureId,
+            'external_order_id'=>'771101',
+            'detail_id'=>'phase1',
+            'line_group'=>'sale_fee',
+            'line_type'=>'SALE_FEE',
+            'line_subtype'=>null,
+            'description'=>'Phase 1 schema probe',
+            'amount'=>10,
+            'direction'=>'debit',
+            'is_shared'=>0,
+            'line_hash'=>hash('sha256','phase1-line'),
+            'occurred_at'=>null,
+        ]],
+        'reconciled',
+        'phase1 checkpoint',
+        hash('sha256','phase1-response'),
+        200,
+        'complete',
+        ['request_id'=>'phase1-schema','response_item_count'=>1]
+    );
+    $evidence = $pdo->query("SELECT evidence_type,source_id,evidence_status,evidence_json FROM sale_financial_evidence WHERE source_id={$captureId} LIMIT 1")->fetch(PDO::FETCH_ASSOC) ?: [];
+    $payload = json_decode((string)($evidence['evidence_json'] ?? ''), true);
+    $compatibleEvidenceType = (string)($evidence['evidence_type'] ?? '') === 'billing_capture'
+        && (int)($evidence['source_id'] ?? 0) === $captureId
+        && (string)($evidence['evidence_status'] ?? '') === 'reconciled'
+        && is_array($payload)
+        && (string)($payload['format'] ?? '') === 'billing_order_v2'
+        && (string)($payload['order_id'] ?? '') === '771101'
+        && (int)($payload['capture_id'] ?? 0) === $captureId;
     $red($captureModel && $compatibleEvidenceType, 'schema_301_persists_one_order_billing_order_v2_checkpoint_evidence');
     echo 'SCHEMA_CAPTURE_MODEL=' . ($captureModel ? 'PASS' : 'FAIL') . "\n";
     echo 'SCHEMA_IMMUTABLE_EVIDENCE_TYPE=' . ($compatibleEvidenceType ? 'PASS' : 'FAIL_CLOSED') . "\n";

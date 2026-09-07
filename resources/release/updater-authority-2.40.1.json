@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
     "target_version": "2.40.1",
-    "contract": "The 2.40.0/schema300 to 2.40.1/schema300 release installs the Worker Cycle Control single-truth runtime, preserves Queue V4, FIFO, Billing pacing, Smart Manual Drain schema, physical Cron and production data, and never performs recovery, OAuth, Billing, Cron, or Mercado Libre HTTP during update.",
+    "contract": "The 2.40.0/schema300 to 2.40.1/schema301 release installs the Worker Cycle Control single-truth runtime, applies migration 301 exactly once, preserves Queue V4, FIFO, Billing pacing, Smart Manual Drain schema, physical Cron and production data, and never performs recovery, OAuth, Billing, Cron, or Mercado Libre HTTP during update.",
     "supersedes_inventory": {
         "path": "resources/release/updater-locked-file-inventory-2.36.1.json",
         "sha256": "7b90dab866e6b49d785ce8c706f3ea7ce7db6846fdd1678e6a953a6bf4e31fd5",
@@ -517,6 +517,10 @@
         {
             "path": "database/migrations/300_manual_drain_sessions_2_40_0.sql",
             "sha256": "fde4b82894615b12edd54dc494f29e890859597abc44bff8f8f4c1a94e40f653"
+        },
+        {
+            "path": "database/migrations/301_k1d_api_safety_2_40_1.sql",
+            "sha256": "8170b7a8fe1f5c7a3d734a4af8f3032f2d83400abc7575e3b909014ac525465c"
         },
         {
             "path": "jobs/_retired_job.php",

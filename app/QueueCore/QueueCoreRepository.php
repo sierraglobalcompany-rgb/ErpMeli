@@ -511,7 +511,7 @@ final class QueueCoreRepository
                     WHERE t.meli_account_id=queue_core_jobs.meli_account_id
                       AND t.refresh_version>COALESCE(queue_core_jobs.wait_refresh_version,0)
                       AND t.expires_at>DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 120 SECOND))))
-              ORDER BY id ASC LIMIT 1";
+              ORDER BY available_at ASC,id ASC LIMIT 1";
         $statement=$this->pdo->prepare($sql);
         $statement->execute([...$types,$domain]);
         $row=$statement->fetch(PDO::FETCH_ASSOC);
@@ -528,9 +528,9 @@ final class QueueCoreRepository
         if($request->accountId!==null){$sql.=' AND j.meli_account_id=?';$params[]=$request->accountId;}
         if($request->domain()!==null){$sql.=' AND j.queue_domain=?';$params[]=$request->domain();}
         // Retry/wait rows keep their original id. While blocked they are not
-        // executable; once eligible again they re-enter at that stable FIFO
-        // position instead of receiving a new priority or arrival sequence.
-        $sql.=" ORDER BY j.id ASC LIMIT 1 FOR UPDATE";
+        // executable; once eligible again they re-enter by their effective
+        // available_at timestamp, with id only as the stable tie-breaker.
+        $sql.=" ORDER BY j.available_at ASC,j.id ASC LIMIT 1 FOR UPDATE";
         $s=$this->pdo->prepare($sql);$s->execute($params);$r=$s->fetch(PDO::FETCH_ASSOC);
         if(is_array($r) && $request->targetJobId!==null && (int)$r['id']!==$request->targetJobId)return null;
         return is_array($r)?$r:null;

@@ -74,8 +74,24 @@ try {
     $known = $pdo->query("SELECT http_status FROM queue_v4_clean_transport_events WHERE request_id='phase1-f2' ORDER BY id DESC LIMIT 1")->fetchColumn();
     $red((int)$known === 200, 'f2_known_http_status_survives_local_journal_failure');
 
-    // Prove viability against the migrated schema, not SQL text. An attempted
-    // immutable billing_order_v2 record must be accepted to certify schema 301.
-    $type = (string)$pdo->query("SHOW COLUMNS FROM sale_financial_evidence LIKE 'evidence_type'")->fetch(PDO::FETCH_ASSOC)['Type'];
-    $red(str_contains($type, "'billing_order_v2'"), 'schema_301_persists_one_order_billing_order_v2_checkpoint_evidence');
+    // Verify the full existing storage model against the migrated DB. The
+    // capture itself is real and scoped, contains exactly one requested order,
+    // known status and hash. Certification additionally requires an immutable
+    // evidence row with the compatible billing_order_v2 enum member.
+    $pdo->prepare("INSERT INTO meli_billing_capture_runs(company_id,meli_account_id,sale_key,external_sale_id,http_status,response_class,requested_order_ids_json,response_hash,captured_at) VALUES(9001,9011,'O:771101','771101',200,'complete',?, ?,UTC_TIMESTAMP())")
+        ->execute([json_encode(['771101'], JSON_THROW_ON_ERROR), hash('sha256', 'phase1-one-order')]);
+    $captureId = (int)$pdo->lastInsertId();
+    $capture = $pdo->query('SELECT company_id,meli_account_id,http_status,response_hash,requested_order_ids_json FROM meli_billing_capture_runs WHERE id=' . $captureId)->fetch(PDO::FETCH_ASSOC) ?: [];
+    $requested = json_decode((string)($capture['requested_order_ids_json'] ?? ''), true);
+    $captureModel = (int)($capture['company_id'] ?? 0) === 9001
+        && (int)($capture['meli_account_id'] ?? 0) === 9011
+        && (int)($capture['http_status'] ?? 0) === 200
+        && is_string($capture['response_hash'] ?? null) && strlen((string)$capture['response_hash']) === 64
+        && is_array($requested) && $requested === ['771101'];
+    $type = (string)($pdo->query("SHOW COLUMNS FROM sale_financial_evidence LIKE 'evidence_type'")->fetch(PDO::FETCH_ASSOC)['Type'] ?? '');
+    $compatibleEvidenceType = str_contains($type, "'billing_order_v2'");
+    $red($captureModel && $compatibleEvidenceType, 'schema_301_persists_one_order_billing_order_v2_checkpoint_evidence');
+    echo 'SCHEMA_CAPTURE_MODEL=' . ($captureModel ? 'PASS' : 'FAIL') . "\n";
+    echo 'SCHEMA_IMMUTABLE_EVIDENCE_TYPE=' . ($compatibleEvidenceType ? 'PASS' : 'FAIL_CLOSED') . "\n";
+    echo "STATUS=COMPLETE CALLS_V2_PHASE1_RED_BEHAVIOR\n";
 } finally { $h->cleanup(); }

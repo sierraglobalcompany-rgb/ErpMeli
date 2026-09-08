@@ -7470,8 +7470,8 @@
         },
         "runtime_resources_release_updater_authority_2_40_1_json": {
             "path": "resources/release/updater-authority-2.40.1.json",
-            "sha256": "747057ec3d4e39b96bca06da4e563a0e4b09d9f26f033d6e4b72e19883e145c6",
-            "sha256_lf": "747057ec3d4e39b96bca06da4e563a0e4b09d9f26f033d6e4b72e19883e145c6",
+            "sha256": "ac5daf85c5aa61dd4bff1a17409fbafb117d7ee35154891a6f0117be0fc133b6",
+            "sha256_lf": "ac5daf85c5aa61dd4bff1a17409fbafb117d7ee35154891a6f0117be0fc133b6",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

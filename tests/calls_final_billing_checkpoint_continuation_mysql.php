@@ -114,6 +114,49 @@ function calls_final_billing_continue_run_worker(PDO $pdo): array
     }
 }
 
+function calls_final_billing_continue_run_worker_with_factory(PDO $pdo, callable $financialFactory): array
+{
+    CronDeadlineContext::start(45, 40, 8, 3);
+    QueueV4CleanCycleBudget::start(1, 'automatic', microtime(true) + 45);
+    try {
+        return (new QueueV4CleanWorker(
+            $pdo,
+            new QueueV4CleanRepository($pdo),
+            null,
+            null,
+            null,
+            null,
+            $financialFactory
+        ))->run('test', 1, 40);
+    } finally {
+        QueueV4CleanCycleBudget::clear();
+        CronDeadlineContext::clear();
+    }
+}
+
+/** @return array{source_id:int,queue_id:int} */
+function calls_final_billing_continue_seed_due_progress_source(PDO $pdo): array
+{
+    $externalOrderId = (string) random_int(880000, 889999);
+    $pdo->prepare(
+        "INSERT INTO sale_financial_reconciliation_jobs
+         (company_id,meli_account_id,sale_key,external_sale_id,input_version,status,next_run_at)
+         VALUES(9001,9011,?,?,?,'pending','2000-01-01')"
+    )->execute(['O:' . $externalOrderId, $externalOrderId, str_repeat('a', 64)]);
+    $sourceId = (int) $pdo->lastInsertId();
+    $pdo->prepare(
+        "INSERT INTO queue_v4_clean_jobs
+         (company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,state,available_at)
+         VALUES(9001,9011,'domain_exact',?,? ,?,'ready','2000-01-01')"
+    )->execute([
+        (string) $sourceId,
+        'billing-progress-due-' . $sourceId . '-' . bin2hex(random_bytes(4)),
+        json_encode(['capability' => 'financial_reconciliation', 'source_id' => $sourceId], JSON_THROW_ON_ERROR),
+    ]);
+
+    return ['source_id' => $sourceId, 'queue_id' => (int) $pdo->lastInsertId()];
+}
+
 function calls_final_billing_continue_configure_wire(): void
 {
     Cap2DomainsWire::$calls = [];
@@ -179,12 +222,15 @@ try {
     calls_final_billing_continue_assert($publicationCount === 0, 'first_window_no_final_publication');
     calls_final_billing_continue_assert((string) ($sourceAfterFirst['status'] ?? '') === 'retry', 'source_waits_after_checkpoint_progress', $sourceAfterFirst ?: []);
     calls_final_billing_continue_assert((string) ($queueAfterFirst['state'] ?? '') === 'waiting', 'queue_waits_after_checkpoint_progress', $queueAfterFirst ?: []);
+    calls_final_billing_continue_assert((string) ($queueAfterFirst['last_error_class'] ?? '') === 'domain_source_waiting:financial_reconciliation:billing_checkpoint_progress', 'queue_preserves_checkpoint_progress_classification', $queueAfterFirst ?: []);
     calls_final_billing_continue_assert((int) ($sourceAfterFirst['attempts'] ?? -1) === (int) ($sourceBefore['attempts'] ?? -2), 'source_attempt_penalty_refunded_after_progress', ['before' => $sourceBefore, 'after' => $sourceAfterFirst]);
     calls_final_billing_continue_assert((int) ($queueAfterFirst['attempt_count'] ?? -1) === (int) ($queueBefore['attempt_count'] ?? -2), 'queue_attempt_penalty_refunded_after_progress', ['before' => $queueBefore, 'after' => $queueAfterFirst]);
     calls_final_billing_continue_assert(($sourceAfterFirst['retry_until'] ?? null) === ($sourceBefore['retry_until'] ?? null), 'retry_until_not_started_by_progress', ['before' => $sourceBefore, 'after' => $sourceAfterFirst]);
     calls_final_billing_continue_assert(($sourceAfterFirst['remote_pending_since'] ?? null) === ($sourceBefore['remote_pending_since'] ?? null), 'remote_pending_not_started_by_progress', ['before' => $sourceBefore, 'after' => $sourceAfterFirst]);
     $delaySeconds = strtotime((string) $sourceAfterFirst['next_run_at'] . ' UTC') - time();
     calls_final_billing_continue_assert($delaySeconds >= 0 && $delaySeconds <= 8, 'source_continuation_uses_billing_interval_not_error_backoff', ['delay_seconds' => $delaySeconds, 'source' => $sourceAfterFirst, 'worker' => $first]);
+    $queueDelaySeconds = strtotime((string) $queueAfterFirst['available_at'] . ' UTC') - time();
+    calls_final_billing_continue_assert($queueDelaySeconds >= 0 && $queueDelaySeconds <= 8, 'queue_continuation_uses_billing_interval_not_900s_fallback', ['delay_seconds' => $queueDelaySeconds, 'queue' => $queueAfterFirst, 'worker' => $first]);
 
     $beforeEarlyWire = count(Cap2DomainsWire::$calls);
     $early = calls_final_billing_continue_run_worker($pdo);
@@ -212,6 +258,40 @@ try {
     $publicationAfterReplay = (int) $pdo->query("SELECT COUNT(*) FROM meli_sale_financial_history h JOIN meli_sale_financials f ON f.id=h.meli_sale_financial_id WHERE f.company_id=9001 AND f.meli_account_id=9011 AND f.sale_key='P:{$fixture['pack_id']}' AND h.source='billing_official'")->fetchColumn();
     calls_final_billing_continue_assert(count(Cap2DomainsWire::$calls) === $beforeReplayWire, 'replay_zero_new_http', ['replay' => $replay]);
     calls_final_billing_continue_assert($publicationAfterReplay === 1, 'replay_zero_new_publication');
+
+    $dueProgress = calls_final_billing_continue_seed_due_progress_source($pdo);
+    $factory = static function () use ($pdo, $dueProgress): object {
+        return new class($pdo, $dueProgress['source_id']) {
+            public function __construct(private PDO $pdo, private int $sourceId)
+            {
+            }
+
+            public function processDomainExactBatch(array $sourceIds, int $companyId, int $accountId, bool $allowSuccessor = true): array
+            {
+                $this->pdo->prepare(
+                    "UPDATE sale_financial_reconciliation_jobs
+                     SET status='retry',next_run_at=UTC_TIMESTAMP(3),lock_owner=NULL,lease_expires_at=NULL,heartbeat_at=NULL
+                     WHERE id=? AND company_id=? AND meli_account_id=?"
+                )->execute([$this->sourceId, $companyId, $accountId]);
+
+                return [
+                    'summary' => ['processed' => 1, 'completed' => 0, 'errors' => 0, 'deferred' => 1, 'stop_reason' => 'billing_checkpoint_progress'],
+                    'outcomes' => [
+                        $this->sourceId => [
+                            'state' => 'waiting',
+                            'classification' => 'domain_source_waiting:financial_reconciliation:billing_checkpoint_progress',
+                            'next_safe_at' => gmdate('Y-m-d H:i:s', time() - 1),
+                        ],
+                    ],
+                ];
+            }
+        };
+    };
+    $dueResult = calls_final_billing_continue_run_worker_with_factory($pdo, $factory);
+    $dueQueue = $pdo->query('SELECT state,available_at,last_error_class FROM queue_v4_clean_jobs WHERE id=' . (int) $dueProgress['queue_id'])->fetch(PDO::FETCH_ASSOC);
+    $dueQueueDelaySeconds = strtotime((string) ($dueQueue['available_at'] ?? '') . ' UTC') - time();
+    calls_final_billing_continue_assert((string) ($dueQueue['last_error_class'] ?? '') === 'domain_source_waiting:financial_reconciliation:billing_checkpoint_progress', 'due_progress_preserves_specific_worker_classification', $dueQueue ?: []);
+    calls_final_billing_continue_assert($dueQueueDelaySeconds >= 0 && $dueQueueDelaySeconds <= 8, 'due_progress_avoids_generic_900s_worker_fallback', ['delay_seconds' => $dueQueueDelaySeconds, 'queue' => $dueQueue, 'worker' => $dueResult]);
 
     echo "STATUS=PASS CALLS_FINAL_BILLING_CHECKPOINT_CONTINUATION MYSQL=REAL REAL_MELI_HTTP=0\n";
 } finally {

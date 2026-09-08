@@ -34,6 +34,32 @@ function calls_final_git_blob(string $root, string $path): string
 }
 
 $authority = json_decode((string) file_get_contents($root . '/' . $authorityPath), true, 512, JSON_THROW_ON_ERROR);
+$seenAuthorityPaths = [];
+$authorityDependencyCount = 0;
+foreach ((array) ($authority['new_runtime_dependencies'] ?? []) as $index => $candidate) {
+    if (!is_array($candidate)) {
+        throw new RuntimeException('FAIL:updater_authority_dependency_malformed:' . (string) $index);
+    }
+    $path = (string) ($candidate['path'] ?? '');
+    $sha256 = (string) ($candidate['sha256'] ?? '');
+    if ($path === '' || str_contains($path, '\\') || str_starts_with($path, '/') || str_contains($path, '..')) {
+        throw new RuntimeException('FAIL:updater_authority_dependency_path_invalid:' . $path);
+    }
+    if (isset($seenAuthorityPaths[$path])) {
+        throw new RuntimeException('FAIL:updater_authority_dependency_duplicate:' . $path);
+    }
+    $seenAuthorityPaths[$path] = true;
+    try {
+        $actualSha256 = hash('sha256', calls_final_git_blob($root, $path));
+    } catch (RuntimeException $exception) {
+        throw new RuntimeException('FAIL:updater_authority_dependency_missing:' . $path, 0, $exception);
+    }
+    if (!hash_equals($actualSha256, $sha256)) {
+        throw new RuntimeException('FAIL:updater_authority_dependency_hash_mismatch:' . $path);
+    }
+    $authorityDependencyCount++;
+}
+
 $dependency = null;
 foreach ((array) ($authority['new_runtime_dependencies'] ?? []) as $candidate) {
     if (is_array($candidate) && ($candidate['path'] ?? null) === $migrationPath) {
@@ -66,6 +92,7 @@ $manifestLfSha256 = (string) ($manifestComponent['sha256_lf'] ?? '');
 echo 'RAW_GIT_SHA256=' . $gitBlobSha256 . PHP_EOL;
 echo 'RUNTIME_MANIFEST_SHA256=' . $manifestSha256 . PHP_EOL;
 echo 'UPDATER_AUTHORITY_SHA256=' . $recordedSha256 . PHP_EOL;
+echo 'UPDATER_AUTHORITY_DEPENDENCIES_CHECKED=' . $authorityDependencyCount . PHP_EOL;
 echo 'CRLF_CONVERTED_SHA256=' . $crlfConvertedSha256 . PHP_EOL;
 
 if (!hash_equals($gitBlobSha256, $manifestSha256)

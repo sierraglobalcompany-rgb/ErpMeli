@@ -66,7 +66,7 @@ $cases = @{
         'capacity_ui','k1d_static_contract','f5_manual_kiss_contract'
     )
     database = @(
-        'calls_settings','calls_history','calls_billing_history_mysql','cap2_health_mysql','cap2_health_controller',
+        'calls_settings','calls_history','calls_billing_history_mysql','calls_final_billing_checkpoint_continuation_mysql','cap2_health_mysql','cap2_health_controller',
         'capacity_policy_mysql','capacity_concurrency_mysql','cap2_writers_mysql','cap2_writers_controller',
         'cap2_automatic_budget_mysql','cap2_automatic_scheduler_mysql','cap2_automatic_worker_context_mysql'
     )

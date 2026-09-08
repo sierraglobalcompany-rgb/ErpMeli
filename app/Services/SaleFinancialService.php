@@ -165,11 +165,16 @@ final class SaleFinancialService
             return ['summary' => $summary, 'outcomes' => $outcomes];
         }
         $result = $this->captureAndReconcile($job, $allowSuccessor, true);
-        $outcomes[(int) $job['id']] = $this->sourceOutcome(
+        $outcome = $this->sourceOutcome(
             (int) $job['id'],
             (int) $job['company_id'],
             (int) $job['meli_account_id'],
         );
+        if (($result['checkpoint_progress'] ?? false) === true) {
+            $outcome['classification'] = 'domain_source_waiting:financial_reconciliation:billing_checkpoint_progress';
+            $outcome['next_safe_at'] = (string) ($result['next_safe_at'] ?? ($outcome['next_safe_at'] ?? ''));
+        }
+        $outcomes[(int) $job['id']] = $outcome;
         $this->summarizeTerminal($summary, $result['status'] === 'reconciled' ? 'complete' : $result['status']);
         return ['summary' => $summary, 'outcomes' => $outcomes];
     }
@@ -208,7 +213,9 @@ final class SaleFinancialService
                     $summary['stop_reason'] = 'work_completed';
                 } elseif (in_array($terminal, ['partial', 'retry', 'awaiting_remote'], true)) {
                     $summary['deferred']++;
-                    $summary['stop_reason'] = 'partial_response';
+                    $summary['stop_reason'] = ($result['checkpoint_progress'] ?? false) === true
+                        ? 'billing_checkpoint_progress'
+                        : 'partial_response';
                 } else {
                     $summary['errors']++;
                     $summary['stop_reason'] = 'manual_review';
@@ -502,6 +509,13 @@ final class SaleFinancialService
         }
 
         return gmdate('Y-m-d H:i:s', time() + self::FINANCIAL_RECONCILIATION_STALE_RECHECK_SECONDS);
+    }
+
+    private function billingCheckpointProgressNextRunAt(): string
+    {
+        $seconds = (new ApiRhythmPolicyService())->billingMinIntervalSeconds();
+
+        return gmdate('Y-m-d H:i:s', (int) ceil(microtime(true) + $seconds));
     }
 
     /** @param array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} $summary */
@@ -863,12 +877,20 @@ final class SaleFinancialService
         );
         $completedCheckpoints = $this->completedBillingOrderCheckpoints($job, $externalOrderIds);
         if (count($completedCheckpoints) < count($externalOrderIds)) {
-            $this->finish($job, 'awaiting_remote', sprintf(
+            $nextSafeAt = $this->billingCheckpointProgressNextRunAt();
+            $message = sprintf(
                 'Billing exacto guardó %d de %d órdenes; continuará con la siguiente llamada permitida.',
                 count($completedCheckpoints),
                 count($externalOrderIds)
-            ));
-            return ['status' => 'awaiting_remote', 'message' => 'Billing exacto guardó un checkpoint y conserva pendientes.', 'finalized' => true];
+            );
+            $this->deferWithoutAttemptPenalty($job, $message, $nextSafeAt);
+            return [
+                'status' => 'retry',
+                'message' => 'Billing exacto guardó un checkpoint y conserva pendientes.',
+                'finalized' => true,
+                'checkpoint_progress' => true,
+                'next_safe_at' => $nextSafeAt,
+            ];
         }
         $this->publishCompletedBillingCheckpoints($job, $orderIds, $completedCheckpoints);
         return ['status' => 'reconciled', 'message' => 'Venta conciliada con checkpoints Billing por orden.', 'finalized' => true];
@@ -1319,7 +1341,8 @@ final class SaleFinancialService
                  lock_owner=NULL,lease_expires_at=NULL,heartbeat_at=NULL,
                  attempts=GREATEST(attempts-1,0)
              WHERE id=:id AND status="running" AND lock_owner=:owner
-               AND lease_generation=:generation AND attempts=:expected_attempts'
+               AND lease_generation=:generation AND attempts=:expected_attempts
+               AND company_id=:company_id AND meli_account_id=:account_id'
         );
         $stmt->execute([
             'next_run_at' => gmdate('Y-m-d H:i:s', $timestamp),
@@ -1328,6 +1351,8 @@ final class SaleFinancialService
             'owner' => (string) $job['lock_owner'],
             'generation' => (int) $job['lease_generation'],
             'expected_attempts' => (int) $job['attempts'],
+            'company_id' => (int) $job['company_id'],
+            'account_id' => (int) $job['meli_account_id'],
         ]);
         if ($stmt->rowCount() !== 1) {
             throw new \RuntimeException('La conciliación perdió su reserva antes de aplazar sin penalización.');

@@ -932,6 +932,18 @@ final class QueueV4CleanWorker
         if ($source === null) {
             return ['state' => 'review', 'classification' => 'domain_source_missing_after_process'];
         }
+        $progressOutcome = $batchOutcomes[$sourceId] ?? null;
+        if ($capability === 'financial_reconciliation'
+            && is_array($progressOutcome)
+            && ($progressOutcome['state'] ?? '') === 'waiting'
+            && ($progressOutcome['classification'] ?? '') === 'domain_source_waiting:financial_reconciliation:billing_checkpoint_progress'
+            && in_array(strtolower((string) ($source['status'] ?? '')), ['pending', 'running', 'retry', 'awaiting_remote'], true)) {
+            return [
+                'state' => 'waiting',
+                'classification' => 'domain_source_waiting:financial_reconciliation:billing_checkpoint_progress',
+                'next_safe_at' => (string) ($source['next_run_at'] ?? ($progressOutcome['next_safe_at'] ?? '')),
+            ];
+        }
         return $this->domainOutcome($capability, $source);
     }
 

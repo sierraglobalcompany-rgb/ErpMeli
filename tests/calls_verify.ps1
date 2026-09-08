@@ -28,27 +28,14 @@ Write-Output ('CALLS_VERIFY_DB_PORT=' + $env:DB_PORT)
 Write-Output ('CALLS_VERIFY_QA_ROOT=' + $qa)
 $dbServerVersion = 'UNKNOWN'
 try {
-    $probe = '$pdo=new PDO("mysql:host=127.0.0.1;port=' + $env:DB_PORT + '", "root", ""); echo $pdo->query("SELECT VERSION()")->fetchColumn();'
+    $probe = "echo (new PDO('mysql:host=127.0.0.1;port=$($env:DB_PORT)', 'root', ''))->query('SELECT VERSION()')->fetchColumn();"
     $observed = & $php -r $probe 2>&1
     $observedText = (($observed | Out-String).Trim())
+    $observedText | Set-Content -LiteralPath (Join-Path $out 'db-version-probe.log') -Encoding utf8
     if ($observedText -match '(\d+\.\d+\.\d+[^\s]*)') { $dbServerVersion = $Matches[1] }
 } catch {
+    ('PROBE_EXCEPTION=' + $_.Exception.Message) | Set-Content -LiteralPath (Join-Path $out 'db-version-probe.log') -Encoding utf8
     $dbServerVersion = 'UNKNOWN'
-}
-if ($dbServerVersion -eq 'UNKNOWN') {
-    try {
-        $docker = Get-Command docker.exe -ErrorAction SilentlyContinue
-        if ($docker) {
-            $container = (& docker ps --filter 'name=erp-meli-pr14-readiness-mariadb' --format '{{.Names}}' 2>$null | Select-Object -First 1)
-            if ($container) {
-                $dockerObserved = & docker exec $container mariadb --user=root -N -e 'SELECT VERSION();' 2>$null
-                $dockerText = (($dockerObserved | Out-String).Trim())
-                if ($dockerText -match '(\d+\.\d+\.\d+[^\s]*)') { $dbServerVersion = $Matches[1] }
-            }
-        }
-    } catch {
-        $dbServerVersion = 'UNKNOWN'
-    }
 }
 Write-Output ('CALLS_VERIFY_DB_SERVER_VERSION=' + $dbServerVersion)
 function Get-Sha256Hex {
@@ -108,7 +95,7 @@ try {
     # A concurrent edit invalidates certification even if every test exits zero.
     function Get-RuntimeInputs {
         $paths = @(& git ls-files --cached --others --exclude-standard -- app jobs public resources tests database bootstrap.php composer.json composer.lock) |
-            Where-Object { $_ -match '\.(php|js|css|json|sql|ps1|lock)$' } | Sort-Object -Unique
+            Where-Object { $_ -match '\.(php|js|cjs|css|json|sql|ps1|lock)$' } | Sort-Object -Unique
         $inputs = foreach ($path in $paths) {
             $absolutePath = Join-Path $root $path
             if (Test-Path -LiteralPath $absolutePath -PathType Leaf) {

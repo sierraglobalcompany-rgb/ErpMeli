@@ -66,6 +66,15 @@ if ($browserFixture && $path === '/__fixture/wire-count') {
     $lines = file($root . '/wire.jsonl', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
     header('Content-Type: application/json'); echo json_encode(['count' => count($lines ?: [])]); exit;
 }
+if ($browserFixture && $path === '/settings/cron/queue-diagnostic/status.json') {
+    header('Content-Type: application/json'); echo json_encode(['ok' => true, 'fixture' => 'queue-diagnostic', 'status' => 'unavailable_in_entrypoints_fixture']); exit;
+}
+if ($browserFixture && $path === '/shell/snapshot.json') {
+    header('Content-Type: application/json'); echo json_encode(['ok' => true, 'fixture' => 'shell-snapshot', 'state' => 'not_attached']); exit;
+}
+if ($browserFixture && $path === '/performance/metrics') {
+    header('Content-Type: application/json'); echo json_encode(['ok' => true, 'fixture' => 'performance-metrics', 'accepted' => true]); exit;
+}
 if ($browserFixture && $path === '/settings/cron/queue-v4.json') {
     $delayMs = (int) (getenv('CALLS_READINESS_REFRESH_DELAY_MS') ?: '0');
     if ($delayMs > 0 && $delayMs <= 5000) {

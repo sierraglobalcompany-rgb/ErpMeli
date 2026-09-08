@@ -68,7 +68,9 @@ $cases = @{
     database = @(
         'calls_settings','calls_history','calls_billing_history_mysql','calls_final_billing_checkpoint_continuation_mysql','cap2_health_mysql','cap2_health_controller',
         'capacity_policy_mysql','capacity_concurrency_mysql','cap2_writers_mysql','cap2_writers_controller',
-        'cap2_automatic_budget_mysql','cap2_automatic_scheduler_mysql','cap2_automatic_worker_context_mysql'
+        'cap2_automatic_budget_mysql','cap2_automatic_scheduler_mysql','cap2_automatic_worker_context_mysql',
+        'calls_final_billing_checkpoint_continuation_mysql --orders=50 --interval=1 --budget=1',
+        'calls_final_concurrency_physical_mysql','calls_final_seed_matrix_mysql','calls_final_mutation_matrix'
     )
     manual = @(
         'calls_manual_preview_mysql','calls_manual_description_preview_mysql','calls_manual_exact_snapshot_mysql','calls_manual_queue_selection_mysql',

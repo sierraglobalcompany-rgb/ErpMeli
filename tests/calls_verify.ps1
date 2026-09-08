@@ -4,19 +4,53 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $php = 'C:/xampphp/php/php.exe'
-$qa = 'D:/Codex/tmp/erp-meli/calls-20260906'
+$qa = if ($env:CALLS_VERIFY_QA_ROOT) { $env:CALLS_VERIFY_QA_ROOT } else { 'D:/Codex/tmp/erp-meli/calls-20260906' }
 $out = Join-Path $qa ('verify-' + $Group + '-' + (Get-Date -Format 'HHmmss'))
 New-Item -ItemType Directory -Path $out -Force | Out-Null
 $env:APP_ENV = 'test'
 $env:ML_WRITE_ENABLED = 'false'
 $env:DB_HOST = '127.0.0.1'
-$env:DB_PORT = '33079'
+$env:DB_PORT = if ($env:DB_PORT) { $env:DB_PORT } else { '33079' }
 $env:DB_USER = 'root'
 $env:DB_PASS = ''
 $env:TEMP = $out
 $env:TMP = $out
 $env:CAP2_MANUAL_QA_ROOT = Join-Path $qa 'manual-fixtures'
-$env:CALLS_QA_STORAGE_ROOT = Join-Path $out 'runtime'
+# tests/k1b_bootstrap.php intentionally allowlists the historical D: QA
+# runtime prefix. Keep human-readable reports under CALLS_VERIFY_QA_ROOT, but
+# place the private ERP_SHARED_ROOT runtime under that allowlisted disposable
+# area so detached audit worktrees can run without changing product fixtures.
+$runtimeRoot = Join-Path 'D:/Codex/tmp/erp-meli/calls-20260906' ('runtime-' + $Group + '-' + (Get-Date -Format 'HHmmss') + '-' + $PID)
+New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
+$env:CALLS_QA_STORAGE_ROOT = $runtimeRoot
+$env:CALLS_VERIFY_RUN_OUTPUT = $out
+Write-Output ('CALLS_VERIFY_DB_PORT=' + $env:DB_PORT)
+Write-Output ('CALLS_VERIFY_QA_ROOT=' + $qa)
+$dbServerVersion = 'UNKNOWN'
+try {
+    $probe = '$pdo=new PDO("mysql:host=127.0.0.1;port=' + $env:DB_PORT + '", "root", ""); echo $pdo->query("SELECT VERSION()")->fetchColumn();'
+    $observed = & $php -r $probe 2>&1
+    $observedText = (($observed | Out-String).Trim())
+    if ($observedText -match '(\d+\.\d+\.\d+[^\s]*)') { $dbServerVersion = $Matches[1] }
+} catch {
+    $dbServerVersion = 'UNKNOWN'
+}
+if ($dbServerVersion -eq 'UNKNOWN') {
+    try {
+        $docker = Get-Command docker.exe -ErrorAction SilentlyContinue
+        if ($docker) {
+            $container = (& docker ps --filter 'name=erp-meli-pr14-readiness-mariadb' --format '{{.Names}}' 2>$null | Select-Object -First 1)
+            if ($container) {
+                $dockerObserved = & docker exec $container mariadb --user=root -N -e 'SELECT VERSION();' 2>$null
+                $dockerText = (($dockerObserved | Out-String).Trim())
+                if ($dockerText -match '(\d+\.\d+\.\d+[^\s]*)') { $dbServerVersion = $Matches[1] }
+            }
+        }
+    } catch {
+        $dbServerVersion = 'UNKNOWN'
+    }
+}
+Write-Output ('CALLS_VERIFY_DB_SERVER_VERSION=' + $dbServerVersion)
 function Get-Sha256Hex {
     param([Parameter(Mandatory=$true)][string]$LiteralPath)
     $stream = [System.IO.File]::Open($LiteralPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
@@ -76,8 +110,9 @@ try {
         $paths = @(& git ls-files --cached --others --exclude-standard -- app jobs public resources tests database bootstrap.php composer.json composer.lock) |
             Where-Object { $_ -match '\.(php|js|css|json|sql|ps1|lock)$' } | Sort-Object -Unique
         $inputs = foreach ($path in $paths) {
-            if (Test-Path -LiteralPath $path -PathType Leaf) {
-                [pscustomobject]@{path=$path; sha256=(Get-Sha256Hex -LiteralPath $path)}
+            $absolutePath = Join-Path $root $path
+            if (Test-Path -LiteralPath $absolutePath -PathType Leaf) {
+                [pscustomobject]@{path=$path; sha256=(Get-Sha256Hex -LiteralPath $absolutePath)}
             }
         }
         return ($inputs | ConvertTo-Json -Depth 3 -Compress)
@@ -108,7 +143,7 @@ try {
     $inputsAfter = Get-RuntimeInputs
     $inputsAfter | Set-Content -LiteralPath (Join-Path $out 'runtime-after.json') -Encoding utf8
     $unchanged = $inputsBefore -ceq $inputsAfter
-    [pscustomobject]@{head=$head; dirty=$dirty; group=$Group; results=$results; failed=$failed.Count; runtime_unchanged=$unchanged; production_changed=$false} |
+    [pscustomobject]@{head=$head; dirty=$dirty; group=$Group; db_port=$env:DB_PORT; db_server_version=$dbServerVersion; qa_storage_root=$env:CALLS_QA_STORAGE_ROOT; results=$results; failed=$failed.Count; runtime_unchanged=$unchanged; production_changed=$false} |
         ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $out 'results.json') -Encoding utf8
     Write-Output ('RESULTS=' + (Join-Path $out 'results.json'))
     if ($failed.Count -gt 0) { exit 1 }

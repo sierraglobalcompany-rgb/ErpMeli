@@ -1,7 +1,23 @@
-async (page) => {
-  const base = 'http://127.0.0.1:18145';
-  const root = 'D:/Codex/tmp/erp-meli/calls-20260906/entrypoints';
+async (page, { outputRoot, baseUrl, logJson }) => {
+  const base = baseUrl || 'http://127.0.0.1:18145';
+  const root = outputRoot;
   const expect = (ok, message) => { if (!ok) throw new Error(message); };
+  const mark = (stage, data = {}) => logJson?.('browser-events.jsonl', Object.assign({stage}, data));
+  const dom = async (stage) => {
+    const state = await page.evaluate(() => {
+      const form = document.querySelector('[data-qv4-action="readiness"]');
+      const button = form?.querySelector('button');
+      const feedback = document.querySelector('[data-qv4-feedback]');
+      return {
+        button_disabled: Boolean(button?.disabled),
+        button_text: button?.textContent || '',
+        feedback: feedback?.textContent || '',
+        scroll_width: document.documentElement.scrollWidth,
+        inner_width: window.innerWidth,
+      };
+    }).catch(error => ({error: String(error)}));
+    logJson?.('dom-state.jsonl', Object.assign({stage}, state));
+  };
   const control = path => page.evaluate(async target => {
     const response = await fetch(target, {credentials:'same-origin',cache:'no-store'});
     if (!response.ok) throw new Error(`Local endpoint status ${response.status}`);
@@ -12,14 +28,50 @@ async (page) => {
   const wire = async () => Number((await control('/__fixture/wire-count')).count) - wireBaseline;
   const form = key => page.locator(`[data-qv4-action="${key}"]`);
   const button = key => form(key).locator('button');
+  const fieldFromPost = (data, key) => data.match(new RegExp(`name="${key}"\\r?\\n\\r?\\n([^\\r\\n]*)`))?.[1] || new URLSearchParams(data).get(key);
+  const submitPlan = async key => {
+    const current = await state();
+    const action = key === 'readiness' ? (current.state === 'TESTING' ? 'check' : 'prepare') : key === 'cancel' ? 'cancel' : null;
+    const path = key === 'activate' ? '/settings/cron/queue-v4/activate'
+      : key === 'stop' ? '/settings/cron/queue-v4/stop'
+        : '/settings/cron/queue-v4/readiness';
+    return {path, action, step: action === 'check' ? String(current.next_step) : null, snapshot: current};
+  };
+  const waitActionReady = async (key, plan) => {
+    await form(key).waitFor({state:'visible', timeout:10000});
+    try {
+      await page.waitForFunction(({key}) => {
+        const form = document.querySelector(`[data-qv4-action="${key}"]`);
+        const btn = form?.querySelector('button');
+        const feedback = document.querySelector('[data-qv4-feedback]')?.textContent || '';
+        return Boolean(btn) && !btn.disabled && btn.textContent.trim() !== 'Procesando…'
+          && !/Cargando estado sin mutaciones/i.test(feedback);
+      }, {key}, {timeout:10000});
+    } catch (error) {
+      await dom(`not-ready-${key}`);
+      throw new Error(`${key} was not ready for submit: state=${plan.snapshot?.state || 'UNKNOWN'} engine=${plan.snapshot?.engine || 'UNKNOWN'} issues=${(plan.snapshot?.issues || []).join('|') || 'none'}`);
+    }
+  };
+  const waitForSubmitResponse = plan => page.waitForResponse(response => {
+    if (response.request().method() !== 'POST') return false;
+    const url = new URL(response.url());
+    if (url.pathname !== plan.path) return false;
+    const data = response.request().postData() || '';
+    const action = fieldFromPost(data, 'action');
+    const step = fieldFromPost(data, 'step_no');
+    if (plan.action !== null && action !== plan.action) return false;
+    if (plan.action === null && action !== null && action !== '') return false;
+    if (plan.step !== null && step !== plan.step) return false;
+    return true;
+  }, {timeout:10000});
   const posts = [];
   page.on('request', request => {
     if (request.method() === 'POST' && request.url().includes('/settings/')) {
       const data = request.postData() || '';
-      const field = key => data.match(new RegExp(`name="${key}"\\r?\\n\\r?\\n([^\\r\\n]*)`))?.[1] || new URLSearchParams(data).get(key);
-      const record = {path:new URL(request.url()).pathname,action:field('action'),step:field('step_no')};
+      const record = {path:new URL(request.url()).pathname,action:fieldFromPost(data, 'action'),step:fieldFromPost(data, 'step_no')};
       posts.push(record);
       console.log('READINESS_POST', JSON.stringify(record));
+      logJson?.('network.jsonl', Object.assign({stage:'request', url:request.url(), method:request.method()}, record));
     }
   });
   page.on('response', async response => {
@@ -27,28 +79,40 @@ async (page) => {
       const data = await response.json().catch(() => ({}));
       console.log('READINESS_RESPONSE', JSON.stringify({path:new URL(response.url()).pathname,status:response.status(),
         ok:data.ok,state:data.state,next_step:data.next_step,calls:data.physical_http_calls,replayed:data.replayed}));
+      logJson?.('network.jsonl', {stage:'response', url:response.url(), method:response.request().method(),
+        status:response.status(), ok:data.ok, state:data.state, next_step:data.next_step,
+        calls:data.physical_http_calls, replayed:data.replayed});
     }
   });
   const submit = async key => {
+    const plan = await submitPlan(key);
+    await waitActionReady(key, plan);
+    await dom(`before-${key}`);
+    mark('submit-attempt', {key, path:plan.path, action:plan.action, step:plan.step});
     const [result] = await Promise.all([
-      page.waitForResponse(response => response.request().method() === 'POST' && response.url().includes('/settings/'), {timeout:10000}),
+      waitForSubmitResponse(plan),
       button(key).click({timeout:10000})
     ]);
-    expect(result.url().includes('/settings/cron/queue-v4/'), `${key} posted to an incorrect form target`);
+    mark('submit-response', {key, url:result.url(), status:result.status()});
     const data = await result.json();
+    mark('submit-json', {key, ok:data.ok, state:data.state, next_step:data.next_step, calls:data.physical_http_calls});
     expect(result.ok() && data.ok !== false, `${key} rejected (${result.status()})`);
+    await dom(`after-${key}`);
     return data;
   };
   const open = async () => {
+    mark('open-start');
     await page.goto(`${base}/settings/cron`);
     await page.locator('[data-qv4-feedback]').filter({hasText: /Cargando/}).waitFor({state:'hidden'}).catch(() => {});
     await page.locator('.cron-admin-actions > summary').click();
+    await dom('open-complete');
   };
   await page.goto(`${base}/__fixture/session?kind=admin`);
   // A retained debug fixture can include a terminal prior run. Measure this
   // browser run's delta without deleting any transport evidence or ledger.
   wireBaseline = Number((await control('/__fixture/wire-count')).count);
   console.log('READINESS_WIRE_BASELINE', wireBaseline);
+  mark('wire-baseline', {wireBaseline});
   await page.setViewportSize({width:1440,height:1000});
   await open();
   expect(await wire() === 0 && posts.length === 0, 'initial render performed work');
@@ -60,9 +124,14 @@ async (page) => {
   expect(prepared.state === 'TESTING' && await wire() === 0, 'prepare was not local-only');
   expect(Number(prepared.next_step) === 1, 'prepare did not offer first explicit step');
   const csrf = await form('readiness').locator('[name="_token"]').inputValue();
-  const firstResponse = page.waitForResponse(response => response.request().method() === 'POST' && response.url().includes('/queue-v4/readiness'));
+  const firstPlan = await submitPlan('readiness');
+  await waitActionReady('readiness', firstPlan);
+  const firstResponse = waitForSubmitResponse(firstPlan);
+  await dom('before-dblclick');
+  mark('dblclick-attempt');
   await button('readiness').dblclick();
   const first = await (await firstResponse).json();
+  mark('dblclick-json', {ok:first.ok, next_step:first.next_step, calls:first.physical_http_calls});
   expect(first.ok === true && Number(first.next_step) === 2, 'first check did not pass exactly once');
   await page.waitForTimeout(500);
   console.log('READINESS_DOUBLE_CLICK', JSON.stringify({posts:posts.length,wire:await wire(),next_step:(await state()).next_step}));

@@ -22,11 +22,15 @@ function calls_entrypoints_readiness_browser(PDO $pdo, Closure $assert): void
         return json_encode($result, JSON_THROW_ON_ERROR);
     };
     $before = $counts();
-    $root = 'D:/Codex/tmp/erp-meli/calls-20260906/entrypoints';
+    $root = rtrim((string) (getenv('CALLS_ENTRYPOINTS_ROOT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906/entrypoints'), '/\\');
+    if (!is_dir($root)) { mkdir($root, 0770, true); }
     $node = proc_open(['node', str_replace('\\', '/', __DIR__ . '/calls_browser_runner.cjs'),
         str_replace('\\', '/', __DIR__ . '/calls_entrypoints_readiness_browser.js')],
         [0 => ['pipe','r'], 1 => ['file',$root . '/browser.log','w'], 2 => ['file',$root . '/browser-error.log','w']],
-        $pipes, dirname(__DIR__), null, ['bypass_shell' => true, 'create_no_window' => true]);
+        $pipes, dirname(__DIR__), array_merge($_ENV, [
+            'CALLS_BROWSER_OUTPUT_ROOT' => $root,
+            'CALLS_BROWSER_BASE_URL' => (string) (getenv('APP_URL') ?: 'http://127.0.0.1:18145'),
+        ]), ['bypass_shell' => true, 'create_no_window' => true]);
     $assert(is_resource($node), 'readiness_real_browser_started');
     fclose($pipes[0]);
     $exit = proc_close($node);

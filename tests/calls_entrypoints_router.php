@@ -15,8 +15,9 @@ use App\Controllers\SettingsController;
 use App\Services\CallsBrowserStepWire;
 
 K1dSafeTestDatabase::assertGuard((string) getenv('APP_ENV'), (string) getenv('ML_WRITE_ENABLED'), (string) getenv('DB_HOST'), (string) getenv('DB_NAME'));
-$root = 'D:/Codex/tmp/erp-meli/calls-20260906/entrypoints';
-if (PHP_SAPI !== 'cli-server' || getenv('DB_PORT') !== '33079'
+$root = rtrim((string) (getenv('CALLS_ENTRYPOINTS_ROOT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906/entrypoints'), '/\\');
+if (!is_dir($root)) { mkdir($root, 0770, true); }
+if (PHP_SAPI !== 'cli-server'
     || getenv('CALLS_ENTRYPOINTS_QA') !== '1'
     || !in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true)) {
     http_response_code(403);
@@ -27,6 +28,27 @@ ini_set('session.save_path', $root . '/sessions');
 $pdo = K1dSafeTestDatabase::connectExistingFromEnvironment()->pdo();
 Session::start();
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$requestStarted = microtime(true);
+$logServer = static function (string $stage, array $extra = []) use ($root, $requestStarted): void {
+    $redactedPost = [];
+    foreach (['action','step_no'] as $key) {
+        if (isset($_POST[$key]) && is_scalar($_POST[$key])) {
+            $redactedPost[$key] = (string) $_POST[$key];
+        }
+    }
+    file_put_contents($root . '/server-events.jsonl', json_encode(array_merge([
+        'utc' => gmdate('Y-m-d\TH:i:s\Z'),
+        'stage' => $stage,
+        'method' => $_SERVER['REQUEST_METHOD'] ?? '',
+        'path' => parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH),
+        'post' => $redactedPost,
+        'duration_ms' => (int) round((microtime(true) - $requestStarted) * 1000),
+    ], $extra), JSON_UNESCAPED_SLASHES) . "\n", FILE_APPEND | LOCK_EX);
+};
+$logServer('request_begin');
+register_shutdown_function(static function () use ($logServer): void {
+    $logServer('request_shutdown', ['status' => http_response_code()]);
+});
 $browserFixture = getenv('CALLS_READINESS_BROWSER') === '1';
 if ($browserFixture && $path === '/asset.php') {
     $asset = (string) ($_GET['path'] ?? '');
@@ -43,6 +65,12 @@ if ($browserFixture && $path === '/__fixture/expire-readiness') {
 if ($browserFixture && $path === '/__fixture/wire-count') {
     $lines = file($root . '/wire.jsonl', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
     header('Content-Type: application/json'); echo json_encode(['count' => count($lines ?: [])]); exit;
+}
+if ($browserFixture && $path === '/settings/cron/queue-v4.json') {
+    $delayMs = (int) (getenv('CALLS_READINESS_REFRESH_DELAY_MS') ?: '0');
+    if ($delayMs > 0 && $delayMs <= 5000) {
+        usleep($delayMs * 1000);
+    }
 }
 if ($path === '/__fixture/session') {
     $_SESSION = [];

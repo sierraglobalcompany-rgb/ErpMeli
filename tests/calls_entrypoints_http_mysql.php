@@ -3,7 +3,8 @@ declare(strict_types=1);
 
 // Execute only while holding the shared Migrator slot. Disposable MySQL, real
 // localhost requests, production Router/Auth/CSRF, cURL fake only at Meli wire.
-$root = 'D:/Codex/tmp/erp-meli/calls-20260906/entrypoints';
+$runOutput = rtrim((string) (getenv('CALLS_VERIFY_RUN_OUTPUT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906'), '/\\');
+$root = rtrim((string) (getenv('CALLS_ENTRYPOINTS_ROOT') ?: $runOutput . '/entrypoints'), '/\\');
 foreach ([$root, $root . '/sessions'] as $directory) {
     if (!is_dir($directory)) mkdir($directory, 0770, true);
 }
@@ -44,8 +45,11 @@ try {
     putenv('CALLS_ENTRYPOINTS_QA=1');
     putenv('CALLS_READINESS_BROWSER=' . ($browserRequested ? '1' : '0'));
     putenv('CALLS_ENTRYPOINTS_INSTALL=' . ERP_INSTALLATION_ROOT);
+    putenv('CALLS_ENTRYPOINTS_ROOT=' . $root);
+    putenv('CALLS_BROWSER_OUTPUT_ROOT=' . $root);
+    putenv('CALLS_BROWSER_BASE_URL=http://127.0.0.1:' . $port);
     $server = proc_open([PHP_BINARY, '-S', '127.0.0.1:' . $port, __DIR__ . '/calls_entrypoints_router.php'],
-        [0 => ['pipe','r'], 1 => ['file',$root . '/server.log','a'], 2 => ['file',$root . '/server-error.log','a']], $pipes,
+        [0 => ['pipe','r'], 1 => ['file',$root . '/server.log','w'], 2 => ['file',$root . '/server-error.log','w']], $pipes,
         dirname(__DIR__), null, ['bypass_shell' => true, 'create_no_window' => true]);
     $assert(is_resource($server), 'local_server_started');
     fclose($pipes[0]);

@@ -60,7 +60,7 @@ $cases = @{
         'calls_technical_budget','calls_technical_launchers','calls_technical_oauth',
         'calls_manual_contract','calls_manual_preview_projection','calls_manual_receipt_certainty','calls_transport_budget','calls_transport_sources','calls_billing_identity',
         'calls_controller valid','calls_controller legacy','calls_controller invalid','calls_controller missing',
-        'calls_retired','capacity_manual_budget','cap2_manual_budget','cap2_manual_item_contract',
+        'calls_retired','calls_final_updater_authority_hash','capacity_manual_budget','cap2_manual_budget','cap2_manual_item_contract',
         'cap2_manual_presentation','capacity_manual_controller','cap2_domains_policy',
         'cap2_transport_deadline','cap2_transport_scheduler','capacity_controller','capacity_anonymous',
         'capacity_ui','k1d_static_contract','f5_manual_kiss_contract'

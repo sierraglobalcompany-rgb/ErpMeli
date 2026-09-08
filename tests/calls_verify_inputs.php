@@ -10,4 +10,5 @@ k1b_assert(str_contains($source,"'calls_final_billing_checkpoint_continuation_my
 k1b_assert(str_contains($source,"'calls_final_concurrency_physical_mysql'"), 'concurrency_physical_gate_not_registered');
 k1b_assert(str_contains($source,"'calls_final_seed_matrix_mysql'"), 'seed_matrix_gate_not_registered');
 k1b_assert(str_contains($source,"'calls_final_mutation_matrix'"), 'mutation_matrix_gate_not_registered');
+k1b_assert(str_contains($source,"'calls_final_updater_authority_hash'"), 'updater_authority_hash_gate_not_registered');
 echo "PASS verification input coverage\n";

@@ -809,6 +809,88 @@ final class QueueV4CleanRepository
     /**
      * @param list<int>|null $authorizedAccountIds
      */
+    public function releaseDueRetryableDirectWaiting(?array $authorizedAccountIds = null, ?int $accountId = null): int
+    {
+        // Closed, zero-dispatch causes emitted by the existing worker/transport only.
+        // Labels alone never authorize reentry: the attempt and journal must agree.
+        $notDispatchedCauses = [
+            'oauth_refresh_required', 'pre_transport_deferred', 'pre_transport_lease_expired',
+            'capacity_deferred:budget', 'capacity_deferred:cron_deadline',
+            'capacity_deferred:manual_burst', 'capacity_deferred:budget_infrastructure',
+            'manual_pause:app', 'manual_pause:account',
+            'rate_limit_deferred:rhythm', 'rate_limit_deferred:rhythm_permit_busy',
+            'rate_limit_deferred:rhythm_interval', 'rate_limit_deferred:rhythm_block_pause',
+            'rate_limit_deferred:rhythm_shared_orders_search_window',
+            'rate_limit_deferred:rhythm_global_window',
+            'rate_limit_deferred:rhythm_penalty_state_unavailable',
+            'rate_limit_deferred:retry_after', 'rate_limit_deferred:rhythm_endpoint_shared_reduced',
+            'rate_limit_deferred:rhythm_account_reduced',
+            'rate_limit_deferred:billing_endpoint_interval', 'rate_limit_deferred:billing_429_backoff',
+            'rate_limit_deferred:rhythm_authority_unavailable', 'rate_limit_deferred:rhythm_fence_stale',
+        ];
+        [$scopeSql, $scopeParams] = $this->accountScopeSql('q', $authorizedAccountIds, $accountId);
+        $causesSql = implode(',', array_fill(0, count($notDispatchedCauses), '?'));
+        $statement = $this->pdo->prepare(
+            "UPDATE queue_v4_clean_jobs q SET q.state='ready'
+             WHERE q.job_type IN ('order_exact','fresh_orders_discovery')
+               AND q.state='waiting' AND q.available_at<=UTC_TIMESTAMP(3)
+               AND q.attempt_count<q.max_attempts AND q.lease_generation>0
+               AND {$scopeSql}
+               AND EXISTS (SELECT 1 FROM meli_accounts m
+                   WHERE m.id=q.meli_account_id AND m.company_id=q.company_id)
+               AND NOT (" . $this->unresolvedPhysicalPredicate('q') . ")
+               AND EXISTS (
+                   SELECT 1 FROM queue_v4_clean_attempts a
+                   WHERE a.job_id=q.id AND a.company_id=q.company_id AND a.meli_account_id=q.meli_account_id
+                     AND a.lease_generation=q.lease_generation AND a.outcome='waiting'
+                     AND a.finished_at IS NOT NULL AND a.source_closed_at IS NOT NULL
+                     AND a.error_class=q.last_error_class
+                     AND ((q.lease_owner IS NULL AND q.lease_expires_at IS NULL)
+                          OR (q.lease_owner=a.lease_owner AND q.lease_owner<>''
+                              AND q.lease_expires_at<=UTC_TIMESTAMP(3)))
+                     AND NOT EXISTS (SELECT 1 FROM queue_v4_clean_attempts newer
+                         WHERE newer.job_id=q.id AND newer.company_id=q.company_id
+                           AND newer.meli_account_id=q.meli_account_id
+                           AND newer.lease_generation>=q.lease_generation AND newer.id<>a.id)
+                     AND NOT EXISTS (SELECT 1 FROM queue_v4_clean_transport_events misplaced
+                         WHERE misplaced.source_kind='queue' AND misplaced.work_id=q.id
+                           AND misplaced.company_id=q.company_id AND misplaced.meli_account_id=q.meli_account_id
+                           AND misplaced.attempt_id=a.id AND misplaced.lease_generation<>a.lease_generation)
+                     AND (
+                         (a.dispatch_state='NOT_DISPATCHED' AND a.physical_http_calls=0
+                          AND a.physical_started_at IS NULL AND a.http_status IS NULL AND a.response_known_at IS NULL
+                          AND a.error_class IN ({$causesSql})
+                          AND NOT EXISTS (SELECT 1 FROM queue_v4_clean_transport_events e
+                              WHERE e.source_kind='queue' AND e.work_id=q.id
+                                AND e.company_id=q.company_id AND e.meli_account_id=q.meli_account_id
+                                AND e.lease_generation=a.lease_generation))
+                         OR
+                         (a.dispatch_state='RESPONSE_KNOWN' AND a.physical_http_calls=1
+                          AND a.transport_method='GET' AND a.endpoint_key<>''
+                          AND a.physical_started_at IS NOT NULL AND a.response_known_at IS NOT NULL
+                          AND (a.http_status=429 OR a.http_status BETWEEN 500 AND 599)
+                          AND (SELECT COUNT(*) FROM queue_v4_clean_transport_events e
+                              WHERE e.source_kind='queue' AND e.work_id=q.id
+                                AND e.company_id=q.company_id AND e.meli_account_id=q.meli_account_id
+                                AND e.lease_generation=a.lease_generation)=1
+                          AND EXISTS (SELECT 1 FROM queue_v4_clean_transport_events e
+                              WHERE e.source_kind='queue' AND e.work_id=q.id AND e.attempt_id=a.id
+                                AND e.company_id=q.company_id AND e.meli_account_id=q.meli_account_id
+                                AND e.lease_generation=a.lease_generation AND e.method=a.transport_method
+                                AND e.endpoint_key=a.endpoint_key AND e.dispatch_state='RESPONSE_KNOWN'
+                                AND e.physical_started_at IS NOT NULL AND e.response_known_at IS NOT NULL
+                                AND e.http_status=a.http_status))
+                     )
+               )
+             ORDER BY q.available_at,q.id LIMIT 200"
+        );
+        // A single bounded local UPDATE, never an HTTP budget or an unbounded draining loop.
+        // Query failures propagate; they cannot certify absence of a transport restriction.
+        $statement->execute(array_merge($scopeParams, $notDispatchedCauses));
+        return $statement->rowCount();
+    }
+
+    /** @param list<int>|null $authorizedAccountIds */
     public function releaseDueWaiting(?array $authorizedAccountIds = null, ?int $accountId = null): int
     {
         $this->lastFinanceWakeupRuntime = [

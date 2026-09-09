@@ -194,6 +194,7 @@ final class QueueV4CleanWorker
         try {
             if ($confirmedSelection === null) {
                 $this->repository->expireLeases($authorizedAccountIds, $accountId);
+                $this->repository->releaseDueRetryableDirectWaiting($authorizedAccountIds, $accountId);
                 try {
                     $this->repository->releaseDueWaiting($authorizedAccountIds, $accountId);
                 } catch (Throwable $error) {

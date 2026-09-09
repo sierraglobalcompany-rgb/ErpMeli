@@ -115,13 +115,17 @@ try {
                 return ['status'=>200,'body'=>[]]; // CSV is observed, not rejected by the fixture.
             };
             Budget::start(2,'automatic',microtime(true)+45);$meta=mutantClaim($pdo,$repo,$run,'queue_v4_clean_domain_exact');
-            Meta::run($meta,static fn()=>(new App\Services\MeliApiClient(9011))->get('/billing/integration/group/ML/order/details',['order_ids'=>$source['orders'][0]]));
-            true_seed_assert(count(Wire::$entries)===1&&Wire::$entries[0]['order_ids']===$source['orders'][0],'M1_SINGLETON_REAL_WIRE_CONTROL');
-            usleep(1100000);$meta=mutantClaim($pdo,$repo,$run,'queue_v4_clean_domain_exact');$error=null;$csv='771101,771102';
+            // Negative first: prior successful Billing traffic can independently defer
+            // the CSV request and hide removal of the cardinality guard.
+            $error=null;$csv='771101,771102';
             try{Meta::run($meta,static fn()=>(new App\Services\MeliApiClient(9011))->get('/billing/integration/group/ML/order/details',['order_ids'=>$csv]));}catch(Throwable $e){$error=$e;}
-            $r['reached']=true;$r['evidence']=['wire_count'=>count(Wire::$entries),'last_order_ids'=>Wire::$entries[count(Wire::$entries)-1]['order_ids'],'error_type'=>$error===null?null:get_class($error)];
-            $r['witness']=count(Wire::$entries)===2&&Wire::$entries[1]['order_ids']===$csv&&$error===null;
-            mutantCheck(count(Wire::$entries)===1&&$error instanceof RuntimeException&&$error->getMessage()==='Billing order_ids debe contener un único ID válido.','M1_CSV_REACHED_PHYSICAL_WIRE');break;
+            $r['reached']=true;$r['evidence']=['csv_wire_count'=>count(Wire::$entries),'csv_order_ids'=>Wire::$entries[0]['order_ids']??null,'error_type'=>$error===null?null:get_class($error)];
+            $r['witness']=count(Wire::$entries)===1&&Wire::$entries[0]['order_ids']===$csv&&$error===null;
+            mutantCheck(Wire::$entries===[]&&$error instanceof RuntimeException&&$error->getMessage()==='Billing order_ids debe contener un único ID válido.','M1_CSV_REACHED_PHYSICAL_WIRE');
+            $meta=mutantClaim($pdo,$repo,$run,'queue_v4_clean_domain_exact');
+            Meta::run($meta,static fn()=>(new App\Services\MeliApiClient(9011))->get('/billing/integration/group/ML/order/details',['order_ids'=>$second['orders'][0]]));
+            true_seed_assert(count(Wire::$entries)===1&&Wire::$entries[0]['order_ids']===$second['orders'][0],'M1_SINGLETON_REAL_WIRE_CONTROL');
+            $r['evidence']['singleton_control_wire_count']=count(Wire::$entries);break;
         case 'M2':
             $source=true_seed_source($pdo,39,true,1);$preview=mutantPreview(9);
             true_seed_assert(array_column($preview['rows'],'queue_job_id')==$source['queue']&&Wire::$entries===[],'M2_REAL_PREVIEW_EXACT_ZERO_WIRE');

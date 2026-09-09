@@ -115,17 +115,46 @@ try {
         $file = 'tests/' + $parts[0] + $(if ($isNode) { '' } else { '.php' })
         $executable = if ($isNode) { (Get-Command node.exe -ErrorAction Stop).Source } else { $php }
         $arguments = @($file) + @($parts | Select-Object -Skip 1)
+        if ($parts[0] -eq 'calls_final_mutation_matrix') {
+            # Genuine mutations are isolated RAW copies of this exact commit.
+            # Never silently fall back to the old banner-only "detections".
+            $arguments += @('--candidate=' + $head, '--root=' + $out, '--allow-owned-mysql')
+            if ($env:CALLS_VERIFY_SCHEMA_TEMPLATE) { $arguments += '--template=' + $env:CALLS_VERIFY_SCHEMA_TEMPLATE }
+        }
         $name = $case.Replace(' ','-')
         $timer = [Diagnostics.Stopwatch]::StartNew()
         # Native stderr is evidence, not a PowerShell terminating error. Capture
         # both streams and continue so even a failed suite gets a final receipt.
         $process = Start-Process -FilePath $executable -ArgumentList $arguments -WorkingDirectory $root `
-            -WindowStyle Hidden -Wait -PassThru `
+            -WindowStyle Hidden -PassThru `
             -RedirectStandardOutput (Join-Path $out ($name + '.out.log')) `
             -RedirectStandardError (Join-Path $out ($name + '.err.log'))
-        $code = $process.ExitCode
+        $commandReceipt = [ordered]@{head=$head; test=$case; executable=$executable; arguments=$arguments;
+            pid=$process.Id; start=[DateTime]::UtcNow.ToString('o'); status='RUNNING'; exit=$null}
+        $receiptPath=Join-Path $out ($name + '.receipt.json')
+        $commandReceipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $receiptPath -Encoding utf8
+        $timeoutSeconds=if($parts[0] -eq 'calls_final_mutation_matrix'){3600}else{1800}
+        if (-not $process.WaitForExit($timeoutSeconds*1000)) {
+            # This PID was just created above and remains live. Terminate only
+            # its owned process tree; a timeout is incomplete evidence, not PASS.
+            & taskkill.exe /PID $process.Id /T /F | Out-Null
+            $process.WaitForExit()
+            $code=124
+            $commandReceipt.status='TIMEOUT_INCOMPLETE'
+        } else {
+            $process.WaitForExit()
+            $code=$process.ExitCode
+            $commandReceipt.status='FINISHED'
+        }
         $timer.Stop()
-        $results += [pscustomobject]@{test=$case; exit=$code; ms=$timer.ElapsedMilliseconds; sha256=(Get-Sha256Hex -LiteralPath $file)}
+        $commandReceipt.exit=$code
+        $commandReceipt.end=[DateTime]::UtcNow.ToString('o')
+        $commandReceipt.stdout_sha256=Get-Sha256Hex -LiteralPath (Join-Path $out ($name + '.out.log'))
+        $commandReceipt.stderr_sha256=Get-Sha256Hex -LiteralPath (Join-Path $out ($name + '.err.log'))
+        $commandReceipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $receiptPath -Encoding utf8
+        $results += [pscustomobject]@{test=$case; arguments=$arguments; exit=$code; ms=$timer.ElapsedMilliseconds; sha256=(Get-Sha256Hex -LiteralPath $file)}
+        [pscustomobject]@{head=$head; group=$Group; results=$results; status='PARTIAL_NOT_FINAL'} |
+            ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $out 'results.partial.json') -Encoding utf8
         Write-Output ($case + ' EXIT=' + $code)
     }
     $failed = @($results | Where-Object { $_.exit -ne 0 })

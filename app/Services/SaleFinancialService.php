@@ -165,6 +165,10 @@ final class SaleFinancialService
             return ['summary' => $summary, 'outcomes' => $outcomes];
         }
         $result = $this->captureAndReconcile($job, $allowSuccessor, true);
+        $terminal = $result['status'] === 'reconciled' ? 'complete' : $result['status'];
+        if (!($result['finalized'] ?? false)) {
+            $this->finish($job, $terminal, (string) $result['message']);
+        }
         $outcome = $this->sourceOutcome(
             (int) $job['id'],
             (int) $job['company_id'],
@@ -175,7 +179,7 @@ final class SaleFinancialService
             $outcome['next_safe_at'] = (string) ($result['next_safe_at'] ?? ($outcome['next_safe_at'] ?? ''));
         }
         $outcomes[(int) $job['id']] = $outcome;
-        $this->summarizeTerminal($summary, $result['status'] === 'reconciled' ? 'complete' : $result['status']);
+        $this->summarizeTerminal($summary, $terminal);
         return ['summary' => $summary, 'outcomes' => $outcomes];
     }
 
@@ -222,11 +226,15 @@ final class SaleFinancialService
                 }
             } catch (Throwable $error) {
                 if ($error instanceof ApiRhythmDeferredException) {
-                    $this->deferWithoutAttemptPenalty(
-                        $job,
-                        SafeErrorPresenter::message($error, 'Billing continuará en su próxima oportunidad segura.'),
-                        $error->nextSafeAt
-                    );
+                    try {
+                        $this->deferWithoutAttemptPenalty(
+                            $job,
+                            SafeErrorPresenter::message($error, 'Billing continuará en su próxima oportunidad segura.'),
+                            $error->nextSafeAt
+                        );
+                    } catch (Throwable) {
+                        throw $error;
+                    }
                     $summary['deferred']++;
                     $summary['stop_reason'] = $error->blockingScope;
                     if ($domainExact) {
@@ -235,17 +243,27 @@ final class SaleFinancialService
                     break;
                 }
                 if ($error instanceof RemoteResultUncertainException) {
-                    $this->finish($job, 'review', SafeErrorPresenter::message($error, 'Resultado remoto pendiente de revisión.'));
+                    try {
+                        $this->finish($job, 'review', SafeErrorPresenter::message($error, 'Resultado remoto pendiente de revisión.'));
+                    } catch (Throwable) {
+                        throw $error;
+                    }
                     $summary['errors']++;
                     $summary['stop_reason'] = 'action_required';
                     break;
                 }
                 $retry = !$this->retryDeadlineExceeded($job);
-                $this->finish(
-                    $job,
-                    $retry ? 'retry' : 'error',
-                    SafeErrorPresenter::message($error, 'No fue posible completar la conciliación oficial.')
-                );
+                try {
+                    $this->finish(
+                        $job,
+                        $retry ? 'retry' : 'error',
+                        SafeErrorPresenter::message($error, 'No fue posible completar la conciliación oficial.')
+                    );
+                } catch (Throwable) {
+                    // A failed local disposition must not replace the original
+                    // known HTTP result or authorize another physical attempt.
+                    throw $error;
+                }
                 $retry ? $summary['deferred']++ : $summary['errors']++;
                 $summary['stop_reason'] = $retry ? 'automatic_retry' : 'persistent_error';
                 if ($error instanceof MeliApiException && $error->httpStatus === 429) {
@@ -1543,7 +1561,9 @@ final class SaleFinancialService
                  retry_until=IF(:deferred_until=1,COALESCE(retry_until,DATE_ADD(UTC_TIMESTAMP(),INTERVAL :retry_days DAY)),retry_until),
                  completed_at=IF(:terminal IN ("complete","partial","review","error"),UTC_TIMESTAMP(),completed_at),
                  lock_owner=NULL,lease_expires_at=NULL,heartbeat_at=NULL
-             WHERE id=:id AND lock_owner=:owner AND lease_generation=:generation'
+             WHERE id=:id AND company_id=:company_id AND meli_account_id=:account_id
+               AND status="running" AND lock_owner=:owner AND lease_generation=:generation
+               AND lease_expires_at>=UTC_TIMESTAMP()'
         );
         $parameters = [
             'status' => $status,
@@ -1553,6 +1573,7 @@ final class SaleFinancialService
             'retry_days' => $this->retryHorizonDays(),
             'terminal' => $status,
             'id' => (int) $job['id'], 'owner' => (string) $job['lock_owner'],
+            'company_id' => (int) $job['company_id'], 'account_id' => (int) $job['meli_account_id'],
             'generation' => (int) $job['lease_generation'],
         ];
         if ($deferred) {

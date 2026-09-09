@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-// Diagnostic only: actual manual preview/admission, real isolated SQL, intercepted cURL.
+// Actual manual preview/admission, real isolated SQL, intercepted cURL.
 require __DIR__ . '/k1b_bootstrap.php';
 require __DIR__ . '/K1dSafeTestDatabase.php';
 require __DIR__ . '/calls_true_wire_fixture.php';
@@ -41,10 +41,25 @@ function r1LocalSnapshot(PDO $pdo, array $source): array
     return $state;
 }
 
+function r1LocalFinancialSnapshot(PDO $pdo): array
+{
+    $snapshot = [];
+    foreach (['sale_financial_state', 'meli_sale_financials', 'meli_billing_capture_runs'] as $table) {
+        $snapshot[$table] = $pdo->query('SELECT * FROM ' . $table
+            . ' WHERE company_id=9001 AND meli_account_id=9011 ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+    }
+    $snapshot['history'] = $pdo->query('SELECT h.* FROM meli_sale_financial_history h
+        JOIN meli_sale_financials f ON f.id=h.meli_sale_financial_id
+        WHERE f.company_id=9001 AND f.meli_account_id=9011 ORDER BY h.id')->fetchAll(PDO::FETCH_ASSOC);
+    $snapshot['nonlocal_evidence'] = $pdo->query("SELECT * FROM sale_financial_evidence
+        WHERE company_id=9001 AND meli_account_id=9011 AND evidence_type<>'local_projection' ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+    return $snapshot;
+}
+
 true_seed_assert(PHP_SAPI === 'cli', 'CLI_ONLY');
 $options = getopt('', ['template:', 'scenario:']);
 $scenario = (string) ($options['scenario'] ?? 'input_changed');
-true_seed_assert(in_array($scenario, ['input_changed', 'official_complete'], true), 'KNOWN_LOCAL_SCENARIO');
+true_seed_assert(in_array($scenario, ['input_changed', 'official_complete', 'identity_changed'], true), 'KNOWN_LOCAL_SCENARIO');
 $root = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_R1_QA_ROOT') ?: '')), '/');
 true_seed_assert(str_starts_with($root, 'D:/Codex/') && !in_array('..', explode('/', $root), true), 'EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 $dir = $root . '/local-resolution-' . $scenario . '-' . bin2hex(random_bytes(5));
@@ -101,7 +116,11 @@ try {
     true_seed_assert($shown === $source['queue'] && count(CallsTrueWire::$entries) === 0, 'REAL_MANUAL_PREVIEW_EXACT_SOURCE_ZERO_WIRE');
     $ledger['preview_queue_ids'] = $shown;
     $ledger['source_selection_version'] = $preview['rows'][0]['source_selection_version'] ?? null;
-    if ($scenario === 'input_changed') {
+    if ($scenario === 'identity_changed') {
+        $statement = $pdo->prepare('UPDATE sale_financial_reconciliation_jobs SET input_version=?
+            WHERE id=? AND company_id=9001 AND meli_account_id=9011');
+        $statement->execute([hash('sha256', 'synthetic-new-source-identity'), $source['source']]);
+    } elseif ($scenario === 'input_changed') {
         $statement = $pdo->prepare('UPDATE meli_orders o JOIN meli_accounts a ON a.id=o.meli_account_id
             SET o.paid_amount=101 WHERE a.company_id=9001 AND o.meli_account_id=9011 AND o.external_order_id=?');
         $statement->execute([$source['orders'][0]]);
@@ -113,6 +132,8 @@ try {
     }
     true_seed_assert($statement->rowCount() === 1, 'LOCAL_INPUT_MUTATION_APPLIED');
     $ledger['before_execution'] = r1LocalSnapshot($pdo, $source);
+    $businessBefore = true_seed_business_snapshot($pdo, $source);
+    $financialBefore = r1LocalFinancialSnapshot($pdo);
     CallsTrueWire::$execution = 1;
     $result = null;
     $executionError = null;
@@ -149,7 +170,50 @@ try {
     true_seed_assert(count($after['all_sources']) === 1 && count($after['queue']) === 1
         && $after['all_sources'][0]['id'] === $before['all_sources'][0]['id'], 'NO_SUCCESSOR_OR_UNCONFIRMED_SCOPE');
     true_seed_assert($executionError === null, 'MANUAL_ADMISSION_COMPLETED');
-    true_seed_assert($omitted || $terminal, 'MANUAL_LOCAL_RESOLUTION_MUST_OMIT_OR_FINISH_WITHOUT_LIVE_LEASE');
+    if ($scenario === 'identity_changed') {
+        true_seed_assert($omitted && (int) ($result['stale_or_busy_skipped'] ?? 0) === 1,
+            'CHANGED_IDENTITY_OMITTED_BEFORE_CLAIM');
+    } else {
+        true_seed_assert($terminal && (int) $after['source']['lease_generation'] === (int) $before['source']['lease_generation'] + 1,
+            'CLAIMED_LOCAL_SOURCE_AND_POINTER_FINISHED_WITHOUT_LEASE');
+        true_seed_assert((int) ($result['completed_count'] ?? 0) === 1 && (int) ($result['waiting_count'] ?? -1) === 0,
+            'LOCAL_FINISH_RECEIPT_MATCHES_DURABLE_DISPOSITION');
+    }
+    true_seed_assert(($result['physical_http_calls_certainty'] ?? '') === 'CERTIFIED'
+        && ($result['physical_http_calls'] ?? null) === 0 && ($result['known_physical_calls'] ?? null) === 0,
+        'LOCAL_FINISH_CERTIFIED_ZERO_PHYSICAL_CALLS');
+    $businessAfter = true_seed_business_snapshot($pdo, $source);
+    $ledger['business_before'] = $businessBefore;
+    $ledger['business_after'] = $businessAfter;
+    $progressKeys = ['queue' => true, 'financial_source' => true];
+    true_seed_assert(array_diff_key($businessAfter, $progressKeys) === array_diff_key($businessBefore, $progressKeys),
+        'LOCAL_FINISH_NO_FINANCIAL_PUBLICATION_OR_CHECKPOINT');
+    $financialAfter = r1LocalFinancialSnapshot($pdo);
+    true_seed_assert(array_diff_key($financialBefore, ['sale_financial_state' => true])
+        === array_diff_key($financialAfter, ['sale_financial_state' => true]), 'NO_CAPTURE_HISTORY_OR_OFFICIAL_EVIDENCE_WRITES');
+    $beforeProjection = $financialBefore['sale_financial_state'][0];
+    $afterProjection = $financialAfter['sale_financial_state'][0];
+    if ($scenario === 'input_changed') {
+        true_seed_assert($afterProjection['input_version'] !== $beforeProjection['input_version']
+            && $afterProjection['official_status'] === 'missing'
+            && $afterProjection['official_net_amount'] === null && $afterProjection['official_capture_id'] === null,
+            'OBSOLETE_SOURCE_CLOSURE_DOES_NOT_CERTIFY_NEW_VERSION');
+    } else {
+        $projectionTimes = ['projected_at' => true, 'updated_at' => true];
+        true_seed_assert(array_diff_key($afterProjection, $projectionTimes) === array_diff_key($beforeProjection, $projectionTimes),
+            'LOCAL_OFFICIAL_VALUES_AND_VERSION_UNCHANGED');
+    }
+    $replayError = null;
+    try {
+        (new ManualSingleStepService())->executePreview($preview['preview_token'], 9007, 1);
+    } catch (Throwable $error) {
+        $replayError = get_class($error);
+    }
+    $ledger['replay_error_type'] = $replayError;
+    true_seed_assert(r1LocalSnapshot($pdo, $source) === $after
+        && true_seed_business_snapshot($pdo, $source) === $businessAfter
+        && r1LocalFinancialSnapshot($pdo) === $financialAfter
+        && count(CallsTrueWire::$entries) === 0, 'LOCAL_REPLAY_NO_NEW_EFFECTS');
     $ledger['state'] = 'PASS';
 } catch (Throwable $error) {
     $exit = 1;

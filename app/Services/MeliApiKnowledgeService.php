@@ -477,7 +477,7 @@ final class MeliApiKnowledgeService
             $this->field('/shipments/{id}', 'shipping_option.cost', 'decimal|null', 'meli_shipments.buyer_cost/gross_cost', 'OrderSyncService::persistShipment', 'No siempre equivale al cargo vendedor financiero.', ['finanzas']),
             $this->field('/questions/search', 'questions[]', 'array', 'meli_questions.*', 'QuestionSyncService', 'Solo lectura; revisar api_version=4 y estado UNANSWERED.', ['preguntas']),
             $this->field('/post-purchase/v1/claims/search', 'data[]|claims[]', 'array', 'meli_claims.*', 'ClaimSyncService', 'Revisar filtros players.user_id/role según documentación.', ['reclamos']),
-            $this->field('/billing/integration/group/ML/order/details', 'billing lines', 'array', 'meli_order_billing_details.* / meli_order_financials.*', 'OrderBillingImportService', 'Parser actual es heurístico; validar estructura oficial y clasificaciones.', ['conciliacion', 'facturacion']),
+            $this->field('/billing/integration/group/ML/order/details', 'billing lines', 'array', 'sale_financial_evidence / meli_sale_financials', 'SaleFinancialService', 'Billing activo envía un único order_id por GET; no reactivar importación agrupada.', ['conciliacion', 'facturacion']),
             $this->field('/missed_feeds', 'messages[]|results[]', 'array', 'webhook_events / internal_notifications', 'WebhookService', 'Recuperación de notificaciones perdidas.', ['notificaciones']),
         ];
     }

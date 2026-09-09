@@ -808,7 +808,7 @@ final class ManagedRuntimePublicationPolicy
         if (in_array($top, ['bin', '.github', 'tools'], true)) {
             return 'BUILD_ONLY';
         }
-        if (in_array($top, ['docs', 'audits', 'graphify-out'], true)) {
+        if (in_array($top, ['docs', 'audits', 'graphify-out', '.superpowers', 'qa'], true)) {
             return 'NON_RUNTIME';
         }
         if ($top === 'database') {

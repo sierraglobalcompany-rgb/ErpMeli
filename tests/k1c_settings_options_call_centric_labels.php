@@ -27,11 +27,22 @@ $expect = static function (string $key, string $label, ?string $unit = null, ?bo
 
 $expect('api.budget.global_requests_per_15m', 'Capacidad general', 'llamadas API / 15 min');
 $expect('api.budget.account_requests_per_15m', 'Capacidad por cuenta', 'llamadas API / 15 min');
+$expect('automation.max_api_calls_per_cycle', 'Máximo de llamadas API por ciclo automático', 'llamadas API');
+$expect('automation.api_calls_ceiling', 'Techo de llamadas API automático', 'llamadas API');
+$expect('manual.api_calls_per_step', 'Máximo de llamadas API por paso manual', 'llamadas API');
+$expect('manual.api_calls_ceiling', 'Techo de llamadas API manual', 'llamadas API');
 $expect('api.budget.web_request_api_limit', 'Máximo desde una pantalla', 'llamadas API');
-$expect('sync.queue_max_chunks_per_run', 'Ventanas tomadas por cron', 'ventanas', true);
-$expect('notifications.worker_batch_limit', 'Recursos por ciclo', 'recursos', true);
+$expect('api.rhythm.billing_min_interval_seconds', 'Ritmo Billing · intervalo mínimo', 'seg', true);
 $expect('financial_recalc.enabled', 'Procesamiento financiero activo');
-$expect('financial_recalc.max_orders_per_job', 'Máximo por recálculo', 'órdenes', true);
+
+foreach ([
+    'sync.queue_max_chunks_per_run',
+    'notifications.worker_batch_limit',
+    'financial_recalc.max_orders_per_job',
+    'financial_recalc.billing_order_ids_per_request',
+] as $retiredKey) {
+    k1b_assert(!isset($fields[$retiredKey]), "Retired resource/batch setting remains editable: {$retiredKey}");
+}
 
 $combined = json_encode($sections, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 foreach ([

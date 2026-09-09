@@ -6,7 +6,6 @@ namespace App\Services;
 
 use App\Core\Auth;
 use App\Core\Database;
-use App\QueueV4Clean\QueueV4CleanDispatchFence;
 use PDO;
 use Throwable;
 
@@ -306,27 +305,10 @@ final class SalesAuditExactRepairService
                 $this->releaseJob($job, $worker, 'waiting_budget', $next, null, null);
                 return ['processed' => $processed, 'jobs' => 1, 'status' => 'waiting_budget'];
             } catch (RemoteResultUncertainException $error) {
-                $dispatch = QueueV4CleanDispatchFence::state($meta);
-                if (($dispatch['dispatch_state'] ?? 'NOT_DISPATCHED') === 'NOT_DISPATCHED') {
-                    $next = gmdate('Y-m-d H:i:s', time() + 60);
-                    $this->deferItem(
-                        $job,
-                        $itemId,
-                        'waiting_budget',
-                        $next,
-                        'Esperando la próxima oportunidad segura.',
-                        $error->requestId,
-                        true,
-                    );
-                    $this->releaseJob($job, $worker, 'waiting_budget', $next, null, null);
-                    return ['processed' => $processed, 'jobs' => 1, 'status' => 'waiting_budget'];
-                }
-                $this->retryOrFail(
-                    $job,
-                    $item,
-                    'La consulta fue iniciada y su resultado remoto no pudo confirmarse.',
-                    $error->requestId,
-                );
+                $message = 'El resultado remoto es incierto. Revise antes de autorizar otro intento.';
+                $this->finishItem($job, $itemId, 'error', $message, $error->requestId);
+                $this->releaseJob($job, $worker, 'error', null, $message, $error->requestId);
+                throw $error; // Keep later items pending and stop the shared cycle.
             } catch (MeliApiException $error) {
                 $this->handleApiFailure($job, $item, $error);
             } catch (Throwable $error) {
@@ -446,6 +428,12 @@ final class SalesAuditExactRepairService
                  INNER JOIN meli_accounts a ON a.id=j.meli_account_id AND a.company_id=j.company_id
                  WHERE j.source_kind="exact"
                    AND j.status IN ("pending","retry","waiting_budget")
+                   AND NOT EXISTS (
+                       SELECT 1 FROM queue_v4_clean_transport_events e
+                       WHERE e.company_id=j.company_id AND e.meli_account_id=j.meli_account_id
+                         AND e.source_kind="sales_repair" AND e.work_id=j.id
+                         AND e.dispatch_state="PHYSICAL_STARTED" AND e.response_known_at IS NULL
+                   )
                    AND (j.next_run_at IS NULL OR j.next_run_at<=UTC_TIMESTAMP())
                    AND (j.lock_expires_at IS NULL OR j.lock_expires_at<UTC_TIMESTAMP())
                    AND (? IS NULL OR j.id=?)' . $reservationGuard . '
@@ -543,7 +531,8 @@ final class SalesAuditExactRepairService
             'UPDATE sync_sales_repair_job_items i
              INNER JOIN sync_sales_repair_jobs j ON j.id=i.sync_sales_repair_job_id
              SET i.status=?,i.safe_error_message=?,i.diagnostic_id=?,i.processed_at=UTC_TIMESTAMP()
-             WHERE i.id=? AND j.id=? AND j.company_id=? AND j.meli_account_id=? AND j.source_kind="exact"'
+             WHERE i.id=? AND j.id=? AND j.company_id=? AND j.meli_account_id=? AND j.source_kind="exact"
+               AND j.lock_owner=? AND j.lease_generation=? AND j.status="running"'
         )->execute([
             $status,
             $message,
@@ -552,6 +541,8 @@ final class SalesAuditExactRepairService
             (int) $job['id'],
             (int) $job['company_id'],
             (int) $job['meli_account_id'],
+            (string) $job['lock_owner'],
+            (int) $job['lease_generation'],
         ]);
     }
 

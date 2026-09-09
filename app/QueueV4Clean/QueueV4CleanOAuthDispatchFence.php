@@ -50,6 +50,7 @@ final class QueueV4CleanOAuthDispatchFence
             if ($ownsTransaction) {
                 $pdo->beginTransaction();
             }
+            QueueV4CleanTransportJournal::preparationBegan($requestId);
             try {
             $scheduler = $pdo->prepare(
                 "UPDATE queue_v4_clean_leases SET heartbeat_at=UTC_TIMESTAMP(3),
@@ -104,11 +105,12 @@ final class QueueV4CleanOAuthDispatchFence
             } catch (\Throwable $error) {
                 if ($ownsTransaction && $pdo->inTransaction()) {
                     $pdo->rollBack();
+                    QueueV4CleanTransportJournal::preparationRolledBack($requestId);
                 }
                 throw $error;
             }
         } catch (\Throwable $error) {
-            QueueV4CleanCycleBudget::releaseBeforeTransport();
+            QueueV4CleanTransportJournal::preparationFailed($metadata);
             throw $error;
         }
     }

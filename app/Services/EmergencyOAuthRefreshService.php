@@ -91,6 +91,15 @@ final class EmergencyOAuthRefreshService
     /** @return array{account_id:int,nickname:string,expires_at:string,refresh_version:int} */
     public function run(int $accountId, string $actor): array
     {
+        return ManualPhysicalCallBudget::withinTechnical(
+            1,
+            fn (): array => $this->runWithinBudget($accountId, $actor)
+        );
+    }
+
+    /** @return array{account_id:int,nickname:string,expires_at:string,refresh_version:int} */
+    private function runWithinBudget(int $accountId, string $actor): array
+    {
         $account = $this->preflight($accountId);
         $nonce = '';
         try {
@@ -110,7 +119,10 @@ final class EmergencyOAuthRefreshService
                 $nonce,
                 fn (): array => ApiExecutionMetadataContext::run(
                     $metadata,
-                    fn (): array => ($this->refresh)($accountId)
+                    fn (): array => ApiExecutionMetadataContext::withTechnicalOperation(
+                        'emergency_oauth',
+                        fn (): array => ($this->refresh)($accountId)
+                    )
                 )
             );
             $token = ($this->tokenStateLoader)($accountId);

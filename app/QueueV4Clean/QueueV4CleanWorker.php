@@ -11,11 +11,13 @@ use App\Services\ApiManualPauseException;
 use App\Services\ApiRhythmPolicyService;
 use App\Services\ApiRhythmDeferredException;
 use App\Services\CronDeadlineContext;
+use App\Services\CapacityPolicyService;
 use App\Services\CronDeadlineDeferredException;
 use App\Services\MeliApiClient;
 use App\Services\MeliApiException;
 use App\Services\MeliReadClientInterface;
 use App\Services\MeliTransportSourcePolicy;
+use App\Services\ManualCampaignPreviewService;
 use App\Services\ManualRemoteCallLimitException;
 use App\Services\OAuthRefreshRequiredException;
 use App\Services\NotificationWorkItemService;
@@ -33,12 +35,9 @@ use Throwable;
 final class QueueV4CleanWorker
 {
     public const DEFAULT_MAX_CALLS = 1;
-    public const HARD_MAX_CALLS = 15;
-    /** @deprecated Temporary Hostinger/hPanel compatibility input alias. */
-    public const DEFAULT_MAX_JOBS = self::DEFAULT_MAX_CALLS;
-    /** @deprecated Temporary Hostinger/hPanel compatibility input alias. */
-    public const HARD_MAX_JOBS = self::HARD_MAX_CALLS;
+    public const HARD_MAX_CALLS = CapacityPolicyService::TECHNICAL_MAX;
     private const POINTER_SAFETY_MULTIPLIER = 20;
+    private const POINTER_SAFETY_FLOOR = 15;
     private const FINANCIAL_RECONCILIATION_STALE_RECHECK_SECONDS = 900;
     private const QUEUE_V4_AUDIT_DIR = 'storage/queue-v4-audit';
 
@@ -52,6 +51,7 @@ final class QueueV4CleanWorker
     private ?\Closure $domainHandler;
     /** @var \Closure():SaleFinancialService */
     private \Closure $financialFactory;
+    private bool $confirmedManualSelectionActive = false;
 
     /**
      * @param null|callable(int):MeliReadClientInterface $clientFactory
@@ -91,9 +91,11 @@ final class QueueV4CleanWorker
         int $maxCalls = self::DEFAULT_MAX_CALLS,
         int $runtimeSeconds = 45,
         ?array $authorizedAccountIds = null,
-        ?int $accountId = null
+        ?int $accountId = null,
+        ?array $confirmedSelection = null
     ): array
     {
+        $maxCalls = max(0, min(self::HARD_MAX_CALLS, $maxCalls));
         if ($maxCalls < 1 || $runtimeSeconds < 5) {
             return [
                 'run_id' => 0,
@@ -104,6 +106,13 @@ final class QueueV4CleanWorker
                 'max_calls' => max(0, $maxCalls),
                 'physical_http_calls' => 0,
             ];
+        }
+        $outerBudget = QueueV4CleanCycleBudget::snapshot();
+        if ($outerBudget['limit'] < 1) {
+            throw new RuntimeException('queue_v4_clean_cycle_budget_context_missing');
+        }
+        if ($outerBudget['remaining'] > $maxCalls) {
+            throw new RuntimeException('queue_v4_clean_cycle_budget_exceeds_authorized_calls');
         }
         $receiptStartedAt = microtime(true);
         $receiptStartedText = gmdate('Y-m-d H:i:s');
@@ -138,7 +147,6 @@ final class QueueV4CleanWorker
                 'runtime_seconds' => $runtimeSeconds,
                 'control_unit' => 'PHYSICAL_API_CALL',
                 'max_calls' => $maxCalls,
-                'max_jobs' => $maxCalls,
                 'ready_before' => $readyBefore,
                 'waiting_before' => $waitingBefore,
                 'review_before' => $reviewBefore,
@@ -165,35 +173,71 @@ final class QueueV4CleanWorker
                 'physical_http_calls' => 0,
             ];
         }
-        $maxCalls = min(self::HARD_MAX_CALLS, $maxCalls);
-        $pointerSafetyLimit = max(self::HARD_MAX_CALLS, $maxCalls * self::POINTER_SAFETY_MULTIPLIER);
+        $selectedCount = $confirmedSelection === null ? 0 : count($confirmedSelection);
+        $confirmedSelection = $confirmedSelection === null
+            ? null
+            : $this->repository->claimableConfirmedSelection($confirmedSelection, $authorizedAccountIds, $accountId);
+        if ($confirmedSelection !== null) {
+            $confirmedSelection = array_values(array_filter(
+                $confirmedSelection,
+                static fn (array $row): bool => ManualCampaignPreviewService::availableSourceIdentityMatches($row)
+            ));
+        }
+        $staleOrBusySkipped = max(0, $selectedCount - count($confirmedSelection ?? []));
+        $pointerSafetyLimit = $confirmedSelection === null
+            ? max(self::POINTER_SAFETY_FLOOR, $maxCalls * self::POINTER_SAFETY_MULTIPLIER)
+            : count($confirmedSelection);
         $deadline = microtime(true) + max(5, min(45, $runtimeSeconds));
         $owner = bin2hex(random_bytes(16));
         $runId = $this->repository->beginRun($launcher, $owner);
         $claimed = $completed = $deferred = 0;
         try {
-            $this->repository->expireLeases($authorizedAccountIds, $accountId);
-            try {
-                $this->repository->releaseDueWaiting($authorizedAccountIds, $accountId);
-            } catch (Throwable $error) {
-                if (method_exists($this->repository, 'lastFinanceWakeupRuntime')) {
-                    $financeWakeupRuntime = $this->repository->lastFinanceWakeupRuntime();
+            if ($confirmedSelection === null) {
+                $this->repository->expireLeases($authorizedAccountIds, $accountId);
+                $this->repository->releaseDueRetryableDirectWaiting($authorizedAccountIds, $accountId);
+                try {
+                    $this->repository->releaseDueWaiting($authorizedAccountIds, $accountId);
+                } catch (Throwable $error) {
+                    if (method_exists($this->repository, 'lastFinanceWakeupRuntime')) {
+                        $financeWakeupRuntime = $this->repository->lastFinanceWakeupRuntime();
+                    }
+                    throw $error;
                 }
-                throw $error;
             }
             if (method_exists($this->repository, 'lastFinanceWakeupRuntime')) {
                 $financeWakeupRuntime = $this->repository->lastFinanceWakeupRuntime();
             }
+            $this->confirmedManualSelectionActive = $confirmedSelection !== null;
+            $claimedJobIds = [];
             while ($claimed < $pointerSafetyLimit
                 && !QueueV4CleanCycleBudget::exhausted()
                 && microtime(true) < $deadline - 2.0
                 && CronDeadlineContext::canAcceptWork(2)) {
-                $job = $this->repository->claim($runId, $owner, 60, $authorizedAccountIds, $accountId);
+                $job = $this->repository->claim($runId, $owner, 60, $authorizedAccountIds, $accountId, $confirmedSelection);
                 if ($job === null) {
                     $endReason = 'no_claimable_job';
                     break;
                 }
+                if ($confirmedSelection !== null) {
+                    $expected = null;
+                    foreach ($confirmedSelection as $selectionRow) {
+                        if ((int) ($selectionRow['queue_job_id'] ?? 0) === (int) $job['id']) {
+                            $expected = $selectionRow;
+                            break;
+                        }
+                    }
+                    if ($expected === null || !ManualCampaignPreviewService::availableSourceIdentityMatches($expected)) {
+                        $this->repository->releaseManualStaleClaim($job, $runId);
+                        $confirmedSelection = array_values(array_filter(
+                            $confirmedSelection,
+                            static fn (array $row): bool => (int) ($row['queue_job_id'] ?? 0) !== (int) $job['id']
+                        ));
+                        $staleOrBusySkipped++;
+                        continue;
+                    }
+                }
                 $claimed++;
+                $claimedJobIds[] = (int) $job['id'];
                 try {
                     $outcome = $this->handle($job);
                 } catch (OAuthRefreshRequiredException $error) {
@@ -214,6 +258,7 @@ final class QueueV4CleanWorker
                     }
                     continue;
                 } catch (ApiRhythmDeferredException $error) {
+                    $remote429 = $error->reachedRemote && $error->blockingScope === 'remote_429_global_pause';
                     $classification = 'rate_limit_deferred:' . $this->safeToken($error->blockingScope);
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
@@ -227,8 +272,12 @@ final class QueueV4CleanWorker
                             (int) ($job['id'] ?? 0),
                         );
                     }
-                    $receiptJobs[] = $this->cycleJobReceipt($job, 'waiting', $classification, $error->reachedRemote, null, null, $error->nextSafeAt);
+                    $receiptJobs[] = $this->cycleJobReceipt($job, 'waiting', $classification, $error->reachedRemote, $remote429 ? 429 : null, null, $error->nextSafeAt);
                     $deferred++;
+                    if ($remote429) {
+                        $endReason = 'remote_429_global_pause';
+                        break;
+                    }
                     if ($this->deferredCycleAction($error) === 'break') {
                         $endReason = 'deferred_break:' . $classification;
                         break;
@@ -291,20 +340,11 @@ final class QueueV4CleanWorker
                     }
                     continue;
                 } catch (RemoteResultUncertainException $error) {
-                    $nextSafeAt = gmdate('Y-m-d H:i:s', time() + 60);
-                    $this->repository->deferWithoutAttemptPenalty(
-                        $job,
-                        $runId,
-                        'remote_result_uncertain_safe_get',
-                        $nextSafeAt,
-                    );
-                    $receiptJobs[] = $this->cycleJobReceipt($job, 'waiting', 'remote_result_uncertain_safe_get', true, null, null, $nextSafeAt);
-                    $deferred++;
-                    if ($this->deferredCycleAction($error) === 'break') {
-                        $endReason = 'deferred_break:remote_result_uncertain_safe_get';
-                        break;
-                    }
-                    continue;
+                    $this->repository->review($job, $runId, 'remote_result_uncertain');
+                    $receiptJobs[] = $this->cycleJobReceipt($job, 'review', 'remote_result_uncertain', true, null, null, null);
+                    $reviewed++;
+                    $endReason = 'remote_result_uncertain';
+                    break;
                 } catch (ApiManualPauseException $error) {
                     $classification = 'manual_pause:' . $this->safeToken($error->scope);
                     $this->repository->deferWithoutAttemptPenalty(
@@ -360,8 +400,13 @@ final class QueueV4CleanWorker
                     continue;
                 } catch (RuntimeException $error) {
                     $this->functionalFailure($job, $runId, $error);
-                    $receiptJobs[] = $this->cycleJobReceipt($job, 'waiting', $this->failureClass($error), false, null, null, null);
+                    $failureClass = $this->failureClass($error);
+                    $receiptJobs[] = $this->cycleJobReceipt($job, 'waiting', $failureClass, false, null, null, null);
                     $deferred++;
+                    if ($this->jobCapability($job) === 'financial_reconciliation') {
+                        $endReason = 'deferred_break:' . $failureClass;
+                        break;
+                    }
                     continue;
                 }
                 if (($outcome['state'] ?? '') === 'waiting') {
@@ -417,7 +462,9 @@ final class QueueV4CleanWorker
                 $receiptJobs[] = $this->cycleJobReceipt($job, 'completed', 'completed', (bool) ($outcome['reached_remote'] ?? false), null, null, null);
                 $completed++;
             }
-            if ($endReason !== 'remote_429_global_pause' && QueueV4CleanCycleBudget::exhausted()) {
+            if (in_array($endReason, ['remote_429_global_pause', 'remote_result_uncertain'], true)) {
+                // Keep the protection that stopped work, even at a budget/time boundary.
+            } elseif (QueueV4CleanCycleBudget::exhausted()) {
                 $endReason = 'call_budget_exhausted';
             } elseif ($claimed >= $pointerSafetyLimit) {
                 $endReason = 'pointer_safety_limit_reached';
@@ -425,6 +472,7 @@ final class QueueV4CleanWorker
                 $endReason = 'runtime_deadline_reached';
             }
             $this->repository->finishRun($runId, 'completed');
+            $physicalReceipt = $this->physicalHttpReceiptForRun($runId);
             return [
                 'run_id' => $runId,
                 'claimed' => $claimed,
@@ -432,15 +480,24 @@ final class QueueV4CleanWorker
                 'deferred' => $deferred,
                 'control_unit' => 'PHYSICAL_API_CALL',
                 'max_calls' => $maxCalls,
-                'physical_http_calls' => $this->physicalHttpCallsForRun($runId),
+                'physical_http_calls' => $physicalReceipt['physical_http_calls'],
+                'physical_http_calls_certainty' => $physicalReceipt['physical_http_calls_certainty'],
+                'known_physical_calls' => $physicalReceipt['known_physical_calls'],
+                'unresolved_dispatches' => $physicalReceipt['unresolved_dispatches'],
+                'possible_physical_calls_max' => $physicalReceipt['possible_physical_calls_max'],
                 'call_budget' => QueueV4CleanCycleBudget::snapshot(),
                 'stop_reason' => $endReason,
+                'selected_count' => $selectedCount,
+                'stale_or_busy_skipped' => $staleOrBusySkipped,
+                'claimed_job_ids' => $claimedJobIds,
+                'not_started_count' => max(0, count($confirmedSelection ?? []) - $claimed),
             ];
         } catch (Throwable $error) {
             $this->repository->finishRun($runId, 'failed');
             $endReason = 'worker_exception:' . $this->failureClass($error);
             throw $error;
         } finally {
+            $this->confirmedManualSelectionActive = false;
             $this->writeCycleAuditReceipt([
                 'started_at' => $receiptStartedText,
                 'ended_at' => gmdate('Y-m-d H:i:s'),
@@ -449,7 +506,6 @@ final class QueueV4CleanWorker
                 'runtime_seconds' => $runtimeSeconds,
                 'control_unit' => 'PHYSICAL_API_CALL',
                 'max_calls' => $maxCalls,
-                'max_jobs' => $maxCalls,
                 'call_budget' => QueueV4CleanCycleBudget::snapshot(),
                 'ready_before' => $readyBefore,
                 'waiting_before' => $waitingBefore,
@@ -516,13 +572,18 @@ final class QueueV4CleanWorker
             if (($attemptRow['job_state'] ?? '') === 'waiting') {
                 $nextSafeAt = $attemptRow['job_available_at'] ?? null;
             }
+            $physicalReceipt = $this->physicalHttpReceiptForRun($runId);
 
             return [
                 'run_id' => $runId,
                 'claimed' => (int) ($runRow['jobs_claimed'] ?? 0),
                 'completed' => (int) ($runRow['jobs_completed'] ?? 0),
                 'deferred' => (int) ($runRow['jobs_deferred'] ?? 0),
-                'physical_http_calls' => $this->physicalHttpCallsForRun($runId),
+                'physical_http_calls' => $physicalReceipt['physical_http_calls'],
+                'physical_http_calls_certainty' => $physicalReceipt['physical_http_calls_certainty'],
+                'known_physical_calls' => $physicalReceipt['known_physical_calls'],
+                'unresolved_dispatches' => $physicalReceipt['unresolved_dispatches'],
+                'possible_physical_calls_max' => $physicalReceipt['possible_physical_calls_max'],
                 'classification' => $classification !== '' ? $classification : 'no_work',
                 'http_status' => isset($attemptRow['http_status']) ? (int) $attemptRow['http_status'] : null,
                 'next_safe_at' => $nextSafeAt,
@@ -536,48 +597,56 @@ final class QueueV4CleanWorker
                 'claimed' => 0,
                 'completed' => 0,
                 'deferred' => 0,
-                'physical_http_calls' => 0,
+                'physical_http_calls' => null,
+                'physical_http_calls_certainty' => 'UNKNOWN',
+                'known_physical_calls' => 0,
+                'unresolved_dispatches' => 0,
+                'possible_physical_calls_max' => null,
                 'classification' => 'receipt_not_available',
                 'http_status' => null,
                 'next_safe_at' => null,
-                'dispatch_state' => 'NOT_DISPATCHED',
+                'dispatch_state' => 'UNKNOWN',
             ];
         }
     }
 
-    private function physicalHttpCallsForRun(int $runId): int
+    /** @return array{physical_http_calls:?int,physical_http_calls_certainty:string,known_physical_calls:int,unresolved_dispatches:int,possible_physical_calls_max:int} */
+    private function physicalHttpReceiptForRun(int $runId): array
     {
         if ($runId < 1) {
-            return 0;
+            return [
+                'physical_http_calls' => 0,
+                'physical_http_calls_certainty' => 'CERTIFIED',
+                'known_physical_calls' => 0,
+                'unresolved_dispatches' => 0,
+                'possible_physical_calls_max' => 0,
+            ];
         }
-        try {
-            if ($this->hasTable('queue_v4_clean_transport_events')
-                && $this->hasColumn('queue_v4_clean_transport_events', 'attempt_id')) {
-                $events = $this->pdo->prepare(
-                    "SELECT COUNT(DISTINCT e.request_id)
-                     FROM queue_v4_clean_transport_events e
-                     INNER JOIN queue_v4_clean_attempts a
-                       ON a.id=e.attempt_id
-                      AND a.company_id=e.company_id
-                      AND a.meli_account_id=e.meli_account_id
-                     WHERE a.run_id=?
-                       AND e.dispatch_state IN ('PHYSICAL_STARTED','RESPONSE_KNOWN')"
-                );
-                $events->execute([$runId]);
-                $count = (int) $events->fetchColumn();
-                if ($count > 0) {
-                    return $count;
-                }
-            }
-            $attempts = $this->pdo->prepare(
-                'SELECT COALESCE(SUM(physical_http_calls),0)
-                 FROM queue_v4_clean_attempts WHERE run_id=?'
-            );
-            $attempts->execute([$runId]);
-            return (int) $attempts->fetchColumn();
-        } catch (Throwable) {
-            return 0;
-        }
+
+        $events = $this->pdo->prepare(
+            "SELECT
+                    COUNT(DISTINCT CASE WHEN e.dispatch_state='RESPONSE_KNOWN' THEN e.request_id END) known_calls,
+                    COUNT(DISTINCT CASE WHEN e.dispatch_state='PHYSICAL_STARTED'
+                         AND e.response_known_at IS NULL AND e.http_status IS NULL THEN e.request_id END) unresolved_dispatches
+             FROM queue_v4_clean_transport_events e
+             INNER JOIN queue_v4_clean_attempts a
+               ON a.id=e.attempt_id AND a.job_id=e.work_id AND e.source_kind='queue'
+              AND a.company_id=e.company_id
+              AND a.meli_account_id=e.meli_account_id
+             WHERE a.run_id=?"
+        );
+        $events->execute([$runId]);
+        $row = $events->fetch(PDO::FETCH_ASSOC) ?: [];
+        $known = max(0, (int) ($row['known_calls'] ?? 0));
+        $unresolved = max(0, (int) ($row['unresolved_dispatches'] ?? 0));
+
+        return [
+            'physical_http_calls' => $unresolved > 0 ? null : $known,
+            'physical_http_calls_certainty' => $unresolved > 0 ? 'UNKNOWN' : 'CERTIFIED',
+            'known_physical_calls' => $known,
+            'unresolved_dispatches' => $unresolved,
+            'possible_physical_calls_max' => $known + $unresolved,
+        ];
     }
 
     private function hasTable(string $table): bool
@@ -763,11 +832,11 @@ final class QueueV4CleanWorker
         }
 
         if ($capability === 'notification_work_item') {
-            $result = (new NotificationWorkItemService())->processQueueV4Exact(
-                $sourceId,
-                $accountId,
-                $companyId,
-                CronDeadlineContext::deadline(),
+            $result = ApiExecutionMetadataContext::run(
+                $this->domainTransportMeta($job, $source, $capability, $sourceId),
+                static fn (): array => (new NotificationWorkItemService())->processQueueV4Exact(
+                    $sourceId, $accountId, $companyId, CronDeadlineContext::deadline(),
+                ),
             );
             if ((string) ($result['status'] ?? '') === 'complete') {
                 return ['state' => 'completed'];
@@ -784,11 +853,15 @@ final class QueueV4CleanWorker
 
         if ($capability === 'order_enrichment_pack') {
             $service = new OrderEnrichmentService();
-            $result = $service->processQueueV4PackExact(
-                $sourceId,
-                $accountId,
-                $companyId,
-                CronDeadlineContext::deadline(),
+            $result = ApiExecutionMetadataContext::run(
+                $this->domainTransportMeta($job, $source, $capability, $sourceId),
+                fn (): array => $service->processQueueV4PackExact(
+                    $sourceId,
+                    $accountId,
+                    $companyId,
+                    CronDeadlineContext::deadline(),
+                    !$this->confirmedManualSelectionActive,
+                ),
             );
             if ((string) ($result['status'] ?? '') === 'complete') {
                 return ['state' => 'completed'];
@@ -814,9 +887,9 @@ final class QueueV4CleanWorker
                 : $outcome;
         }
 
-        $batchSourceIds = $capability === 'financial_reconciliation'
-            ? $this->repository->contiguousFinancialReconciliationSourceIds($job, 60)
-            : [$sourceId];
+        // Billing automático es estrictamente una venta por GET. Nunca se
+        // admiten fuentes vecinas ni se alinean sus punteros en esta ruta.
+        $batchSourceIds = [$sourceId];
         $batchOutcomes = [];
 
         try {
@@ -836,39 +909,41 @@ final class QueueV4CleanWorker
                         return;
                     }
                     if ($capability === 'financial_recalc') {
-                        (new OrderFinancialRecalcJobService())->processExact($sourceId, $accountId, 1);
+                        $service = new OrderFinancialRecalcJobService();
+                        if ($this->confirmedManualSelectionActive) {
+                            $service->processManualExact($sourceId, $accountId);
+                        } else {
+                            $service->processExact($sourceId, $accountId, 1);
+                        }
                         return;
                     }
                     $batchOutcomes = ($this->financialFactory)()->processDomainExactBatch(
                         $batchSourceIds,
                         $companyId,
                         $accountId,
+                        !$this->confirmedManualSelectionActive,
                     )['outcomes'];
                 }
             );
         } catch (Throwable $error) {
-            if ($capability === 'financial_reconciliation' && count($batchSourceIds) > 1) {
-                $this->repository->alignReadyFinancialReconciliationPointersFromSources(
-                    $companyId,
-                    $accountId,
-                    $batchSourceIds,
-                    $sourceId,
-                );
-            }
             throw $error;
-        }
-        if ($capability === 'financial_reconciliation' && $batchOutcomes !== []) {
-            $this->repository->alignReadyFinancialReconciliationPointers(
-                $companyId,
-                $accountId,
-                $batchOutcomes,
-                $sourceId,
-            );
         }
 
         $source = $this->domainSource($capability, $sourceId, $companyId, $accountId);
         if ($source === null) {
             return ['state' => 'review', 'classification' => 'domain_source_missing_after_process'];
+        }
+        $progressOutcome = $batchOutcomes[$sourceId] ?? null;
+        if ($capability === 'financial_reconciliation'
+            && is_array($progressOutcome)
+            && ($progressOutcome['state'] ?? '') === 'waiting'
+            && ($progressOutcome['classification'] ?? '') === 'domain_source_waiting:financial_reconciliation:billing_checkpoint_progress'
+            && in_array(strtolower((string) ($source['status'] ?? '')), ['pending', 'running', 'retry', 'awaiting_remote'], true)) {
+            return [
+                'state' => 'waiting',
+                'classification' => 'domain_source_waiting:financial_reconciliation:billing_checkpoint_progress',
+                'next_safe_at' => (string) ($source['next_run_at'] ?? ($progressOutcome['next_safe_at'] ?? '')),
+            ];
         }
         return $this->domainOutcome($capability, $source);
     }
@@ -877,7 +952,8 @@ final class QueueV4CleanWorker
     private function domainSource(string $capability, int $sourceId, int $companyId, int $accountId): ?array
     {
         if ($capability === 'notification_work_item') {
-            $sql = 'SELECT w.id,a.company_id,w.meli_account_id,w.status,w.next_run_at,NULL sale_key,NULL external_sale_id
+            $sql = 'SELECT w.id,a.company_id,w.meli_account_id,w.status,w.next_run_at,w.resource_type,
+                          w.remote_resource_id,NULL sale_key,NULL external_sale_id
                FROM meli_notification_work_items w
                JOIN meli_accounts a ON a.id=w.meli_account_id
                WHERE w.id=? AND a.company_id=? AND w.meli_account_id=? LIMIT 1';
@@ -1152,9 +1228,6 @@ final class QueueV4CleanWorker
             || $error instanceof ManualRemoteCallLimitException) {
             return 'break';
         }
-        if ($error instanceof RemoteResultUncertainException) {
-            return 'continue';
-        }
         if ($error instanceof ApiManualPauseException) {
             return $this->manualPauseCycleAction($error);
         }
@@ -1345,6 +1418,14 @@ final class QueueV4CleanWorker
         return (string) ($payload['capability'] ?? '') === 'financial_reconciliation';
     }
 
+    /** @param array<string,mixed> $job */
+    private function jobCapability(array $job): string
+    {
+        $payload = is_array($job['payload'] ?? null) ? $job['payload'] : [];
+
+        return (string) ($payload['capability'] ?? '');
+    }
+
     /** @param array<string,mixed> $job @return array<string,mixed> */
     private function transportMeta(array $job): array
     {
@@ -1354,5 +1435,21 @@ final class QueueV4CleanWorker
             'queue_v4_lease_owner' => (string) ($job['lease_owner'] ?? ''),
             'queue_v4_lease_generation' => (int) ($job['lease_generation'] ?? 0),
         ];
+    }
+
+    /** Resource identity comes only from the tenant-bound durable source, never the job payload. */
+    private function domainTransportMeta(array $job, array $source, string $capability, int $sourceId): array
+    {
+        return [
+            'source' => MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT,
+            'job_type' => 'domain_exact',
+            'company_id' => (int) $source['company_id'],
+            'account_id' => (int) $source['meli_account_id'],
+            'source_queue_key' => $capability,
+            'source_work_id' => (string) $sourceId,
+            'domain_resource_type' => (string) $source['resource_type'],
+            'domain_remote_resource_id' => (string) ($source['remote_resource_id'] ?? $source['external_sale_id']),
+            'bulk' => false,
+        ] + $this->transportMeta($job);
     }
 }

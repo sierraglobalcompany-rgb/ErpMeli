@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace App\QueueV4Clean;
 
 use App\Core\Env;
+use App\Services\AppSettingsService;
+use App\Services\AutomationCallBudgetService;
 use App\Services\CronDeadlineContext;
+use App\Services\CapacityPolicyService;
 use App\Services\EmergencyControlService;
 use App\Services\SalesAuditExactRepairService;
 use App\Work\Adapters\QueueCoreDrainAuthority;
@@ -19,8 +22,18 @@ final class QueueV4CleanScheduler
     }
 
     /** @return array<string,mixed> */
-    public function run(int $maxCalls = QueueV4CleanWorker::DEFAULT_MAX_CALLS, int $runtimeSeconds = 45): array
+    public function run(?int $maxCalls = null, int $runtimeSeconds = 45): array
     {
+        if (QueueV4CleanCycleBudget::snapshot()['limit'] > 0) {
+            throw new \RuntimeException('physical_budget_already_owned');
+        }
+        $capacityService = new AutomationCallBudgetService(
+            new AppSettingsService(),
+            new CapacityPolicyService($this->pdo),
+        );
+        $capacity = $capacityService->resolve($maxCalls);
+        $requestedMaxCalls = $capacity['requested_max_calls'];
+        $maxCalls = $capacity['max_calls'];
         QueueV4CleanOAuthStageContext::reset();
         $startedAt = microtime(true);
         $deadline = $startedAt + max(5, min(45, $runtimeSeconds));
@@ -35,7 +48,10 @@ final class QueueV4CleanScheduler
                 'status' => 'stopped',
                 'processed' => 0,
                 'control_unit' => 'PHYSICAL_API_CALL',
-                'max_calls' => max(1, min(QueueV4CleanWorker::HARD_MAX_CALLS, $maxCalls)),
+                'max_calls' => $maxCalls,
+                'requested_max_calls' => $requestedMaxCalls,
+                'configured_max_calls' => $capacity['configured_max_calls'],
+                'ceiling' => $capacity['ceiling'],
             ];
         }
         $owner = bin2hex(random_bytes(16));
@@ -52,7 +68,10 @@ final class QueueV4CleanScheduler
                 'status' => 'busy',
                 'processed' => 0,
                 'control_unit' => 'PHYSICAL_API_CALL',
-                'max_calls' => max(1, min(QueueV4CleanWorker::HARD_MAX_CALLS, $maxCalls)),
+                'max_calls' => $maxCalls,
+                'requested_max_calls' => $requestedMaxCalls,
+                'configured_max_calls' => $capacity['configured_max_calls'],
+                'ceiling' => $capacity['ceiling'],
             ];
         }
         $drainLeases = new QueueCoreDrainAuthority($this->pdo);
@@ -70,12 +89,19 @@ final class QueueV4CleanScheduler
                 'processed' => 0,
                 'claimed_total' => 0,
                 'control_unit' => 'PHYSICAL_API_CALL',
-                'max_calls' => max(1, min(QueueV4CleanWorker::HARD_MAX_CALLS, $maxCalls)),
+                'max_calls' => $maxCalls,
+                'requested_max_calls' => $requestedMaxCalls,
+                'configured_max_calls' => $capacity['configured_max_calls'],
+                'ceiling' => $capacity['ceiling'],
             ];
         }
-        $maxCalls = max(1, min(QueueV4CleanWorker::HARD_MAX_CALLS, $maxCalls));
-        QueueV4CleanCycleBudget::start($maxCalls);
         try {
+            // The lease wait is a concurrency boundary. Re-read the ERP pair
+            // immediately before beginning physical work so saved reductions win.
+            $capacity = $capacityService->resolve($requestedMaxCalls);
+            $maxCalls = $capacity['max_calls'];
+            $outerDeadline = CronDeadlineContext::deadline();
+            QueueV4CleanCycleBudget::start($maxCalls, 'automatic', $outerDeadline === null ? $deadline : min($deadline,$outerDeadline));
             $oauth = (new QueueV4CleanOAuthSupervisor(
                 $this->pdo,
                 new QueueV4CleanOAuthOperationRepository($this->pdo),
@@ -89,6 +115,9 @@ final class QueueV4CleanScheduler
                     'worker' => ['skipped' => true],
                     'control_unit' => 'PHYSICAL_API_CALL',
                     'max_calls' => $maxCalls,
+                    'requested_max_calls' => $requestedMaxCalls,
+                    'configured_max_calls' => $capacity['configured_max_calls'],
+                    'ceiling' => $capacity['ceiling'],
                     'http_budget' => QueueV4CleanCycleBudget::snapshot(),
                 ];
             }
@@ -109,6 +138,9 @@ final class QueueV4CleanScheduler
                     'claimed_total' => (int) ($oauth['claimed'] ?? 0) + (int) ($salesAudit['claimed'] ?? 0),
                     'control_unit' => 'PHYSICAL_API_CALL',
                     'max_calls' => $maxCalls,
+                    'requested_max_calls' => $requestedMaxCalls,
+                    'configured_max_calls' => $capacity['configured_max_calls'],
+                    'ceiling' => $capacity['ceiling'],
                     'http_budget' => QueueV4CleanCycleBudget::snapshot(),
                 ];
             }
@@ -130,7 +162,9 @@ final class QueueV4CleanScheduler
                 ? (new QueueV4CleanWorker($this->pdo, $repository))->run('scheduler', $availableWorkerCalls, $workerRuntime)
                 : ['claimed' => 0, 'completed' => 0, 'deferred' => 0];
             $workerClaimed = (int) ($worker['claimed'] ?? 0);
-            $salesRepair = QueueV4CleanCycleBudget::remaining() > 0 && CronDeadlineContext::canAcceptWork(3)
+            $protectedStop = in_array((string) ($worker['stop_reason'] ?? ''), ['remote_result_uncertain', 'remote_429_global_pause'], true)
+                ? (string) $worker['stop_reason'] : null;
+            $salesRepair = $protectedStop === null && QueueV4CleanCycleBudget::remaining() > 0 && CronDeadlineContext::canAcceptWork(3)
                 ? (new SalesAuditExactRepairService())->processDue(1)
                 : ['processed' => 0, 'jobs' => 0, 'status' => 'deferred'];
             $repairClaimed = (int) ($salesRepair['jobs'] ?? 0);
@@ -141,9 +175,10 @@ final class QueueV4CleanScheduler
             $this->pdo->exec(
                 "UPDATE queue_v4_clean_control SET last_scheduler_at=UTC_TIMESTAMP(3) WHERE control_key='primary'"
             );
+            $physicalReceipt = QueueV4CleanCycleBudget::snapshot();
             return [
-                'ok' => true,
-                'status' => 'completed',
+                'ok' => $protectedStop === null,
+                'status' => $protectedStop ?? 'completed',
                 'oauth' => $oauth,
                 'recovery' => $recovery,
                 'maintenance' => $maintenance,
@@ -154,8 +189,14 @@ final class QueueV4CleanScheduler
                 'claimed_total' => $claimedTotal,
                 'control_unit' => 'PHYSICAL_API_CALL',
                 'max_calls' => $maxCalls,
-                'physical_http_calls' => (int) (QueueV4CleanCycleBudget::snapshot()['used'] ?? 0),
-                'http_budget' => QueueV4CleanCycleBudget::snapshot(),
+                'requested_max_calls' => $requestedMaxCalls,
+                'configured_max_calls' => $capacity['configured_max_calls'],
+                'ceiling' => $capacity['ceiling'],
+                'physical_http_calls' => $physicalReceipt['physical_http_calls'],
+                'physical_http_calls_certainty' => $physicalReceipt['physical_http_calls_certainty'],
+                'known_physical_calls' => $physicalReceipt['known_physical_calls'],
+                'charged_calls' => $physicalReceipt['used'],
+                'http_budget' => $physicalReceipt,
             ];
         } finally {
             if (isset($drainLeases, $drainAuthority)

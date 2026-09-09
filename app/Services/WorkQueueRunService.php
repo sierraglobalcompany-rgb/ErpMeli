@@ -11,6 +11,44 @@ use Throwable;
 
 final class WorkQueueRunService
 {
+    /** Current worker history, explicitly separate from archived V2/V3 projections.
+     * Run rows do not durably identify outer OAuth/audit stages; never invent a cycle total.
+     */
+    public function v4HistoryPage(int $page = 1, int $perPage = 50): array
+    {
+        (new CronOperationalAccessScope())->assertGlobal();
+        $page = max(1, $page);
+        $perPage = max(10, min(100, $perPage));
+        $pdo = Database::connectionFresh();
+        $total = (int) $pdo->query('SELECT COUNT(*) FROM queue_v4_clean_runs')->fetchColumn();
+        $runs = $pdo->query('SELECT id,launcher,status,started_at,finished_at,jobs_claimed,jobs_completed,jobs_deferred
+            FROM queue_v4_clean_runs ORDER BY id DESC LIMIT ' . $perPage . ' OFFSET ' . (($page - 1) * $perPage))->fetchAll(PDO::FETCH_ASSOC);
+        $evidence = [];
+        if ($runs !== []) {
+            $ids = array_column($runs, 'id');
+            $statement = $pdo->prepare('SELECT a.run_id,COUNT(e.id) sent,
+                SUM(e.dispatch_state="PHYSICAL_STARTED") uncertain
+                FROM queue_v4_clean_attempts a
+                JOIN queue_v4_clean_transport_events e ON e.source_kind="queue"
+                  AND e.work_id=a.job_id AND e.attempt_id=a.id
+                  AND e.company_id=a.company_id AND e.meli_account_id=a.meli_account_id
+                  AND e.lease_generation=a.lease_generation
+                WHERE a.run_id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')
+                GROUP BY a.run_id');
+            $statement->execute($ids);
+            $evidence = array_column($statement->fetchAll(PDO::FETCH_ASSOC), null, 'run_id');
+        }
+        foreach ($runs as &$run) {
+            $row = $evidence[$run['id']] ?? [];
+            $run['known_worker_http_calls'] = (int) ($row['sent'] ?? 0);
+            $run['uncertain_worker_http_calls'] = (int) ($row['uncertain'] ?? 0);
+            $run['physical_http_calls'] = null;
+            $run['evidence_state'] = 'PARTIAL';
+        }
+        unset($run);
+        return ['runs'=>$runs,'total'=>$total,'page'=>$page,'per_page'=>$perPage,'source_engine'=>'queue_v4_clean'];
+    }
+
     public function begin(string $runToken, string $origin): ?int
     {
         if (!(new SchemaInspectorService())->hasTable('system_work_queue_runs')) {

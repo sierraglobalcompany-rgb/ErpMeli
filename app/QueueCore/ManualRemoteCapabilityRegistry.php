@@ -24,6 +24,7 @@ final class ManualRemoteCapabilityRegistry
             'billing_orders'=>['GET','~^/billing/integration/group/ML/order/details$~'],
             'items_discovery'=>['GET','~^/users/[0-9]+/items/search$~'],
             'item_detail'=>['GET','~^/items/[A-Z]{2,4}[0-9]+$~i'],
+            'item_exact'=>['GET','~^/items/[A-Z]{2,4}[0-9]+$~i','item_detail'],
             'item_description'=>['GET','~^/items/[A-Z]{2,4}[0-9]+/description$~i'],
         ];
         $definition=$contracts[$operationKey]??null;

@@ -663,9 +663,9 @@ final class QueueV4DiagnosticBundleService
             'section_failure_can_abort_bundle' => false,
             'bundle_generates_partial' => true,
             'control_unit' => 'PHYSICAL_API_CALL',
-            'cron_max_calls' => (new AutomationCallBudgetService())->resolve(null, null)['max_calls'],
-            'cron_legacy_max_jobs_alias_accepted' => true,
-            'dual_capacity_arguments_fail_closed' => true,
+            'cron_max_calls' => (new AutomationCallBudgetService())->resolve()['max_calls'],
+            'cron_removed_jobs_alias_accepted' => false,
+            'jobs_argument_removed' => true,
             'queue_active' => (string) ($queue['control']['engine_state'] ?? '') === 'ACTIVE',
             'queue_certified' => (string) ($queue['control']['readiness_state'] ?? '') === 'CERTIFIED',
             'ready' => $queue['counts']['ready'] ?? 0,
@@ -722,9 +722,9 @@ final class QueueV4DiagnosticBundleService
             'debug_enabled' => (bool) ($debug['enabled'] ?? false),
             'debug_expires_at' => $debug['expires_at'] ?? null,
             'control_unit' => 'PHYSICAL_API_CALL',
-            'cron_max_calls' => (new AutomationCallBudgetService())->resolve(null, null)['max_calls'],
-            'cron_legacy_max_jobs_alias_accepted' => true,
-            'dual_capacity_arguments_fail_closed' => true,
+            'cron_max_calls' => (new AutomationCallBudgetService())->resolve()['max_calls'],
+            'cron_removed_jobs_alias_accepted' => false,
+            'jobs_argument_removed' => true,
             'queue_active' => (string) ($queue['control']['engine_state'] ?? '') === 'ACTIVE',
             'queue_certified' => (string) ($queue['control']['readiness_state'] ?? '') === 'CERTIFIED',
             'ready' => $queue['counts']['ready'] ?? 0,
@@ -884,8 +884,8 @@ final class QueueV4DiagnosticBundleService
             'control_unit' => 'PHYSICAL_API_CALL',
             'canonical_entrypoint' => 'jobs/queue_v4_clean.php --runtime=45',
             'advanced_override_accepted' => 'jobs/queue_v4_clean.php --runtime=45 --max-calls=1',
-            'legacy_hpanel_alias_accepted' => 'jobs/queue_v4_clean.php --runtime=45 --max-jobs=1',
-            'dual_capacity_arguments_fail_closed' => true,
+            'removed_hpanel_jobs_alias_accepted' => false,
+            'jobs_argument_removed' => true,
             'base_receipt_status' => $this->baseReceiptStatus(),
             'manual_cron_runs_by_diagnostic' => 0,
         ];
@@ -1160,23 +1160,12 @@ final class QueueV4DiagnosticBundleService
             'BILLING_INTERVAL_BLOCK_ACTIVE' => $billingBlock['active'] ? 'YES' : 'NO',
             'BILLING_INTERVAL_BLOCK_UNTIL' => $billingBlock['until'],
             'BILLING_INTERVAL_BLOCK_REMAINING_SECONDS' => $billingBlock['remaining_seconds'],
-            'BILLING_429_STREAK' => (int) ($billing429Backoff['streak'] ?? 0),
-            'BILLING_429_BACKOFF_LEVEL' => (int) ($billing429Backoff['level'] ?? 0),
-            'BILLING_429_BACKOFF_SECONDS' => (int) ($billing429Backoff['backoff_seconds'] ?? 0),
             'BILLING_429_BACKOFF_UNTIL' => $billing429Backoff['backoff_until'] ?? null,
-            'BILLING_429_BACKOFF_ACTIVE' => !empty($billing429Backoff['backoff_active']) ? 'YES' : 'NO',
             'BILLING_429_LAST_REAL_AT' => $billing429Backoff['last_real_at'] ?? null,
             'BILLING_429_LAST_SUCCESS_AT' => $billing429Backoff['last_success_at'] ?? null,
-            'BILLING_429_RETRY_AFTER_SOURCE' => $billing429Backoff['retry_after_source'] ?? 'none',
-            'BILLING_429_RETRY_AFTER_SECONDS' => (int) ($billing429Backoff['retry_after_seconds'] ?? 0),
-            'BILLING_429_RAW_EVENT_ROWS' => (int) ($billing429Backoff['raw_event_rows'] ?? 0),
-            'BILLING_429_UNIQUE_PHYSICAL_EVENTS' => (int) ($billing429Backoff['unique_physical_events'] ?? 0),
-            'BILLING_429_DUPLICATE_ROWS_DEDUPED' => (int) ($billing429Backoff['duplicate_rows_deduped'] ?? 0),
+            ...$this->billingEvidenceProjection($billing429Backoff),
             'BILLING_429_PHYSICAL_CORRELATION_KEY' => (string) ($billing429Backoff['physical_correlation_key'] ?? 'UNKNOWN'),
-            'BILLING_429_CORRELATION_KEY_AVAILABLE' => !empty($billing429Backoff['correlation_key_available']) ? 'YES' : 'NO',
-            'BILLING_429_FALLBACK_DEDUPE_TOLERANCE_MS' => (int) ($billing429Backoff['fallback_dedupe_tolerance_ms'] ?? 3000),
-            'API_REQUEST_LOGS_HAS_RETRY_AFTER_SECONDS' => !empty($billing429Backoff['api_request_logs_has_retry_after_seconds']) ? 'YES' : 'NO',
-            'API_REMOTE_PERMITS_HAS_RETRY_AFTER_SECONDS' => !empty($billing429Backoff['api_remote_permits_has_retry_after_seconds']) ? 'YES' : 'NO',
+            'BILLING_429_FALLBACK_DEDUPE_TOLERANCE_MS' => 0,
             'API_REMOTE_PERMITS_RETRY_AFTER_FALLBACK' => (string) ($billing429Backoff['api_remote_permits_retry_after_fallback'] ?? 'UNKNOWN'),
             'STALE_12H_429_RECONCILIATION' => $this->lastStale429Reconciliation,
             'CURRENT_DUPLICATE_BACKOFF_CAN_BE_RELEASED' => (string) ($this->lastStale429Reconciliation['current_duplicate_backoff_can_be_released'] ?? 'NO'),
@@ -1637,6 +1626,33 @@ final class QueueV4DiagnosticBundleService
     }
 
     /** @param array<string,mixed> $meta @return array<string,mixed> */
+    private function billingEvidenceProjection(array $evidence): array
+    {
+        $state = (string) ($evidence['status'] ?? 'UNKNOWN');
+        $number = static fn (string $key): ?int => isset($evidence[$key]) && is_int($evidence[$key])
+            && $evidence[$key] >= 0 ? $evidence[$key] : null;
+        $flag = static fn (string $key): string => $state !== 'ERROR' && is_bool($evidence[$key] ?? null)
+            ? ($evidence[$key] ? 'YES' : 'NO') : 'UNKNOWN';
+        return [
+            'BILLING_429_EVIDENCE_STATE' => in_array($state, ['OK', 'UNKNOWN', 'ERROR'], true) ? $state : 'UNKNOWN',
+            'BILLING_429_STREAK' => $state === 'OK' ? $number('streak') : null,
+            'BILLING_429_BACKOFF_LEVEL' => $state === 'OK' ? $number('level') : null,
+            'BILLING_429_BACKOFF_SECONDS' => $state !== 'ERROR' ? $number('backoff_seconds') : null,
+            'BILLING_429_BACKOFF_ACTIVE' => $state !== 'ERROR' && is_bool($evidence['backoff_active'] ?? null)
+                ? ($evidence['backoff_active'] ? 'YES' : 'NO') : 'UNKNOWN',
+            'BILLING_429_RETRY_AFTER_SOURCE' => $state !== 'ERROR' ? ($evidence['retry_after_source'] ?? 'UNKNOWN') : 'UNKNOWN',
+            'BILLING_429_RETRY_AFTER_SECONDS' => $state !== 'ERROR' ? $number('retry_after_seconds') : null,
+            'BILLING_429_CORRELATION_KEY_AVAILABLE' => $flag('correlation_key_available'),
+            'API_REQUEST_LOGS_HAS_RETRY_AFTER_SECONDS' => $flag('api_request_logs_has_retry_after_seconds'),
+            'API_REMOTE_PERMITS_HAS_RETRY_AFTER_SECONDS' => $flag('api_remote_permits_has_retry_after_seconds'),
+            'BILLING_429_RAW_EVENT_ROWS' => $number('raw_event_rows'),
+            'BILLING_429_UNIQUE_PHYSICAL_EVENTS' => $state === 'OK' ? $number('unique_physical_events') : null,
+            'BILLING_429_KNOWN_PHYSICAL_EVENTS' => $number('known_physical_events'),
+            'BILLING_429_UNKNOWN_ROWS' => $number('unknown_rows'),
+            'BILLING_429_DUPLICATE_ROWS_DEDUPED' => $number('duplicate_rows_deduped'),
+        ];
+    }
+
     private function billing429BackoffStateForDiagnostic(array &$meta): array
     {
         try {
@@ -1848,7 +1864,7 @@ final class QueueV4DiagnosticBundleService
             ['QUEUE_CONTROL_UNIT', 'Current Queue V4 execution budget unit. Cron and Manual capacity are limited by physical Mercado Libre API calls, not by local queue jobs.', 'QueueV4CleanCycleBudget + QueueV4CleanDispatchFence', 'snapshot', 'instant'],
             ['QUEUE_CRON_MAX_CALLS', 'ERP setting authority for natural cron capacity per cycle.', 'automation.max_api_calls_per_cycle', 'snapshot', 'instant'],
             ['QUEUE_ADVANCED_MAX_CALLS_OVERRIDE', 'Technical support override only; not the primary Hostinger command.', 'jobs/queue_v4_clean.php --max-calls', 'snapshot', 'instant'],
-            ['QUEUE_LEGACY_MAX_JOBS_ALIAS', 'Temporary hPanel compatibility: --max-jobs is accepted only as an alias for --max-calls; using both arguments fails closed.', 'jobs/queue_v4_clean.php argument parser', 'snapshot', 'instant'],
+            ['QUEUE_REMOVED_JOBS_ARGUMENT', 'The old --max-jobs argument is rejected; capacity is configured only as physical API calls.', 'jobs/queue_v4_clean.php argument parser', 'snapshot', 'instant'],
             ['QUEUE_WAITING', 'Current rows in queue_v4_clean_jobs with state=waiting.', 'queue_v4_clean_jobs.state', 'snapshot', 'instant'],
             ['QUEUE_REVIEW', 'Current rows in queue_v4_clean_jobs with state=review.', 'queue_v4_clean_jobs.state', 'snapshot', 'instant'],
             ['BROAD_UNKNOWN_PACKS', 'Packs whose local expected child order authority is unknown or empty.', 'meli_packs expected-count/expected-orders authority', 'snapshot', 'instant'],
@@ -1873,7 +1889,7 @@ final class QueueV4DiagnosticBundleService
             ['FINANCE_WAITING_REASON_COUNTS', 'Finance waiting classified only from actual source-domain truth and recent transport evidence, never from capability name alone.', 'sale_financial_reconciliation_jobs + queue_v4_clean_transport_events', 'snapshot', 'instant'],
             ['BILLING_INTERVAL_SECONDS', 'Current local preventive minimum interval for Billing physical HTTP calls.', 'App\\Services\\ApiRhythmPolicyService::billingPacingDiagnosticPolicy().interval_seconds', 'snapshot', 'instant'],
             ['BILLING_INTERVAL_SCOPE', 'Scope affected by one successful Billing physical HTTP call.', 'App\\Services\\ApiRhythmPolicyService::billingPacingDiagnosticPolicy().scope', 'snapshot', 'instant'],
-            ['BILLING_ORDER_IDS_PER_CALL_LIMIT', 'Maximum order IDs sent in a single Billing physical HTTP call.', 'App\\Services\\SaleFinancialService::billingOrderIdsPerCallLimit()', 'snapshot', 'instant'],
+            ['BILLING_ORDER_IDS_PER_CALL_LIMIT', 'Active maximum order IDs sent in a single Billing physical HTTP call; Calls V2 requires one.', 'App\\Services\\SaleFinancialService::billingOrderIdsPerCallLimit()', 'snapshot', 'instant'],
             ['BILLING_POLICY_FILE_SHA256', 'SHA-256 of the runtime ApiRhythmPolicyService.php file used as Billing policy authority.', 'hash_file(sha256, App\\Services\\ApiRhythmPolicyService.php)', 'snapshot', 'instant'],
             ['BILLING_INTERVAL_DEFER', 'Current Finance waiting rows whose source is due but Queue availability is held by Billing endpoint interval.', 'FINANCE_WAITING_REASON_COUNTS.BILLING_ENDPOINT_INTERVAL', 'snapshot', 'instant'],
             ['FINANCE_NEXT_RUN_HORIZON', 'Buckets current finance waiting rows by the source next_run_at relative to bundle generation time.', 'sale_financial_reconciliation_jobs.next_run_at', 'snapshot', 'instant'],
@@ -3003,14 +3019,14 @@ final class QueueV4DiagnosticBundleService
             throw new \RuntimeException('csv_open_failed');
         }
         $columns = ['id_hash','company_id_hash','meli_account_id_hash','job_type','work_type','source_table','source_id_hash','state','available_at','attempt_count','last_error_class','reason','reason_code','reason_human','exit_condition_human','created_at','updated_at'];
-        fputcsv($fp, $columns);
+        fputcsv($fp, $columns, ',', '"', '\\', "\n");
         foreach ($rows as $row) {
             $line = [];
             foreach ($columns as $col) {
                 $value = $row[$col] ?? '';
                 $line[] = is_scalar($value) || $value === null ? (string) $value : json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
             }
-            fputcsv($fp, $line);
+            fputcsv($fp, $line, ',', '"', '\\', "\n");
         }
         fclose($fp);
     }

@@ -73,7 +73,7 @@ $nowLocal = (new DateTimeImmutable('now', new DateTimeZone(DateTimePresenter::ti
       <span><strong>Hora local ERP:</strong> <?= View::e($nowLocal) ?></span>
       <span><strong>Cron:</strong> <?= View::e($cron['label'] ?? 'Sin señales') ?></span>
       <span><strong>Próxima ejecución:</strong> <?= View::e($next ? DateTimePresenter::formatQueue($next['next_run_at']) : 'Sin bloques') ?></span>
-      <span><strong>Ventanas por ciclo:</strong> <?= (int)$settings->queueMaxChunksPerRun() ?></span>
+      <span><strong>Capacidad:</strong> <a href="<?= View::e($base) ?>/settings/cron/rhythm">Presupuesto de llamadas API</a></span>
       <span><strong>Continuación:</strong> <?= (int)$settings->continuationDelayMinutes() ?> min</span>
     </div>
     <?php if (!empty($globalStatus['latest_error'])): $err = $globalStatus['latest_error']; ?>
@@ -149,7 +149,7 @@ $nowLocal = (new DateTimeImmutable('now', new DateTimeZone(DateTimePresenter::ti
 
 <section class="metrics">
   <article class="metric-card"><div><div class="metric-label">División por defecto</div><div class="metric-value"><?= View::e($settings->chunkMode()==='weekly'?'Semanal':'Por partes') ?></div></div></article>
-  <article class="metric-card"><div><div class="metric-label">Máximo por ejecución</div><div class="metric-value"><?= (int) $settings->maxOrdersPerRun() ?></div></div></article>
+  <article class="metric-card"><div><div class="metric-label">Llamadas API por ciclo</div><div class="metric-value"><a class="link" href="<?= View::e($base) ?>/settings/cron/rhythm">Ver presupuesto</a></div></div></article>
   <article class="metric-card"><div><div class="metric-label">Inicio sugerido</div><div class="metric-value"><?= (int) $settings->defaultEnqueueDelayMinutes() ?> min</div></div></article>
   <article class="metric-card"><div><div class="metric-label">Protección API</div><div class="metric-value"><a class="link" href="<?= View::e($base) ?>/sync/guardrails">Ver</a></div></div></article>
 </section>

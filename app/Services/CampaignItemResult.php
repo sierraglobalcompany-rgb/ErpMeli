@@ -16,6 +16,7 @@ final readonly class CampaignItemResult
         public ?string $nextEligibleAt = null,
         public ?string $diagnosticId = null,
         public ?string $reason = null,
+        public ?int $httpStatus = null,
     ) {
     }
 

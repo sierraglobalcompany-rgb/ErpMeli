@@ -33,6 +33,11 @@ final class QueueV4CleanUncertainReadRecoveryService
                  WHERE j.state='review' AND j.job_type IN ('fresh_orders_discovery','order_exact')
                    AND j.last_error_class IN ('remoteresultuncertainexception','remote_result_uncertain')
                    AND a.outcome='review' AND e.id IS NULL
+                   AND a.dispatch_state='NOT_DISPATCHED'
+                   AND NOT EXISTS (SELECT 1 FROM queue_v4_clean_transport_events physical
+                       WHERE physical.source_kind='queue' AND physical.work_id=j.id
+                         AND physical.attempt_id=a.id AND physical.company_id=j.company_id
+                         AND physical.meli_account_id=j.meli_account_id)
                  ORDER BY j.id LIMIT 1 FOR UPDATE"
             )->fetchAll(PDO::FETCH_ASSOC);
             if ($row === []) {

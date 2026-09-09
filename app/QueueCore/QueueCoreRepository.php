@@ -260,10 +260,10 @@ final class QueueCoreRepository
             if(!$this->lockFence($claim,'running')){$this->pdo->rollBack();return false;}
             $job=$this->pdo->prepare("UPDATE queue_core_jobs SET dispatch_state='NOT_DISPATCHED',updated_at=UTC_TIMESTAMP(3) WHERE id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND state='running' AND dispatch_state='DISPATCHED_RESULT_UNCERTAIN'");
             $job->execute([$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
-            $attempt=$this->pdo->prepare("UPDATE queue_core_attempts SET dispatch_state='NOT_DISPATCHED',physical_http_calls=0,physical_http_started_at=NULL WHERE id=? AND job_id=? AND lease_owner=? AND lease_generation=? AND dispatch_state='DISPATCHED_RESULT_UNCERTAIN' AND physical_http_calls=1 AND response_known_at IS NULL");
-            $attempt->execute([$attemptId,$claim->id,$claim->leaseOwner,$claim->leaseGeneration]);
-            $journal=$this->pdo->prepare("UPDATE queue_core_dispatch_journal SET state='cancelled_before_remote' WHERE attempt_id=? AND lease_owner=? AND lease_generation=? AND state='in_flight'");
-            $journal->execute([$attemptId,$claim->leaseOwner,$claim->leaseGeneration]);
+            $attempt=$this->pdo->prepare("UPDATE queue_core_attempts SET dispatch_state='NOT_DISPATCHED',physical_http_calls=0,physical_http_started_at=NULL,dispatch_reserved_at=NULL,error_class='cancelled_before_remote' WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND dispatch_state='DISPATCHED_RESULT_UNCERTAIN' AND physical_http_calls=1 AND response_known_at IS NULL");
+            $attempt->execute([$attemptId,$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
+            $journal=$this->pdo->prepare("UPDATE queue_core_dispatch_journal SET state='cancelled_before_remote' WHERE attempt_id=? AND job_id=? AND company_id=? AND meli_account_id=? AND lease_owner=? AND lease_generation=? AND state='in_flight'");
+            $journal->execute([$attemptId,$claim->id,$claim->companyId,$claim->meliAccountId,$claim->leaseOwner,$claim->leaseGeneration]);
             if($job->rowCount()!==1||$attempt->rowCount()!==1||$journal->rowCount()!==1){$this->pdo->rollBack();return false;}
             $this->pdo->commit();return true;
         }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
@@ -388,13 +388,30 @@ final class QueueCoreRepository
      * global manual execution lease. A still-live claimed/running row remains
      * busy. An expired uncertain dispatch is closed only as action-required;
      * it is never made retryable or presented as safely not dispatched.
+     * Pending rows require durable consumed-preview provenance and a newer
+     * global owner; the caller admits the fresh preview before any recovery.
      */
-    public function recoverAbandonedManualJobs(): int
+    public function recoverAbandonedManualJobs(?QueueExecutionLease $executionLease=null,array $items=[],array $pendingIds=[]): int
     {
         $this->pdo->beginTransaction();
         try{
-            $q=$this->pdo->query("SELECT * FROM queue_core_jobs WHERE queue_domain='manual' AND work_type='manual_exact' AND state IN ('claimed','running') AND lease_expires_at<=UTC_TIMESTAMP(3) ORDER BY id FOR UPDATE");
             $recovered=0;
+            if($pendingIds!==[]){
+                if($executionLease===null)throw new RuntimeException('Manual pending recovery requires current execution authority.');
+                // Lock the current global authority and exact certified rows.
+                // Classification before admission never performs these writes.
+                $pending=$this->certifiedPendingManualRows($items,$executionLease,true);
+                $pending=array_values(array_filter($pending,static fn(array $row):bool=>in_array((int)$row['id'],$pendingIds,true)));
+                if(count($pending)!==count($pendingIds))throw new ManualFifoBusyException();
+                foreach($pending as $row){
+                    $u=$this->pdo->prepare("UPDATE queue_core_jobs SET state='review',completed_at=UTC_TIMESTAMP(3),last_error_class='manual_preclaim_orphan',lease_generation=lease_generation+1,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND company_id=? AND meli_account_id=? AND state='pending' AND lease_owner IS NULL AND lease_generation=0 AND dispatch_state='NOT_DISPATCHED'");
+                    $u->execute([(int)$row['id'],(int)$row['company_id'],(int)$row['meli_account_id']]);
+                    if($u->rowCount()!==1)throw new ManualFifoBusyException();
+                    $this->event((int)$row['id'],(int)$row['company_id'],(int)$row['meli_account_id'],(string)$row['lane'],'review');
+                    $recovered++;
+                }
+            }
+            $q=$this->pdo->query("SELECT * FROM queue_core_jobs WHERE queue_domain='manual' AND work_type='manual_exact' AND state IN ('claimed','running') AND lease_expires_at<=UTC_TIMESTAMP(3) ORDER BY id FOR UPDATE");
             foreach($q->fetchAll(PDO::FETCH_ASSOC) as $row){
                 $uncertain=(string)$row['dispatch_state']==='DISPATCHED_RESULT_UNCERTAIN';
                 $reason=$uncertain?'remote_result_uncertain':'manual_launcher_abandoned';
@@ -409,6 +426,48 @@ final class QueueCoreRepository
             }
             $this->pdo->commit();return $recovered;
         }catch(Throwable $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}
+    }
+
+    /** Read-only pre-admission classification, not recovery. @return list<int> */
+    public function pendingManualOrphans(array $items,QueueExecutionLease $lease): array
+    {
+        return array_map(static fn(array $row):int=>(int)$row['id'],$this->certifiedPendingManualRows($items,$lease));
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function certifiedPendingManualRows(array $items,QueueExecutionLease $lease,bool $lock=false): array
+    {
+        $scopes=[];$params=[$lease->ownerToken,$lease->generation];
+        foreach($items as $item){
+            $identity=[(int)($item['company_id']??0),(int)($item['account_id']??0),(int)($item['manual_user_id']??0)];
+            if(min($identity)<1 || (int)($item['manual_preview_id']??0)<1)continue;
+            $scopes[implode(':',$identity)]=$identity;
+        }
+        if($scopes===[])return [];
+        foreach($scopes as $identity)array_push($params,...$identity);
+        $sql="SELECT j.id,j.company_id,j.meli_account_id,j.lane
+            FROM queue_core_jobs j
+            JOIN manual_campaign_previews p ON p.id=CAST(JSON_UNQUOTE(JSON_EXTRACT(j.provenance_json,'$.manual_preview_id')) AS UNSIGNED)
+            JOIN meli_accounts account ON account.id=j.meli_account_id AND account.company_id=j.company_id
+            JOIN queue_core_execution_leases e ON e.lease_key='global' AND e.launcher='manual'
+              AND e.owner_token=? AND e.generation=? AND e.expires_at>UTC_TIMESTAMP(3)
+            WHERE j.queue_domain='manual' AND j.work_type='manual_exact' AND j.source='manual_web'
+              AND j.state='pending' AND j.dispatch_state='NOT_DISPATCHED' AND j.attempt_count=0
+              AND j.lease_owner IS NULL AND j.lease_expires_at IS NULL AND j.lease_generation=0
+              AND JSON_UNQUOTE(JSON_EXTRACT(j.provenance_json,'$.launcher'))='manual_single_step'
+              AND p.status='consumed' AND p.consumed_at IS NOT NULL
+              AND p.created_by_user_id=CAST(JSON_UNQUOTE(JSON_EXTRACT(j.provenance_json,'$.manual_user_id')) AS UNSIGNED)
+              AND CAST(JSON_UNQUOTE(JSON_EXTRACT(j.provenance_json,'$.execution_generation')) AS UNSIGNED)>0
+              AND CAST(JSON_UNQUOTE(JSON_EXTRACT(j.provenance_json,'$.execution_generation')) AS UNSIGNED)<e.generation
+              AND JSON_UNQUOTE(JSON_EXTRACT(j.provenance_json,'$.execution_owner')) REGEXP '^manual-[a-f0-9]{16}$'
+              AND JSON_UNQUOTE(JSON_EXTRACT(j.provenance_json,'$.execution_owner'))<>e.owner_token
+              AND EXISTS (SELECT 1 FROM manual_campaign_preview_items i WHERE i.manual_campaign_preview_id=p.id
+                  AND i.queue_key=j.resource_type AND i.source_id=j.resource_id AND i.meli_account_id=j.meli_account_id)
+              AND NOT EXISTS (SELECT 1 FROM queue_core_attempts a WHERE a.job_id=j.id)
+              AND (".implode(' OR ',array_fill(0,count($scopes),'(j.company_id=? AND j.meli_account_id=? AND p.created_by_user_id=?)')).")
+            ORDER BY j.id".($lock?' FOR UPDATE':'');
+        $statement=$this->pdo->prepare($sql);$statement->execute($params);
+        return $statement->fetchAll(PDO::FETCH_ASSOC);
     }
 
     /** @return array{retry_wait:int,review:int,dead:int} */
@@ -452,7 +511,7 @@ final class QueueCoreRepository
                     WHERE t.meli_account_id=queue_core_jobs.meli_account_id
                       AND t.refresh_version>COALESCE(queue_core_jobs.wait_refresh_version,0)
                       AND t.expires_at>DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 120 SECOND))))
-              ORDER BY id ASC LIMIT 1";
+              ORDER BY available_at ASC,id ASC LIMIT 1";
         $statement=$this->pdo->prepare($sql);
         $statement->execute([...$types,$domain]);
         $row=$statement->fetch(PDO::FETCH_ASSOC);
@@ -469,9 +528,9 @@ final class QueueCoreRepository
         if($request->accountId!==null){$sql.=' AND j.meli_account_id=?';$params[]=$request->accountId;}
         if($request->domain()!==null){$sql.=' AND j.queue_domain=?';$params[]=$request->domain();}
         // Retry/wait rows keep their original id. While blocked they are not
-        // executable; once eligible again they re-enter at that stable FIFO
-        // position instead of receiving a new priority or arrival sequence.
-        $sql.=" ORDER BY j.id ASC LIMIT 1 FOR UPDATE";
+        // executable; once eligible again they re-enter by their effective
+        // available_at timestamp, with id only as the stable tie-breaker.
+        $sql.=" ORDER BY j.available_at ASC,j.id ASC LIMIT 1 FOR UPDATE";
         $s=$this->pdo->prepare($sql);$s->execute($params);$r=$s->fetch(PDO::FETCH_ASSOC);
         if(is_array($r) && $request->targetJobId!==null && (int)$r['id']!==$request->targetJobId)return null;
         return is_array($r)?$r:null;

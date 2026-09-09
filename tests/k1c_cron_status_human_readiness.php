@@ -14,6 +14,6 @@ k1b_assert(str_contains($cron, 'Máximo de llamadas API por ciclo'), 'Cron shell
 k1b_assert(str_contains($cron, 'queue_v4_clean.php --runtime=45'), 'Cron shell must expose the canonical runtime command.');
 k1b_assert(!str_contains($cron, 'queue_v4_clean.php --runtime=45 --max-calls='), 'Primary cron command must not contain max-calls.');
 k1b_assert(str_contains($cron, 'Pendientes ahora'), 'Cron shell must show pending state in human language.');
-k1b_assert(str_contains($cron, 'Comando') && str_contains($cron, '--max-calls') && str_contains($cron, '--max-jobs'), 'Technical overrides must remain only in advanced diagnostics.');
+k1b_assert(str_contains($cron, 'Comando') && str_contains($cron, '--max-calls') && str_contains($cron, '--max-jobs') && str_contains($cron, 'fue retirado'), 'Technical overrides must mention calls and reject jobs.');
 
 echo "STATUS=PASS K1C_CRON_STATUS_HUMAN_READINESS\n";

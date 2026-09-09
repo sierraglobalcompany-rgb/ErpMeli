@@ -328,6 +328,69 @@ final class SaleFinancialStateService
         return true;
     }
 
+    /**
+     * Persiste un checkpoint remoto de una sola orden de Billing. No cambia el
+     * estado financiero actual de la venta; la publicación se hace cuando la
+     * venta completa reúne todos sus checkpoints exactos.
+     *
+     * @param array<string,mixed> $job
+     * @param list<array<string,mixed>> $lines
+     * @param array<string,mixed> $metadata
+     */
+    public function recordBillingOrderCheckpoint(
+        PDO $pdo,
+        array $job,
+        int $captureId,
+        string $orderId,
+        array $lines,
+        string $status,
+        string $message,
+        string $responseHash,
+        int $httpStatus,
+        string $responseClass,
+        array $metadata
+    ): void {
+        $payload = [
+            'format' => 'billing_order_v2',
+            'capture_id' => $captureId,
+            'order_id' => $orderId,
+            'status' => $status,
+            'message' => mb_substr($message, 0, 500),
+            'response_hash' => $responseHash,
+            'http_status' => $httpStatus,
+            'response_class' => $responseClass,
+            'request_id' => (string) ($metadata['request_id'] ?? ''),
+            'response_item_count' => (int) ($metadata['response_item_count'] ?? 0),
+            'lines' => array_map(static fn (array $line): array => [
+                'capture_id' => $captureId,
+                'external_order_id' => (string) ($line['external_order_id'] ?? ''),
+                'detail_id' => $line['detail_id'] ?? null,
+                'line_group' => (string) ($line['line_group'] ?? 'other'),
+                'line_type' => $line['line_type'] ?? null,
+                'line_subtype' => $line['line_subtype'] ?? null,
+                'description' => $line['description'] ?? null,
+                'amount' => (float) ($line['amount'] ?? 0),
+                'direction' => (string) ($line['direction'] ?? 'neutral'),
+                'is_shared' => (int) ($line['is_shared'] ?? 0),
+                'line_hash' => (string) ($line['line_hash'] ?? ''),
+                'occurred_at' => $line['occurred_at'] ?? null,
+            ], $lines),
+        ];
+        $this->insertEvidence(
+            $pdo,
+            (int) $job['company_id'],
+            (int) $job['meli_account_id'],
+            (string) $job['sale_key'],
+            (string) $job['input_version'],
+            'billing_capture',
+            $status,
+            $captureId,
+            $payload,
+            null,
+            null
+        );
+    }
+
     /** @return array<string,mixed> */
     private function scopeForOrder(int $orderId): array
     {

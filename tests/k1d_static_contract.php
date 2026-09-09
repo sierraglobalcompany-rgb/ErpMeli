@@ -28,14 +28,14 @@ foreach (compact('budget', 'job', 'worker', 'rhythm', 'client', 'email', 'migrat
 k1b_assert(str_contains($budget, "SETTING_KEY = 'automation.max_api_calls_per_cycle'"), 'budget_setting_key');
 k1b_assert(str_contains($budget, 'public const DEFAULT = 1'), 'budget_default_1');
 k1b_assert(str_contains($budget, 'public const MIN = 1'), 'budget_min_1');
-k1b_assert(str_contains($budget, 'public const HARD_MAX = 15'), 'budget_hard_max_15');
+k1b_assert(str_contains($budget, 'public const HARD_MAX = CapacityPolicyService::TECHNICAL_MAX'), 'budget_shared_technical_max');
 k1b_assert(str_contains($budget, 'CLI_MAX_CALLS_OVERRIDE'), 'cli_override_source');
-k1b_assert(str_contains($budget, 'LEGACY_MAX_JOBS_OVERRIDE'), 'legacy_override_source');
+k1b_assert(!str_contains($budget, 'LEGACY_MAX_JOBS_OVERRIDE'), 'legacy_jobs_not_capacity_source');
 k1b_assert(str_contains($budget, 'ERP_SETTINGS'), 'settings_source');
 k1b_assert(str_contains($budget, 'SAFE_DEFAULT'), 'safe_default_source');
 
 k1b_assert(str_contains($job, "Database::useProfile('cli');") && strpos($job, "Database::useProfile('cli');") < strpos($job, '$budget ='), 'cli_profile_before_settings');
-k1b_assert(str_contains($parser, 'dual_capacity_arguments') && str_contains($job, 'AutomationCliCapacityArgumentParser'), 'dual_capacity_fails_closed');
+k1b_assert(str_contains($parser, 'legacy_capacity_argument_removed') && str_contains($job, 'AutomationCliCapacityArgumentParser'), 'legacy_jobs_fails_closed');
 k1b_assert(str_contains($parser, 'invalid_capacity_argument') && str_contains($parser, "preg_match('/^\\d+$/"), 'invalid_cli_fails_closed');
 k1b_assert(str_contains($job, "'control_unit' =") || str_contains($job, '$result[\'control_unit\'] = \'PHYSICAL_API_CALL\''), 'job_control_unit');
 
@@ -48,7 +48,9 @@ k1b_assert(str_contains($rhythm, 'ORDERS_SEARCH_LOCAL_CEILING = 3'), 'orders_sea
 
 k1b_assert(substr_count($worker, 'remote_429_global_pause') >= 3, 'worker_global_429_scope');
 k1b_assert(str_contains($worker, '$endReason = \'remote_429_global_pause\';') && str_contains($worker, 'break;'), 'worker_429_breaks_cycle');
-k1b_assert(str_contains($worker, '$endReason !== \'remote_429_global_pause\' && QueueV4CleanCycleBudget::exhausted()'), 'worker_429_stop_reason_priority');
+$protectedReason = strpos($worker, "in_array(\$endReason, ['remote_429_global_pause', 'remote_result_uncertain'], true)");
+$budgetReason = strpos($worker, "\$endReason = 'call_budget_exhausted';");
+k1b_assert($protectedReason !== false && $budgetReason !== false && $protectedReason < $budgetReason, 'worker_429_stop_reason_priority');
 k1b_assert(str_contains($client, 'notifyCriticalApiIncident'), 'client_calls_email_alert');
 k1b_assert(substr_count($client, 'remote_429_global_pause') >= 2, 'client_429_global_scope');
 k1b_assert(str_contains($client, "\$meta['source']") && str_contains($client, "\$meta['job_type']") && str_contains($client, "\$meta['source_work_id']"), 'email_context_uses_canonical_meta');

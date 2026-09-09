@@ -6,7 +6,7 @@ use App\Services\AutomationCallBudgetService;
 
 $base = rtrim(Env::get('APP_URL', ''), '/');
 $csrfToken = Csrf::token();
-$callBudget = (new AutomationCallBudgetService())->resolve(null, null);
+$callBudget = (new AutomationCallBudgetService())->resolve();
 $maxCalls = (int) $callBudget['max_calls'];
 ?>
 <div class="page-head cron-page-head">
@@ -126,7 +126,7 @@ $maxCalls = (int) $callBudget['max_calls'];
       <section class="cron-truth-grid" aria-label="Detalles internos">
         <article><span>Readiness GET</span><strong data-qv4-readiness>0/3</strong><p>GET /users/me por cuenta.</p></article>
         <article><span>Programador</span><strong data-qv4-scheduler>Inactivo</strong><p>Estado configurado, no acción manual.</p></article>
-        <article><span>Comando</span><strong>queue_v4_clean.php --runtime=45</strong><p>Entrada canónica. Los overrides <code>--max-calls</code> y <code>--max-jobs</code> quedan sólo para soporte técnico avanzado.</p></article>
+        <article><span>Comando</span><strong>queue_v4_clean.php --runtime=45</strong><p>Entrada canónica. <code>--max-calls</code> queda sólo como reductor técnico; <code>--max-jobs</code> fue retirado.</p></article>
         <article><span>Legado consultado</span><strong data-qv4-legacy>No</strong><p>Debe permanecer fuera de autoridad.</p></article>
       </section>
       <section class="cron-truth-grid" aria-label="OAuth técnico" data-qv4-oauth-operations>
@@ -158,7 +158,7 @@ $maxCalls = (int) $callBudget['max_calls'];
   <details class="technical-details cron-admin-actions">
     <summary><span>Acciones administrativas</span><span aria-hidden="true">⌄</span></summary>
     <div class="technical-details-body">
-      <p>Estas acciones conservan sesión administrativa, CSRF y contraseña.</p>
+      <p>Prepare sin llamadas y compruebe cada cuenta por separado: máximo una llamada por clic. La confirmación administrativa dura diez minutos; activar o detener conserva su confirmación independiente.</p>
       <label>Contraseña administrativa
         <input type="password" autocomplete="current-password" data-qv4-password>
       </label>
@@ -166,7 +166,13 @@ $maxCalls = (int) $callBudget['max_calls'];
         <form method="post" action="<?= View::e($base) ?>/settings/cron/queue-v4/readiness" data-qv4-action="readiness">
           <input type="hidden" name="_token" value="<?= View::e($csrfToken) ?>">
           <input type="hidden" name="admin_password" value="">
-          <button class="btn primary" type="submit" disabled>Comprobar y certificar</button>
+          <input type="hidden" name="action" value="prepare">
+          <button class="btn primary" type="submit" disabled>Preparar comprobación · sin llamadas</button>
+        </form>
+        <form method="post" action="<?= View::e($base) ?>/settings/cron/queue-v4/readiness" data-qv4-action="cancel">
+          <input type="hidden" name="_token" value="<?= View::e($csrfToken) ?>">
+          <input type="hidden" name="action" value="cancel">
+          <button class="btn" type="submit" disabled>Cancelar comprobación</button>
         </form>
         <form method="post" action="<?= View::e($base) ?>/settings/cron/queue-v4/activate" data-qv4-action="activate">
           <input type="hidden" name="_token" value="<?= View::e($csrfToken) ?>">
@@ -179,6 +185,8 @@ $maxCalls = (int) $callBudget['max_calls'];
           <button class="btn danger" type="submit" disabled>Detener</button>
         </form>
       </div>
+      <p class="muted mt-2" data-qv4-progress aria-live="polite">Sin comprobación preparada.</p>
+      <p class="muted" data-qv4-selected-accounts></p>
       <p class="muted mt-2" data-qv4-feedback aria-live="polite">Cargando estado sin mutaciones…</p>
     </div>
   </details>

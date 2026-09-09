@@ -23,11 +23,7 @@ final class SettingsDefinitionRepository
             ]),
             'synchronization' => $this->sectionDefinition('Sincronización y automatización', 'Capacidad, pausas y organización de pendientes de órdenes.', 'refresh', [
                 $this->number('sync.max_manual_range_days', 'Rango manual máximo', 7, 1, 31, 'días', 'Limita el periodo de una sincronización iniciada desde la web.'),
-                $this->number('sync.page_limit', 'Órdenes por consulta', 50, 1, 100, 'órdenes', 'Un número menor reduce la carga de cada llamada API.'),
-                $this->number('sync.max_orders_per_run', 'Máximo por ejecución', 500, 1, 500, 'órdenes', 'Límite duro por ciclo. Aunque la base contenga un valor mayor, el ERP nunca procesará más de 500.'),
-                $this->number('sync.max_api_pages_per_run', 'Páginas API por ejecución', 5, 1, 10, 'páginas', 'Límite duro de páginas remotas por ciclo; evita recorridos ilimitados aunque una configuración antigua sea incorrecta.'),
                 $this->select('sync.chunk_mode', 'División mensual', 'daily', ['daily' => 'Por día (recomendado)', 'weekly' => 'Por semana', 'parts' => 'Por número de partes'], 'Define cómo se divide un mes antes de crear pendientes.', true),
-                $this->number('sync.queue_max_chunks_per_run', 'Ventanas tomadas por cron', 3, 1, 20, 'ventanas', 'Límite técnico heredado; la capacidad visible del operador son llamadas API físicas.', true),
                 $this->select('sync.default_enqueue_delay_minutes', 'Inicio sugerido', '5', ['0' => 'Ahora', '5' => 'En 5 minutos', '30' => 'En 30 minutos', '60' => 'En 1 hora'], 'Momento predeterminado al crear pendientes.'),
                 $this->select('sync.overdue_reschedule_default_minutes', 'Reprogramación predeterminada', '5', ['0' => 'Ahora', '5' => 'En 5 minutos', '10' => 'En 10 minutos', '20' => 'En 20 minutos', '30' => 'En 30 minutos'], 'Momento sugerido al recuperar pendientes vencidos.'),
                 $this->number('sync.pause_between_pages_ms', 'Pausa entre páginas', 400, 0, 10000, 'ms', 'Reduce ráfagas hacia Mercado Libre.', true),
@@ -42,9 +38,24 @@ final class SettingsDefinitionRepository
                 $this->number('api.budget.global_requests_per_15m', 'Capacidad general', 300, 1, 10000, 'llamadas API / 15 min', 'Límite preventivo de toda la aplicación.'),
                 $this->number('api.budget.account_requests_per_15m', 'Capacidad por cuenta', 120, 1, 5000, 'llamadas API / 15 min', 'Evita que una cuenta consuma todo el presupuesto.'),
                 $this->managed(
-                    $this->number('automation.max_api_calls_per_cycle', 'Máximo de llamadas API por ciclo automático', 1, 1, 15, 'llamadas API', 'Unidad operativa canónica del cron automático. Se aumenta manualmente sólo con evidencia sana.'),
+                    $this->number('automation.max_api_calls_per_cycle', 'Máximo de llamadas API por ciclo automático', 1, 1, 100, 'llamadas API', 'Configurar y confirmar en Automatización. No puede superar el techo automático.'),
                     '/settings/cron/rhythm',
                     'Cambiar en Automatización y seguridad API'
+                ),
+                $this->managed(
+                    $this->number('automation.api_calls_ceiling', 'Techo de llamadas API automático', 55, 1, 100, 'llamadas API', 'Configurar y confirmar en Automatización. Cambiar el techo no cambia el presupuesto actual.'),
+                    '/settings/cron/rhythm',
+                    'Cambiar en Automatización y seguridad API'
+                ),
+                $this->managed(
+                    $this->number('manual.api_calls_per_step', 'Máximo de llamadas API por paso manual', 1, 1, 100, 'llamadas API', 'Configurar y confirmar en Procesar ahora. Conserva la capacidad heredada mientras no se guarde.'),
+                    '/settings/manual-processing',
+                    'Cambiar en Procesar ahora'
+                ),
+                $this->managed(
+                    $this->number('manual.api_calls_ceiling', 'Techo de llamadas API manual', 55, 1, 100, 'llamadas API', 'Configurar y confirmar en Procesar ahora. Independiente del techo automático.'),
+                    '/settings/manual-processing',
+                    'Cambiar en Procesar ahora'
                 ),
                 $this->number('api.budget.web_request_api_limit', 'Máximo desde una pantalla', 10, 1, 100, 'llamadas API', 'Las operaciones mayores deben pasar a automatización.'),
                 $this->number('oauth.auto_refresh_lead_seconds', 'Anticipación de renovación OAuth', 3600, 300, 7200, 'segundos', 'La automatización renueva antes del vencimiento sin alterar la barrera comercial.', true),
@@ -65,6 +76,11 @@ final class SettingsDefinitionRepository
                 $this->number('api.rhythm.billing_429_backoff_2_minutes', 'Billing 429 · segunda pausa', 120, 5, 720, 'min', 'Sólo para Billing 429 remoto real; Retry-After de Mercado Libre prevalece.', true),
                 $this->number('api.rhythm.billing_429_backoff_3_minutes', 'Billing 429 · tercera pausa', 360, 5, 720, 'min', 'Sólo para Billing 429 remoto real; Retry-After de Mercado Libre prevalece.', true),
                 $this->number('api.rhythm.billing_429_backoff_max_minutes', 'Billing 429 · pausa máxima', 720, 5, 720, 'min', 'Sólo para Billing 429 remoto real; Retry-After de Mercado Libre prevalece.', true),
+                $this->managed(
+                    $this->number('api.rhythm.billing_min_interval_seconds', 'Ritmo Billing · intervalo mínimo', 300, 1, 3600, 'seg', 'Ritmo Billing: 1 llamada cada N segundos. Compartido por automático y manual; no cambia presupuestos ni acorta pausas 429.', true),
+                    '/settings/cron/rhythm',
+                    'Cambiar en Automatización y seguridad API'
+                ),
                 $this->number('api.rhythm.shared_429_backoff_seconds', '429 remoto · pausa global compartida', 1800, 300, 86400, 'seg', 'Barrera simple para todas las fuentes automáticas cuando Mercado Libre responde 429 sin Retry-After.', true),
                 $this->number('api.rhythm.orders_search_requests_per_15m', 'Búsqueda de órdenes · techo local', 3, 1, 30, 'llamadas / 15 min', 'Límite específico de /orders/search; no reemplaza el máximo total por ciclo.', true),
                 $this->managed(
@@ -101,14 +117,10 @@ final class SettingsDefinitionRepository
             'communications' => $this->sectionDefinition('Preguntas, reclamos y notificaciones', 'Frecuencia y límites de atención y eventos.', 'bell', [
                 $this->bool('questions.sync_enabled', 'Sincronización general retirada', false, 'Debe permanecer apagada: no existe consumidor automático vigente.'),
                 $this->bool('questions.endpoint_confirmed', 'Búsqueda general retirada', false, 'Debe permanecer apagada. Las preguntas exactas notificadas conservan su ruta segura.'),
-                $this->number('questions.page_limit', 'Preguntas por consulta', 50, 1, 100, 'preguntas', 'Límite por página.'),
-                $this->number('questions.lookback_hours', 'Ventana de revisión', 48, 1, 720, 'horas', 'Revisa preguntas recientes y reduce duplicados.'),
                 $this->bool('questions.email_enabled', 'Enviar alertas por correo', false, 'Requiere que el servidor permita enviar correo.'),
                 $this->text('questions.email_to', 'Correo de destino', '', 'email', 'Dirección que recibirá alertas de preguntas.'),
                 $this->bool('notifications.enabled', 'Centro de notificaciones activo', true, 'Procesa eventos recibidos por webhooks.'),
                 $this->bool('notifications.safe_mode', 'Modo seguro', true, 'Procesa solo eventos y topics confirmados.'),
-                $this->number('notifications.max_events_per_run', 'Eventos por ejecución', 20, 1, 100, 'eventos', 'Evita procesos largos.'),
-                $this->number('notifications.max_resources_per_account_per_run', 'Máximo por tienda y ciclo', 5, 1, 20, 'recursos', 'Evita que una cuenta monopolice la atención automática.'),
                 $this->number('notifications.pause_between_requests_ms', 'Pausa entre consultas', 750, 0, 10000, 'ms', 'Reduce ráfagas de recuperación.', true),
                 $this->number('notifications.max_retries', 'Reintentos', 3, 1, 10, 'intentos', 'Máximo antes de dejar un evento con error.', true),
                 $this->number('notifications.cooldown_429_minutes', 'Pausa ante límite API', 30, 1, 1440, 'min', 'Respeta Retry-After cuando está disponible.', true),
@@ -117,24 +129,15 @@ final class SettingsDefinitionRepository
                 $this->bool('notifications.show_bell', 'Mostrar campana', true, 'Muestra pendientes en la barra superior.', true),
                 $this->bool('notifications.show_health', 'Mostrar estado de webhooks', true, 'Presenta el semáforo de recepción.', true),
                 $this->bool('notifications.webhook_first_enabled', 'Incorporar cambios desde eventos', true, 'Crea un único pendiente por orden, envío, reclamo, pregunta o producto notificado.'),
-                $this->number('notifications.worker_batch_limit', 'Recursos por ciclo', 15, 1, 50, 'recursos', 'Límite técnico por ciclo; la capacidad principal se mide en llamadas API físicas.', true),
-                $this->number('notifications.worker_time_budget_seconds', 'Tiempo máximo por ejecución', 40, 5, 120, 'segundos', 'La automatización se detiene de forma segura al consumir este tiempo.'),
                 $this->number('notifications.target_sla_seconds', 'Tiempo objetivo de incorporación', 120, 30, 1800, 'segundos', 'Se usa para medir si las ventas entran a tiempo.'),
                 $this->number('notifications.debounce_seconds', 'Espera para agrupar avisos repetidos', 5, 0, 60, 'segundos', 'Agrupa cambios consecutivos del mismo recurso antes de consultar.', true),
-                $this->number('notifications.backfill_batch_limit', 'Eventos históricos por etapa', 500, 50, 1000, 'eventos', 'Clasifica el historial local sin saturar memoria.', true),
             ]),
             'financial' => $this->sectionDefinition('Conciliación financiera', 'Billing, esperas seguras y recuperación de procesos financieros.', 'money', [
                 $this->bool('financial_recalc.enabled', 'Procesamiento financiero activo', true, 'Permite crear y atender recálculos financieros seguros.'),
                 $this->bool('financial_recalc.use_billing_order_details', 'Completar con billing', true, 'Busca datos financieros solo cuando hacen falta.'),
                 $this->bool('financial_recalc.auto_billing_for_missing', 'Billing solo para faltantes', true, 'Evita consultar órdenes ya conciliadas.'),
-                $this->number('financial_recalc.orders_per_run', 'Órdenes por ciclo', 10, 1, 100, 'órdenes', 'Ciclo corto y recuperable.'),
-                $this->number('financial_recalc.max_orders_per_job', 'Máximo por recálculo', 500, 1, 50000, 'órdenes', 'Limita el tamaño de una solicitud financiera.', true),
-                $this->number('financial_recalc.billing_order_ids_per_request', 'Órdenes por consulta de billing', 20, 1, 60, 'órdenes', 'Mercado Libre admite hasta 60; se recomienda 20.'),
-                $this->number('financial_recalc.time_budget_seconds', 'Tiempo por ejecución', 30, 5, 120, 'seg', 'Permite que el cron regrese antes del timeout.'),
                 $this->number('financial_recalc.pause_between_requests_ms', 'Pausa entre consultas', 800, 0, 10000, 'ms', 'Reduce presión sobre la API.', true),
                 $this->bool('financial_recalc.safe_mode', 'Modo seguro', true, 'No marca como definitivo un dato incompleto.', true),
-                $this->bool('financial_recalc.stop_on_429', 'Pausar ante límite API', true, 'Detiene el ciclo y conserva el checkpoint.', true),
-                $this->bool('financial_recalc.stop_on_403', 'Pausar ante permisos', true, 'Detiene el ciclo y conserva el checkpoint.', true),
                 $this->bool('financial_recalc.reconnect_between_steps', 'Renovar conexión MySQL', true, 'Evita conexiones vencidas durante procesos largos.', true),
             ]),
             'catalogs' => $this->sectionDefinition('Catálogos', 'Paginación, privacidad y procesos de descripción.', 'file', [
@@ -142,7 +145,6 @@ final class SettingsDefinitionRepository
                 $this->number('catalog.private_page_size', 'Productos por página privada', 48, 12, 120, 'productos', 'La vista interna puede mostrar más elementos.'),
                 $this->bool('catalog.tracking_enabled', 'Estadísticas anónimas', false, 'Registra visitas sin guardar IP en texto plano.'),
                 $this->number('catalog.views_retention_days', 'Retención de visitas', 90, 7, 730, 'días', 'Elimina datos anónimos antiguos.', true),
-                $this->number('catalog.description_job_batch_limit', 'Descripciones por ciclo', 20, 1, 50, 'productos', 'Procesa y guarda antes de continuar.', true),
                 $this->number('catalog.description_job_pause_seconds', 'Pausa entre ciclos', 30, 10, 3600, 'seg', 'Reduce el riesgo de límite API.', true),
                 $this->number('catalog.description_job_max_attempts', 'Intentos por descripción', 3, 1, 10, 'intentos', 'Después queda visible como error.', true),
                 $this->number('catalog.description_job_retention_days', 'Historial de procesos', 90, 7, 3650, 'días', 'Conserva resumen y limpia detalle antiguo.', true),

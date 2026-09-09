@@ -340,9 +340,9 @@
             "text": "$profile = (new MeliApiClient($accountId))->get('/users/me', [], ['job_type' => 'oauth']);"
         },
         {
-            "file": "app/Services/OrderBillingImportService.php",
-            "line": 59,
-            "text": "$response = (new MeliApiClient((int) $accountId))->get(self::ENDPOINT, ['order_ids' => implode(',', $externalIds)], ['job_type' => 'billing', 'bulk' => true, 'estimated_total' => count($externalIds)]);"
+            "file": "app/Services/SaleFinancialService.php",
+            "line": 783,
+            "text": "$response = $api->get(self::ENDPOINT, ['order_ids' => $requestedOrderIds[0]], ['job_type' => 'billing', 'bulk' => false, 'estimated_total' => 1]);"
         },
         {
             "file": "app/Services/OrderSyncService.php",

@@ -19,7 +19,8 @@ use App\Services\ApiManualPauseService;
 use App\Services\ApiErrorSummaryService;
 use App\Services\BusinessScopeContext;
 use App\Services\AppSettingsService;
-use App\Services\AutomationCallBudgetService;
+use App\Services\CapacityChangeGuard;
+use App\Services\CapacityPolicyService;
 use App\Services\CriticalApiAlertEmailService;
 use App\Services\CronHealthService;
 use App\Services\ReleaseIntegrityService;
@@ -68,7 +69,8 @@ final class SettingsController
             $rhythm['increase_blocker'] = $increaseGate['message'];
         }
         $rhythm['recent_rate_limit_incidents'] = $this->recentRateLimitIncidents();
-        View::render('settings/api_workload', compact('rhythm'));
+        $capacity = (new CapacityPolicyService())->snapshot('automation');
+        View::render('settings/api_workload', compact('rhythm', 'capacity'));
     }
 
     public function saveCronRhythm(): void
@@ -95,12 +97,14 @@ final class SettingsController
         }
         $settings = new AppSettingsService();
         $billingBackoff = $this->billing429BackoffMinutesFromPost();
+        $previousBillingInterval = (new \App\Services\ApiRhythmPolicyService($settings))->billingMinIntervalSeconds();
+        $billingInterval = $this->billingMinIntervalSecondsFromPost($settings);
         $previousProfile = (string) $settings->get('api.rhythm.profile', '');
         $previousTarget = $settings->int('api.rhythm.target_http_per_minute', $target);
         $previousCurrent = $settings->int('api.rhythm.current_adaptive_limit', min(15, $target));
         $previousAdaptive = $settings->bool('api.rhythm.adaptive_enabled', true);
         $adaptiveEnabled = isset($_POST['adaptive_enabled']);
-        if ($target > $previousTarget) {
+        if ($target > $previousTarget || $billingInterval < $previousBillingInterval) {
             $gate = $this->queueV4RhythmIncreaseGate();
             if (empty($gate['allowed'])) {
                 Session::flash('error', 'No se subió el ritmo: ' . $gate['message']);
@@ -111,6 +115,7 @@ final class SettingsController
         $settings->set('api.rhythm.profile', $profile, 'api_rhythm');
         $settings->set('api.rhythm.target_http_per_minute', (string) $target, 'api_rhythm');
         $settings->set('api.rhythm.minimum_interval_ms', '1000', 'api_rhythm');
+        $settings->set('api.rhythm.billing_min_interval_seconds', (string) $billingInterval, 'api_rhythm');
         $settings->set('api.rhythm.rolling_window_seconds', '60', 'api_rhythm');
         // Al reducir, el nuevo límite entra inmediatamente. Al aumentar se
         // conserva el nivel actual y la rampa exige evidencia antes de subir.
@@ -147,38 +152,88 @@ final class SettingsController
         $this->redirect('/settings/cron/rhythm');
     }
 
+    private function billingMinIntervalSecondsFromPost(AppSettingsService $settings): int
+    {
+        $raw = $_POST['billing_min_interval_seconds']
+            ?? $settings->get('api.rhythm.billing_min_interval_seconds', '300')
+            ?? '300';
+        try {
+            return (int) \App\Services\ApiRhythmPolicyService::normalizeBillingMinIntervalSeconds($raw);
+        } catch (\InvalidArgumentException $error) {
+            throw new \App\Core\HttpException(422, $error->getMessage());
+        }
+    }
+
     public function saveCronCallBudget(): void
+    {
+        $this->saveCapacity('automation');
+    }
+
+    public function saveManualCallBudget(): void
+    {
+        $this->saveCapacity('manual');
+    }
+
+    private function saveCapacity(string $module): void
     {
         $this->requireAdminPermanent();
         $this->assertSameOrigin();
         Csrf::validate($_POST['_token'] ?? null);
-
-        $raw = trim((string) ($_POST['automation_max_api_calls_per_cycle'] ?? ''));
-        if ($raw === '' || preg_match('/^\d+$/', $raw) !== 1) {
-            Session::flash('error', 'El presupuesto por ciclo debe ser un entero entre 1 y 15.');
-            $this->redirect('/settings/cron/rhythm');
+        $returnPath = $module === 'automation' ? '/settings/cron/rhythm' : '/settings/manual-processing';
+        $action = $module === 'automation' ? '/settings/cron/call-budget' : '/settings/manual-processing/call-budget';
+        $sessionKey = 'capacity_proposal_' . $module;
+        $intent = $_POST['capacity_action'] ?? 'prepare';
+        if ($intent === 'cancel') {
+            Session::forget($sessionKey);
+            Session::flash('success', 'Cambio cancelado. La capacidad guardada no cambió.');
+            $this->redirect($returnPath);
         }
-
-        $postedMaxCalls = max(
-            AutomationCallBudgetService::MIN,
-            min(AutomationCallBudgetService::HARD_MAX, (int) $raw)
-        );
-        $previousMaxCalls = (int) (new AutomationCallBudgetService())->resolve(null, null)['max_calls'];
-        if ($postedMaxCalls > $previousMaxCalls) {
-            $gate = $this->queueV4RhythmIncreaseGate();
-            if (empty($gate['allowed'])) {
-                Session::flash('error', 'No se subió el presupuesto por ciclo: ' . $gate['message']);
-                $this->redirect('/settings/cron/rhythm');
+        $policy = new CapacityPolicyService();
+        if ($intent === 'confirm') {
+            $proposal = Session::get($sessionKey);
+            if (!is_array($proposal) || ($proposal['module'] ?? '') !== $module
+                || (int) ($proposal['user_id'] ?? 0) !== (int) Auth::id()
+                || (int) ($proposal['expires_at'] ?? 0) < time()
+                || !is_string($_POST['confirmation_nonce'] ?? null)
+                || !hash_equals((string) ($proposal['nonce'] ?? ''), $_POST['confirmation_nonce'])) {
+                throw new \App\Core\HttpException(409, 'La confirmación venció. Revise y confirme nuevamente la capacidad.');
             }
+            $capacityGuard = new CapacityChangeGuard();
+            $capacityGuard->assertGlobalAuthorization();
+            Session::forget($sessionKey);
+            try {
+                $policy->save($module, $proposal['current'], $proposal['ceiling'], $proposal['revision'], fn (): array => $capacityGuard->increaseGate());
+                Session::flash('success', 'Capacidad guardada. No se inició ningún procesamiento.');
+            } catch (\Throwable $error) {
+                Session::flash('error', \App\Services\SafeErrorPresenter::message($error, 'No se guardó la capacidad. Recargue y revise los valores actuales.'));
+            }
+            $this->redirect($returnPath);
         }
-
-        (new AppSettingsService())->set(
-            AutomationCallBudgetService::SETTING_KEY,
-            (string) $postedMaxCalls,
-            'automation'
-        );
-        Session::flash('success', 'Presupuesto de llamadas por ciclo guardado.');
-        $this->redirect('/settings/cron/rhythm');
+        if ($intent !== 'prepare') {
+            throw new \App\Core\HttpException(422, 'Acción de capacidad inválida.');
+        }
+        (new CapacityChangeGuard())->assertGlobalAuthorization();
+        $before = $policy->snapshot($module);
+        $currentKey = $module === 'automation' ? 'automation_max_api_calls_per_cycle' : 'manual_api_calls_per_step';
+        try {
+            ['current' => $current, 'ceiling' => $ceiling] = $policy->validatePair(
+                $_POST[$currentKey] ?? null,
+                $_POST[$module . '_api_calls_ceiling'] ?? $before['ceiling']
+            );
+        } catch (\InvalidArgumentException $error) {
+            throw new \App\Core\HttpException(422, $error->getMessage());
+        }
+        $revision = $_POST['capacity_revision'] ?? $before['revision'];
+        if (!is_string($revision) || !hash_equals($before['revision'], $revision)) {
+            throw new \App\Core\HttpException(409, 'La capacidad cambió. Recargue y confirme los valores actuales.');
+        }
+        $proposal = [
+            'module' => $module, 'user_id' => (int) Auth::id(), 'before' => $before,
+            'current' => $current, 'ceiling' => $ceiling, 'revision' => $revision,
+            'nonce' => bin2hex(random_bytes(24)), 'expires_at' => time() + 600,
+        ];
+        Session::put($sessionKey, $proposal);
+        View::render('settings/capacity_confirmation', compact('module', 'action', 'returnPath', 'proposal'));
     }
 
     /** @return array{1:int,2:int,3:int,4:int} */
@@ -266,26 +321,7 @@ final class SettingsController
     /** @return array{allowed:bool,message:string} */
     private function queueV4RhythmIncreaseGate(?array $snapshot = null): array
     {
-        try {
-            $snapshot ??= $this->queueV4RhythmSnapshot();
-            $totals = is_array($snapshot['totals'] ?? null) ? $snapshot['totals'] : [];
-            if ((int) ($totals['dead'] ?? 0) > 0) {
-                return ['allowed' => false, 'message' => 'Queue V4 tiene trabajos muertos; resuelva ese diagnóstico antes de subir el ritmo.'];
-            }
-            if ((int) ($totals['stale_running'] ?? 0) > 0) {
-                return ['allowed' => false, 'message' => 'Queue V4 tiene leases vencidos; espere estabilidad antes de subir el ritmo.'];
-            }
-            if ((string) ($snapshot['state'] ?? '') !== 'healthy') {
-                return ['allowed' => false, 'message' => 'Queue V4 no tiene una señal reciente y certificada para subir el ritmo.'];
-            }
-            if ($this->recentRateLimitIncidents() !== []) {
-                return ['allowed' => false, 'message' => 'hay un 429 remoto reciente; respete la ventana de estabilidad antes de subir el ritmo.'];
-            }
-
-            return ['allowed' => true, 'message' => 'Queue V4 tiene evidencia suficiente para subir el ritmo.'];
-        } catch (\Throwable) {
-            return ['allowed' => false, 'message' => 'no se pudo comprobar la salud de Queue V4 con una lectura completa.'];
-        }
+        return (new CapacityChangeGuard())->increaseGate();
     }
 
     public function cronRhythmPreview(): void
@@ -388,15 +424,11 @@ final class SettingsController
         $generalBillingBackoff = $this->billing429BackoffMinutesFromGeneralPost($settings);
         foreach ([
             'sync.max_manual_range_days' => 'sync',
-            'sync.page_limit' => 'sync',
             'sync.pause_between_pages_ms' => 'sync',
-            'sync.max_orders_per_run' => 'sync',
-            'sync.max_api_pages_per_run' => 'sync',
             'sync.backoff_429_seconds' => 'sync',
             'sync.backoff_5xx_seconds' => 'sync',
             'sync.chunk_parts' => 'sync',
             'sync.continuation_delay_minutes' => 'sync',
-            'sync.queue_max_chunks_per_run' => 'sync',
             'sync.diagnostic_sample_days' => 'sync',
             'sync.monitor_refresh_seconds' => 'sync',
             'sync.default_enqueue_delay_minutes' => 'sync',
@@ -426,19 +458,10 @@ final class SettingsController
             'api.rhythm.billing_429_backoff_2_minutes' => 'api_rhythm',
             'api.rhythm.billing_429_backoff_3_minutes' => 'api_rhythm',
             'api.rhythm.billing_429_backoff_max_minutes' => 'api_rhythm',
-            'questions.page_limit' => 'questions',
-            'questions.lookback_hours' => 'questions',
-            'notifications.max_events_per_run' => 'notifications',
-            'notifications.max_resources_per_account_per_run' => 'notifications',
             'notifications.pause_between_requests_ms' => 'notifications',
             'notifications.max_retries' => 'notifications',
             'notifications.cooldown_429_minutes' => 'notifications',
             'notifications.cooldown_403_minutes' => 'notifications',
-            'financial_recalc.orders_per_run' => 'financial_recalc',
-            'financial_recalc.batch_limit' => 'financial_recalc',
-            'financial_recalc.max_orders_per_job' => 'financial_recalc',
-            'financial_recalc.billing_order_ids_per_request' => 'financial_recalc',
-            'financial_recalc.time_budget_seconds' => 'financial_recalc',
             'financial_recalc.pause_between_requests_ms' => 'financial_recalc',
         ] as $key => $group) {
             $postKey = str_replace('.', '_', $key);
@@ -452,21 +475,6 @@ final class SettingsController
                 }
                 if ($key === 'sync.overdue_reschedule_default_minutes' && !in_array($value, [0, 5, 10, 20, 30], true)) {
                     $value = 5;
-                }
-                if ($key === 'financial_recalc.billing_order_ids_per_request') {
-                    $value = max(1, min(60, $value));
-                }
-                if ($key === 'financial_recalc.orders_per_run' || $key === 'financial_recalc.batch_limit') {
-                    $value = max(1, min(100, $value));
-                }
-                if ($key === 'financial_recalc.time_budget_seconds') {
-                    $value = max(5, min(120, $value));
-                }
-                if ($key === 'sync.max_orders_per_run') {
-                    $value = \App\Services\SyncSettingsService::clampOrdersPerRun($value);
-                }
-                if ($key === 'sync.max_api_pages_per_run') {
-                    $value = \App\Services\SyncSettingsService::clampApiPages($value);
                 }
                 $settings->set($key, (string) $value, $group);
             }
@@ -502,8 +510,6 @@ final class SettingsController
         $settings->set('financial_recalc.use_billing_order_details', isset($_POST['financial_recalc_use_billing_order_details']) ? '1' : '0', 'financial_recalc');
         $settings->set('financial_recalc.auto_billing_for_missing', isset($_POST['financial_recalc_auto_billing_for_missing']) ? '1' : '0', 'financial_recalc');
         $settings->set('financial_recalc.safe_mode', isset($_POST['financial_recalc_safe_mode']) ? '1' : '0', 'financial_recalc');
-        $settings->set('financial_recalc.stop_on_429', isset($_POST['financial_recalc_stop_on_429']) ? '1' : '0', 'financial_recalc');
-        $settings->set('financial_recalc.stop_on_403', isset($_POST['financial_recalc_stop_on_403']) ? '1' : '0', 'financial_recalc');
         $settings->set('financial_recalc.reconnect_between_steps', isset($_POST['financial_recalc_reconnect_between_steps']) ? '1' : '0', 'financial_recalc');
         $settings->set('update.enabled', isset($_POST['update_enabled']) ? '1' : '0', 'update');
         Session::flash('success', 'Configuración guardada.');
@@ -641,21 +647,67 @@ final class SettingsController
 
     private function queueV4CleanMutation(string $action): void
     {
+        $deadline = microtime(true) + 45.0;
         $this->requireAdminPermanent();
         $this->assertSameOrigin();
         Csrf::validate($_POST['_token'] ?? null);
-        (new \App\Services\AdministrativeReauthenticationService())->requirePassword(
-            (string) ($_POST['admin_password'] ?? '')
-        );
         try {
-            $pdo = Database::connectionFresh();
-            $actorId = (int) Auth::id();
-            $result = match ($action) {
-                'readiness' => (new \App\QueueV4Clean\QueueV4CleanReadinessService($pdo))->certify($actorId),
-                'activate' => (new \App\QueueV4Clean\QueueV4CleanControlService($pdo))->activate($actorId),
-                'stop' => (new \App\QueueV4Clean\QueueV4CleanControlService($pdo))->stop($actorId),
-                default => throw new \RuntimeException('queue_v4_clean_action_invalid'),
-            };
+            $operation = $action === 'readiness' ? ($_POST['action'] ?? null) : $action;
+            if (!is_string($operation) || !in_array($operation, ['prepare', 'check', 'cancel', 'activate', 'stop'], true)
+                || ($action === 'readiness' && !in_array($operation, ['prepare', 'check', 'cancel'], true))
+                || array_diff(array_keys($_POST), ['_token', 'admin_password', 'action', 'run_id', 'run_token', 'step_no']) !== []
+            ) {
+                throw new \RuntimeException('Vuelva a preparar la comprobación; la solicitud no es válida.');
+            }
+            $runId = 0;
+            $runToken = '';
+            $stepNo = 0;
+            if (in_array($operation, ['check', 'cancel', 'activate'], true)) {
+                $rawRun = $_POST['run_id'] ?? null;
+                $runToken = $_POST['run_token'] ?? '';
+                if ((!is_string($rawRun) && !is_int($rawRun))
+                    || preg_match('/^[1-9][0-9]*$/D', (string) $rawRun) !== 1
+                    || filter_var($rawRun, FILTER_VALIDATE_INT) === false
+                    || !is_string($runToken)
+                    || (!($operation === 'cancel' && $runToken === '') && preg_match('/^[a-f0-9]{64}$/D', $runToken) !== 1)
+                ) {
+                    throw new \RuntimeException('Vuelva a preparar la comprobación; su identificación no es válida.');
+                }
+                $runId = (int) $rawRun;
+            }
+            if ($operation === 'check') {
+                $rawStep = $_POST['step_no'] ?? null;
+                if ((!is_string($rawStep) && !is_int($rawStep)) || preg_match('/^[1-3]$/D', (string) $rawStep) !== 1) {
+                    throw new \RuntimeException('La comprobación solicitada no es válida.');
+                }
+                $stepNo = (int) $rawStep;
+            }
+            $password = $_POST['admin_password'] ?? '';
+            if (!is_string($password)) {
+                throw new \RuntimeException('La confirmación administrativa no es válida.');
+            }
+            $reauth = new \App\Services\AdministrativeReauthenticationService();
+            if (in_array($operation, ['check', 'cancel'], true)) {
+                // A password may refresh an expired confirmation or permit explicit orphan cancellation.
+                // It never extends the readiness manifest TTL.
+                if ($password !== '') {
+                    $reauth->requirePassword($password);
+                }
+                $reauth->requireRecent(600);
+            } else {
+                $reauth->requirePassword($password);
+            }
+            $result = \App\Services\CronDeadlineContext::within($deadline, static function () use ($operation, $runId, $runToken, $stepNo): array {
+                $pdo = Database::connectionFresh();
+                $actorId = (int) Auth::id();
+                return match ($operation) {
+                    'prepare' => (new \App\QueueV4Clean\QueueV4CleanReadinessService($pdo))->prepare($actorId),
+                    'check' => (new \App\QueueV4Clean\QueueV4CleanReadinessService($pdo))->check($actorId, $runId, $runToken, $stepNo),
+                    'cancel' => (new \App\QueueV4Clean\QueueV4CleanReadinessService($pdo))->cancel($actorId, $runId, $runToken),
+                    'activate' => (new \App\QueueV4Clean\QueueV4CleanControlService($pdo))->activate($actorId, $runId, $runToken),
+                    'stop' => (new \App\QueueV4Clean\QueueV4CleanControlService($pdo))->stop($actorId),
+                };
+            });
             $this->json($result);
         } catch (\Throwable $error) {
             http_response_code(409);
@@ -851,6 +903,15 @@ final class SettingsController
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
         try {
+            if (($_GET['archive'] ?? '') !== 'legacy') {
+                $history = (new \App\Services\WorkQueueRunService())->v4HistoryPage(
+                    max(1, (int) ($_GET['page'] ?? 1)), 50
+                );
+                $this->json(['ok'=>true, 'read_only'=>true, 'snapshot_state'=>'partial',
+                    'rows'=>$history['runs'], 'source_engine'=>'queue_v4_clean',
+                    'physical_total_certainty'=>'UNKNOWN']);
+                return;
+            }
             $snapshot = (new \App\Services\CronV3OperationalSnapshotService())->snapshot();
             $overview = is_array($snapshot['legacy_overview'] ?? null) ? $snapshot['legacy_overview'] : [];
             $history = is_array($overview['history'] ?? null) ? $overview['history'] : [];
@@ -1084,6 +1145,11 @@ final class SettingsController
         $page = max(1, (int) ($_GET['page'] ?? 1));
         $requestedPerPage = (int) ($_GET['per_page'] ?? 50);
         $perPage = in_array($requestedPerPage, [25, 50, 100], true) ? $requestedPerPage : 50;
+        if (($_GET['archive'] ?? '') !== 'legacy') {
+            $history = (new \App\Services\WorkQueueRunService())->v4HistoryPage($page, $perPage);
+            View::render('settings/calls_history', compact('history', 'page', 'perPage'));
+            return;
+        }
         $history = (new \App\Services\WorkQueueRunService())->historyPage($page, $perPage);
         $runs = $history['runs'];
         $total = $history['total'];
@@ -1140,34 +1206,12 @@ final class SettingsController
         ];
         $safetyStatus = (new \App\Services\SystemSafetyStatusService())->status();
         $emergencyStop = $safetyStatus['api'] === 'stopped' || $safetyStatus['automation'] === 'stopped';
-        $settings = $emergencyStop ? null : new AppSettingsService();
-        $rhythmPreview = $emergencyStop ? [] : (new \App\Services\ApiRhythmPolicyService())->preview($accountId ?: null);
-        $globalBlockSize = max(1, (int) ($rhythmPreview['calls_per_block'] ?? 40));
-        $globalIntervalSeconds = max(1, ((int) ($rhythmPreview['interval_ms'] ?? 1000)) / 1000);
-        $globalPauseSeconds = max(0, ((int) ($rhythmPreview['block_pause_ms'] ?? 20000)) / 1000);
-        $blockSize = max(1, min(60, (int) ($_GET['block_size']
-            ?? ($settings?->int('manual_campaign.default_block_size', 30) ?? 30))));
-        if ($scope === 'available_queue') {
-            $blockSize = min($blockSize, \App\QueueV4Clean\QueueV4CleanWorker::HARD_MAX_CALLS);
-        }
-        $intervalSeconds = max(0, min(300, (float) ($_GET['interval_seconds']
-            ?? (($settings?->int('manual_campaign.default_interval_ms', 2000) ?? 2000) / 1000))));
-        $blockPauseSeconds = max(0, min(3600, (float) ($_GET['block_pause_seconds']
-            ?? (($settings?->int('manual_campaign.default_block_pause_ms', 30000) ?? 30000) / 1000))));
-        $blockSize = min($blockSize, $globalBlockSize);
-        $intervalSeconds = max($intervalSeconds, $globalIntervalSeconds);
-        $blockPauseSeconds = max($blockPauseSeconds, $globalPauseSeconds);
-        $maxBlocks = max(0, min(10000, (int) ($_GET['max_blocks'] ?? 0)));
-        $maxDurationMinutes = max(0, min(10080, (int) ($_GET['max_duration_minutes'] ?? 0)));
+        $scope = \App\Services\ManualCampaignPreviewService::assertScope($scope);
+        $capacity = (new CapacityPolicyService())->snapshot('manual');
         $schema = new \App\Services\SchemaInspectorService();
-        $campaignReady = $schema->missingRequirements([
-            'manual_campaign_steps' => [],
-            'manual_campaign_reservations' => [],
-            'manual_campaign_previews' => [],
-            'manual_campaign_preview_items' => [],
-            'manual_campaigns' => ['execution_mode', 'control_expires_at'],
-            'manual_campaign_items' => ['total_units'],
-        ]) === [];
+        $campaignReady = $schema->missingRequirements(
+            \App\Services\ManualCampaignPreviewService::schemaRequirements($scope)
+        ) === [];
         $preview = null;
         if ($previewToken !== '' && $campaignReady) {
             try {
@@ -1175,14 +1219,6 @@ final class SettingsController
                 $configuration = (array) ($preview['configuration'] ?? []);
                 $scope = (string) ($configuration['scope'] ?? $scope);
                 $accountId = (int) ($configuration['account_id'] ?? $accountId);
-                $blockSize = (int) ($configuration['block_size'] ?? $blockSize);
-                if ($scope === 'available_queue') {
-                    $blockSize = min($blockSize, \App\QueueV4Clean\QueueV4CleanWorker::HARD_MAX_CALLS);
-                }
-                $intervalSeconds = ((int) ($configuration['interval_ms'] ?? (int) round($intervalSeconds * 1000))) / 1000;
-                $blockPauseSeconds = ((int) ($configuration['block_pause_ms'] ?? (int) round($blockPauseSeconds * 1000))) / 1000;
-                $maxBlocks = (int) ($configuration['max_blocks'] ?? $maxBlocks);
-                $maxDurationMinutes = (int) ($configuration['max_duration_minutes'] ?? $maxDurationMinutes);
             } catch (\Throwable $error) {
                 Session::flash('error', \App\Services\SafeErrorPresenter::message(
                     $error,
@@ -1190,10 +1226,6 @@ final class SettingsController
                 ));
             }
         }
-        // El cálculo manual puede pedir un ritmo más lento, nunca superar la autoridad global.
-        $blockSize = min($blockSize, $globalBlockSize);
-        $intervalSeconds = max($intervalSeconds, $globalIntervalSeconds);
-        $blockPauseSeconds = max($blockPauseSeconds, $globalPauseSeconds);
         $manualAccountLabel = 'Todas las cuentas autorizadas';
         if ($accountId > 0) {
             try {
@@ -1203,19 +1235,20 @@ final class SettingsController
                 $manualAccountLabel = 'Cuenta autorizada';
             }
         }
-        $availableQueueCount = 0;
+        $availableQueueCount = null;
         if ($campaignReady && !$emergencyStop) {
             try {
                 $scopeContext = new BusinessScopeContext();
                 $authorizedAccountIds = $accountId > 0
                     ? [(int) $scopeContext->account($accountId, 0, $userId)['id']]
                     : $scopeContext->accountIds($userId);
+                $availableQueueCount = 0; // A certified empty authorized scope.
                 if ($authorizedAccountIds !== []) {
                     $availableQueueCount = (new \App\QueueV4Clean\QueueV4CleanRepository(Database::connection()))
                         ->eligibleCount($authorizedAccountIds, $accountId ?: null);
                 }
             } catch (\Throwable) {
-                $availableQueueCount = 0;
+                $availableQueueCount = null;
             }
         }
         $manualResult = Session::get('manual_processing_result');
@@ -1238,15 +1271,11 @@ final class SettingsController
         $workerCommand = '';
         View::render('settings/manual_processing', compact(
             'scope',
+            'capacity',
             'preview',
             'workerCommand',
             'activeSession',
             'engine',
-            'blockSize',
-            'intervalSeconds',
-            'blockPauseSeconds',
-            'maxBlocks',
-            'maxDurationMinutes',
             'campaignReady',
             'accountId',
             'manualAccountLabel',
@@ -1256,7 +1285,6 @@ final class SettingsController
             'origin',
             'originContext',
             'emergencyStop',
-            'rhythmPreview',
             'smartDrainReady',
             'smartDrain'
         ));
@@ -1273,25 +1301,26 @@ final class SettingsController
             $this->redirect('/settings/manual-processing');
         }
         try {
+            $this->assertCallsOnlyManualPost();
             $accountId = max(0, (int) ($_POST['account_id'] ?? 0));
-            $rhythm = (new \App\Services\ApiRhythmPolicyService())->preview($accountId ?: null);
-            $requestedBlock = max(1, min(60, (int) ($_POST['block_size'] ?? 30)));
-            $requestedScope = trim((string) ($_POST['scope'] ?? 'available_queue'));
-            if ($requestedScope === 'available_queue') {
-                $requestedBlock = min($requestedBlock, \App\QueueV4Clean\QueueV4CleanWorker::HARD_MAX_CALLS);
+            $requestedScope = \App\Services\ManualCampaignPreviewService::assertScope(
+                trim((string) ($_POST['scope'] ?? 'available_queue'))
+            );
+            $capacity = (new CapacityPolicyService())->snapshot('manual');
+            $requestedCalls = (new CapacityPolicyService())->validatePair(
+                $_POST['physical_api_call_budget'] ?? null, $capacity['current']
+            )['current'];
+            if (!is_string($_POST['capacity_revision'] ?? null)
+                || !hash_equals($capacity['revision'], $_POST['capacity_revision'])) {
+                throw new \App\Core\HttpException(409, 'La capacidad cambió. Vuelva a previsualizar.');
             }
-            $requestedInterval = max(0, (int) round(((float) ($_POST['interval_seconds'] ?? 2)) * 1000));
-            $requestedPause = max(0, (int) round(((float) ($_POST['block_pause_seconds'] ?? 30)) * 1000));
             $preview = (new \App\Services\ManualCampaignPreviewService())->create(
                 (int) Auth::id(),
                 [
                     'scope' => $requestedScope,
                     'account_id' => $accountId,
-                    'block_size' => min($requestedBlock, max(1, (int) ($rhythm['calls_per_block'] ?? 40))),
-                    'interval_ms' => max($requestedInterval, max(1000, (int) ($rhythm['interval_ms'] ?? 1000))),
-                    'block_pause_ms' => max($requestedPause, max(0, (int) ($rhythm['block_pause_ms'] ?? 20000))),
-                    'max_blocks' => (int) ($_POST['max_blocks'] ?? 0),
-                    'max_duration_minutes' => (int) ($_POST['max_duration_minutes'] ?? 0),
+                    'physical_api_call_budget' => $requestedCalls,
+                    'capacity_revision' => $capacity['revision'],
                 ]
             );
             Session::flash(
@@ -1305,11 +1334,6 @@ final class SettingsController
                 'scope' => (string) ($preview['configuration']['scope'] ?? $requestedScope),
                 'origin' => preg_replace('/[^a-z_]/', '', (string) ($_POST['origin'] ?? 'manual_center')) ?: 'manual_center',
                 'account_id' => $accountId ?: null,
-                'year' => max(0, (int) ($_POST['year'] ?? 0)) ?: null,
-                'month' => max(0, (int) ($_POST['month'] ?? 0)) ?: null,
-                'date_from' => trim((string) ($_POST['date_from'] ?? '')) ?: null,
-                'date_to' => trim((string) ($_POST['date_to'] ?? '')) ?: null,
-                'block_size' => min($requestedBlock, max(1, (int) ($rhythm['calls_per_block'] ?? 40))),
             ]);
             $this->redirect('/settings/manual-processing?' . $query . '#resultado-calculo');
         } catch (\Throwable $error) {
@@ -1355,11 +1379,6 @@ final class SettingsController
             $this->redirect('/settings/manual-processing?' . http_build_query([
                 'scope' => (string) ($configuration['scope'] ?? 'recommended'),
                 'account_id' => (int) ($configuration['account_id'] ?? 0) ?: null,
-                'block_size' => (int) ($configuration['block_size'] ?? 30),
-                'interval_seconds' => ((int) ($configuration['interval_ms'] ?? 2000)) / 1000,
-                'block_pause_seconds' => ((int) ($configuration['block_pause_ms'] ?? 30000)) / 1000,
-                'max_blocks' => (int) ($configuration['max_blocks'] ?? 0),
-                'max_duration_minutes' => (int) ($configuration['max_duration_minutes'] ?? 0),
             ]));
         }
         $all = array_values(array_filter(
@@ -1402,18 +1421,22 @@ final class SettingsController
             $this->redirect('/settings/manual-processing');
         }
         try {
-            $limit = max(1, min(60, (int) ($_POST['process_limit'] ?? $_POST['block_size'] ?? 1)));
-            $result = (new \App\Services\ManualSingleStepService())->executeMany(
+            $this->assertCallsOnlyManualPost();
+            $limit = (new CapacityPolicyService())->validatePair(
+                $_POST['physical_api_call_budget'] ?? null,
+                CapacityPolicyService::TECHNICAL_MAX
+            )['current'];
+            $result = (new \App\Services\ManualSingleStepService())->executePreview(
                 trim((string) ($_POST['preview_token'] ?? '')),
                 (int) Auth::id(),
                 $limit
             );
-            $status = (string) ($result['status'] ?? 'completed');
+            $status = (string) ($result['status'] ?? 'unknown');
             if (!empty($result['manual_available_queue'])) {
                 Session::put('manual_available_queue_result', $result);
                 Session::flash(
-                    $status === 'waiting' || $status === 'review' ? 'warning' : 'success',
-                    (string) ($result['message'] ?? 'Pendientes disponibles atendidos.')
+                    $status !== 'completed' ? 'warning' : 'success',
+                    (string) ($result['message'] ?? 'La petición terminó; revise el resultado y la evidencia de llamadas.')
                 );
                 $this->redirect('/settings/manual-processing?scope=available_queue#resultado-proceso');
             }
@@ -1429,24 +1452,35 @@ final class SettingsController
                 $rowState = (string) ($row['status'] ?? '');
                 if ($rowState === 'completed') {
                     $completed++;
-                } elseif (in_array($rowState, ['waiting', 'retry_wait', 'waiting_oauth', 'pending', 'claimed', 'running'], true)) {
+                } elseif (in_array($rowState, ['deferred', 'waiting', 'retry_wait', 'waiting_oauth', 'pending', 'claimed', 'running'], true)) {
                     $waiting++;
-                } else {
+                } elseif ($rowState !== 'not_started') {
                     $review++;
                 }
             }
-            if ($resultRows === [] && $status === 'completed') {
-                $completed = $selected;
-            }
+            $attended = (int) ($result['processed_count'] ?? count($resultRows));
             Session::put('manual_processing_result', [
-                'processed' => $selected,
+                'processed' => $attended,
                 'completed' => $completed,
                 'waiting' => $waiting,
                 'review' => $review,
+                'not_started' => max(0, (int) ($result['not_processed_count'] ?? $selected - $attended)),
+                'configured_api_calls' => $result['configured_api_calls'] ?? null,
+                'requested_api_calls' => $result['requested_api_calls'] ?? $limit,
+                'effective_api_calls' => $result['effective_api_calls'] ?? null,
+                'api_calls_used' => $result['api_calls_used'] ?? $result['physical_http_calls'] ?? null,
+                'physical_http_calls' => array_key_exists('physical_http_calls', $result)
+                    ? $result['physical_http_calls'] : (($result['evidence_state'] ?? '') === 'CERTIFIED' ? ($result['api_calls_used'] ?? null) : null),
+                'known_physical_calls' => $result['known_physical_calls'] ?? null,
+                'unresolved_reservations' => $result['unresolved_reservations'] ?? null,
+                'api_calls_remaining' => $result['api_calls_remaining'] ?? null,
+                'evidence_state' => $result['evidence_state'] ?? 'UNKNOWN',
+                'stop_reason' => $result['stop_reason'] ?? $status,
+                'next_allowed_at' => $result['next_allowed_at'] ?? null,
             ]);
             Session::flash(
-                $status === 'review' ? 'warning' : 'success',
-                (string) ($result['message'] ?? ('Se proceso la seleccion exacta: ' . $selected . ' trabajo(s).'))
+                $status !== 'completed' ? 'warning' : 'success',
+                (string) ($result['message'] ?? 'La petición terminó; revise lo atendido, lo pendiente y la evidencia de llamadas.')
             );
             $this->redirect('/settings/manual-processing');
         } catch (\Throwable $error) {
@@ -1457,6 +1491,20 @@ final class SettingsController
             ));
             $scope = preg_replace('/[^a-z_]/', '', (string) ($_POST['scope'] ?? 'recommended'));
             $this->redirect('/settings/manual-processing?scope=' . ($scope ?: 'recommended'));
+        }
+    }
+
+    private function assertCallsOnlyManualPost(): void
+    {
+        foreach (['process_limit', 'block_size', 'interval_seconds', 'block_pause_seconds', 'max_blocks', 'max_duration_minutes'] as $retired) {
+            if (array_key_exists($retired, $_POST)) {
+                throw new \App\Core\HttpException(422, 'El formulario anterior está retirado. Recargue y vuelva a calcular usando llamadas API.');
+            }
+        }
+        foreach (['year', 'month', 'date_from', 'date_to'] as $unsupportedFilter) {
+            if (!empty($_POST[$unsupportedFilter])) {
+                throw new \App\Core\HttpException(422, 'Este cálculo no admite filtros de periodo. Recargue y revise la selección exacta antes de confirmar.');
+            }
         }
     }
 

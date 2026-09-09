@@ -98,6 +98,37 @@ final class ManualSourceAuthorityService
         );
     }
 
+    /** @return list<string> */
+    public function relatedResourceIds(
+        string $queueKey,
+        string $sourceId,
+        int $accountId,
+        int $companyId
+    ): array {
+        if ($queueKey !== 'sale_financial_reconciliation' || !ctype_digit($sourceId)) {
+            return [];
+        }
+        $pdo = Database::connectionFresh();
+        $source = $pdo->prepare(
+            'SELECT sale_key FROM sale_financial_reconciliation_jobs
+             WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1'
+        );
+        $source->execute([(int) $sourceId, $companyId, $accountId]);
+        $saleKey = (string) ($source->fetchColumn() ?: '');
+        if ($saleKey === '') {
+            return [];
+        }
+        $orders = $pdo->prepare(
+            'SELECT o.external_order_id FROM meli_orders o
+             JOIN meli_accounts a ON a.id=o.meli_account_id AND a.company_id=?
+             WHERE o.meli_account_id=?
+               AND CONCAT(IF(o.external_pack_id IS NULL,"O:","P:"),COALESCE(o.external_pack_id,o.external_order_id))=?
+             ORDER BY o.id'
+        );
+        $orders->execute([$companyId, $accountId, $saleKey]);
+        return array_values(array_map('strval', $orders->fetchAll(PDO::FETCH_COLUMN)));
+    }
+
     /** @return array<string,mixed>|null */
     private function sourceRow(string $queueKey, string $sourceId): ?array
     {

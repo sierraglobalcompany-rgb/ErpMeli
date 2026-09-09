@@ -20,7 +20,8 @@ final class RouteMetadataRepository
             'domain' => $domain,
             'authentication' => $public ? 'public' : 'required',
             'role' => $this->role($method, $path),
-            'permanent_admin' => str_starts_with($path, '/settings/update')
+            'permanent_admin' => in_array($path, ['/settings/cron/call-budget', '/settings/manual-processing/call-budget'], true)
+                || str_starts_with($path, '/settings/update')
                 || str_starts_with($path, '/settings/backups')
                 || str_starts_with($path, '/settings/database-maintenance')
                 || str_starts_with($path, '/settings/imported-data-reset')
@@ -58,6 +59,9 @@ final class RouteMetadataRepository
 
     private function role(string $method, string $path): string
     {
+        if (in_array($path, ['/settings/cron/call-budget', '/settings/manual-processing/call-budget'], true)) {
+            return 'admin';
+        }
         if ($method === 'GET') {
             return 'authenticated';
         }

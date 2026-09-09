@@ -202,7 +202,14 @@ final class OrderFinancialRecalcJobService
 
         foreach ($items as $item) {
             try {
-                $projection = (new SaleFinancialStateService())->projectOrder((int) $item['meli_order_id']);
+                $financialState = new SaleFinancialStateService();
+                $projection = $allowContinuation
+                    ? $financialState->projectOrder((int) $item['meli_order_id'])
+                    : $financialState->projectOrderForQueueCore(
+                        (int) $job['company_id'],
+                        (int) $job['meli_account_id'],
+                        (int) $item['meli_order_id'],
+                    );
                 $summary = (new OrderFinancialService())->findByOrderId((int) $item['meli_order_id']) ?? [];
                 $rawSummary = json_decode((string) ($summary['raw_summary_json'] ?? '{}'), true);
                 $missingFlags = implode(',', array_slice((array) ($summary['missing_flags'] ?? []), 0, 20));

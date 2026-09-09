@@ -14,14 +14,23 @@ if ($mode === 'child') {
     $pdo = $harness->pdo();
     $ledger = (string) getenv('K1D_DRAINER_LEDGER');
     $owner = bin2hex(random_bytes(8));
+    $pdo->exec('UPDATE k1d_rc1_drainer_barrier SET ready_count=ready_count+1 WHERE id=1');
+    k1d_rc1_drainer_wait_for($pdo, 'go_flag', 1);
+    k1d_rc1_drainer_ledger($ledger, 'acquire started');
     $token = (new QueueCoreDrainAuthority($pdo))->acquire('cron_v4', $owner, 30);
+    $pdo->exec('UPDATE k1d_rc1_drainer_barrier SET attempted_count=attempted_count+1 WHERE id=1');
     if ($token !== null) {
-        k1d_rc1_drainer_ledger($ledger, 'winner transport');
+        k1d_rc1_drainer_ledger($ledger, 'winner transport generation=' . $token->generation);
         $stmt = $pdo->prepare("UPDATE k1d_rc1_drainer_jobs SET state='completed',completed_by=? WHERE id=1 AND state='ready'");
         $stmt->execute([$owner]);
         k1d_rc1_drainer_ledger($ledger, 'winner finalized ' . $stmt->rowCount());
-        usleep(250000);
+        // Retain the lease until every contender has attempted acquisition.
+        // A fixed250ms sleep let late-starting processes acquire after release,
+        // falsely labelling legal sequential ownership as concurrent owners.
+        k1d_rc1_drainer_wait_for($pdo, 'attempted_count', 20);
+        k1d_rc1_drainer_ledger($ledger, 'release started generation=' . $token->generation);
         (new QueueCoreDrainAuthority($pdo))->release($token);
+        k1d_rc1_drainer_ledger($ledger, 'release completed generation=' . $token->generation);
         echo "DRAINER_CHILD_STATUS=winner\n";
         exit(0);
     }
@@ -47,6 +56,7 @@ $duplicateRemote = 0;
 $doubleFinalization = 0;
 $failure = '';
 $childOutputs = [];
+$reacquiredAfterRelease = false;
 
 try {
     $pdo = $harness->pdo();
@@ -64,6 +74,8 @@ try {
     $pdo->exec("INSERT IGNORE INTO queue_core_execution_leases (lease_key,generation) VALUES ('global',0)");
     $pdo->exec("CREATE TABLE k1d_rc1_drainer_jobs (id INT NOT NULL PRIMARY KEY,state VARCHAR(20) NOT NULL,completed_by VARCHAR(96) NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
     $pdo->exec("INSERT INTO k1d_rc1_drainer_jobs (id,state) VALUES (1,'ready')");
+    $pdo->exec('CREATE TABLE k1d_rc1_drainer_barrier (id INT PRIMARY KEY,ready_count INT NOT NULL DEFAULT 0,go_flag INT NOT NULL DEFAULT 0,attempted_count INT NOT NULL DEFAULT 0) ENGINE=InnoDB');
+    $pdo->exec('INSERT INTO k1d_rc1_drainer_barrier (id) VALUES (1)');
 
     $childOutputs = k1d_rc1_drainer_spawn_children($argv[0], 20, ['K1D_DRAINER_LEDGER' => $ledger]);
     $winners = count(array_filter($childOutputs, static fn(string $out): bool => str_contains($out, 'DRAINER_CHILD_STATUS=winner')));
@@ -75,6 +87,12 @@ try {
     $finalizationRows = count(array_filter($lines, static fn(string $line): bool => str_contains($line, 'winner finalized 1')));
     $doubleFinalization = max(0, $finalizationRows - 1);
     k1b_assert($finalized === 'completed', 'DRAINER_WINNER_FINALIZED_JOB');
+    k1b_assert((int) $pdo->query('SELECT attempted_count FROM k1d_rc1_drainer_barrier WHERE id=1')->fetchColumn() === 20, 'ALL_CONTENDERS_ATTEMPTED_WHILE_WINNER_HELD_LEASE');
+    $authority = new QueueCoreDrainAuthority($pdo);
+    $next = $authority->acquire('cron_v4', bin2hex(random_bytes(8)), 30);
+    $reacquiredAfterRelease = $next !== null && $next->generation === 2;
+    k1b_assert($reacquiredAfterRelease, 'SEQUENTIAL_REACQUISITION_AFTER_RELEASE_IS_LEGAL');
+    k1b_assert($authority->release($next), 'SEQUENTIAL_TEST_LEASE_RELEASED');
 } catch (Throwable $error) {
     $failure = get_class($error) . ':' . preg_replace('/\s+/', ' ', $error->getMessage());
 } finally {
@@ -89,7 +107,8 @@ $pass = $failure === ''
     && $winnerRemote >= 1
     && $loserRemote === 0
     && $duplicateRemote === 0
-    && $doubleFinalization === 0;
+    && $doubleFinalization === 0
+    && $reacquiredAfterRelease;
 
 echo 'STATUS=' . ($pass ? 'PASS K1D_RC1_DRAINER_MULTIPROCESS' : 'BLOCKED K1D_RC1_DRAINER_MULTIPROCESS') . "\n";
 echo "CONCURRENT_LAUNCHERS=20\n";
@@ -99,6 +118,12 @@ echo "LOSER_REMOTE_CALLS={$loserRemote}\n";
 echo "DUPLICATE_REMOTE_CALLS={$duplicateRemote}\n";
 echo "DOUBLE_FINALIZATION={$doubleFinalization}\n";
 echo 'CHILD_OUTPUTS_CAPTURED=' . count($childOutputs) . "\n";
+echo 'REACQUIRE_AFTER_RELEASE=' . ($reacquiredAfterRelease ? 'PASS' : 'FAIL') . "\n";
+if (getenv('K1D_DRAINER_DIAGNOSTICS') === '1') {
+    foreach ($lines ?? [] as $line) {
+        echo 'DRAINER_TIMELINE=' . $line . "\n";
+    }
+}
 if ($failure !== '') {
     echo "FAILURE={$failure}\n";
 }
@@ -118,9 +143,22 @@ function k1d_rc1_drainer_ledger(string $path, string $line): void
         return;
     }
     flock($fh, LOCK_EX);
-    fwrite($fh, getmypid() . ' ' . $line . "\n");
+    fwrite($fh, getmypid() . ' ' . sprintf('%.6f', microtime(true)) . ' ' . $line . "\n");
     flock($fh, LOCK_UN);
     fclose($fh);
+}
+
+function k1d_rc1_drainer_wait_for(PDO $pdo, string $column, int $expected): void
+{
+    k1b_assert(in_array($column, ['ready_count','go_flag','attempted_count'], true), 'KNOWN_BARRIER_COLUMN');
+    $deadline = microtime(true) + 15.0;
+    do {
+        if ((int) $pdo->query('SELECT ' . $column . ' FROM k1d_rc1_drainer_barrier WHERE id=1')->fetchColumn() === $expected) {
+            return;
+        }
+        usleep(20000);
+    } while (microtime(true) < $deadline);
+    throw new RuntimeException('DRAINER_BARRIER_TIMEOUT_' . $column);
 }
 
 /** @param array<string,string> $extraEnv @return list<string> */
@@ -144,6 +182,11 @@ function k1d_rc1_drainer_spawn_children(string $script, int $count, array $extra
             $children[] = [$process, $pipes];
         }
     }
+
+    k1b_assert(count($children) === $count, 'ALL_DRAINER_CHILDREN_STARTED');
+    $pdo = \App\Core\Database::connectionFresh();
+    k1d_rc1_drainer_wait_for($pdo, 'ready_count', $count);
+    $pdo->exec('UPDATE k1d_rc1_drainer_barrier SET go_flag=1 WHERE id=1');
 
     $outputs = [];
     foreach ($children as [$process, $pipes]) {

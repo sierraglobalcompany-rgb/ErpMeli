@@ -13,7 +13,7 @@ k1b_assert(str_contains($manual, 'Pendientes disponibles ahora'), 'Manual must l
 k1b_assert(str_contains($manual, 'Máximo de llamadas API'), 'Manual must expose API call capacity.');
 k1b_assert(str_contains($manual, 'Límite de llamadas API'), 'Manual preview must expose API call limit.');
 k1b_assert(str_contains($singleStep, 'Pendientes disponibles: llamadas API solicitadas'), 'Manual result message must be call-centric.');
-k1b_assert(str_contains($settingsController, 'Pendientes disponibles atendidos.'), 'Manual available queue fallback flash must use human pending-items copy.');
+k1b_assert(str_contains($manual, 'Pendientes disponibles atendidos'), 'Manual available queue result must use human pending-items copy.');
 k1b_assert(!str_contains($settingsController, 'Cola disponible procesada.'), 'Manual available queue fallback flash must not use queue-centric copy.');
 
 foreach ([

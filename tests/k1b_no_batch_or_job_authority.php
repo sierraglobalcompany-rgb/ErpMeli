@@ -20,7 +20,7 @@ foreach ($files as $file) {
 
 k1b_assert(str_contains($text, 'PHYSICAL_API_CALL'), 'control_unit_physical_api_call');
 k1b_assert(str_contains(file_get_contents(__DIR__ . '/../jobs/queue_v4_clean.php'), 'max-calls'), 'max_calls_remains_canonical');
-k1b_assert(str_contains(file_get_contents(__DIR__ . '/../jobs/queue_v4_clean.php'), 'max-jobs'), 'legacy_max_jobs_compat_still_supported');
+k1b_assert(str_contains(file_get_contents(__DIR__ . '/../jobs/queue_v4_clean.php'), 'legacy_capacity_argument_removed'), 'legacy_max_jobs_rejected');
 k1b_assert(!str_contains($text, 'QueueV5') && !str_contains($text, 'queue_v5'), 'no_queue_v5');
 k1b_assert(!str_contains($text, 'BATCH_AUTHORITY') && !str_contains($text, 'JOB_COUNT_AUTHORITY'), 'no_batch_or_job_count_authority');
 

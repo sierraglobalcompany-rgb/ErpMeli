@@ -12,6 +12,8 @@ final class K1dSafeTestDatabase
 
     private PDO $admin;
     private bool $created = false;
+    private string $ownershipJournal = '';
+    private string $creationAttempt = '';
 
     private function __construct()
     {
@@ -90,11 +92,57 @@ final class K1dSafeTestDatabase
         self::assertGuard((string) getenv('APP_ENV'), (string) getenv('ML_WRITE_ENABLED'), $this->host, $this->dbName);
         $this->admin->exec('DROP DATABASE IF EXISTS `' . $this->dbName . '`');
         $this->created = false;
+        $this->recordOwnershipEvent('dropped');
     }
 
     private function createDatabase(): void
     {
-        $this->admin->exec('CREATE DATABASE IF NOT EXISTS `' . $this->dbName . '` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+        $root = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_VERIFY_QA_ROOT')
+            ?: 'D:/Codex/tmp/erp-meli/calls-20260906/database-ownership')), '/');
+        if (!str_starts_with($root, 'D:/Codex/') || in_array('..', explode('/', $root), true)) {
+            throw new RuntimeException('TEST_DB_OWNERSHIP_ROOT_NOT_LOCAL');
+        }
+        if (!is_dir($root) && !mkdir($root, 0770, true) && !is_dir($root)) {
+            throw new RuntimeException('TEST_DB_OWNERSHIP_DIRECTORY_UNAVAILABLE');
+        }
+        $this->ownershipJournal = $root . '/k1d-test-databases.jsonl';
+        $this->creationAttempt = bin2hex(random_bytes(12));
+        // An intent is not ownership. Existing databases must fail, never be adopted.
+        $this->recordOwnershipEvent('create_intent');
+        $this->admin->exec('CREATE DATABASE `' . $this->dbName . '` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
         $this->created = true;
+        try {
+            $this->recordOwnershipEvent('created');
+        } catch (Throwable $error) {
+            // The caller must not receive an unrecorded DB. Only this confirmed CREATE is ours.
+            $this->cleanup();
+            throw $error;
+        }
+    }
+
+    private function recordOwnershipEvent(string $event): void
+    {
+        $line = json_encode([
+            'event' => $event,
+            'attempt_id' => $this->creationAttempt,
+            'db_name' => $this->dbName,
+            'db_host' => $this->host,
+            'db_port' => $this->port,
+            'pid' => getmypid(),
+            'at' => gmdate('c'),
+        ], JSON_THROW_ON_ERROR) . "\n";
+        $stream = fopen($this->ownershipJournal, 'ab');
+        if ($stream === false) {
+            throw new RuntimeException('TEST_DB_OWNERSHIP_JOURNAL_UNAVAILABLE');
+        }
+        try {
+            if (!flock($stream, LOCK_EX) || fwrite($stream, $line) !== strlen($line)
+                || !fflush($stream) || !fsync($stream)) {
+                throw new RuntimeException('TEST_DB_OWNERSHIP_RECORD_NOT_DURABLE');
+            }
+        } finally {
+            flock($stream, LOCK_UN);
+            fclose($stream);
+        }
     }
 }

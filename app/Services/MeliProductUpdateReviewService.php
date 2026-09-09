@@ -114,7 +114,7 @@ final class MeliProductUpdateReviewService
         return $reviewId;
     }
 
-    public function createReviewForItem(int $accountId, string $externalItemId): int
+    public function createReviewForItem(int $accountId, string $externalItemId, bool $strictExact = false): int
     {
         $externalItemId = strtoupper(trim($externalItemId));
         if ($accountId <= 0 || preg_match('/^[A-Z]{2,4}[0-9]+$/', $externalItemId) !== 1) {
@@ -127,8 +127,9 @@ final class MeliProductUpdateReviewService
              JOIN meli_product_update_review_items i ON i.review_id=r.id
              WHERE r.company_id=? AND r.meli_account_id=? AND i.external_item_id=?
                AND r.status IN ("draft","scanning","ready","applying","partial")
-               AND i.item_status IN ("new","changed","approved","error")
-             ORDER BY r.id DESC LIMIT 1'
+               AND i.item_status IN ("new","changed","approved","error")'
+             . ($strictExact ? ' AND i.item_status<>"error"' : '')
+             . ' ORDER BY r.id DESC LIMIT 1'
         );
         $existing->execute([$companyId, $accountId, $externalItemId]);
         $existingId = (int) $existing->fetchColumn();
@@ -144,7 +145,7 @@ final class MeliProductUpdateReviewService
         )->execute([$companyId, $accountId, Auth::id()]);
         $reviewId = (int) $pdo->lastInsertId();
         try {
-            $this->scanOne($reviewId, $accountId, $externalItemId, new MeliItemSyncService($accountId));
+            $this->scanOne($reviewId, $accountId, $externalItemId, new MeliItemSyncService($accountId), $strictExact);
             $this->refreshReviewTotals($reviewId, 'ready', 1);
             if ((new AppSettingsService())->bool('items.hybrid_notification_updates_enabled', true)) {
                 $this->applySafeNotificationReview($reviewId, $companyId);
@@ -410,7 +411,7 @@ final class MeliProductUpdateReviewService
         return $applied;
     }
 
-    private function scanOne(int $reviewId, int $accountId, string $externalId, MeliItemSyncService $sync): void
+    private function scanOne(int $reviewId, int $accountId, string $externalId, MeliItemSyncService $sync, bool $strictExact = false): void
     {
         try {
             $remoteRaw = $sync->fetchRemoteItem($externalId);
@@ -424,6 +425,9 @@ final class MeliProductUpdateReviewService
             $this->replaceChanges($reviewItemId, $changes);
         } catch (Throwable $e) {
             $this->upsertReviewItem($reviewId, $accountId, $externalId, null, 'error', 'Error consultando publicación.', null, null, 0, $e->getMessage());
+            if ($strictExact) {
+                throw $e;
+            }
         }
     }
 

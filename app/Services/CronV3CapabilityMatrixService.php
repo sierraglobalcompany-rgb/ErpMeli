@@ -122,7 +122,7 @@ final class CronV3CapabilityMatrixService
             'family' => 'finance',
             'lane' => 'remote',
             'state' => 'v3_active',
-            'reason' => 'Captura Billing exacta por venta/input_version con máximo 60 order_ids por solicitud.',
+            'reason' => 'Captura Billing exacta por venta/input_version con un order_id por llamada física.',
             'work_types' => ['sale_billing_capture'],
         ],
         'financial_period_history' => [

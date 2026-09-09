@@ -93,7 +93,7 @@ final class CronDeadlineContext
     public static function within(float $deadline, callable $callback): mixed
     {
         $previous = self::$scopedDeadline;
-        $globalDeadline = self::$window?->deadline();
+        $globalDeadline = self::deadline();
         self::$scopedDeadline = $globalDeadline === null ? $deadline : min($globalDeadline, $deadline);
         try {
             return $callback();
@@ -105,7 +105,7 @@ final class CronDeadlineContext
     /** @return array{timeout:int,connect_timeout:int} */
     public static function curlTimeouts(): array
     {
-        if (!self::active()) {
+        if (!self::active() && self::deadline() === null) {
             return ['timeout' => 25, 'connect_timeout' => 8];
         }
         $transportDeadline = self::deadline();

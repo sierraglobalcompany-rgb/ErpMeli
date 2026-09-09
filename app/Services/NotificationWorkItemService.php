@@ -439,7 +439,7 @@ final class NotificationWorkItemService
         return $stmt->rowCount();
     }
 
-    public function inspectExact(int $workId, int $accountId, int $companyId = 0): CampaignItemState
+    public function inspectExact(int $workId, int $accountId, int $companyId = 0, bool $queueV4Exact = false): CampaignItemState
     {
         if ($workId < 1 || !$this->available()) {
             return new CampaignItemState(false, true, false, true, 'order_exact', 'Venta notificada', 'El trabajo ya no existe.', 0, 0, 'missing');
@@ -466,7 +466,7 @@ final class NotificationWorkItemService
             'question' => 'question_exact',
             'claim' => 'claim_exact',
             'shipment' => 'shipment_exact',
-            'item' => 'local_maintenance',
+            'item' => 'item_exact',
             default => 'order_exact',
         };
         $label = match ($type) {
@@ -484,16 +484,16 @@ final class NotificationWorkItemService
             $message = in_array($status, ['error', 'quarantined'], true)
                 ? 'Este recurso tiene un error anterior y requiere revisión.'
                 : ($status === 'running' ? 'Otro proceso está terminando este recurso.' : 'Este recurso está pausado.');
-            return new CampaignItemState(true, false, false, $type !== 'item', $operation, $label, $message, 0, 1, $status === 'running' ? 'locked' : 'action_required');
+            return new CampaignItemState(true, false, false, true, $operation, $label, $message, 0, 1, $status === 'running' ? 'locked' : 'action_required');
         }
         $clock = new SystemDatabaseUtcClock();
         if (!empty($row['next_run_at']) && !$clock->isDue((string) $row['next_run_at'])) {
-            return new CampaignItemState(true, false, false, $type !== 'item', $operation, $label, 'Este recurso está programado para después.', 0, 1, 'future', (string) $row['next_run_at']);
+            return new CampaignItemState(true, false, false, true, $operation, $label, 'Este recurso está programado para después.', 0, 1, 'future', (string) $row['next_run_at']);
         }
         if (!empty($row['lock_expires_at']) && !$clock->isDue((string) $row['lock_expires_at'])) {
-            return new CampaignItemState(true, false, false, $type !== 'item', $operation, $label, 'Otro proceso está terminando este recurso.', 0, 1, 'locked', (string) $row['lock_expires_at']);
+            return new CampaignItemState(true, false, false, true, $operation, $label, 'Otro proceso está terminando este recurso.', 0, 1, 'locked', (string) $row['lock_expires_at']);
         }
-        if ($type === 'shipment' && !$this->shipmentHasLocalOrder((int) $row['meli_account_id'], (string) $row['remote_resource_id'])) {
+        if (!$queueV4Exact && $type === 'shipment' && !$this->shipmentHasLocalOrder((int) $row['meli_account_id'], (string) $row['remote_resource_id'])) {
             return new CampaignItemState(
                 true,
                 false,
@@ -514,11 +514,11 @@ final class NotificationWorkItemService
             true,
             false,
             true,
-            $type !== 'item',
+            true,
             $operation,
             $label,
             'Listo para procesar.',
-            $type === 'item' ? 0 : 1,
+            1,
             1,
             'ready'
         );
@@ -531,8 +531,11 @@ final class NotificationWorkItemService
         CampaignExecutionContext $context,
         bool $allowContinuation=true
     ): array {
-        if (\App\QueueCore\QueueCoreOwnershipGuard::v4OwnsWebhook()) {
-            return \App\QueueCore\QueueCoreOwnershipGuard::skippedResult();
+        $coreManual = $context->worker === 'queue_core_manual';
+        if (($coreManual && !$this->certifiedManualAttempt($workId, $accountId, $context))
+            || (!$coreManual && \App\QueueCore\QueueCoreOwnershipGuard::v4OwnsWebhook())) {
+            return ['status'=>'protected','stop_reason'=>'manual_ownership_unproven','processed'=>0,
+                'message'=>'La autoridad exacta no está disponible. Vuelva a calcular.'];
         }
         if (!$this->canStartResource($context->deadline)) {
             return [
@@ -560,7 +563,7 @@ final class NotificationWorkItemService
         }
         $started = microtime(true);
         try {
-            $result = $this->processOne($work,$allowContinuation);
+            $result = $this->processOne($work,$allowContinuation,$coreManual);
             $this->complete($work, $owner, $result, (int) round((microtime(true) - $started) * 1000));
             return [
                 'status' => 'complete',
@@ -573,27 +576,56 @@ final class NotificationWorkItemService
             $safeAt = (new SystemDatabaseUtcClock())->timestamp((string) ($waiting->nextSafeAt ?? ''));
             $minutes = $safeAt !== null ? max(1, (int) ceil(($safeAt - time()) / 60)) : 1;
             $this->defer($work, $owner, $minutes, $waiting instanceof ApiRhythmDeferredException ? 'api_rhythm_deferred' : 'api_budget_exhausted', $waiting->getMessage(), $diagnosticId, 'policy', false);
-            return ['status' => $waiting instanceof ApiRhythmDeferredException ? 'waiting_rhythm' : 'waiting_budget', 'processed' => 0, 'message' => $waiting->getMessage(), 'next_eligible_at' => $waiting->nextSafeAt];
+            return ['status'=>'protected','stop_reason'=>$waiting instanceof ApiRhythmDeferredException && $waiting->reachedRemote ? 'remote_429' : 'policy_deferred', 'processed'=>0, 'message'=>$waiting->getMessage(), 'next_eligible_at'=>$waiting->nextSafeAt];
         } catch (RemoteResultUncertainException $uncertain) {
             $diagnosticId = $this->reportWorkError($work, $uncertain, 'fencing');
             $this->markActionRequired($work, $owner, $uncertain, $diagnosticId);
             return ['status' => 'action_required', 'processed' => 0, 'errors' => 1, 'message' => $this->safeMessage($uncertain), 'diagnostic_id' => $diagnosticId];
         } catch (ManualRemoteCallLimitException) {
             $this->defer($work, $owner, 1, 'manual_step_limit', 'La consulta principal continuará en el siguiente paso.', 'STEP-' . gmdate('Ymd-His'), 'guard', false);
-            return ['status' => 'deferred', 'processed' => 0, 'message' => 'La autorización se renovó. El recurso continuará después del intervalo.', 'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 60)];
+            return ['status'=>'protected','stop_reason'=>'manual_step_limit', 'processed' => 0, 'message' => 'La autorización se renovó. El recurso continuará después del intervalo.', 'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 60)];
         } catch (ApiManualPauseException $pause) {
             $diagnosticId = 'PAUSE-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(3));
             $this->defer($work, $owner, 5, 'api_manual_pause', $pause->getMessage(), $diagnosticId, 'guard', false);
-            return ['status' => 'deferred', 'processed' => 0, 'message' => 'La protección preventiva aplazó esta consulta.', 'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 300)];
+            return ['status'=>'protected','stop_reason'=>'api_manual_pause', 'processed' => 0, 'message' => 'La protección preventiva aplazó esta consulta.', 'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 300)];
         } catch (MeliApiException $error) {
             $diagnosticId = $this->reportWorkError($work, $error, 'api');
-            $this->deferApiError($work, $owner, $error, $diagnosticId);
-            return ['status' => 'deferred', 'processed' => 0, 'message' => $this->safeMessage($error), 'diagnostic_id' => $diagnosticId];
+            if ($this->deferApiError($work, $owner, $error, $diagnosticId)) {
+                return ['status'=>'complete','processed'=>1,'result'=>'question_not_available',
+                    'message'=>'La pregunta ya no está disponible en Mercado Libre.'];
+            }
+            return ['status'=>'protected','stop_reason'=>'remote_'.max(0,(int)$error->httpStatus),'http_status'=>$error->httpStatus, 'processed' => 0, 'message' => $this->safeMessage($error), 'diagnostic_id' => $diagnosticId];
         } catch (Throwable $error) {
             $diagnosticId = $this->reportWorkError($work, $error, 'processing');
             $this->failOrRetry($work, $owner, $error, $diagnosticId);
             return ['status' => 'error', 'processed' => 0, 'errors' => 1, 'message' => $this->safeMessage($error), 'diagnostic_id' => $diagnosticId];
         }
+    }
+
+    /** Read-only authorization; the physical Core fence still repeats all leases and capabilities. */
+    private function certifiedManualAttempt(int $workId, int $accountId, CampaignExecutionContext $context): bool
+    {
+        $m = ApiExecutionMetadataContext::current();
+        if (($m['source'] ?? '') !== 'queue_core' || ($m['queue_core_launcher'] ?? '') !== 'manual'
+            || ($m['queue_core_work_type'] ?? '') !== 'manual_exact'
+            || (int)($m['account_id'] ?? 0) !== $accountId || (int)($m['company_id'] ?? 0) !== $context->companyId) {
+            return false;
+        }
+        $s = Database::connectionFresh()->prepare(
+            "SELECT 1 FROM queue_core_jobs j
+             JOIN queue_core_attempts a ON a.job_id=j.id AND a.company_id=j.company_id AND a.meli_account_id=j.meli_account_id
+               AND a.lease_owner=j.lease_owner AND a.lease_generation=j.lease_generation
+             JOIN queue_core_execution_leases e ON e.lease_key='global' AND e.launcher='manual'
+             WHERE j.id=? AND a.id=? AND j.company_id=? AND j.meli_account_id=?
+               AND j.work_type='manual_exact' AND j.queue_domain='manual' AND j.resource_type='notification_fallback' AND j.resource_id=?
+               AND JSON_UNQUOTE(JSON_EXTRACT(j.payload_json,'$.source_authority_version'))=?
+               AND j.state='running' AND j.lease_owner=? AND j.lease_generation=? AND j.lease_expires_at>UTC_TIMESTAMP(3)
+               AND a.finished_at IS NULL AND e.owner_token=? AND e.generation=? AND e.expires_at>UTC_TIMESTAMP(3) LIMIT 1"
+        );
+        $s->execute([(int)($m['queue_core_job_id']??0),(int)($m['queue_core_attempt_id']??0),$context->companyId,$accountId,(string)$workId,
+            $context->expectedSourceAuthorityVersion,(string)($m['queue_core_lease_owner']??''),$context->leaseGeneration,
+            (string)($m['queue_core_execution_owner']??''),(int)($m['queue_core_execution_generation']??0)]);
+        return (bool)$s->fetchColumn();
     }
 
     /** @return array<string,mixed> */
@@ -614,7 +646,7 @@ final class NotificationWorkItemService
                 'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 60),
             ];
         }
-        $state = $this->inspectExact($workId, $accountId, $companyId);
+        $state = $this->inspectExact($workId, $accountId, $companyId, true);
         if (!$state->eligible) {
             return [
                 'status' => $state->terminal ? 'skipped' : 'deferred',
@@ -635,7 +667,7 @@ final class NotificationWorkItemService
         }
         $started = microtime(true);
         try {
-            $result = $this->processOne($work, true);
+            $result = $this->processOne($work, false, true);
             $this->complete($work, $owner, $result, (int) round((microtime(true) - $started) * 1000));
             return [
                 'status' => 'complete',
@@ -647,8 +679,8 @@ final class NotificationWorkItemService
             $diagnosticId = 'WAIT-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(3));
             $safeAt = (new SystemDatabaseUtcClock())->timestamp((string) ($waiting->nextSafeAt ?? ''));
             $minutes = $safeAt !== null ? max(1, (int) ceil(($safeAt - time()) / 60)) : 1;
-            $this->defer($work, $owner, $minutes, $waiting instanceof ApiRhythmDeferredException ? 'api_rhythm_deferred' : 'api_budget_exhausted', $waiting->getMessage(), $diagnosticId, 'policy', false);
-            return ['status' => $waiting instanceof ApiRhythmDeferredException ? 'waiting_rhythm' : 'waiting_budget', 'processed' => 0, 'message' => $waiting->getMessage(), 'next_eligible_at' => $waiting->nextSafeAt];
+            $this->defer($work, $owner, $minutes, $waiting instanceof ApiRhythmDeferredException ? 'api_rhythm_deferred' : 'api_budget_exhausted', $waiting->getMessage(), $diagnosticId, 'policy', $waiting instanceof ApiRhythmDeferredException && $waiting->reachedRemote);
+            throw $waiting;
         } catch (RemoteResultUncertainException $uncertain) {
             $diagnosticId = $this->reportWorkError($work, $uncertain, 'fencing');
             $this->markActionRequired($work, $owner, $uncertain, $diagnosticId);
@@ -662,12 +694,15 @@ final class NotificationWorkItemService
             return ['status' => 'deferred', 'processed' => 0, 'message' => 'La protección preventiva aplazó esta consulta.', 'next_eligible_at' => gmdate('Y-m-d H:i:s', time() + 300)];
         } catch (MeliApiException $error) {
             $diagnosticId = $this->reportWorkError($work, $error, 'api');
-            $this->deferApiError($work, $owner, $error, $diagnosticId);
-            return ['status' => 'deferred', 'processed' => 0, 'message' => $this->safeMessage($error), 'diagnostic_id' => $diagnosticId];
+            if ($this->deferApiError($work, $owner, $error, $diagnosticId)) {
+                return ['status'=>'complete','processed'=>1,'result'=>'question_not_available',
+                    'message'=>'La pregunta ya no está disponible en Mercado Libre.'];
+            }
+            throw $error;
         } catch (Throwable $error) {
             $diagnosticId = $this->reportWorkError($work, $error, 'processing');
             $this->failOrRetry($work, $owner, $error, $diagnosticId);
-            return ['status' => 'error', 'processed' => 0, 'errors' => 1, 'message' => $this->safeMessage($error), 'diagnostic_id' => $diagnosticId];
+            throw $error;
         }
     }
 
@@ -787,7 +822,7 @@ final class NotificationWorkItemService
     }
 
     /** @param array<string,mixed> $work @return array{result:string,entity_type:?string,entity_id:?int,action_url:?string,message:string} */
-    private function processOne(array $work,bool $allowContinuation=true): array
+    private function processOne(array $work, bool $allowContinuation = true, bool $queueV4Exact = false): array
     {
         $accountId = (int) ($work['meli_account_id'] ?? 0);
         if ($accountId <= 0) {
@@ -801,10 +836,15 @@ final class NotificationWorkItemService
             'bulk' => false,
             'account_id' => $accountId,
         ];
+        if ($queueV4Exact) {
+            $meta = array_replace($meta, ApiExecutionMetadataContext::current());
+        }
         if ($type === 'order') {
             $existing = $this->localOrder($accountId, $remoteId);
             $sync=new OrderSyncService($accountId);
-            $orderId=$allowContinuation?$sync->syncOrderById($remoteId,$meta):$sync->syncOrderByIdForManual($remoteId,$meta);
+            $orderId = $queueV4Exact
+                ? $sync->syncOrderByIdForQueueV4Clean($remoteId, $meta)
+                : ($allowContinuation ? $sync->syncOrderById($remoteId, $meta) : $sync->syncOrderByIdForManual($remoteId, $meta));
             if($allowContinuation)$this->enqueueFinancial($orderId, (int) $work['id']);
             return [
                 'result' => $existing ? 'order_updated' : 'order_created',
@@ -815,7 +855,10 @@ final class NotificationWorkItemService
             ];
         }
         if ($type === 'shipment') {
-            $shipmentId = (new OrderSyncService($accountId))->syncShipmentById($remoteId, $meta);
+            $sync = new OrderSyncService($accountId);
+            $shipmentId = $queueV4Exact
+                ? $sync->syncShipmentByIdForQueueCore($remoteId, $meta)
+                : $sync->syncShipmentById($remoteId, $meta);
             if($allowContinuation)$this->refreshFinancialForShipment($accountId, $shipmentId, (int) $work['id']);
             return [
                 'result' => 'shipment_updated',
@@ -846,7 +889,7 @@ final class NotificationWorkItemService
             ];
         }
         if ($type === 'item') {
-            $reviewId = (new MeliProductUpdateReviewService())->createReviewForItem($accountId, $remoteId);
+            $reviewId = (new MeliProductUpdateReviewService())->createReviewForItem($accountId, $remoteId, $queueV4Exact);
             return [
                 'result' => 'item_review_created',
                 'entity_type' => 'meli_product_update_review',
@@ -928,13 +971,13 @@ final class NotificationWorkItemService
         }
     }
 
-    /** @param array<string,mixed> $work */
-    private function deferApiError(array $work, string $owner, MeliApiException $error, string $diagnosticId): void
+    /** @param array<string,mixed> $work @return bool True only after expected absence is durably closed. */
+    private function deferApiError(array $work, string $owner, MeliApiException $error, string $diagnosticId): bool
     {
         $statusCode = (int) $error->httpStatus;
         if ($statusCode === 404 && (string) ($work['resource_type'] ?? '') === 'question') {
             $this->completeExpectedAbsence($work, $owner, $diagnosticId);
-            return;
+            return true;
         }
         $minutes = $statusCode === 429
             ? max(1, $this->settings->int('notifications.cooldown_429_minutes', 30))
@@ -952,6 +995,7 @@ final class NotificationWorkItemService
             'api',
             !in_array($statusCode, [403, 429], true)
         );
+        return false;
     }
 
     /** @param array<string,mixed> $work */

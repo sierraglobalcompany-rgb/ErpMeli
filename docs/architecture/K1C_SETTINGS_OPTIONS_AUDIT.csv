@@ -16,6 +16,6 @@ notifications.worker_batch_limit,communications,ADVANCED,Recursos por ciclo,"Tec
 financial_recalc.enabled,financial,HUMANIZED,Procesamiento financiero activo,"Primary label/help no longer expose queue authority"
 financial_recalc.orders_per_run,financial,HUMANIZED,Órdenes por ciclo,"Short recoverable cycle"
 financial_recalc.max_orders_per_job,financial,ADVANCED,Máximo por recálculo,"Technical job key hidden as advanced"
-financial_recalc.billing_order_ids_per_request,financial,CALL_CAPACITY,Órdenes por consulta de billing,"Confirmed call payload size"
+financial_recalc.billing_order_ids_per_request,financial,RETIRED,Retirado,"Historical row ignored; Billing active path is one order_id per physical GET"
 catalog.description_job_batch_limit,catalogs,ADVANCED,Descripciones por ciclo,"Technical key retained, operator wording changed"
 catalog.description_job_pause_seconds,catalogs,ADVANCED,Pausa entre ciclos,"No batch/lote as primary copy"

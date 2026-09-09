@@ -180,8 +180,29 @@ final class RegisteredManualCampaignAdapter implements InteractiveCampaignAdapte
             'module_jobs' => $result['processed'] ?? 0,
         });
         $status = (string) ($result['status'] ?? '');
+        // Some existing exact services return their domain outcome inside a
+        // summary. Preserve that structured result instead of guessing success.
+        if ($queueKey === 'orders_sync') {
+            $status = (string) ($result['last_result']['status'] ?? $status);
+            $errors = max($errors, (int) ($result['error_chunks'] ?? 0));
+        }
         $phase = (string) ($result['phase'] ?? '');
         $stopReason = (string) ($result['stop_reason'] ?? '');
+        $error = (array) ($result['error'] ?? $result['last_error'] ?? []);
+        $httpStatus = (int) ($result['http_status'] ?? $error['http_status'] ?? 0);
+        $errorType = (string) ($error['type'] ?? '');
+        $protectedReason = in_array($httpStatus, [401,403,429], true) ? 'remote_'.$httpStatus : null;
+        if ($protectedReason === null && ($status === 'protected'
+            || in_array($status, ['waiting_rhythm','waiting_budget','action_required'], true)
+            || in_array($errorType, ['waiting_api','waiting_rhythm','waiting_budget','waiting_deadline','oauth_token','remote_result_uncertain'], true)
+            || in_array($stopReason, ['SKIPPED_V4_OWNER','manual_pause','circuit_breaker','api_budget','lane_deadline','request_deadline'], true))) {
+            $protectedReason = $errorType ?: ($stopReason ?: $status);
+        }
+        if ($protectedReason !== null) {
+            return new CampaignItemResult('protected',
+                (string) ($result['message'] ?? 'El paso se cerró por protección; vuelva a calcular.'),
+                $processed, reason: $protectedReason, httpStatus: $httpStatus ?: null);
+        }
         $done = $this->resultIsDone($queueKey, $result, $status, $phase, $stopReason);
         $locked = $stopReason === 'locked' || $phase === 'locked';
         if ($errors > 0 || in_array($status, ['error', 'failed'], true)) {
@@ -193,7 +214,8 @@ final class RegisteredManualCampaignAdapter implements InteractiveCampaignAdapte
                 0,
                 0,
                 null,
-                isset($result['diagnostic_id']) ? (string) $result['diagnostic_id'] : null
+                isset($result['diagnostic_id']) ? (string) $result['diagnostic_id'] : null,
+                $errorType ?: ($stopReason ?: 'manual_error')
             );
         }
         if (!$done || $locked || in_array($status, ['deferred', 'waiting_budget', 'partial'], true)) {

@@ -67,6 +67,15 @@ final class EmergencyApiCanaryService
     /** @return array{account_id:int,nickname:string,http_status:int,completed_at:string} */
     public function run(int $accountId, string $actor): array
     {
+        return ManualPhysicalCallBudget::withinTechnical(
+            1,
+            fn (): array => $this->runWithinBudget($accountId, $actor)
+        );
+    }
+
+    /** @return array{account_id:int,nickname:string,http_status:int,completed_at:string} */
+    private function runWithinBudget(int $accountId, string $actor): array
+    {
         $account = $this->preflight($accountId);
         $nonce = $this->control->reserveApiCanary($accountId, (string) $account['meli_user_id']);
         $client = ($this->clientFactory)($accountId);
@@ -87,7 +96,10 @@ final class EmergencyApiCanaryService
                 $nonce,
                 static fn (): array => ApiExecutionMetadataContext::run(
                     $metadata,
-                    static fn (): array => $client->get(self::ENDPOINT, [], $metadata)
+                    static fn (): array => ApiExecutionMetadataContext::withTechnicalOperation(
+                        'emergency_canary',
+                        static fn (): array => $client->get(self::ENDPOINT, [], $metadata)
+                    )
                 )
             );
             $actualUserId = $this->canonicalIdentifier($response['id'] ?? null);

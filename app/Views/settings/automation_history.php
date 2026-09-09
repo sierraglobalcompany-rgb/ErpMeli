@@ -8,7 +8,7 @@ require __DIR__ . '/_automation_nav.php';
 $originLabels = ['scheduled_cli' => 'Lanzador automático', 'manual_cli' => 'Ejecución administrativa', 'manual_web' => 'Comprobación desde el ERP'];
 $pages = max(1, (int) ceil(max(0, (int) $total) / max(1, (int) $perPage)));
 ?>
-<div class="page-head"><div><span class="eyebrow">Automatización</span><h1>Historial de ejecuciones</h1><p>Cada error real abre el ciclo, su diagnóstico seguro y el recurso que puede resolverse.</p></div></div>
+<div class="page-head"><div><span class="eyebrow">ARCHIVO HISTÓRICO</span><h1>Historial heredado V2/V3</h1><p>Estos registros no certifican el estado ni la capacidad actuales V4.</p><a class="btn" href="<?= View::e($base) ?>/settings/cron/history">Volver al historial actual V4</a></div></div>
 <?php if ((int) ($legacyNeedsDiagnosis ?? 0) > 0): ?>
 <section class="alert warning">
   <strong><?= number_format((int) $legacyNeedsDiagnosis, 0, ',', '.') ?> eventos legacy agrupados para diagnóstico local.</strong>
@@ -18,7 +18,7 @@ $pages = max(1, (int) ceil(max(0, (int) $total) / max(1, (int) $perPage)));
 <?php endif; ?>
 <section class="panel">
   <header class="panel-head"><div><h2><?= number_format((int) $total, 0, ',', '.') ?> ciclos</h2><p>Página <?= (int) $page ?> de <?= $pages ?>.</p></div></header>
-  <?php if (!$runs): ?><div class="empty-state"><h3>Todavía no hay ejecuciones proyectadas</h3><p>El historial comenzará a llenarse después de ejecutar Cron.</p></div>
+  <?php if (!$runs): ?><div class="empty-state"><h3>Todavía no hay ejecuciones proyectadas</h3><p>Este archivo no contiene ejecuciones históricas; los ciclos actuales se consultan en V4.</p></div>
   <?php else: ?><div class="table-scroll"><table class="data-table responsive-table"><caption>Historial resoluble de ciclos de automatización</caption><thead><tr><th>Inicio</th><th>Origen</th><th>Resultado</th><th>Función o recurso</th><th>Transporte</th><th>Próxima oportunidad</th><th>Conteos</th><th>Acción</th></tr></thead><tbody>
   <?php foreach ($runs as $run):
       $error = is_array($run['primary_error'] ?? null) ? $run['primary_error'] : null;
@@ -42,8 +42,8 @@ $pages = max(1, (int) ceil(max(0, (int) $total) / max(1, (int) $perPage)));
   </tr><?php endforeach; ?>
   </tbody></table></div><?php endif; ?>
   <?php if ($pages > 1): ?><nav class="pagination" aria-label="Páginas del historial">
-    <?php if ($page > 1): ?><a class="btn" href="<?= View::e($base) ?>/settings/cron/history?<?= View::e(http_build_query(['page' => $page - 1, 'per_page' => $perPage])) ?>">Anterior</a><?php endif; ?>
+    <?php if ($page > 1): ?><a class="btn" href="<?= View::e($base) ?>/settings/cron/history?<?= View::e(http_build_query(['page' => $page - 1, 'per_page' => $perPage, 'archive' => 'legacy'])) ?>">Anterior</a><?php endif; ?>
     <span>Página <?= (int) $page ?> de <?= $pages ?></span>
-    <?php if ($page < $pages): ?><a class="btn" href="<?= View::e($base) ?>/settings/cron/history?<?= View::e(http_build_query(['page' => $page + 1, 'per_page' => $perPage])) ?>">Siguiente</a><?php endif; ?>
+    <?php if ($page < $pages): ?><a class="btn" href="<?= View::e($base) ?>/settings/cron/history?<?= View::e(http_build_query(['page' => $page + 1, 'per_page' => $perPage, 'archive' => 'legacy'])) ?>">Siguiente</a><?php endif; ?>
   </nav><?php endif; ?>
 </section>

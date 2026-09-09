@@ -321,13 +321,66 @@ final class ManualSingleStepService
             if ((string) ($control['engine_state'] ?? '') !== 'ACTIVE') {
                 throw new RuntimeException('El procesamiento automático está detenido; no se admitió el paso manual.');
             }
-            $currentSelection = $repository->claimableConfirmedSelection($rows, $allowedAccountIds, $accountId ?: null);
             $workerLimit = min($requested, QueueV4CleanWorker::HARD_MAX_CALLS);
             if (!CronDeadlineContext::canAcceptWork(1)) {
                 throw new RuntimeException('El cálculo ya no tiene tiempo seguro en esta ventana. Vuelva a calcular.');
             }
-            if ($currentSelection === []) {
+            // Consume and wake only this confirmed subset under the same live
+            // global authority and PDO transaction. No HTTP occurs until commit.
+            // Applies only to this next transaction, not the session default:
+            // a lock wait must not preserve a pre-wait snapshot of live inputs.
+            $pdo->exec('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+            $pdo->beginTransaction();
+            try {
+                $authority = $pdo->prepare(
+                    "SELECT generation FROM queue_core_execution_leases
+                      WHERE lease_key='global' AND launcher='manual' AND owner_token=?
+                        AND generation=? AND expires_at>UTC_TIMESTAMP(3) FOR UPDATE"
+                );
+                $authority->execute([$lease->ownerToken, $lease->generation]);
+                if ($authority->fetchColumn() === false) {
+                    throw new RuntimeException('La autoridad manual venció. Vuelva a calcular.');
+                }
+                if ((string) ($repository->control(true)['engine_state'] ?? '') !== 'ACTIVE') {
+                    throw new RuntimeException('El procesamiento automático está detenido; no se admitió el paso manual.');
+                }
+                // Re-read authorization after acquiring the global lease.
+                $allowedAccountIds = $accountId > 0
+                    ? [(int) $scope->account($accountId, 0, $userId)['id']]
+                    : $scope->accountIds($userId);
+                ManualPhysicalCallBudget::resolve($configuration, $requested, (new CapacityPolicyService())->snapshot('manual'));
+                if (!CronDeadlineContext::canAcceptWork(1) || Database::connectionFresh() !== $pdo) {
+                    throw new RuntimeException('El cálculo ya no tiene tiempo seguro en esta ventana. Vuelva a calcular.');
+                }
                 $previews->consume($previewToken, $userId);
+                $currentSelection = $repository->admitManualConfirmedSelection($rows, $allowedAccountIds, $accountId ?: null);
+                // Lock acquisition/domain reads may have waited. Never commit
+                // consumption or promotion after the request/authority expires.
+                $freshAccountIds = $accountId > 0
+                    ? [(int) $scope->account($accountId, 0, $userId)['id']]
+                    : $scope->accountIds($userId);
+                foreach ($currentSelection as $confirmed) {
+                    if (!in_array((int) $confirmed['meli_account_id'], $freshAccountIds, true)) {
+                        throw new RuntimeException('La autorización de la selección cambió. Vuelva a calcular.');
+                    }
+                    $scope->account((int) $confirmed['meli_account_id'], (int) $confirmed['company_id'], $userId);
+                }
+                ManualPhysicalCallBudget::resolve($configuration, $requested, (new CapacityPolicyService())->snapshot('manual'));
+                if ((string) ($repository->control(true)['engine_state'] ?? '') !== 'ACTIVE') {
+                    throw new RuntimeException('El procesamiento automático está detenido; no se admitió el paso manual.');
+                }
+                $authority->execute([$lease->ownerToken, $lease->generation]);
+                if ($authority->fetchColumn() === false || !CronDeadlineContext::canAcceptWork(1)) {
+                    throw new RuntimeException('La autoridad o el tiempo seguro del paso manual venció. Vuelva a calcular.');
+                }
+                $pdo->commit();
+            } catch (Throwable $error) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                throw $error;
+            }
+            if ($currentSelection === []) {
                 return $this->capacityReceipt([
                     'status' => 'waiting',
                     'message' => 'Los pendientes confirmados cambiaron o ya están ocupados; no se sustituyó ninguno.',
@@ -343,16 +396,13 @@ final class ManualSingleStepService
                     'stop_reason' => 'selection_stale_or_busy',
                 ], $configuration, $limit, $requested);
             }
-            // Available work has no exact launcher: consume directly before
-            // entering its worker, while holding the same global authority.
-            $previews->consume($previewToken, $userId);
             $workerResult = (new QueueV4CleanWorker($pdo, $repository))->run(
                     'manual',
                     $workerLimit,
                     max(0, (int) floor(CronDeadlineContext::remainingSeconds())),
                     $allowedAccountIds,
                     $accountId ?: null,
-                    $rows
+                    $currentSelection
                 );
             $runSummary = $repository->runOutcomeCounts((int) ($workerResult['run_id'] ?? 0));
             $claimed = (int) ($workerResult['claimed'] ?? 0);
@@ -385,7 +435,7 @@ final class ManualSingleStepService
                 'waiting_count' => $waiting,
                 'review_error_count' => $review,
                 'not_processed_count' => $notProcessed,
-                'stale_or_busy_skipped' => (int) ($workerResult['stale_or_busy_skipped'] ?? 0),
+                'stale_or_busy_skipped' => $selected - count($currentSelection) + (int) ($workerResult['stale_or_busy_skipped'] ?? 0),
                 'run_id' => (int) ($workerResult['run_id'] ?? 0),
                 'active_drainers_max' => 1,
                 'manual_auto_shared_global_authority' => true,

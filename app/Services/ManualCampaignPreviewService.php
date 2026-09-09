@@ -457,30 +457,28 @@ final class ManualCampaignPreviewService
 
         $ttl = max(60, min(3600, (new AppSettingsService())->int('manual_campaign.preview_ttl_seconds', 600)));
         $repository = new QueueV4CleanRepository($pdo);
-        $availableRows = [];
-        foreach ($repository->previewEligible(
+        $projection = $repository->previewManualEligible(
             self::PRESENTATION_LIMIT,
             $allowedAccountIds,
-            $accountId > 0 ? $accountId : null
-        ) as $row) {
-            $bound = self::bindAvailableSourceIdentity($row);
-            if ($bound !== null) {
-                $availableRows[] = $bound;
-            }
-        }
+            $accountId > 0 ? $accountId : null,
+            [self::class, 'bindAvailableSourceIdentity']
+        );
+        $availableRows = $projection['rows'];
         $preview = [
-            'eligible_jobs' => $repository->eligibleCount($allowedAccountIds, $accountId > 0 ? $accountId : null),
+            'eligible_jobs' => count($availableRows),
+            'candidate_jobs_scanned' => $projection['candidate_count'],
+            'has_more_basis' => 'validated_fifo_lookahead',
             'rows' => $availableRows,
             'excluded_jobs' => [],
             'excluded_summary' => [],
-            'manual_queue_preview_matches_auto_eligibility' => 'PASS',
-            'auto_eligibility_match' => 'PASS',
+            'manual_queue_preview_matches_auto_eligibility' => 'MANUAL_CHECKPOINT_CONTINUATION',
+            'auto_eligibility_match' => 'MANUAL_CHECKPOINT_CONTINUATION',
             'f1_future_finance_excluded' => 'PASS',
             'f1b_pack_incomplete_excluded' => 'PASS',
-            'waiting_excluded' => 'PASS',
+            'waiting_excluded' => 'EXCEPT_CONFIRMED_BILLING_CHECKPOINT',
             'review_excluded' => 'PASS',
         ];
-        $preview['has_more'] = (int) $preview['eligible_jobs'] > count($preview['rows']);
+        $preview['has_more'] = $projection['has_more'];
         $preview['truncated'] = $preview['has_more'];
         $preview['scope_label'] = 'Pendientes disponibles ahora';
         $preview['expires_in_seconds'] = $ttl;
@@ -546,6 +544,7 @@ final class ManualCampaignPreviewService
             'selection_id','selection_version','source_authority_version','remote_contract',
             'related_resource_ids','queue_idempotency_key','queue_payload_hash',
             'source_queue_key','source_selection_version',
+            'manual_continuation_kind','queue_lease_generation','financial_source_lease_generation','financial_input_version',
         ];
         return array_intersect_key($row, array_flip($allowed));
     }
@@ -559,6 +558,9 @@ final class ManualCampaignPreviewService
      */
     public static function bindAvailableSourceIdentity(array $row): ?array
     {
+        if (!(new QueueV4CleanRepository(Database::connectionFresh()))->manualContinuationSourceIdentityMatches($row)) {
+            return null;
+        }
         if ((string) ($row['job_type'] ?? '') !== 'domain_exact') {
             return $row;
         }

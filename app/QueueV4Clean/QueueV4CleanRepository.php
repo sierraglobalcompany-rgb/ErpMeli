@@ -5,12 +5,16 @@ declare(strict_types=1);
 namespace App\QueueV4Clean;
 
 use PDO;
+use App\Services\CronDeadlineContext;
+use App\Services\ManualCampaignPreviewService;
+use App\Services\SaleFinancialStateService;
 use RuntimeException;
 use Throwable;
 
 final class QueueV4CleanRepository
 {
     private const HARD_PREVIEW_LIMIT = 60;
+    private const MANUAL_CONTINUATION = 'billing_checkpoint_progress';
 
     private ?bool $financialSourceTableExists = null;
     /** @var array{ran:bool,candidates:int,released:int,skipped_future:int,skipped_blocked:int,errors:int} */
@@ -287,6 +291,288 @@ final class QueueV4CleanRepository
         }
 
         return $rows;
+    }
+
+    /**
+     * Manual-only, read-only bounded keyset pages. Only fully validated rows
+     * count toward the displayed limit and the single authorized lookahead.
+     * @return array{rows:list<array<string,mixed>>,has_more:bool,candidate_count:int}
+     */
+    public function previewManualEligible(int $limit, ?array $authorizedAccountIds = null, ?int $accountId = null, ?callable $bind = null): array
+    {
+        $limit = max(1, min(self::HARD_PREVIEW_LIMIT, $limit));
+        $candidateLimit = $limit + 1;
+        $deadline = min(microtime(true) + 10.0, (CronDeadlineContext::deadline() ?? INF) - 1.0);
+        [$scopeSql, $scopeParams] = $this->accountScopeSql('q', $authorizedAccountIds, $accountId);
+        $sql =
+            "SELECT q.*,q.id queue_job_id,SHA2(CAST(q.payload_json AS CHAR),256) queue_payload_hash,
+                    JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,'$.capability')) capability,
+                    a.account_name,c.name company_name
+               FROM queue_v4_clean_jobs q
+               JOIN meli_accounts a ON a.id=q.meli_account_id AND a.company_id=q.company_id
+               JOIN companies c ON c.id=q.company_id
+              WHERE {$scopeSql} AND %s AND q.available_at<=UTC_TIMESTAMP(3)
+                AND NOT (" . $this->unresolvedPhysicalPredicate('q') . ")
+                AND ((q.state='ready'
+                      AND (q.lease_owner IS NULL OR q.lease_expires_at IS NULL OR q.lease_expires_at<=UTC_TIMESTAMP(3))
+                      AND NOT (" . $this->financialSourceFuturePredicate('q') . "))
+                     OR ((" . $this->manualContinuationQueuePredicate('q') . ")
+                         AND (" . $this->manualContinuationCheapSourcePredicate('q') . ")))
+              ORDER BY q.available_at,q.id LIMIT {$candidateLimit}";
+        $rows = [];
+        $candidateCount = 0;
+        $cursor = null;
+        do {
+            $this->assertManualPreviewDeadline($deadline);
+            $cursorSql = $cursor === null ? '1=1' : '(q.available_at>? OR (q.available_at=? AND q.id>?))';
+            // Use replacement, not sprintf: source predicates contain SQL LIKE
+            // percent signs and must remain literal.
+            $statement = $this->pdo->prepare(str_replace('%s', $cursorSql, $sql));
+            $statement->execute(array_merge($scopeParams, $cursor === null ? [] : [$cursor[0], $cursor[0], $cursor[1]]));
+            $candidates = $statement->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($candidates as $row) {
+                $this->assertManualPreviewDeadline($deadline);
+                $candidateCount++;
+                $cursor = [(string) $row['available_at'], (int) $row['queue_job_id']];
+                if ((string) $row['state'] === 'waiting') {
+                    $source = $this->manualContinuationSource($row);
+                    if ($source === null) {
+                        continue;
+                    }
+                    $row += [
+                        'manual_continuation_kind' => self::MANUAL_CONTINUATION,
+                        'queue_lease_generation' => (int) $row['lease_generation'],
+                        'financial_source_lease_generation' => (int) $source['lease_generation'],
+                        'financial_input_version' => (string) $source['input_version'],
+                    ];
+                }
+                $human = $this->humanQueuePreviewRow($row, count($rows) + 1);
+                $bound = $bind === null ? $human : $bind($human);
+                $this->assertManualPreviewDeadline($deadline);
+                if ($bound === null) {
+                    continue;
+                }
+                $rows[] = $bound;
+                if (count($rows) > $limit) {
+                    break 2;
+                }
+            }
+        } while (count($candidates) === $candidateLimit);
+        $this->assertManualPreviewDeadline($deadline);
+        return ['rows' => array_slice($rows, 0, $limit), 'has_more' => count($rows) > $limit, 'candidate_count' => $candidateCount];
+    }
+
+    private function assertManualPreviewDeadline(float $deadline): void
+    {
+        if (microtime(true) >= $deadline) {
+            throw new RuntimeException('El cálculo de pendientes agotó su tiempo seguro. Vuelva a calcular; no se guardó una selección parcial.');
+        }
+    }
+
+    /**
+     * Called only inside manual admission's transaction/global lease. Invalid
+     * individual rows are left untouched; infrastructure errors abort admission.
+     * @param list<array<string,mixed>> $selection
+     * @return list<array<string,mixed>>
+     */
+    public function admitManualConfirmedSelection(array $selection, ?array $authorizedAccountIds = null, ?int $accountId = null): array
+    {
+        if (!$this->pdo->inTransaction()) {
+            throw new RuntimeException('manual_continuation_transaction_required');
+        }
+        [$scopeSql, $scopeParams] = $this->accountScopeSql('q', $authorizedAccountIds, $accountId);
+        $accepted = [];
+        foreach (array_slice($selection, 0, self::HARD_PREVIEW_LIMIT) as $snapshot) {
+            if (!is_array($snapshot) || !$this->validManualContinuationFields($snapshot)) {
+                continue;
+            }
+            [$identitySql, $identityParams] = $this->confirmedSelectionSql('q', [$snapshot]);
+            $statement = $this->pdo->prepare(
+                "SELECT q.* FROM queue_v4_clean_jobs q WHERE {$scopeSql} AND {$identitySql} FOR UPDATE"
+            );
+            $statement->execute(array_merge($scopeParams, $identityParams));
+            $queue = $statement->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($queue)) {
+                continue;
+            }
+            if (isset($snapshot['manual_continuation_kind'])) {
+                $source = $this->manualContinuationSource($queue, true);
+                if ($source === null || !$this->manualSourceSnapshotMatches($snapshot, $source)
+                    || !ManualCampaignPreviewService::availableSourceIdentityMatches($snapshot)) {
+                    continue;
+                }
+                $update = $this->pdo->prepare(
+                    "UPDATE queue_v4_clean_jobs q SET state='ready'
+                      WHERE {$scopeSql} AND {$identitySql}
+                        AND (" . $this->manualContinuationQueuePredicate('q') . ")
+                        AND NOT (" . $this->unresolvedPhysicalPredicate('q') . ")"
+                );
+                // An unchanged automatic wake to ready is acceptable. The
+                // identity/generation SQL still rejects a claim/checkpoint ABA.
+                if ((string) $queue['state'] === 'waiting') {
+                    $update->execute(array_merge($scopeParams, $identityParams));
+                    if ($update->rowCount() !== 1) {
+                        continue;
+                    }
+                } elseif ((string) $queue['state'] !== 'ready') {
+                    continue;
+                }
+            }
+            $accepted[] = $snapshot;
+        }
+        return $this->claimableConfirmedSelection($accepted, $authorizedAccountIds, $accountId);
+    }
+
+    /** Domain binding deliberately does not compare q generation: the worker
+     * calls it after its own fenced ready-only claim increments that generation.
+     * Admission and confirmedSelectionSql enforce q generation before claim.
+     */
+    public function manualContinuationSourceIdentityMatches(array $snapshot): bool
+    {
+        if (!$this->validManualContinuationFields($snapshot)) {
+            return false;
+        }
+        if (!isset($snapshot['manual_continuation_kind'])) {
+            return true;
+        }
+        $source = $this->manualContinuationSource([
+            'company_id' => $snapshot['company_id'] ?? 0,
+            'meli_account_id' => $snapshot['meli_account_id'] ?? 0,
+            'resource_id' => $snapshot['resource_id'] ?? '',
+            'job_type' => $snapshot['job_type'] ?? '',
+            'payload_json' => json_encode(['capability' => $snapshot['capability'] ?? '', 'source_id' => $snapshot['resource_id'] ?? '']),
+        ]);
+        return $source !== null && $this->manualSourceSnapshotMatches($snapshot, $source);
+    }
+
+    private function manualContinuationQueuePredicate(string $alias): string
+    {
+        $this->assertSqlAlias($alias);
+        return "{$alias}.state='waiting' AND {$alias}.job_type='domain_exact'
+            AND BINARY {$alias}.last_error_class='domain_source_waiting:financial_reconciliation:billing_checkpoint_progress'
+            AND {$alias}.available_at<=UTC_TIMESTAMP(3) AND {$alias}.attempt_count<{$alias}.max_attempts
+            AND (({$alias}.lease_owner IS NULL AND {$alias}.lease_expires_at IS NULL)
+                 OR ({$alias}.lease_owner IS NOT NULL AND {$alias}.lease_expires_at IS NOT NULL
+                     AND {$alias}.lease_expires_at<=UTC_TIMESTAMP(3)))";
+    }
+
+    /** Cheap prefilter only; the shared live-input/checkpoint validator remains
+     * authoritative before showing or admitting any continuation. */
+    private function manualContinuationCheapSourcePredicate(string $alias): string
+    {
+        $this->assertSqlAlias($alias);
+        if (!$this->financialSourceTableExists()) {
+            return '0=1';
+        }
+        return "BINARY JSON_UNQUOTE(JSON_EXTRACT({$alias}.payload_json,'$.capability'))='financial_reconciliation'
+            AND {$alias}.resource_id REGEXP '^[1-9][0-9]*$'
+            AND BINARY JSON_UNQUOTE(JSON_EXTRACT({$alias}.payload_json,'$.source_id'))=BINARY {$alias}.resource_id
+            AND EXISTS (SELECT 1 FROM sale_financial_reconciliation_jobs ms
+                JOIN sale_financial_state st ON st.company_id=ms.company_id AND st.meli_account_id=ms.meli_account_id
+                     AND st.sale_key=ms.sale_key AND st.input_version=ms.input_version
+                JOIN meli_packs p ON p.meli_account_id=ms.meli_account_id AND p.external_pack_id=SUBSTRING(ms.sale_key,3)
+                WHERE ms.id={$alias}.resource_id AND ms.company_id={$alias}.company_id AND ms.meli_account_id={$alias}.meli_account_id
+                  AND ms.status='retry' AND ms.sale_key LIKE 'P:%' AND p.integrity_status='complete'
+                  AND ms.next_run_at<=UTC_TIMESTAMP(3)
+                  AND ((ms.lock_owner IS NULL AND ms.lease_expires_at IS NULL)
+                       OR (ms.lock_owner IS NOT NULL AND ms.lease_expires_at IS NOT NULL AND ms.lease_expires_at<=UTC_TIMESTAMP(3)))
+                  AND NOT (" . $this->financialSourceManualReservationPredicate('ms') . "))";
+    }
+
+    /** Shared read-only authority for preview, binding and locked admission. */
+    private function manualContinuationSource(array $queue, bool $forUpdate = false): ?array
+    {
+        $payload = json_decode((string) ($queue['payload_json'] ?? ''), true);
+        $sourceId = (string) ($queue['resource_id'] ?? '');
+        if ((string) ($queue['job_type'] ?? '') !== 'domain_exact'
+            || !is_array($payload) || ($payload['capability'] ?? null) !== 'financial_reconciliation'
+            || preg_match('/^[1-9][0-9]*$/D', $sourceId) !== 1
+            || (!is_string($payload['source_id'] ?? null) && !is_int($payload['source_id'] ?? null))
+            || (string) $payload['source_id'] !== $sourceId) {
+            return null;
+        }
+        $statement = $this->pdo->prepare(
+            "SELECT s.* FROM sale_financial_reconciliation_jobs s
+               JOIN meli_accounts a ON a.id=s.meli_account_id AND a.company_id=s.company_id
+               JOIN sale_financial_state st ON st.company_id=s.company_id AND st.meli_account_id=s.meli_account_id
+                    AND st.sale_key=s.sale_key AND st.input_version=s.input_version
+               JOIN meli_packs p ON p.meli_account_id=s.meli_account_id AND p.external_pack_id=SUBSTRING(s.sale_key,3)
+              WHERE s.id=? AND s.company_id=? AND s.meli_account_id=? AND s.status='retry'
+                AND s.sale_key LIKE 'P:%' AND p.integrity_status='complete'
+                AND s.next_run_at<=UTC_TIMESTAMP(3)
+                AND ((s.lock_owner IS NULL AND s.lease_expires_at IS NULL)
+                     OR (s.lock_owner IS NOT NULL AND s.lease_expires_at IS NOT NULL AND s.lease_expires_at<=UTC_TIMESTAMP(3)))
+                AND NOT (" . $this->financialSourceManualReservationPredicate('s') . ")"
+                . ($forUpdate ? ' FOR UPDATE' : '')
+        );
+        $statement->execute([$sourceId, (int) ($queue['company_id'] ?? 0), (int) ($queue['meli_account_id'] ?? 0)]);
+        $source = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($source)) {
+            return null;
+        }
+        $orders = $this->pdo->prepare(
+            'SELECT o.id,o.external_order_id FROM meli_orders o
+              JOIN meli_accounts a ON a.id=o.meli_account_id AND a.company_id=?
+             WHERE o.meli_account_id=? AND o.external_pack_id=? ORDER BY o.id'
+             . ($forUpdate ? ' FOR UPDATE' : '')
+        );
+        $orders->execute([(int) $source['company_id'], (int) $source['meli_account_id'], substr((string) $source['sale_key'], 2)]);
+        $orderRows = $orders->fetchAll(PDO::FETCH_ASSOC);
+        if (count($orderRows) < 2
+            || !hash_equals((string) $source['input_version'], (new SaleFinancialStateService())->inputVersionForOrder((int) $orderRows[0]['id']))) {
+            return null;
+        }
+        $known = array_fill_keys(array_map(static fn (array $row): string => (string) $row['external_order_id'], $orderRows), true);
+        $evidence = $this->pdo->prepare(
+            'SELECT e.source_id,e.evidence_json,c.requested_order_ids_json
+               FROM sale_financial_evidence e
+               JOIN meli_billing_capture_runs c ON c.id=e.source_id AND c.company_id=e.company_id
+                    AND c.meli_account_id=e.meli_account_id AND c.sale_key=e.sale_key AND c.input_version=e.input_version
+              WHERE e.company_id=? AND e.meli_account_id=? AND e.sale_key=? AND e.input_version=?
+                AND e.evidence_type="billing_capture" AND e.evidence_status="reconciled"
+                AND c.http_status=200 AND c.response_class="complete" AND c.captured_at IS NOT NULL'
+                . ($forUpdate ? ' FOR UPDATE' : '')
+        );
+        $evidence->execute([(int) $source['company_id'], (int) $source['meli_account_id'], (string) $source['sale_key'], (string) $source['input_version']]);
+        $completed = [];
+        foreach ($evidence->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $checkpoint = json_decode((string) $row['evidence_json'], true);
+            $requested = json_decode((string) $row['requested_order_ids_json'], true);
+            if (!is_array($checkpoint) || ($checkpoint['format'] ?? null) !== 'billing_order_v2'
+                || (!is_string($checkpoint['order_id'] ?? null) && !is_int($checkpoint['order_id'] ?? null))
+                || (!is_int($checkpoint['capture_id'] ?? null) && !is_string($checkpoint['capture_id'] ?? null))) {
+                continue;
+            }
+            $orderId = (string) $checkpoint['order_id'];
+            $captureId = (string) $checkpoint['capture_id'];
+            if (preg_match('/^[1-9][0-9]*$/D', $captureId) !== 1 || $captureId !== (string) $row['source_id']
+                || !isset($known[$orderId]) || !is_array($requested) || count($requested) !== 1
+                || (!is_string($requested[0] ?? null) && !is_int($requested[0] ?? null))
+                || (string) $requested[0] !== $orderId) {
+                continue;
+            }
+            $completed[$orderId] = true;
+        }
+        return count($completed) > 0 && count($completed) < count($known) ? $source : null;
+    }
+
+    private function validManualContinuationFields(array $row): bool
+    {
+        $fields = ['manual_continuation_kind', 'queue_lease_generation', 'financial_source_lease_generation', 'financial_input_version'];
+        if (array_intersect($fields, array_keys($row)) === []) {
+            return true;
+        }
+        return ($row['manual_continuation_kind'] ?? null) === self::MANUAL_CONTINUATION
+            && is_int($row['queue_lease_generation'] ?? null) && $row['queue_lease_generation'] >= 0
+            && is_int($row['financial_source_lease_generation'] ?? null) && $row['financial_source_lease_generation'] >= 0
+            && is_string($row['financial_input_version'] ?? null)
+            && preg_match('/^[a-f0-9]{64}$/D', $row['financial_input_version']) === 1;
+    }
+
+    private function manualSourceSnapshotMatches(array $snapshot, array $source): bool
+    {
+        return (int) $source['lease_generation'] === $snapshot['financial_source_lease_generation']
+            && hash_equals($snapshot['financial_input_version'], (string) $source['input_version']);
     }
 
     /**
@@ -1123,7 +1409,10 @@ final class QueueV4CleanRepository
         $resource = $this->humanQueueResource($jobType, $capability);
         $status = $state === 'waiting' ? 'Disponible al iniciar' : 'Listo ahora';
 
-        return [
+        $continuation = array_intersect_key($row, array_flip([
+            'manual_continuation_kind', 'queue_lease_generation', 'financial_source_lease_generation', 'financial_input_version',
+        ]));
+        return $continuation + [
             'queue_key' => 'available_queue',
             'source_id' => (string) ($row['queue_job_id'] ?? ''),
             'queue_job_id' => (int) ($row['queue_job_id'] ?? 0),
@@ -1154,7 +1443,10 @@ final class QueueV4CleanRepository
     /** @param array<string,mixed> $row */
     private function queueSelectionVersion(array $row): string
     {
-        return hash('sha256', json_encode([
+        $continuation = array_intersect_key($row, array_flip([
+            'manual_continuation_kind', 'queue_lease_generation', 'financial_source_lease_generation', 'financial_input_version',
+        ]));
+        return hash('sha256', json_encode($continuation + [
             'queue_job_id' => (int) ($row['queue_job_id'] ?? 0),
             'company_id' => (int) ($row['company_id'] ?? 0),
             'meli_account_id' => (int) ($row['meli_account_id'] ?? 0),
@@ -1185,12 +1477,28 @@ final class QueueV4CleanRepository
                 || (int) ($row['queue_job_id'] ?? 0) < 1
                 || preg_match('/^[a-f0-9]{64}$/', (string) ($row['selection_version'] ?? '')) !== 1
                 || preg_match('/^[a-f0-9]{64}$/', (string) ($row['queue_payload_hash'] ?? '')) !== 1
-                || (string) ($row['queue_idempotency_key'] ?? '') === '') {
+                || (string) ($row['queue_idempotency_key'] ?? '') === ''
+                || !$this->validManualContinuationFields($row)) {
                 continue;
+            }
+            $fence = '';
+            $fenceParams = [];
+            if (isset($row['manual_continuation_kind'])) {
+                $identity = array_replace($row, ['idempotency_key' => $row['queue_idempotency_key']]);
+                if (!hash_equals((string) $row['selection_version'], $this->queueSelectionVersion($identity))) {
+                    continue;
+                }
+                $fence = " AND {$alias}.lease_generation=? AND {$alias}.attempt_count<{$alias}.max_attempts
+                    AND (({$alias}.lease_owner IS NULL AND {$alias}.lease_expires_at IS NULL)
+                         OR ({$alias}.lease_owner IS NOT NULL AND {$alias}.lease_expires_at IS NOT NULL AND {$alias}.lease_expires_at<=UTC_TIMESTAMP(3)))
+                    AND EXISTS (SELECT 1 FROM sale_financial_reconciliation_jobs ms
+                        WHERE ms.id={$alias}.resource_id AND ms.company_id={$alias}.company_id
+                          AND ms.meli_account_id={$alias}.meli_account_id AND ms.lease_generation=? AND ms.input_version=?)";
+                $fenceParams = [$row['queue_lease_generation'], $row['financial_source_lease_generation'], $row['financial_input_version']];
             }
             $clauses[] = "({$alias}.id=? AND {$alias}.company_id=? AND {$alias}.meli_account_id=?
                 AND {$alias}.job_type=? AND COALESCE({$alias}.resource_id,'')=?
-                AND {$alias}.idempotency_key=? AND SHA2(CAST({$alias}.payload_json AS CHAR),256)=?)";
+                AND {$alias}.idempotency_key=? AND SHA2(CAST({$alias}.payload_json AS CHAR),256)=?{$fence})";
             array_push($params,
                 (int) $row['queue_job_id'],
                 (int) ($row['company_id'] ?? 0),
@@ -1200,6 +1508,7 @@ final class QueueV4CleanRepository
                 (string) $row['queue_idempotency_key'],
                 (string) $row['queue_payload_hash']
             );
+            array_push($params, ...$fenceParams);
         }
         return $clauses === [] ? ['1=0', []] : ['(' . implode(' OR ', $clauses) . ')', $params];
     }

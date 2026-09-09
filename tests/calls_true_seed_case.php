@@ -21,11 +21,13 @@ if(!is_dir($dir))mkdir($dir,0770,true);
 foreach(['APP_ENV'=>'test','ML_WRITE_ENABLED'=>'false','DB_HOST'=>'127.0.0.1','DB_PORT'=>'33079','DB_USER'=>'root','DB_PASS'=>'','DB_NAME'=>'erp_meli_k1d_test_true_seed_'.bin2hex(random_bytes(5)),'APP_KEY'=>'synthetic-true-final-only','PRIVATE_STORAGE_PATH'=>$dir.'/private','MELI_API_BASE'=>'https://calls-wire.invalid']as $k=>$v)putenv($k.'='.$v);
 if(!defined('ERP_INSTALLATION_ROOT'))define('ERP_INSTALLATION_ROOT',$dir.'/install');
 mkdir(ERP_INSTALLATION_ROOT,0770,true);
-$h=K1dSafeTestDatabase::createFromEnvironment();
-$ledger=['seed'=>$seed,'db_name'=>$h->dbName,'database_version'=>null,'state'=>'RUNNING','wire_entries'=>[]];
-file_put_contents($dir.'/started.json',json_encode($ledger,JSON_THROW_ON_ERROR));
+$h=null;
+$ledger=['seed'=>$seed,'db_name'=>(string)getenv('DB_NAME'),'db_host'=>(string)getenv('DB_HOST'),'db_port'=>(string)getenv('DB_PORT'),'pid'=>getmypid(),'database_version'=>null,'state'=>'OWNERSHIP_DECLARED_BEFORE_CREATE','wire_entries'=>[]];
+true_seed_assert(file_put_contents($dir.'/started.json',json_encode($ledger,JSON_THROW_ON_ERROR),LOCK_EX)!==false,'PRECREATE_OWNERSHIP_LEDGER_DURABLE');
 $exit=0;
 try{
+    $h=K1dSafeTestDatabase::createFromEnvironment();
+    $ledger['state']='RUNNING';
     $pdo=$h->pdo();
     $ledger['database_version']=$pdo->query('SELECT VERSION()')->fetchColumn();
     if(isset($options['template'])){
@@ -39,19 +41,20 @@ try{
         true_seed_export_schema($pdo,$options['export-template']);
         $ledger['state']='SCHEMA_TEMPLATE_EXPORTED';
     }else{
-        $family=intdiv($seed-1,25);$index=($seed-1)%25;
-        $manual=($family%2)===1;$billing=$family<2;
-        $budgets=[1,2,3,5,9,15,50,55,100];$budget=$budgets[$index%count($budgets)];
-        $outcomes=['200','prewire','429','401','403','500','503','timeout','connect','partial','200','stale','200','200','200','200','200','200','200','200','200','prewire','429','200','429'];
-        $outcome=$outcomes[$index];
-        $count=$billing&&in_array($index,[0,10,12,18,23],true)?3:($billing?1:3);
-        $retry=$family===2&&$index>=12&&$index<=21;
-        if($retry){$outcome='500';$count=1;}
+        $profile=true_seed_profile($seed,isset($options['direct-type'])?(string)$options['direct-type']:null);
+        $manual=$profile['manual'];$billing=$profile['billing'];$budget=$profile['budget'];$outcome=$profile['outcome'];$count=$profile['count'];$retry=$profile['retry'];
+        $ledger['expected_profile']=$profile;
         true_seed_scope($pdo,$budget);
-        $directType=(string)($options['direct-type']??'order_exact');
-        true_seed_assert(in_array($directType,['order_exact','fresh_orders_discovery'],true),'DIRECT_TYPE_ALLOWLIST');
-        $source=true_seed_source($pdo,$seed,$billing,$count,$directType);
+        $source=true_seed_source($pdo,$seed,$billing,$count,$profile['direct_type']);
+        $source+=['oauth'=>$profile['oauth'],'resource_local'=>$profile['resource_local'],'page_size'=>$profile['page_size']];
+        if($profile['oauth']){
+            putenv('MELI_CLIENT_ID=synthetic-client');putenv('MELI_CLIENT_SECRET=synthetic-client-secret');
+            $pdo->exec("UPDATE meli_tokens SET expires_at='2000-01-01' WHERE meli_account_id=9011");
+            $ledger['oauth_refresh_version_before']=(int)$pdo->query('SELECT refresh_version FROM meli_tokens WHERE meli_account_id=9011')->fetchColumn();
+        }
         $ledger+=['owner'=>$manual?'manual':'automatic','family'=>$billing?'billing':'order','budget'=>$budget,'outcome'=>$outcome,'source'=>$source];
+        $before=true_seed_business_snapshot($pdo,$source);
+        $ledger['business_before']=$before;
         CallsTrueWire::$ledger=$dir.'/wire.jsonl';
         CallsTrueWire::$respond=static fn(array $e):array=>true_seed_response($e,$source,$outcome==='stale'?'200':$outcome);
         $preview=null;
@@ -100,6 +103,18 @@ try{
             true_seed_assert(count(array_unique($requestIds))===count($wire)&&count(array_filter($requestIds,static fn(string $id):bool=>preg_match('/^[a-f0-9]{40}$/D',$id)===1))===count($wire),'PHYSICAL_IDENTITIES_UNIQUE');
         }
         true_seed_assert(CallsTrueWire::$violations===[],'NO_SWALLOWED_FIXTURE_VIOLATIONS',['violations'=>CallsTrueWire::$violations]);
+        $ledger['business_after_first']=true_seed_assert_business($pdo,$source,$profile,$wire,$before,$outcome);
+        if($profile['oauth']){
+            $oauthWire=array_values(array_filter($wire,static fn(array $e):bool=>$e['path']==='/oauth/token'));
+            true_seed_assert(count($oauthWire)===1&&$wire[0]['path']==='/oauth/token','OAUTH_IS_ONE_REAL_PHYSICAL_POST_BEFORE_BUSINESS');
+            $version=(int)$pdo->query('SELECT refresh_version FROM meli_tokens WHERE meli_account_id=9011')->fetchColumn();
+            true_seed_assert($version===$ledger['oauth_refresh_version_before']+1,'OAUTH_ROTATION_DURABLE_ONCE');
+            $ledger['oauth_verified']=true;
+        }
+        if($profile['resource_local']){
+            true_seed_assert(count($ledger['business_after_first']['orders'])>=1&&$ledger['business_after_first']['queue'][0]['state']==='waiting','RESOURCE_403_DOES_NOT_BLOCK_OTHER_RESOURCE');
+            $ledger['resource_local_http_error_verified']=true;
+        }
         $ledger['executions']=[['execution'=>1,'budget'=>$budget,'result'=>$result,'wire'=>$wire]];
         if($retry){
             $queueId=$source['queue'][0];
@@ -138,13 +153,43 @@ try{
             true_seed_receipt($second,$secondWire,$budget);
             true_seed_assert($secondWire[0]['transport_request_id']!==$wire[0]['transport_request_id'],'RETRY_HAS_OWN_PHYSICAL_ID');
             true_seed_assert($ledger['retry_queue_after']['state']==='completed','RETRY_COMPLETES_SOURCE');
+            $ledger['business_after_retry']=true_seed_assert_business($pdo,$source,$profile,$secondWire,$before,'200');
             $ledger['retry_verified']=true;
+        }
+        if($billing&&$count>1&&$outcome==='200'){
+            $allWire=$wire;
+            for($execution=2;count($allWire)<$count;$execution++){
+                true_seed_assert($execution<=$count,'PACK_CONTINUATION_EXECUTIONS_BOUNDED');
+                $due=$pdo->prepare('SELECT q.available_at<=UTC_TIMESTAMP(3) AND s.next_run_at<=UTC_TIMESTAMP(3) AS due FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=? AND s.company_id=q.company_id AND s.meli_account_id=q.meli_account_id WHERE q.id=? AND q.company_id=9001 AND q.meli_account_id=9011');
+                $start=microtime(true);
+                do{$due->execute([$source['source'],$source['queue'][0]]);$ready=(bool)$due->fetchColumn();true_seed_assert(microtime(true)-$start<15,'PACK_CONTINUATION_REAL_DUE_BOUNDED');if(!$ready)usleep(100000);}while(!$ready);
+                CallsTrueWire::$execution=$execution;
+                if($manual){
+                    $capacity=(new CapacityPolicyService())->snapshot('manual');
+                    $nextPreview=(new ManualCampaignPreviewService())->create(9007,['scope'=>'available_queue','account_id'=>9011,'physical_api_call_budget'=>$budget,'capacity_revision'=>$capacity['revision']]);
+                    true_seed_assert(array_map(static fn(array $r):int=>(int)$r['queue_job_id'],$nextPreview['rows'])===$source['queue'],'PACK_CONTINUATION_RECONFIRMS_SAME_SOURCE');
+                    $next=(new ManualSingleStepService())->executePreview($nextPreview['preview_token'],9007,$budget);
+                }else{
+                    CronDeadlineContext::start(45,43,8,3);
+                    try{$next=(new QueueV4CleanScheduler($pdo))->run($budget,45);}finally{CronDeadlineContext::clear();}
+                }
+                $nextWire=array_values(array_filter(CallsTrueWire::$entries,static fn(array $e):bool=>$e['execution']===$execution));
+                true_seed_assert(count($nextWire)===1,'PACK_ONE_NEW_ORDER_PER_EXECUTION');
+                true_seed_receipt($next,$nextWire,$budget);
+                $allWire=array_merge($allWire,$nextWire);
+                $business=true_seed_assert_business($pdo,$source,$profile,$allWire,$before,'200');
+                $ledger['executions'][]=['execution'=>$execution,'budget'=>$budget,'result'=>$next,'wire'=>$nextWire,'business'=>$business,'real_due_wait_seconds'=>microtime(true)-$start];
+            }
+            true_seed_assert(count($allWire)===$count,'PACK_ALL_ORDERS_CHECKPOINTED');
+            $ledger['pack_continuation_verified']=true;
         }
         if($manual&&$outcome!=='prewire'){
             $beforeReplay=count(CallsTrueWire::$entries);$replayRejected=false;
             try{(new ManualSingleStepService())->executePreview($preview['preview_token'],9007,$budget);}catch(Throwable){$replayRejected=true;}
             true_seed_assert($replayRejected&&count(CallsTrueWire::$entries)===$beforeReplay,'MANUAL_REPLAY_ZERO_NEW_CALLS');
         }
+        $ledger['business_verified']=true;
+        $ledger['coverage']=['prewire'=>$outcome==='prewire'||$outcome==='stale','remote_429'=>$outcome==='429'&&count($wire)===1,'discovery'=>$profile['direct_type']==='fresh_orders_discovery'&&!$billing&&$outcome==='200','multiple_calls_one_execution'=>count($wire)>1,'multiple_resources'=>count($ledger['business_after_first']['orders'])>1&&!$billing,'local_resolution'=>false];
         $ledger['state']='PASS';
         $ledger['wire_entries']=CallsTrueWire::$entries;
     }
@@ -155,6 +200,6 @@ try{
 }finally{
     file_put_contents($dir.'/result.json',json_encode($ledger,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR));
     echo 'SEED_RESULT='.$dir.'/result.json'."\n";
-    $h->cleanup();
+    if($h!==null)$h->cleanup();
 }
 exit($exit);

@@ -11,6 +11,103 @@ function true_seed_assert(bool $value,string $code,array $context=[]):void
     if(!$value)throw new RuntimeException('INVARIANT:'.$code.':'.json_encode($context,JSON_THROW_ON_ERROR));
 }
 
+/** The profile is fixed before execution; observed output never defines success. */
+function true_seed_profile(int $seed,?string $directOverride=null):array
+{
+    $family=intdiv($seed-1,25);$index=($seed-1)%25;
+    $manual=($family%2)===1;$billing=$family<2;
+    $budgets=[1,2,3,5,9,15,50,55,100];
+    $outcomes=['200','prewire','429','401','403','500','503','timeout','connect','partial','200','stale','200','200','200','200','200','200','200','200','200','prewire','429','200','429'];
+    $retry=$family===2&&$index>=12&&$index<=21;
+    $count=$billing&&in_array($index,[0,10,12,18,23],true)?3:($billing?1:3);
+    $directType=$directOverride??(in_array($seed,[51,74,76,99],true)?'fresh_orders_discovery':'order_exact');
+    true_seed_assert(in_array($directType,['order_exact','fresh_orders_discovery'],true),'DIRECT_TYPE_ALLOWLIST');
+    return ['manual'=>$manual,'billing'=>$billing,'budget'=>$budgets[$index%count($budgets)],
+        'outcome'=>$retry?'500':$outcomes[$index],'count'=>$retry?1:$count,'retry'=>$retry,
+        'direct_type'=>$directType,'oauth'=>$seed===61,'resource_local'=>in_array($seed,[55,80],true),
+        'page_size'=>in_array($seed,[51,74,76,99],true)?1:($retry?1:$count),
+        'expected_business'=>$billing?($count>1?'durable_per_order_checkpoints_then_one_official_publication':'official_publication_or_explicit_deferral'):($directType==='fresh_orders_discovery'?'persist_page_orders_and_continuation_or_watermark':'persist_only_successful_exact_orders'),
+        'expected_certainty'=>'CERTIFIED','expected_429_calls'=>1,'expected_retry_executions'=>$retry?2:1];
+}
+
+function true_seed_business_snapshot(PDO $pdo,array $source):array
+{
+    $q=$pdo->prepare('SELECT id,resource_id,job_type,state,attempt_count,last_error_class,payload_json FROM queue_v4_clean_jobs WHERE company_id=9001 AND meli_account_id=9011 ORDER BY id');$q->execute();
+    $snapshot=['queue'=>$q->fetchAll(PDO::FETCH_ASSOC)];
+    $q=$pdo->prepare('SELECT o.external_order_id,o.status,o.total_amount,o.paid_amount,COUNT(i.id) AS item_count,COALESCE(SUM(i.quantity*i.unit_price),0) AS item_total FROM meli_orders o JOIN meli_accounts a ON a.id=o.meli_account_id LEFT JOIN meli_order_items i ON i.meli_order_id=o.id AND i.meli_account_id=o.meli_account_id WHERE a.company_id=9001 AND o.meli_account_id=9011 GROUP BY o.id ORDER BY o.external_order_id');$q->execute();
+    $snapshot['orders']=$q->fetchAll(PDO::FETCH_ASSOC);
+    $snapshot['checkpoints']=$pdo->query('SELECT producer_key,meli_account_id,watermark_at,next_due_at FROM queue_v4_clean_checkpoints WHERE company_id=9001 AND meli_account_id IN (9011,9012,9013) ORDER BY meli_account_id,producer_key')->fetchAll(PDO::FETCH_ASSOC);
+    // This tenant is outside both the certified automatic account set and the
+    // manual user's company access. Its local rows are a distinct scope sentinel.
+    $snapshot['unauthorized_tenant']=[
+        'checkpoints'=>$pdo->query('SELECT producer_key,company_id,meli_account_id,watermark_at,next_due_at,last_job_id FROM queue_v4_clean_checkpoints WHERE company_id=9002 AND meli_account_id=9021 ORDER BY producer_key')->fetchAll(PDO::FETCH_ASSOC),
+        'orders'=>$pdo->query('SELECT o.* FROM meli_orders o JOIN meli_accounts a ON a.id=o.meli_account_id WHERE a.company_id=9002 AND o.meli_account_id=9021 ORDER BY o.id')->fetchAll(PDO::FETCH_ASSOC),
+        'queue'=>$pdo->query('SELECT * FROM queue_v4_clean_jobs WHERE company_id=9002 AND meli_account_id=9021 ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+    ];
+    if(isset($source['saleKey'])){
+        $q=$pdo->prepare('SELECT status,attempts FROM sale_financial_reconciliation_jobs WHERE id=? AND company_id=9001 AND meli_account_id=9011');$q->execute([$source['source']]);$snapshot['financial_source']=$q->fetch(PDO::FETCH_ASSOC);
+        $q=$pdo->prepare('SELECT evidence_status,evidence_json FROM sale_financial_evidence WHERE company_id=9001 AND meli_account_id=9011 AND sale_key=? AND evidence_type="billing_capture" ORDER BY id');$q->execute([$source['saleKey']]);
+        $snapshot['billing_checkpoints']=[];
+        foreach($q->fetchAll(PDO::FETCH_ASSOC)as $row){$payload=json_decode($row['evidence_json'],true,512,JSON_THROW_ON_ERROR);if(($payload['format']??'')==='billing_order_v2')$snapshot['billing_checkpoints'][]=['order_id'=>(string)$payload['order_id'],'status'=>$row['evidence_status'],'lines'=>$payload['lines']??[]];}
+        $q=$pdo->prepare('SELECT COUNT(*) FROM meli_sale_financial_history h JOIN meli_sale_financials f ON f.id=h.meli_sale_financial_id WHERE f.company_id=9001 AND f.meli_account_id=9011 AND f.sale_key=? AND h.source="billing_official"');$q->execute([$source['saleKey']]);$snapshot['official_publications']=(int)$q->fetchColumn();
+    }
+    return $snapshot;
+}
+
+function true_seed_assert_business(PDO $pdo,array $source,array $profile,array $wire,array $before,string $outcome):array
+{
+    $after=true_seed_business_snapshot($pdo,$source);
+    $blocked=in_array($outcome,['prewire','stale'],true);
+    $success=$outcome==='200';
+    $original=array_values(array_filter($after['queue'],static fn(array $r):bool=>in_array((int)$r['id'],$source['queue'],true)));
+    true_seed_assert(count($original)===count($source['queue']),'SOURCE_ROWS_DURABLE');
+    foreach($after['orders']as $order)true_seed_assert(in_array((string)$order['external_order_id'],$source['orders'],true)&&$order['status']==='paid'&&(float)$order['total_amount']===100.0&&(float)$order['paid_amount']===100.0&&(int)$order['item_count']===1&&(float)$order['item_total']===100.0,'ORDER_BUSINESS_VALUES_DURABLE',['order'=>$order]);
+    if($profile['billing']){
+        $expected=$success?count($wire):0;
+        true_seed_assert(count($after['billing_checkpoints'])===$expected,'BILLING_CHECKPOINT_COUNT',['expected'=>$expected,'after'=>$after]);
+        if($success){
+            $ids=array_column($after['billing_checkpoints'],'order_id');
+            true_seed_assert($ids===array_slice($source['orders'],0,$expected)&&count(array_unique($ids))===count($ids),'BILLING_CHECKPOINT_FIFO_NO_DUPLICATES');
+            foreach($after['billing_checkpoints']as $checkpoint)true_seed_assert($checkpoint['status']==='reconciled'&&count($checkpoint['lines'])===1,'BILLING_OFFICIAL_LINE_DURABLE');
+            $complete=$expected===count($source['orders']);
+            true_seed_assert($after['official_publications']===($complete?1:0),'BILLING_NO_EARLY_OR_DUPLICATE_PUBLICATION');
+            true_seed_assert($after['financial_source']['status']===($complete?'complete':'retry')&&$original[0]['state']===($complete?'completed':'waiting'),'BILLING_SOURCE_AND_POINTER_AGREE',['after'=>$after]);
+            if(!$complete)true_seed_assert((int)$after['financial_source']['attempts']===(int)$before['financial_source']['attempts']&&(int)$original[0]['attempt_count']===(int)$before['queue'][0]['attempt_count'],'CHECKPOINT_PROGRESS_IS_NOT_FAILED_ATTEMPT');
+        }else true_seed_assert($after['official_publications']===0,'FAILED_BILLING_NO_OFFICIAL_PUBLICATION');
+    }else{
+        $businessWire=array_values(array_filter($wire,static fn(array $e):bool=>$e['path']!=='/oauth/token'));
+        if(($source['direct_type']??'')==='fresh_orders_discovery'){
+            $expected=$success?min(count($source['orders']),count($businessWire)*$profile['page_size']):0;
+            true_seed_assert(count($after['orders'])===$expected,'DISCOVERY_SNAPSHOTS_DURABLE',['after'=>$after,'expected'=>$expected]);
+            $cp=static fn(array $s):array=>array_values(array_filter($s['checkpoints'],static fn(array $r):bool=>$r['meli_account_id']==9011&&$r['producer_key']==='fresh_orders'))[0];
+            if($success&&$expected===count($source['orders']))true_seed_assert($cp($after)['watermark_at']==='2026-09-01 00:05:00.000','DISCOVERY_COMPLETED_WINDOW_CHECKPOINT');
+            else{
+                true_seed_assert($cp($before)===$cp($after),'DISCOVERY_INCOMPLETE_WINDOW_NOT_ADVANCED');
+                if($success){$pending=array_values(array_filter($after['queue'],static fn(array $r):bool=>$r['job_type']==='fresh_orders_discovery'&&$r['state']==='ready'));true_seed_assert(count($pending)===1&&(int)json_decode($pending[0]['payload_json'],true)['offset']===$expected,'DISCOVERY_NEXT_PAGE_DURABLE');}
+            }
+        }else{
+            $expectedIds=[];
+            if($success||$profile['resource_local'])foreach($businessWire as $entry){$id=basename($entry['path']);if($success||$id!==$source['orders'][0])$expectedIds[]=$id;}
+            sort($expectedIds);$actual=array_column($after['orders'],'external_order_id');sort($actual);
+            true_seed_assert($actual===$expectedIds,'EXACT_ORDER_RESULTS_MATCH_SUCCESSFUL_WIRE',['expected'=>$expectedIds,'actual'=>$actual]);
+            foreach($original as $row)if(in_array($row['resource_id'],$expectedIds,true))true_seed_assert($row['state']==='completed','SUCCESSFUL_ORDER_QUEUE_COMPLETED',['row'=>$row]);
+        }
+    }
+    if($blocked){
+        true_seed_assert($after['orders']===$before['orders'],'PREWIRE_BUSINESS_UNCHANGED');
+        foreach($original as $row)true_seed_assert((int)$row['attempt_count']===0&&$row['state']===($outcome==='stale'?'completed':'ready'),'PREWIRE_NO_ATTEMPT_OR_RECLAIM',['row'=>$row]);
+    }elseif(!$success&&!$profile['resource_local']){
+        $expectedState=in_array($outcome,['timeout','connect','partial'],true)?'review':'waiting';
+        true_seed_assert($original[0]['state']===$expectedState,'FAILURE_HAS_EXPLICIT_DURABLE_DISPOSITION',['expected'=>$expectedState,'after'=>$original]);
+    }
+    $other=static fn(array $s):array=>array_values(array_filter($s['checkpoints'],static fn(array $r):bool=>$r['meli_account_id']!=9011));
+    // Automatic producer housekeeping is authorized for all three certified
+    // accounts; only the confirmed manual selection is restricted to 9011.
+    if($profile['manual'])true_seed_assert($other($before)===$other($after),'MANUAL_UNSELECTED_ACCOUNT_CHECKPOINTS_UNCHANGED',['before'=>$other($before),'after'=>$other($after)]);
+    true_seed_assert($before['unauthorized_tenant']===$after['unauthorized_tenant'],'UNCERTIFIED_UNAUTHORIZED_TENANT_UNCHANGED',['before'=>$before['unauthorized_tenant'],'after'=>$after['unauthorized_tenant']]);
+    return $after;
+}
+
 function true_seed_scope(PDO $pdo,int $budget):void
 {
     $pdo->exec("INSERT INTO companies(id,name,status) VALUES(9001,'True final synthetic QA',1)");
@@ -25,6 +122,10 @@ function true_seed_scope(PDO $pdo,int $budget):void
             $pdo->prepare("INSERT INTO queue_v4_clean_checkpoints(producer_key,company_id,meli_account_id,watermark_at,next_due_at) VALUES(?,9001,?,UTC_TIMESTAMP(3),DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 DAY))")->execute([$producer,$account]);
         }
     }
+    $pdo->exec("INSERT INTO companies(id,name,status) VALUES(9002,'Outside certified and manual scope',1)");
+    $pdo->exec("INSERT INTO meli_accounts(id,company_id,account_name,meli_user_id,status) VALUES(9021,9002,'Uncertified scope sentinel','99021','desconectado')");
+    foreach(['fresh_orders','inventory_order_refresh']as $producer)$pdo->prepare("INSERT INTO queue_v4_clean_checkpoints(producer_key,company_id,meli_account_id,watermark_at,next_due_at) VALUES(?,9002,9021,'2000-01-01','2000-01-01')")->execute([$producer]);
+    $pdo->exec("INSERT INTO meli_orders(meli_account_id,external_order_id,status,total_amount,paid_amount,currency_id,synced_at) VALUES(9021,'990000001','paid',777,777,'COP','2000-01-01')");
     $pdo->exec("UPDATE queue_v4_clean_control SET engine_state='ACTIVE',readiness_state='CERTIFIED',scheduler_enabled=1,readiness_passed_accounts=3 WHERE control_key='primary'");
     $pdo->exec("UPDATE queue_engine_control SET active_engine='v4'");
     $settings=new AppSettingsService();
@@ -80,17 +181,25 @@ function true_seed_order_body(string $order):array
 
 function true_seed_response(array $entry,array $source,string $outcome):array
 {
+    if(($source['oauth']??false)&&$entry['path']==='/oauth/token'){
+        true_seed_assert($entry['method']==='POST'&&$entry['company_id']===9001&&$entry['account_id']===9011,'WIRE_OAUTH_EXACT_TENANT');
+        return ['status'=>200,'body'=>['access_token'=>'synthetic-rotated-access','refresh_token'=>'synthetic-rotated-refresh','expires_in'=>21600,'token_type'=>'Bearer','user_id'=>99011]];
+    }
+    $transport=in_array($outcome,['timeout','connect','partial'],true)?['status'=>$outcome==='partial'?200:0,'raw'=>false,'error'=>$outcome==='timeout'?'Operation timed out':($outcome==='connect'?'Could not connect':'transfer closed with outstanding data'),'errno'=>$outcome==='timeout'?28:($outcome==='connect'?7:18),'wire_bytes'=>$outcome==='partial'?12:0]:null;
     $billing=$entry['path']==='/billing/integration/group/ML/order/details';
     if(($source['direct_type']??'')==='fresh_orders_discovery'){
         true_seed_assert($entry['method']==='GET'&&$entry['path']==='/orders/search'&&$entry['company_id']===9001&&$entry['account_id']===9011,'WIRE_EXACT_DISCOVERY_SCOPE',['entry'=>$entry]);
         true_seed_assert(($entry['safe_query']['seller']??'')==='99011'&&($entry['safe_query']['order_date_created_from']??'')===$source['discovery_payload']['from']&&($entry['safe_query']['order_date_created_to']??'')===$source['discovery_payload']['to'],'WIRE_EXACT_DISCOVERY_WINDOW');
-        return ['status'=>(int)$outcome,'body'=>$outcome==='200'?['results'=>[],'paging'=>['total'=>0,'offset'=>0,'limit'=>50]]:['message'=>'Synthetic failure','error'=>'fixture_error']];
+        $offset=(int)($entry['safe_query']['offset']??0);$size=(int)($source['page_size']??count($source['orders']));
+        true_seed_assert($offset>=0&&$offset<count($source['orders']),'WIRE_DISCOVERY_OFFSET_IN_RANGE');
+        return $transport??['status'=>(int)$outcome,'body'=>$outcome==='200'?['results'=>array_map('true_seed_order_body',array_slice($source['orders'],$offset,$size)),'paging'=>['total'=>count($source['orders']),'offset'=>$offset,'limit'=>50]]:['message'=>'Synthetic failure','error'=>'fixture_error'],'headers'=>$outcome==='429'?['retry-after'=>'1']:[]];
     }
     $order=$billing?$entry['order_ids']:basename($entry['path']);
     true_seed_assert($entry['method']==='GET'&&$entry['company_id']===9001&&$entry['account_id']===9011,'WIRE_METHOD_AND_TENANT',['entry'=>$entry]);
     true_seed_assert($billing?isset($source['saleKey']):(!isset($source['saleKey'])&&$entry['path']==='/orders/'.$order),'WIRE_EXACT_DOMAIN_PATH',['entry'=>$entry]);
     true_seed_assert(is_string($order)&&in_array($order,$source['orders'],true),'WIRE_ONLY_EXPECTED_ORDER',['entry'=>$entry]);
-    if(in_array($outcome,['timeout','connect','partial'],true))return ['status'=>$outcome==='partial'?200:0,'raw'=>false,'error'=>$outcome==='timeout'?'Operation timed out':($outcome==='connect'?'Could not connect':'transfer closed with outstanding data'),'errno'=>$outcome==='timeout'?28:($outcome==='connect'?7:18),'wire_bytes'=>$outcome==='partial'?12:0];
+    if($transport!==null)return $transport;
+    if(($source['resource_local']??false)&&$order!==$source['orders'][0])$outcome='200';
     $status=(int)$outcome;
     if($status!==200)return ['status'=>$status,'body'=>['message'=>'Synthetic failure','error'=>'fixture_error'],'headers'=>$status===429?['retry-after'=>'1']:[]];
     return ['status'=>200,'body'=>$billing?[['order_id'=>$order,'detail_id'=>'fee-'.$order,'detail_type'=>'SALE_FEE','description'=>'Synthetic fee','amount'=>10,'date_created'=>'2026-09-08T00:00:00Z']]:true_seed_order_body($order)];

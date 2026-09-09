@@ -327,11 +327,54 @@ function cap2BuildRawArtifact(
     ];
 }
 
+/** Rehash only the existing dependency entries; every input is from one immutable commit. */
+function cap2UpdaterAuthority(string $root, string $commit): array
+{
+    if (preg_match('/^[0-9a-fA-F]{40}$/D', $commit) !== 1) {
+        throw new RuntimeException('updater_authority_explicit_40_hex_commit_required');
+    }
+    if (trim(cap2Git($root, ['cat-file', '-t', $commit])['stdout']) !== 'commit') {
+        throw new RuntimeException('updater_authority_commit_required');
+    }
+    $authorityPath = 'resources/release/updater-authority-2.40.1.json';
+    // Decode objects as objects so metadata such as {} is not silently converted to [].
+    $authority = json_decode(cap2GitBlob($root, $commit, $authorityPath), false, 64, JSON_THROW_ON_ERROR);
+    if (!$authority instanceof stdClass || !isset($authority->new_runtime_dependencies)
+        || !is_array($authority->new_runtime_dependencies) || !array_is_list($authority->new_runtime_dependencies)) {
+        throw new RuntimeException('updater_authority_dependencies_invalid');
+    }
+    $seen = [];
+    foreach ($authority->new_runtime_dependencies as $entry) {
+        if (!$entry instanceof stdClass || !isset($entry->path, $entry->sha256)
+            || !is_string($entry->path) || !is_string($entry->sha256)
+            || preg_match('/^[0-9a-fA-F]{64}$/D', $entry->sha256) !== 1) {
+            throw new RuntimeException('updater_authority_dependency_invalid');
+        }
+        cap2AssertRuntimePackagePath($entry->path);
+        if (isset($seen[$entry->path]) || $entry->path === $authorityPath) {
+            throw new RuntimeException('updater_authority_duplicate_or_self_dependency:' . $entry->path);
+        }
+        $seen[$entry->path] = true;
+        if (trim(cap2Git($root, ['cat-file', '-t', $commit . ':' . $entry->path])['stdout']) !== 'blob') {
+            throw new RuntimeException('updater_authority_dependency_blob_required:' . $entry->path);
+        }
+        $entry->sha256 = hash('sha256', cap2GitBlob($root, $commit, $entry->path));
+    }
+    return get_object_vars($authority);
+}
+
 function cap2ArtifactMain(array $argv): int
 {
-    require_once __DIR__ . '/k1b_bootstrap.php';
     $root = dirname(__DIR__);
     $mode = $argv[1] ?? '';
+    if ($mode === 'updater-authority') {
+        $authority = cap2UpdaterAuthority($root, $argv[2] ?? '');
+        // Validate/read every blob before any write: malformed input leaves the file unchanged.
+        cap2WriteFile($root . '/resources/release/updater-authority-2.40.1.json', cap2Json($authority));
+        echo 'UPDATER_AUTHORITY_DEPENDENCIES=' . count($authority['new_runtime_dependencies']) . "\n";
+        return 0;
+    }
+    require_once __DIR__ . '/k1b_bootstrap.php';
     $ref = $argv[2] ?? 'HEAD';
     $registryPath = 'resources/release/managed-runtime-dependencies-2.40.1.json';
     if ($mode === 'registry') {
@@ -350,7 +393,7 @@ function cap2ArtifactMain(array $argv): int
         return 0;
     }
     if ($mode !== 'build') {
-        throw new RuntimeException('usage: capacity_artifact.php build <ref> <absolute-output> [yyyymmdd]');
+        throw new RuntimeException('usage: capacity_artifact.php build <ref> <absolute-output> [yyyymmdd] | updater-authority <40-hex-commit>');
     }
     $out = str_replace('\\', '/', $argv[3] ?? '');
     if (preg_match('#^[A-Za-z]:/#D', $out) !== 1) {

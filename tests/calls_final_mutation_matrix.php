@@ -52,6 +52,17 @@ PHP]]],
         'M10'=>['supported'=>true,'file'=>'app/QueueV4Clean/QueueV4CleanWorker.php','kind'=>'real_SQL_persisted_receipt_NOT_proof_of_actual_send','edits'=>[
             ["'physical_http_calls' => \$unresolved > 0 ? null : \$known,","'physical_http_calls' => \$known + \$unresolved,"],
             ["'physical_http_calls_certainty' => \$unresolved > 0 ? 'UNKNOWN' : 'CERTIFIED',","'physical_http_calls_certainty' => 'CERTIFIED',"]]],
+        'M11'=>['supported'=>true,'file'=>'app/QueueV4Clean/QueueV4CleanRepository.php','kind'=>'real_manual_pack_auto_checkpoint_ABA_generation_fences','edits'=>[
+            ['$fence = " AND {$alias}.lease_generation=? AND {$alias}.attempt_count<{$alias}.max_attempts',
+             '$fence = " AND ? >=0 AND {$alias}.attempt_count<{$alias}.max_attempts'],
+            ['AND ms.lease_generation=? AND ms.input_version=?','AND ? >=0 AND ms.input_version=?'],
+            [<<<'PHP'
+return (int) $source['lease_generation'] === $snapshot['financial_source_lease_generation']
+            && hash_equals($snapshot['financial_input_version'], (string) $source['input_version']);
+PHP,
+             <<<'PHP'
+return hash_equals($snapshot['financial_input_version'], (string) $source['input_version']);
+PHP]]],
     ];
 }
 function mutationMaterialize(string $archive,string $dest):void {
@@ -84,16 +95,17 @@ if(isset($o['template'])){
 $git=static fn(array $args,string $tag):array=>mutationProcess(array_merge(['git','-c','safe.directory='.$repo,'-C',$repo],$args),$repo,$dir.'/'.$tag);
 $resolved=$git(['rev-parse',$candidate.'^{commit}'],'candidate');if($resolved['exit']!==0||trim((string)file_get_contents($resolved['stdout']))!==$candidate)throw new RuntimeException('candidate_not_resolved');
 $tree=$git(['rev-parse',$candidate.'^{tree}'],'tree');if($tree['exit']!==0)throw new RuntimeException('candidate_tree_missing');$inputHashes=[];
-foreach(['tests/calls_final_mutation_matrix.php','tests/calls_true_mutation_case.php','tests/calls_true_seed_fixture.php','tests/calls_true_wire_fixture.php','tests/K1dSafeTestDatabase.php','tests/k1b_bootstrap.php']as $i=>$path){
+foreach(['tests/calls_final_mutation_matrix.php','tests/calls_true_mutation_case.php','tests/calls_true_seed_fixture.php','tests/calls_true_wire_fixture.php','tests/K1dSafeTestDatabase.php','tests/k1b_bootstrap.php','tests/calls_mpc1_manual_pack_mysql.php','tests/calls_mpc1_lock_contender.php']as $i=>$path){
     $blob=$git(['show',$candidate.':'.$path],'input-'.$i);
     if($blob['exit']!==0||hash_file('sha256',$blob['stdout'])!==hash_file('sha256',$repo.'/'.$path))throw new RuntimeException('candidate_oracle_input_mismatch:'.$path);
     $inputHashes[$path]=hash_file('sha256',$blob['stdout']);
 }
 $archive=$dir.'/raw.zip';$archived=$git(['archive','--format=zip','--output='.$archive,$candidate],'archive');if($archived['exit']!==0)throw new RuntimeException('archive_failed');
 $recipes=mutationRecipes();$selected=($o['mutants']??'all')==='all'?array_keys($recipes):explode(',',(string)$o['mutants']);
+$required=count($recipes);
 if($selected===[]||array_diff($selected,array_keys($recipes))!==[]||count(array_unique($selected))!==count($selected))throw new RuntimeException('invalid_mutant_selection');
 $report=['candidate'=>$candidate,'tree'=>trim((string)file_get_contents($tree['stdout'])),'raw_archive_sha256'=>hash_file('sha256',$archive),'oracle_input_hashes'=>$inputHashes,
-    'sealed_template_sha256'=>$sealedTemplateHash,'private_template_packaged'=>false,'required'=>10,'kills'=>0,'full_gate_complete'=>false,'state'=>'INCOMPLETE','cases'=>[]];
+    'sealed_template_sha256'=>$sealedTemplateHash,'private_template_packaged'=>false,'required'=>$required,'kills'=>0,'full_gate_complete'=>false,'state'=>'INCOMPLETE','cases'=>[]];
 foreach($selected as $id){
     $r=$recipes[$id];$row=['recipe'=>$r,'state'=>'INCOMPLETE'];$caseDir=$dir.'/'.$id;mkdir($caseDir,0770,true);
     if(!$r['supported']){$row['reason']=$r['reason'];$report['cases'][$id]=$row;continue;}
@@ -121,7 +133,10 @@ foreach($selected as $id){
         if($row['lint']['exit']!==0||$row['lint']['timeout'])$row['state']='INVALID_SYNTAX_NOT_KILL';
         else{
             foreach(['baseline','mutant']as $v){
-                $artifact=$caseDir.'/'.$v.'-result.json';$command=[PHP_BINARY,$caseDir.'/'.$v.'/tests/calls_true_mutation_case.php','--case='.$id,'--artifact='.$artifact,'--root='.$caseDir.'/'.$v.'-artifacts'];
+                $oracleFile=$id==='M11'?'calls_mpc1_manual_pack_mysql.php':'calls_true_mutation_case.php';
+                $oracleCase=$id==='M11'?'auto_aba':$id;
+                $artifact=$caseDir.'/'.$v.'-result.json';$command=[PHP_BINARY,$caseDir.'/'.$v.'/tests/'.$oracleFile,'--case='.$oracleCase,'--artifact='.$artifact,'--root='.$caseDir.'/'.$v.'-artifacts'];
+                if($id==='M11')$command[]='--mutation-oracle';
                 if($sealedTemplate!==null){
                     if(hash_file('sha256',$sealedTemplate)!==$sealedTemplateHash)throw new RuntimeException('sealed_template_changed');
                     $command[]='--template='.$sealedTemplate;$command[]='--template-sha256='.$sealedTemplateHash;
@@ -149,7 +164,7 @@ foreach($selected as $id){
     if($row['state']==='KILLED')$report['kills']++;
     $report['cases'][$id]=$row;mutationWrite($caseDir.'/experiment.json',$row);mutationWrite($dir.'/matrix.json',$report);
 }
-if(count($report['cases'])===10&&$report['kills']===10){$report['state']='PASS';$report['full_gate_complete']=true;}
-elseif(count($report['cases'])<10&&$report['kills']===count($selected))$report['state']='SUBSET_PASS';
+if(count($report['cases'])===$required&&$report['kills']===$required){$report['state']='PASS';$report['full_gate_complete']=true;}
+elseif(count($report['cases'])<$required&&$report['kills']===count($selected))$report['state']='SUBSET_PASS';
 mutationWrite($dir.'/matrix.json',$report);echo 'MUTATION_RESULT='.$dir.'/matrix.json'.PHP_EOL.'MUTATIONS_DETECTED='.$report['kills'].PHP_EOL.'STATUS='.$report['state'].PHP_EOL;
 exit(in_array($report['state'],['PASS','SUBSET_PASS'],true)?0:2);

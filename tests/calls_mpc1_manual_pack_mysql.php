@@ -25,7 +25,8 @@ $cases=['continue','preview_readonly','future_pointer','future_source','pointer_
     'expired_token','global_busy','admitted_before_http_failure','unresolved','neighbor_untouched',
     'live_input_after_preview','checkpoint_after_preview','future_after_preview','tenant_after_preview',
     'consume_failure','capture_version_mismatch','capture_http_mismatch','capture_orders_mismatch','zero_checkpoints',
-    'external_sale_changed','starvation','lock_input_change','lock_deadline'];
+    'external_sale_changed','starvation','lock_input_change','lock_deadline',
+    'all_checkpoints_complete','reservation_before_preview','reservation_after_preview','marker_malformed'];
 true_seed_assert(in_array($case,$cases,true),'MPC1_KNOWN_CASE');
 $root=rtrim((string)($options['root']??getenv('CALLS_TRUE_QA_ROOT')?:'D:/Codex/tmp/mpc1'),'/\\');
 true_seed_assert(str_starts_with(str_replace('\\','/',$root),'D:/Codex/')&&!in_array('..',explode('/',str_replace('\\','/',$root)),true),'MPC1_EXTERNAL_EVIDENCE_ROOT');
@@ -54,6 +55,7 @@ function mpc1_snapshot(PDO $pdo):array
     $hashes=[];
     foreach(['queue_v4_clean_jobs','queue_v4_clean_attempts','sale_financial_reconciliation_jobs','sale_financial_evidence',
         'sale_financial_state','meli_orders','meli_order_items','meli_packs',
+        'manual_campaigns','manual_campaign_operations','manual_campaign_items','manual_campaign_reservations',
         'meli_billing_capture_runs','queue_v4_clean_transport_events','meli_sale_financials',
         'meli_sale_financial_history','meli_sale_financial_lines','meli_sale_financial_allocations']as $table){
         $hashes[$table]=hash('sha256',json_encode($pdo->query('SELECT * FROM '.$table.' ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),JSON_THROW_ON_ERROR));
@@ -82,15 +84,69 @@ function mpc1_execute(array $preview,int $execution):array
     return ['result'=>$result,'wire'=>$wire];
 }
 
+/** Complete synthetic evidence through the existing response/parser/recorder, without publishing. */
+function mpc1_seed_remaining_checkpoints(PDO $pdo,array $source):void
+{
+    $read=$pdo->prepare('SELECT * FROM sale_financial_reconciliation_jobs WHERE id=? AND company_id=9001 AND meli_account_id=9011');
+    $read->execute([$source['source']]);$job=$read->fetch(PDO::FETCH_ASSOC);
+    true_seed_assert(is_array($job)&&$job['status']==='retry','MPC1_COMPLETE_CHECKPOINT_SOURCE_SEEDED');
+    $pdo->beginTransaction();
+    try{
+        foreach(array_slice($source['orders'],1)as $order){
+            $response=true_seed_response(['method'=>'GET','path'=>'/billing/integration/group/ML/order/details',
+                'company_id'=>9001,'account_id'=>9011,'order_ids'=>$order],$source,'200')['body'];
+            $hash=hash('sha256',json_encode($response,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
+            $lines=(new App\Services\SaleBillingParser())->parse($response,[$order]);
+            true_seed_assert(count($lines)===1&&(string)$lines[0]['external_order_id']===$order,'MPC1_COMPLETE_CHECKPOINT_LINE_IDENTITY');
+            $pdo->prepare("INSERT INTO meli_billing_capture_runs
+                (company_id,meli_account_id,sale_key,external_sale_id,input_version,source_mode,
+                 requested_order_ids_json,http_status,response_class,response_hash,missing_fields_json,captured_at)
+                VALUES(9001,9011,?,?,?,'exact_repair',?,200,'complete',?,'[]',UTC_TIMESTAMP())")
+                ->execute([$job['sale_key'],$job['external_sale_id'],$job['input_version'],json_encode([$order],JSON_THROW_ON_ERROR),$hash]);
+            (new App\Services\SaleFinancialStateService())->recordBillingOrderCheckpoint($pdo,$job,(int)$pdo->lastInsertId(),
+                $order,$lines,'reconciled','Synthetic complete-checkpoint fixture',$hash,200,'complete',['response_item_count'=>1]);
+        }
+        $pdo->commit();
+    }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+}
+
+/** Same minimal FK fixture as calls_final_financial_neighbor_perimeter_mysql; no legacy engine starts. */
+function mpc1_reserve_financial_source(PDO $pdo,int $sourceId):int
+{
+    $pdo->prepare("INSERT INTO manual_campaigns
+        (campaign_token,created_by_user_id,company_scope_key,scope_key,preset,status,configuration_json,total_items)
+        VALUES(?,9007,9001,'finance','safe','active','{}',1)")->execute([bin2hex(random_bytes(20))]);
+    $campaign=(int)$pdo->lastInsertId();
+    $pdo->prepare("INSERT INTO manual_campaign_operations
+        (manual_campaign_id,queue_key,operation_key,meli_account_id,company_id,item_count,exact_adapter)
+        VALUES(?,'sale_financial_reconciliation','financial_reconciliation',9011,9001,1,1)")->execute([$campaign]);
+    $operation=(int)$pdo->lastInsertId();
+    $pdo->prepare("INSERT INTO manual_campaign_items
+        (manual_campaign_id,operation_id,queue_key,operation_key,source_id,meli_account_id,company_id,human_label,status,position_no)
+        VALUES(?,?,'sale_financial_reconciliation','financial_reconciliation',?,9011,9001,'MPC1 reserved finance','pending',1)")
+        ->execute([$campaign,$operation,(string)$sourceId]);
+    $item=(int)$pdo->lastInsertId();
+    $pdo->prepare("INSERT INTO manual_campaign_reservations
+        (manual_campaign_id,manual_campaign_item_id,queue_key,source_id,company_id,meli_account_id,status,expires_at)
+        VALUES(?,?,'sale_financial_reconciliation',?,9001,9011,'active',DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 5 MINUTE))")
+        ->execute([$campaign,$item,(string)$sourceId]);
+    $reservation=(int)$pdo->lastInsertId();
+    true_seed_assert($reservation>0,'MPC1_FINANCIAL_RESERVATION_SEEDED');
+    return $reservation;
+}
+
 try{
     $h=K1dSafeTestDatabase::createFromEnvironment();$pdo=$h->pdo();
     $ledger['database_version']=$pdo->query('SELECT VERSION()')->fetchColumn();
     if(isset($options['template'])){
         $template=realpath($options['template']);
         true_seed_assert($template!==false&&str_starts_with(str_replace('\\','/',$template),'D:/Codex/'),'MPC1_PRIVATE_TEMPLATE_PATH');
-        foreach(json_decode(file_get_contents($template),true,512,JSON_THROW_ON_ERROR)as $sql)$pdo->exec($sql);
-        $ledger['template_sha256']=hash_file('sha256',$template);
+        $templateBytes=file_get_contents($template);
+        true_seed_assert(is_string($templateBytes),'MPC1_TEMPLATE_READ');
+        $ledger['template_sha256']=hash('sha256',$templateBytes);
         true_seed_assert(!isset($options['template-sha256'])||hash_equals((string)$options['template-sha256'],$ledger['template_sha256']),'MPC1_SEALED_TEMPLATE_HASH');
+        foreach(json_decode($templateBytes,true,512,JSON_THROW_ON_ERROR)as $sql)$pdo->exec($sql);
+        unset($templateBytes);
     }else{(new App\Services\Migrator($pdo,__DIR__.'/../database/migrations'))->run(301);}
     true_seed_scope($pdo,1);$source=true_seed_source($pdo,26,true,3);
     CallsTrueWire::$ledger=$dir.'/wire.jsonl';
@@ -154,10 +210,47 @@ try{
         $pdo->exec("UPDATE queue_v4_clean_transport_events SET response_known_at=NULL,dispatch_state='PHYSICAL_STARTED' WHERE source_kind='queue' AND work_id=$qid AND company_id=9001 AND meli_account_id=9011");
         true_seed_assert((int)$pdo->query("SELECT COUNT(*) FROM queue_v4_clean_transport_events WHERE dispatch_state='PHYSICAL_STARTED' AND response_known_at IS NULL")->fetchColumn()>0,'MPC1_UNRESOLVED_FIXTURE_REACHED');
     }
+    if($case==='all_checkpoints_complete')mpc1_seed_remaining_checkpoints($pdo,$source);
+    if($case==='reservation_before_preview')$reservation=mpc1_reserve_financial_source($pdo,$sid);
     $beforePreview=mpc1_snapshot($pdo);$preview=mpc1_preview();
     true_seed_assert(mpc1_snapshot($pdo)===$beforePreview&&count(CallsTrueWire::$entries)===1,'MPC1_PREVIEW_ZERO_OPERATIONAL_WRITES_OR_HTTP');
-    if($negativeSql!==null||$case==='unresolved'){
+    if($negativeSql!==null||in_array($case,['unresolved','all_checkpoints_complete','reservation_before_preview'],true)){
         true_seed_assert($preview['rows']===[],'MPC1_UNSAFE_CONTINUATION_NOT_SHOWN',['case'=>$case]);
+        if($case==='all_checkpoints_complete'){
+            $complete=true_seed_business_snapshot($pdo,$source);
+            $stateRead=$pdo->prepare('SELECT official_status,official_net_amount FROM sale_financial_state WHERE company_id=9001 AND meli_account_id=9011 AND sale_key=?');
+            $stateRead->execute([$source['saleKey']]);$official=$stateRead->fetch(PDO::FETCH_ASSOC);
+            true_seed_assert(count($complete['billing_checkpoints'])===3&&count(array_unique(array_column($complete['billing_checkpoints'],'order_id')))===3
+                &&$complete['official_publications']===0&&$official['official_status']!=='complete'&&$official['official_net_amount']===null,
+                'MPC1_ALL_CHECKPOINTS_UNPUBLISHED_PRECONDITION');
+            $beforeSource=$pdo->query("SELECT * FROM sale_financial_reconciliation_jobs WHERE id=$sid")->fetch(PDO::FETCH_ASSOC);
+            $beforePointer=$pdo->query("SELECT * FROM queue_v4_clean_jobs WHERE id=$qid")->fetch(PDO::FETCH_ASSOC);
+            true_seed_assert($beforePointer['state']==='waiting'&&$beforeSource['status']==='retry','MPC1_ALL_CHECKPOINTS_WAITING_EXCLUDED');
+            // Fixture selects the already-existing ready path; no source/date/rhythm rewrite or scheduler wake-up.
+            $pdo->exec("UPDATE queue_v4_clean_jobs SET state='ready' WHERE id=$qid AND company_id=9001 AND meli_account_id=9011 AND state='waiting'");
+            $ready=mpc1_preview();$captures=mpc1_snapshot($pdo)['meli_billing_capture_runs'];
+            true_seed_assert(array_column($ready['rows'],'queue_job_id')===[$qid]
+                &&!array_key_exists('manual_continuation_kind',$ready['rows'][0]),'MPC1_ALL_CHECKPOINTS_ORDINARY_READY_PATH');
+            $ledger['local']=mpc1_execute($ready,2);$after=true_seed_business_snapshot($pdo,$source);
+            $afterSource=$pdo->query("SELECT * FROM sale_financial_reconciliation_jobs WHERE id=$sid")->fetch(PDO::FETCH_ASSOC);
+            $afterPointer=$pdo->query("SELECT * FROM queue_v4_clean_jobs WHERE id=$qid")->fetch(PDO::FETCH_ASSOC);
+            true_seed_assert($ledger['local']['wire']===[]&&count(CallsTrueWire::$entries)===1
+                &&$after['official_publications']===1&&$afterSource['status']==='complete'&&$afterPointer['state']==='completed'
+                &&(int)$afterSource['lease_generation']===(int)$beforeSource['lease_generation']+1
+                &&(int)$afterPointer['lease_generation']===(int)$beforePointer['lease_generation']+1
+                &&mpc1_snapshot($pdo)['meli_billing_capture_runs']===$captures,'MPC1_ALL_CHECKPOINTS_READY_PUBLISHES_WITH_ZERO_HTTP');
+            $stateRead->execute([$source['saleKey']]);$official=$stateRead->fetch(PDO::FETCH_ASSOC);
+            true_seed_assert($official['official_status']==='complete'&&(float)$official['official_net_amount']===270.0,
+                'MPC1_ALL_CHECKPOINTS_OFFICIAL_VALUES');
+            $snapshot=mpc1_snapshot($pdo);$denied=false;
+            try{mpc1_execute($ready,3);}catch(Throwable){$denied=true;}
+            true_seed_assert($denied&&mpc1_snapshot($pdo)===$snapshot&&count(CallsTrueWire::$entries)===1,'MPC1_ALL_CHECKPOINTS_REPLAY_NO_DUPLICATE');
+        }elseif($case==='reservation_before_preview'){
+            $pdo->prepare("UPDATE manual_campaign_reservations SET status='released' WHERE id=?")->execute([$reservation]);
+            $released=mpc1_preview();
+            true_seed_assert(array_column($released['rows'],'queue_job_id')===[$qid]&&count(CallsTrueWire::$entries)===1,
+                'MPC1_RELEASED_RESERVATION_NOT_A_BLANKET_BLOCK');
+        }
     }else{
         true_seed_assert(array_map(static fn(array $row):int=>(int)$row['queue_job_id'],$preview['rows'])===[$qid],
             'MPC1_DUE_SAME_SOURCE_SHOWN');
@@ -181,6 +274,40 @@ try{
             }
             $ids=array_column(CallsTrueWire::$entries,'order_ids');
             true_seed_assert(count(array_unique($ids))===3,'MPC1_DISTINCT_ORDER_GETS');
+        }elseif($case==='reservation_after_preview'){
+            $reservation=mpc1_reserve_financial_source($pdo,$sid);$snapshot=mpc1_snapshot($pdo);
+            $ledger['reserved']=mpc1_execute($preview,2);
+            true_seed_assert(mpc1_snapshot($pdo)===$snapshot&&count(CallsTrueWire::$entries)===1,
+                'MPC1_RESERVATION_AFTER_PREVIEW_ZERO_ADMISSION');
+            $pdo->prepare("UPDATE manual_campaign_reservations SET status='released' WHERE id=?")->execute([$reservation]);
+            true_seed_assert(array_column(mpc1_preview()['rows'],'queue_job_id')===[$qid],'MPC1_RESERVATION_RELEASE_NEW_CONFIRMATION_AVAILABLE');
+        }elseif($case==='marker_malformed'){
+            $repo=new QueueV4CleanRepository($pdo);
+            $version=new ReflectionMethod(QueueV4CleanRepository::class,'queueSelectionVersion');
+            // Recompute the real snapshot hash so an unrelated hash mismatch cannot mask missing type checks.
+            foreach(['unknown_kind','missing_kind','missing_generation','string_generation','negative_generation','invalid_version']as $malformed){
+                $current=mpc1_preview();$bad=$current['rows'][0];
+                true_seed_assert($repo->manualContinuationSourceIdentityMatches($bad),'MPC1_MARKER_VALID_CONTROL');
+                switch($malformed){
+                    case 'unknown_kind':$bad['manual_continuation_kind']='other';break;
+                    case 'missing_kind':unset($bad['manual_continuation_kind']);break;
+                    case 'missing_generation':unset($bad['queue_lease_generation']);break;
+                    case 'string_generation':$bad['queue_lease_generation']=(string)$bad['queue_lease_generation'];break;
+                    case 'negative_generation':$bad['financial_source_lease_generation']=-1;break;
+                    case 'invalid_version':$bad['financial_input_version']='not-a-version';break;
+                }
+                $bad['selection_version']=$version->invoke($repo,array_replace($bad,['idempotency_key'=>$bad['queue_idempotency_key']]));
+                true_seed_assert(!$repo->manualContinuationSourceIdentityMatches($bad),'MPC1_MALFORMED_MARKER_REJECTED',['variant'=>$malformed]);
+                $update=$pdo->prepare('UPDATE manual_campaign_preview_items SET item_payload_json=?
+                    WHERE manual_campaign_preview_id=? AND queue_key="available_queue" AND source_id=? AND meli_account_id=9011');
+                $update->execute([json_encode($bad,JSON_THROW_ON_ERROR),$current['preview_id'],(string)$qid]);
+                true_seed_assert($update->rowCount()===1,'MPC1_MALFORMED_DURABLE_SNAPSHOT_REACHED');
+                $loaded=(new ManualCampaignPreviewService())->load($current['preview_token'],9007);
+                true_seed_assert($loaded['rows'][0]===$bad,'MPC1_MALFORMED_SNAPSHOT_LOADED_EXACTLY');
+                $snapshot=mpc1_snapshot($pdo);$ledger['malformed'][$malformed]=mpc1_execute($current,2);
+                true_seed_assert(mpc1_snapshot($pdo)===$snapshot&&count(CallsTrueWire::$entries)===1,
+                    'MPC1_MALFORMED_MARKER_END_TO_END_NO_EFFECT',['variant'=>$malformed]);
+            }
         }elseif($case==='auto_aba'){
             $beforeGenerations=$pdo->query("SELECT q.lease_generation AS qgen,s.lease_generation AS sgen FROM queue_v4_clean_jobs q JOIN sale_financial_reconciliation_jobs s ON s.id=$sid AND s.company_id=q.company_id AND s.meli_account_id=q.meli_account_id WHERE q.id=$qid")->fetch(PDO::FETCH_ASSOC);
             CallsTrueWire::$execution=2;CronDeadlineContext::start(45,43,8,3);

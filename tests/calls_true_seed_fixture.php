@@ -24,10 +24,78 @@ function true_seed_profile(int $seed,?string $directOverride=null):array
     true_seed_assert(in_array($directType,['order_exact','fresh_orders_discovery'],true),'DIRECT_TYPE_ALLOWLIST');
     return ['manual'=>$manual,'billing'=>$billing,'budget'=>$budgets[$index%count($budgets)],
         'outcome'=>$retry?'500':$outcomes[$index],'count'=>$retry?1:$count,'retry'=>$retry,
-        'direct_type'=>$directType,'oauth'=>$seed===61,'resource_local'=>in_array($seed,[55,80],true),
+        'direct_type'=>$directType,'oauth'=>$seed===61,'resource_local'=>in_array($seed,[55,80],true),'local_resolution'=>$seed===39,
         'page_size'=>in_array($seed,[51,74,76,99],true)?1:($retry?1:$count),
-        'expected_business'=>$billing?($count>1?'durable_per_order_checkpoints_then_one_official_publication':'official_publication_or_explicit_deferral'):($directType==='fresh_orders_discovery'?'persist_page_orders_and_continuation_or_watermark':'persist_only_successful_exact_orders'),
+        'expected_business'=>$seed===39?'claimed_local_completion_without_http_or_new_publication':($billing?($count>1?'durable_per_order_checkpoints_then_one_official_publication':'official_publication_or_explicit_deferral'):($directType==='fresh_orders_discovery'?'persist_page_orders_and_continuation_or_watermark':'persist_only_successful_exact_orders')),
         'expected_certainty'=>'CERTIFIED','expected_429_calls'=>1,'expected_retry_executions'=>$retry?2:1];
+}
+
+/** Snapshot for the one explicit local-only matrix seed; no lease owner values. */
+function true_seed_local_resolution_snapshot(PDO $pdo,array $source):array
+{
+    $snapshot=['business'=>true_seed_business_snapshot($pdo,$source)];
+    $snapshot['sources']=$pdo->query('SELECT id,status,input_version,attempts,lease_generation,
+        (lock_owner IS NOT NULL) AS owner_present,lease_expires_at,heartbeat_at,next_run_at,completed_at
+        FROM sale_financial_reconciliation_jobs WHERE company_id=9001 AND meli_account_id=9011 ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+    $snapshot['pointers']=$pdo->query('SELECT id,resource_id,state,attempt_count,lease_generation,
+        (lease_owner IS NOT NULL) AS owner_present,lease_expires_at,available_at,completed_at
+        FROM queue_v4_clean_jobs WHERE company_id=9001 AND meli_account_id=9011 ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+    $snapshot['attempts']=$pdo->query('SELECT id,job_id,outcome,lease_generation,dispatch_state,physical_http_calls,
+        physical_started_at,http_status,response_known_at,source_closed_at,finished_at
+        FROM queue_v4_clean_attempts WHERE company_id=9001 AND meli_account_id=9011 ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+    $snapshot['transport_events']=(int)$pdo->query('SELECT COUNT(*) FROM queue_v4_clean_transport_events
+        WHERE company_id=9001 AND meli_account_id=9011')->fetchColumn();
+    foreach(['sale_financial_state','meli_sale_financials','meli_billing_capture_runs']as $table){
+        $snapshot[$table]=$pdo->query('SELECT * FROM '.$table.' WHERE company_id=9001 AND meli_account_id=9011 ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+    }
+    foreach(['meli_sale_financial_history','meli_sale_financial_lines','meli_sale_financial_allocations']as $table){
+        $snapshot[$table]=$pdo->query('SELECT h.* FROM '.$table.' h JOIN meli_sale_financials f ON f.id=h.meli_sale_financial_id
+            WHERE f.company_id=9001 AND f.meli_account_id=9011 ORDER BY h.id')->fetchAll(PDO::FETCH_ASSOC);
+    }
+    $snapshot['official_evidence']=$pdo->query("SELECT * FROM sale_financial_evidence
+        WHERE company_id=9001 AND meli_account_id=9011 AND evidence_type<>'local_projection' ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+    $snapshot['local_projection_evidence']=$pdo->query("SELECT * FROM sale_financial_evidence
+        WHERE company_id=9001 AND meli_account_id=9011 AND evidence_type='local_projection' ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+    return $snapshot;
+}
+
+/** Positive local closure oracle, separate from the 99 ordinary wire scenarios. */
+function true_seed_assert_local_resolution(PDO $pdo,array $source,array $before,array $result,array $wire,int $budget):array
+{
+    true_seed_assert($wire===[]&&App\Services\CallsTrueWire::$violations===[],'LOCAL_MATRIX_INDEPENDENT_WIRE_ZERO');
+    true_seed_receipt($result,$wire,$budget);
+    true_seed_assert(($result['api_calls_used']??null)===0&&($result['completed_count']??null)===1
+        &&($result['waiting_count']??null)===0,'LOCAL_MATRIX_COMPLETED_RECEIPT_ZERO_CONSUMED');
+    $after=true_seed_local_resolution_snapshot($pdo,$source);
+    true_seed_assert(count($before['sources'])===1&&count($after['sources'])===1
+        &&count($before['pointers'])===1&&count($after['pointers'])===1,'LOCAL_MATRIX_NO_NEW_NEIGHBORS');
+    $s=$after['sources'][0];$q=$after['pointers'][0];
+    true_seed_assert((int)$s['id']===$source['source']&&(int)$q['id']===$source['queue'][0]
+        &&$s['status']==='complete'&&$q['state']==='completed'
+        &&(int)$s['lease_generation']===(int)$before['sources'][0]['lease_generation']+1
+        &&(int)$q['lease_generation']===(int)$before['pointers'][0]['lease_generation']+1
+        &&$s['input_version']===$before['sources'][0]['input_version'],'LOCAL_MATRIX_ACTUAL_CLAIM_EXACT_SOURCE_COMPLETED');
+    true_seed_assert((int)$s['owner_present']===0&&$s['lease_expires_at']===null&&$s['heartbeat_at']===null
+        &&(int)$q['owner_present']===0&&$q['lease_expires_at']===null
+        &&$s['completed_at']!==null&&$q['completed_at']!==null,'LOCAL_MATRIX_SOURCE_POINTER_LEASES_CLEARED');
+    true_seed_assert($before['attempts']===[]&&count($after['attempts'])===1,'LOCAL_MATRIX_ONE_ATTEMPT');
+    $a=$after['attempts'][0];
+    true_seed_assert((int)$a['job_id']===(int)$q['id']&&$a['outcome']==='completed'
+        &&$a['dispatch_state']==='NOT_DISPATCHED'&&(int)$a['physical_http_calls']===0
+        &&$a['physical_started_at']===null&&$a['http_status']===null&&$a['response_known_at']===null
+        &&$a['finished_at']!==null&&$after['transport_events']===0,'LOCAL_MATRIX_ATTEMPT_CLOSED_WITHOUT_DISPATCH');
+    $progress=['queue'=>true,'financial_source'=>true];
+    true_seed_assert(array_diff_key($after['business'],$progress)===array_diff_key($before['business'],$progress),
+        'LOCAL_MATRIX_NO_CHECKPOINT_PUBLICATION_OR_UNSELECTED_EFFECT');
+    $allowed=['business'=>true,'sources'=>true,'pointers'=>true,'attempts'=>true,'sale_financial_state'=>true,'local_projection_evidence'=>true];
+    true_seed_assert(array_diff_key($after,$allowed)===array_diff_key($before,$allowed),'LOCAL_MATRIX_NO_CAPTURE_OR_OFFICIAL_EVIDENCE_WRITES');
+    true_seed_assert(count($after['sale_financial_state'])===1&&count($before['sale_financial_state'])===1,'LOCAL_MATRIX_ONE_OFFICIAL_STATE');
+    $projectionTimes=['projected_at'=>true,'updated_at'=>true];
+    true_seed_assert(array_diff_key($after['sale_financial_state'][0],$projectionTimes)
+        ===array_diff_key($before['sale_financial_state'][0],$projectionTimes)
+        &&$after['sale_financial_state'][0]['official_status']==='complete'
+        &&(float)$after['sale_financial_state'][0]['official_net_amount']===90.0,'LOCAL_MATRIX_OFFICIAL_INPUT_AND_VALUES_UNCHANGED');
+    return $after;
 }
 
 function true_seed_business_snapshot(PDO $pdo,array $source):array
@@ -88,9 +156,9 @@ function true_seed_assert_business(PDO $pdo,array $source,array $profile,array $
         }else{
             $expectedIds=[];
             if($success||$profile['resource_local'])foreach($businessWire as $entry){$id=basename($entry['path']);if($success||$id!==$source['orders'][0])$expectedIds[]=$id;}
-            sort($expectedIds);$actual=array_column($after['orders'],'external_order_id');sort($actual);
+            sort($expectedIds);$actual=array_map('strval',array_column($after['orders'],'external_order_id'));sort($actual);
             true_seed_assert($actual===$expectedIds,'EXACT_ORDER_RESULTS_MATCH_SUCCESSFUL_WIRE',['expected'=>$expectedIds,'actual'=>$actual]);
-            foreach($original as $row)if(in_array($row['resource_id'],$expectedIds,true))true_seed_assert($row['state']==='completed','SUCCESSFUL_ORDER_QUEUE_COMPLETED',['row'=>$row]);
+            foreach($original as $row)if(in_array((string)$row['resource_id'],$expectedIds,true))true_seed_assert($row['state']==='completed','SUCCESSFUL_ORDER_QUEUE_COMPLETED',['row'=>$row]);
         }
     }
     if($blocked){

@@ -38,8 +38,9 @@ namespace App\Services {
         public function increaseGate(): array { \diagnostics_fault('gate'); return ['allowed' => false, 'message' => 'Runtime health gate remains active.']; }
     }
     final class ApiHealthService {
+        public function dataAvailable(): bool { return !in_array($GLOBALS['stage'] ?? '', ['incidents_unavailable', 'incidents_partial_unavailable'], true); }
         public function classificationAvailable(): bool { return ($GLOBALS['stage'] ?? '') !== 'classification_unavailable'; }
-        public function incidents(array $filters, int $limit): array { \diagnostics_fault('incidents'); return []; }
+        public function incidents(array $filters, int $limit): array { \diagnostics_fault('incidents'); return ($GLOBALS['stage'] ?? '') === 'incidents_partial_unavailable' ? [['http_status' => 429]] : []; }
     }
 }
 namespace App\QueueV4Clean {
@@ -59,6 +60,8 @@ namespace {
         foreach (['get', 'preview'] as $endpoint) {
             $cases = [['healthy', 'none'], ['admin', 'auth'], ['rhythm', 'failure'], ['scope', 'failure'], ['queue', 'failure'], ['gate', 'failure'], ['incidents', 'failure'], ['scope', 'auth'], ['gate', 'auth'], ['incidents', 'auth'], ['observed_unavailable', 'failure'], ['classification_unavailable', 'failure'], ['queue_incomplete', 'failure']];
             $cases[] = ['setting', 'failure'];
+            $cases[] = ['incidents_unavailable', 'failure'];
+            $cases[] = ['incidents_partial_unavailable', 'failure'];
             if ($endpoint === 'get') $cases[] = ['capacity', 'failure'];
             foreach ($cases as [$stage, $failure]) {
                 $process = proc_open([PHP_BINARY, __FILE__, $endpoint, $stage, $failure], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);

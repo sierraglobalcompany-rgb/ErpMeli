@@ -427,11 +427,15 @@ final class SettingsController
         if (!$health->classificationAvailable()) {
             throw new \RuntimeException('Rate limit diagnostics are unavailable.');
         }
-        return array_slice($health->incidents([
+        $incidents = $health->incidents([
             'hours' => 24,
             'origin' => 'remote',
             'http_status' => 429,
-        ], 5), 0, 5);
+        ], 5);
+        if (!$health->dataAvailable()) {
+            throw new \RuntimeException('Rate limit diagnostics are unavailable.');
+        }
+        return array_slice($incidents, 0, 5);
     }
 
     public function save(): void

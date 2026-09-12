@@ -48,8 +48,7 @@ try {
                 $module,
                 $current,
                 $ceiling,
-                $before['revision'],
-                static fn (): array => ['allowed' => true, 'message' => '']
+                $before['revision']
             );
             $reloaded = $policy->snapshot($module);
             k1b_assert(
@@ -62,38 +61,35 @@ try {
     }
     $pdo->exec("DELETE FROM app_settings WHERE setting_key IN ('manual.api_calls_per_step','manual.api_calls_ceiling')");
     AppSettingsService::clearCache();
-    $gateCalls = 0;
-    $allow = static function () use (&$gateCalls): array { $gateCalls++; return ['allowed'=>true,'message'=>'']; };
-    foreach ([1,2,3,15,55,100] as $value) {
+    foreach ([1,2,3,5,9,10,15,50,55,100] as $value) {
         $before = $policy->snapshot('automation');
-        $after = $policy->save('automation', (string) $value, (string) max(55,$value), $before['revision'], $allow);
+        $after = $policy->save('automation', (string) $value, (string) max(55,$value), $before['revision']);
         k1b_assert($after['current'] === $value && $after['ceiling'] === max(55,$value), 'save_boundary_' . $value);
         k1b_assert((new AutomationCallBudgetService())->resolve()['max_calls'] === $value, 'runtime_boundary_' . $value);
     }
-    k1b_assert($gateCalls === 5, 'gate_only_actual_current_increases');
+    k1b_assert((new ReflectionMethod($policy, 'save'))->getNumberOfParameters() === 4, 'capacity_save_has_no_health_callback');
     foreach ([0,101,-1,1.0,true,null,'','2.5','1e1',' 2','02',[],str_repeat('9',30)] as $bad) {
         $before = $policy->snapshot('automation');
         foreach ([[$bad,100],[1,$bad]] as [$current,$ceiling]) {
             $rejected = false;
-            try { $policy->save('automation',$current,$ceiling,$before['revision'],$allow); }
+            try { $policy->save('automation',$current,$ceiling,$before['revision']); }
             catch (InvalidArgumentException) { $rejected = true; }
             k1b_assert($rejected, 'strict_integer_rejected_' . json_encode([$current,$ceiling]));
             k1b_assert($policy->snapshot('automation') === $before, 'invalid_save_no_mutation');
         }
     }
     $before = $policy->snapshot('automation');
-    $after = $policy->save('automation', 1, 55, $before['revision'], $allow);
+    $after = $policy->save('automation', 1, 55, $before['revision']);
     $stale = false;
-    try { $policy->save('automation',2,55,$before['revision'],$allow); } catch (RuntimeException) { $stale = true; }
+    try { $policy->save('automation',2,55,$before['revision']); } catch (RuntimeException) { $stale = true; }
     k1b_assert($stale && $policy->snapshot('automation') === $after, 'stale_revision_does_not_overwrite');
-    $denied = false;
-    try { $policy->save('automation',2,55,$after['revision'],static fn (): array => ['allowed'=>false,'message'=>'health_denied']); }
-    catch (RuntimeException $error) { $denied = $error->getMessage() === 'health_denied'; }
-    k1b_assert($denied && $policy->snapshot('automation') === $after, 'unhealthy_increase_rolls_back');
-    $noGate = static function (): array { throw new RuntimeException('must_not_gate_ceiling_only'); };
-    $ceilingOnly = $policy->save('automation',1,100,$after['revision'],$noGate);
+    // This schema deliberately has no telemetry/queue tables. Saving needs only settings.
+    $raised = $policy->save('automation',10,55,$after['revision']);
+    k1b_assert($raised['current'] === 10, 'increase_independent_of_telemetry');
+    $lowered = $policy->save('automation',1,55,$raised['revision']);
+    $ceilingOnly = $policy->save('automation',1,100,$lowered['revision']);
     k1b_assert($ceilingOnly['current'] === 1 && $ceilingOnly['ceiling'] === 100, 'ceiling_only_keeps_current');
-    $small = $policy->save('automation',2,3,$ceilingOnly['revision'],$allow);
+    $small = $policy->save('automation',2,3,$ceilingOnly['revision']);
     k1b_assert((new AutomationCallBudgetService())->resolve(100)['max_calls'] === 2, 'cli_override_cannot_raise_current');
     k1b_assert((new ReflectionMethod(AutomationCallBudgetService::class, 'resolve'))->getNumberOfParameters() === 1, 'budget_service_has_no_legacy_jobs_parameter');
     $pdo->exec('CREATE TABLE queue_v4_clean_control (control_key VARCHAR(32) PRIMARY KEY,engine_state VARCHAR(20),scheduler_enabled TINYINT) ENGINE=InnoDB');
@@ -102,13 +98,13 @@ try {
     k1b_assert($stopped['max_calls'] === 2 && $stopped['status'] === 'stopped', 'scheduler_entry_uses_configured_current');
     k1b_assert($policy->snapshot('manual')['current'] === 1 && $policy->snapshot('manual')['ceiling'] === 55, 'manual_unmodified_by_automation');
     $manual = $policy->snapshot('manual');
-    $savedManual = $policy->save('manual',55,55,$manual['revision'],$allow);
+    $savedManual = $policy->save('manual',55,55,$manual['revision']);
     $settings->set('api.rhythm.target_http_per_minute','1');
     k1b_assert($policy->snapshot('manual')['current'] === 55, 'explicit_manual_not_legacy_rhythm_clamped');
     // A failed second write must not expose half a pair.
     $pdo->exec("CREATE TRIGGER reject_capacity_ceiling BEFORE UPDATE ON app_settings FOR EACH ROW BEGIN IF NEW.setting_key='automation.api_calls_ceiling' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='fixture_write_failure'; END IF; END");
     $failed = false;
-    try { $policy->save('automation',3,55,$small['revision'],$allow); } catch (PDOException) { $failed = true; }
+    try { $policy->save('automation',3,55,$small['revision']); } catch (PDOException) { $failed = true; }
     k1b_assert($failed && $policy->snapshot('automation') === $small, 'pair_save_atomic_on_db_failure');
     $pdo->exec('DROP TRIGGER reject_capacity_ceiling');
     $pdo->exec('DROP TABLE app_settings');

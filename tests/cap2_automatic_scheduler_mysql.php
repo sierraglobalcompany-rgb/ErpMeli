@@ -116,9 +116,8 @@ namespace {
         $pdo->exec("INSERT INTO queue_v4_clean_leases (lease_key) VALUES ('scheduler')");
 
         $policy = new CapacityPolicyService($pdo);
-        $allow = static fn (): array => ['allowed' => true, 'message' => ''];
         $before = $policy->snapshot('automation');
-        $policy->save('automation', 50, 100, $before['revision'], $allow);
+        $policy->save('automation', 50, 100, $before['revision']);
         AppSettingsService::clearCache();
         $loadedBeforeReduction = (new AutomationCallBudgetService())->resolve(50);
         k1b_assert($loadedBeforeReduction['max_calls'] === 50, 'fixture_loaded_fifty_before_concurrent_reduction');
@@ -147,7 +146,7 @@ namespace {
         k1b_assert(QueueV4CleanCycleBudget::snapshot()['limit'] === 0, 'scheduler_clears_outer_budget');
 
         $beforeReadFailure = $policy->snapshot('automation');
-        $policy->save('automation', 50, 100, $beforeReadFailure['revision'], $allow);
+        $policy->save('automation', 50, 100, $beforeReadFailure['revision']);
         AppSettingsService::clearCache();
         Cap2AutomaticStageFixture::$leaseBoundaryAction = 'break_capacity_read';
         $readFailed = false;

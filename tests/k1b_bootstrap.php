@@ -7,7 +7,8 @@ declare(strict_types=1);
 $callsQaStorage = str_replace('\\', '/', (string) getenv('CALLS_QA_STORAGE_ROOT'));
 if ($callsQaStorage !== '' && !defined('ERP_SHARED_ROOT')) {
     if (PHP_SAPI !== 'cli'
-        || !str_starts_with($callsQaStorage, 'D:/Codex/tmp/erp-meli/calls-20260906/')
+        || !(str_starts_with($callsQaStorage, 'D:/Codex/tmp/erp-meli/calls-20260906/')
+            || str_starts_with($callsQaStorage, 'C:/codex/capacity-save-kiss/'))
         || str_contains($callsQaStorage, '..')) {
         throw new RuntimeException('Invalid calls QA storage root.');
     }

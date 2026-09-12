@@ -18,9 +18,12 @@ final class AppSettingsService
     /** @var array<string, true> */
     private static array $loaded = [];
 
+    // Opt-in for settings forms: cached fallbacks cannot verify current values.
+    public function __construct(private readonly bool $strictReads = false) {}
+
     public function get(string $key, ?string $default = null): ?string
     {
-        if (isset(self::$loaded[$key])) {
+        if (!$this->strictReads && isset(self::$loaded[$key])) {
             return self::$cache[$key] ?? $default;
         }
 
@@ -44,7 +47,10 @@ final class AppSettingsService
             self::$loaded[$key] = true;
             self::$cache[$key] = $resolved;
             return $resolved;
-        } catch (Throwable) {
+        } catch (Throwable $error) {
+            if ($this->strictReads) {
+                throw $error;
+            }
             $value = Env::get($key, $default);
             self::$loaded[$key] = true;
             self::$cache[$key] = $value;
@@ -62,7 +68,7 @@ final class AppSettingsService
     {
         $missing = [];
         foreach ($defaults as $key => $default) {
-            if (!isset(self::$loaded[$key])) {
+            if ($this->strictReads || !isset(self::$loaded[$key])) {
                 $missing[$key] = $default;
             }
         }
@@ -79,10 +85,10 @@ final class AppSettingsService
                     $key = (string) $row['setting_key'];
                     $value = $row['setting_value'];
                     $found[$key] = true;
-                    self::$loaded[$key] = true;
                     self::$cache[$key] = $value === null
                         ? ($missing[$key] ?? null)
                         : ((int) $row['is_encrypted'] === 1 ? Crypto::decrypt((string) $value) : (string) $value);
+                    self::$loaded[$key] = true;
                 }
                 foreach ($missing as $key => $default) {
                     if (isset($found[$key])) {
@@ -91,7 +97,10 @@ final class AppSettingsService
                     self::$loaded[$key] = true;
                     self::$cache[$key] = Env::get($key, $default);
                 }
-            } catch (Throwable) {
+            } catch (Throwable $error) {
+                if ($this->strictReads) {
+                    throw $error;
+                }
                 foreach ($missing as $key => $default) {
                     self::$loaded[$key] = true;
                     self::$cache[$key] = Env::get($key, $default);
@@ -139,7 +148,10 @@ final class AppSettingsService
             $stmt = Database::connection()->prepare('SELECT setting_key,setting_value,is_encrypted,updated_at FROM app_settings WHERE setting_group=:group_name ORDER BY setting_key');
             $stmt->execute(['group_name' => $group]);
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
-        } catch (Throwable) {
+        } catch (Throwable $error) {
+            if ($this->strictReads) {
+                throw $error;
+            }
             return [];
         }
     }

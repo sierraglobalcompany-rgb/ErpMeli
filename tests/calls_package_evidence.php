@@ -15,7 +15,8 @@ function callsEvidenceReject(callable $callback,string $expected): void
     throw new RuntimeException('missing_rejection:'.$expected);
 }
 
-$base = 'D:/Codex/tmp/erp-meli/calls-20260906/package-tests/evidence-'.bin2hex(random_bytes(5));
+$base = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_VERIFY_QA_ROOT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906')), '/') . '/package-tests/evidence-'.bin2hex(random_bytes(5));
+if (!(str_starts_with($base, 'D:/Codex/') || str_starts_with($base, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $base), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 $workspace = $base.'/repository'; $qa = $base.'/curated'; $artifact = $base.'/artifact';
 foreach ([$workspace,$qa,$artifact] as $directory) mkdir($directory,0777,true);
 cap2Git($workspace,['init','-q']);

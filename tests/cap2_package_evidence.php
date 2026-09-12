@@ -32,7 +32,8 @@ function cap2EvidenceWrite(string $path, string $bytes): void
     file_put_contents($path, $bytes);
 }
 
-$tmp = str_replace('\\', '/', getenv('CAP2_PACKAGE_TMP') ?: 'D:/Codex/tmp/erp-meli/cap2-20260905/qa/package-prep');
+$tmp = str_replace('\\', '/', getenv('CAP2_PACKAGE_TMP') ?: (getenv('CALLS_VERIFY_QA_ROOT') ? rtrim((string) getenv('CALLS_VERIFY_QA_ROOT'), '/\\') . '/package-tests' : 'D:/Codex/tmp/erp-meli/cap2-20260905/qa/package-prep'));
+if (!(str_starts_with($tmp, 'D:/Codex/') || str_starts_with($tmp, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $tmp), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 $case = $tmp . '/evidence-' . bin2hex(random_bytes(4));
 $workspace = $case . '/workspace';
 $qa = $case . '/qa';

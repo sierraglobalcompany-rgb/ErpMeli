@@ -44,7 +44,7 @@ $o=getopt('',['case:','root:','artifact:','template:','template-sha256:','conten
 // invokes the actual opposite launcher; it never creates/drops a database.
 if(isset($o['contender'])){
     $path=realpath((string)$o['contender']);
-    true_seed_assert($path!==false&&str_starts_with(str_replace('\\','/',$path),'D:/Codex/'),'M8_OWNED_CONTEXT_PATH');
+    true_seed_assert($path!==false&&(str_starts_with(str_replace('\\','/',$path),'D:/Codex/') || str_starts_with(str_replace('\\','/',$path),'C:/codex/capacity-save-kiss/')),'M8_OWNED_CONTEXT_PATH');
     $context=json_decode((string)file_get_contents($path),true,512,JSON_THROW_ON_ERROR);
     K1dSafeTestDatabase::assertGuard((string)getenv('APP_ENV'),(string)getenv('ML_WRITE_ENABLED'),(string)getenv('DB_HOST'),(string)getenv('DB_NAME'));
     true_seed_assert(getenv('DB_NAME')===$context['db_name'],'M8_PARENT_OWNED_DATABASE');
@@ -75,8 +75,8 @@ if(isset($o['contender'])){
     exit(0);
 }
 $root=rtrim(str_replace('\\','/',(string)($o['root']??'')),'/');$artifact=str_replace('\\','/',(string)($o['artifact']??''));
-if(PHP_SAPI!=='cli'||!str_starts_with($root,'D:/Codex/')||in_array('..',explode('/',$root),true)
-    ||!str_starts_with($artifact,'D:/Codex/')||in_array('..',explode('/',$artifact),true))throw new RuntimeException('explicit_owned_artifact_paths_required');
+if(PHP_SAPI!=='cli'||!(str_starts_with($root,'D:/Codex/') || str_starts_with($root,'C:/codex/capacity-save-kiss/'))||in_array('..',explode('/',$root),true)
+    ||!(str_starts_with($artifact,'D:/Codex/') || str_starts_with($artifact,'C:/codex/capacity-save-kiss/'))||in_array('..',explode('/',$artifact),true))throw new RuntimeException('explicit_owned_artifact_paths_required');
 if(!mkdir($root,0770,true))throw new RuntimeException('fresh_case_directory_required');
 $r=['case'=>$case,'state'=>'SETUP_FAILURE','reached'=>false,'witness'=>false,'cleanup'=>false,
     'oracle_hash'=>hash_file('sha256',__FILE__),'pid'=>getmypid(),'wire_count'=>0,'real_remote_http'=>0];
@@ -94,7 +94,7 @@ try {
         $h=K1dSafeTestDatabase::createFromEnvironment();$pdo=$h->pdo();
         if(isset($o['template'])){
             $template=realpath((string)$o['template']);
-            true_seed_assert($template!==false&&str_starts_with(str_replace('\\','/',$template),'D:/Codex/'),'MUTANT_LOCAL_TEMPLATE');
+            true_seed_assert($template!==false&&(str_starts_with(str_replace('\\','/',$template),'D:/Codex/') || str_starts_with(str_replace('\\','/',$template),'C:/codex/capacity-save-kiss/')),'MUTANT_LOCAL_TEMPLATE');
             // Hash and decode the same read: no template TOCTOU between hash and SQL.
             $templateBytes=file_get_contents($template);
             true_seed_assert(is_string($templateBytes),'MUTANT_TEMPLATE_READ');
@@ -192,7 +192,7 @@ try {
         case 'M7':
             $policy=new App\Services\CapacityPolicyService($pdo);$other=$policy->snapshot('manual');$before=$policy->snapshot('automation');
             $q=$pdo->query("SELECT setting_key,setting_value,is_encrypted,setting_group FROM app_settings WHERE setting_key IN ('manual.api_calls_per_step','manual.api_calls_ceiling') ORDER BY setting_key");$rowsBefore=$q->fetchAll(PDO::FETCH_ASSOC);
-            $saved=$policy->save('automation',3,17,$before['revision'],static fn():array=>['allowed'=>true,'message'=>'']);
+            $saved=$policy->save('automation',3,17,$before['revision']);
             $rowsAfter=$pdo->query("SELECT setting_key,setting_value,is_encrypted,setting_group FROM app_settings WHERE setting_key IN ('manual.api_calls_per_step','manual.api_calls_ceiling') ORDER BY setting_key")->fetchAll(PDO::FETCH_ASSOC);
             App\Services\AppSettingsService::clearCache();$fresh=(new App\Services\CapacityPolicyService($pdo))->snapshot('manual');
             $r['reached']=$saved['current']===3&&$saved['ceiling']===17;$r['evidence']=['manual_rows_before'=>$rowsBefore,'manual_rows_after'=>$rowsAfter,'saved_current'=>$saved['current'],'saved_ceiling'=>$saved['ceiling']];

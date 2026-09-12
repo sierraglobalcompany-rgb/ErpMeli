@@ -16,11 +16,9 @@ $env:DB_PASS = ''
 $env:TEMP = $out
 $env:TMP = $out
 $env:CAP2_MANUAL_QA_ROOT = Join-Path $qa 'manual-fixtures'
-# tests/k1b_bootstrap.php intentionally allowlists the historical D: QA
-# runtime prefix. Keep human-readable reports under CALLS_VERIFY_QA_ROOT, but
-# place the private ERP_SHARED_ROOT runtime under that allowlisted disposable
-# area so detached audit worktrees can run without changing product fixtures.
-$runtimeRoot = Join-Path 'D:/Codex/tmp/erp-meli/calls-20260906' ('runtime-' + $Group + '-' + (Get-Date -Format 'HHmmss') + '-' + $PID)
+# The test bootstrap allowlists historical D: and the dedicated capacity-save C:
+# root. Reports and private runtime stay together without adopting unrelated data.
+$runtimeRoot = Join-Path $qa ('runtime-' + $Group + '-' + (Get-Date -Format 'HHmmss') + '-' + $PID)
 New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
 $env:CALLS_QA_STORAGE_ROOT = $runtimeRoot
 $env:CALLS_VERIFY_RUN_OUTPUT = $out
@@ -63,11 +61,15 @@ $cases = @{
         'calls_retired','calls_final_updater_authority_hash','capacity_manual_budget','cap2_manual_budget','cap2_manual_item_contract',
         'cap2_manual_presentation','capacity_manual_controller','cap2_domains_policy',
         'cap2_transport_deadline','cap2_transport_scheduler','capacity_controller','capacity_anonymous',
-        'capacity_ui','k1d_static_contract','f5_manual_kiss_contract'
+        'capacity_ui','k1d_static_contract','f5_manual_kiss_contract',
+        'capacity_save_outcome','app_settings_strict_reads','capacity_diagnostics_controller'
     )
     database = @(
         'calls_settings','calls_history','calls_billing_history_mysql','calls_final_billing_checkpoint_continuation_mysql','cap2_health_mysql','cap2_health_controller',
         'capacity_policy_mysql','capacity_concurrency_mysql','cap2_writers_mysql','cap2_writers_controller',
+        'capacity_save_faults_mysql health','capacity_save_faults_mysql release',
+        'capacity_save_faults_mysql write_release','capacity_save_faults_mysql write_rollback',
+        'capacity_save_faults_mysql commit_unknown','capacity_save_faults_mysql stale','capacity_save_faults_mysql busy',
         'cap2_automatic_budget_mysql','cap2_automatic_scheduler_mysql','cap2_automatic_worker_context_mysql',
         'calls_final_billing_checkpoint_continuation_mysql --orders=50 --interval=1 --budget=1',
         'calls_final_concurrency_physical_mysql','calls_final_seed_matrix_mysql','calls_final_mutation_matrix'
@@ -81,7 +83,7 @@ $cases = @{
     )
     transport = @('calls_transport_mysql','cap2_transport_mysql','cap2_domains_mysql','cap2_uncertain_recovery','calls_oauth_persistence_mysql','calls_domains_regression_mysql')
     readiness = @('calls_readiness_contract','calls_readiness_safety','calls_readiness_uncertain','calls_readiness_transport --mysql')
-    entrypoints = @('calls_entrypoints_http_mysql --readiness-browser')
+    entrypoints = @('calls_entrypoints_http_mysql --readiness-browser','capacity_save_browser_mysql')
     package = @('calls_package_contract','cap2_package_handoff','calls_package_evidence','cap2_package_evidence')
 }
 $httpCases = @('prepare','check','cancel','activate','stop','legacy','invalid-step','invalid-run','invalid-token','injected-scope',

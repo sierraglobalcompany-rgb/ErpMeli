@@ -1,12 +1,14 @@
 <?php
 declare(strict_types=1);
-putenv('CAP2_MANUAL_QA_ROOT=D:/Codex/tmp/erp-meli/calls-20260906/readiness');
-putenv('CALLS_QA_STORAGE_ROOT=D:/Codex/tmp/erp-meli/calls-20260906/readiness/shared');
+$callsQaRoot = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_VERIFY_QA_ROOT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906')), '/');
+if (!(str_starts_with($callsQaRoot, 'D:/Codex/') || str_starts_with($callsQaRoot, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $callsQaRoot), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
+putenv('CAP2_MANUAL_QA_ROOT=' . $callsQaRoot . '/readiness');
+putenv('CALLS_QA_STORAGE_ROOT=' . $callsQaRoot . '/readiness/shared');
 require __DIR__.'/cap2_manual_fixture.php';
 
 function calls_readiness_database(): K1dSafeTestDatabase
 {
-    $sessionPath='D:/Codex/tmp/erp-meli/calls-20260906/readiness/sessions';
+    $sessionPath=rtrim((string) getenv('CAP2_MANUAL_QA_ROOT'), '/\\') . '/sessions';
     if(!is_dir($sessionPath)) mkdir($sessionPath,0770,true);
     session_save_path($sessionPath); session_name('erp_meli_session'); session_id(bin2hex(random_bytes(16))); session_start();
     $h=cap2_manual_database(); $pdo=App\Core\Database::connection();

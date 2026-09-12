@@ -138,7 +138,9 @@ function calls_scopes_matrix(PDO $pdo, Closure $request, Closure $login, Closure
     preg_match_all('/<tr data-selection-id="/', $rendered['body'], $renderedRows);
     $assert($rendered['status'] === 200 && count($renderedRows[0]) === 60, 'scope_finance_GET_renders_all_60_confirmed_rows');
     $assert(hash_equals($before, $businessHash()), 'scope_finance_60_presentation_business_unchanged');
-    clearstatcache(true, 'D:/Codex/tmp/erp-meli/calls-20260906/entrypoints/wire.jsonl');
-    $assert(filesize('D:/Codex/tmp/erp-meli/calls-20260906/entrypoints/wire.jsonl') === 0, 'scope_matrix_wire_zero');
+    $wireRoot = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_ENTRYPOINTS_ROOT') ?: getenv('CAP2_MANUAL_QA_ROOT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906/entrypoints')), '/');
+    if (!(str_starts_with($wireRoot, 'D:/Codex/') || str_starts_with($wireRoot, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $wireRoot), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
+    clearstatcache(true, $wireRoot . '/wire.jsonl');
+    $assert(filesize($wireRoot . '/wire.jsonl') === 0, 'scope_matrix_wire_zero');
     echo "STATUS=PASS CALLS_SCOPES_MATRIX supported=9 invalid=2 REAL_HTTP_ROUTER=YES LEGACY_CAMPAIGN_TABLE=ABSENT_DURING_PREVIEWS\n";
 }

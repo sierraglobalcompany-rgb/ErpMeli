@@ -61,7 +61,7 @@ $options = getopt('', ['template:', 'scenario:']);
 $scenario = (string) ($options['scenario'] ?? 'input_changed');
 true_seed_assert(in_array($scenario, ['input_changed', 'official_complete', 'identity_changed'], true), 'KNOWN_LOCAL_SCENARIO');
 $root = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_R1_QA_ROOT') ?: '')), '/');
-true_seed_assert(str_starts_with($root, 'D:/Codex/') && !in_array('..', explode('/', $root), true), 'EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
+true_seed_assert((str_starts_with($root, 'D:/Codex/') || str_starts_with($root, 'C:/codex/capacity-save-kiss/')) && !in_array('..', explode('/', $root), true), 'EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 $dir = $root . '/local-resolution-' . $scenario . '-' . bin2hex(random_bytes(5));
 true_seed_assert(mkdir($dir, 0770, true), 'LOCAL_DIAGNOSTIC_DIRECTORY');
 $database = 'erp_meli_k1d_test_r1_local_' . bin2hex(random_bytes(8));
@@ -90,7 +90,7 @@ try {
     $ledger['database_version'] = $pdo->query('SELECT VERSION()')->fetchColumn();
     if (isset($options['template'])) {
         $template = realpath((string) $options['template']);
-        true_seed_assert($template !== false && str_starts_with(str_replace('\\', '/', $template), 'D:/Codex/'), 'LOCAL_SCHEMA_TEMPLATE_REQUIRED');
+        true_seed_assert($template !== false && (str_starts_with(str_replace('\\', '/', $template), 'D:/Codex/') || str_starts_with(str_replace('\\', '/', $template), 'C:/codex/capacity-save-kiss/')), 'LOCAL_SCHEMA_TEMPLATE_REQUIRED');
         foreach (json_decode((string) file_get_contents($template), true, 512, JSON_THROW_ON_ERROR) as $sql) {
             $pdo->exec($sql);
         }

@@ -226,7 +226,7 @@ $cases = ['wrong_company', 'wrong_account', 'wrong_status', 'wrong_owner', 'wron
 $requested = (string) ($options['case'] ?? 'all');
 true_seed_assert($requested === 'all' || in_array($requested, $cases, true), 'KNOWN_FINISH_CASE');
 $root = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_R1_QA_ROOT') ?: '')), '/');
-true_seed_assert(str_starts_with($root, 'D:/Codex/') && !in_array('..', explode('/', $root), true), 'EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
+true_seed_assert((str_starts_with($root, 'D:/Codex/') || str_starts_with($root, 'C:/codex/capacity-save-kiss/')) && !in_array('..', explode('/', $root), true), 'EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 $dir = $root . '/finish-safety-' . $requested . '-' . bin2hex(random_bytes(5));
 true_seed_assert(mkdir($dir, 0770, true), 'FINISH_DIAGNOSTIC_DIRECTORY');
 if (!defined('ERP_INSTALLATION_ROOT')) define('ERP_INSTALLATION_ROOT', $dir . '/install');
@@ -255,7 +255,7 @@ foreach ($requested === 'all' ? $cases : [$requested] as $case) {
         $ledger['database_version'] = $pdo->query('SELECT VERSION()')->fetchColumn();
         if (isset($options['template'])) {
             $template = realpath((string) $options['template']);
-            true_seed_assert($template !== false && str_starts_with(str_replace('\\', '/', $template), 'D:/Codex/'), 'LOCAL_SCHEMA_TEMPLATE_REQUIRED');
+            true_seed_assert($template !== false && (str_starts_with(str_replace('\\', '/', $template), 'D:/Codex/') || str_starts_with(str_replace('\\', '/', $template), 'C:/codex/capacity-save-kiss/')), 'LOCAL_SCHEMA_TEMPLATE_REQUIRED');
             foreach (json_decode((string) file_get_contents($template), true, 512, JSON_THROW_ON_ERROR) as $sql) $pdo->exec($sql);
         } else {
             (new App\Services\Migrator($pdo, __DIR__ . '/../database/migrations'))->run(301);

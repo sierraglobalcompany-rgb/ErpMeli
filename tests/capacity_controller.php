@@ -13,10 +13,14 @@ namespace App\Core {
 namespace App\Services {
     final class ApiHealthAccessScope { public function snapshot(): array { throw new \RuntimeException('Fixture health unavailable'); } }
     final class CapacityChangeGuard {
-        public function assertGlobalAuthorization(): void {}
-        public function increaseGate(): array { return ['allowed' => false, 'message' => 'health blocked']; }
+        public function assertGlobalAuthorization(): void { if (($GLOBALS['mode'] ?? '') === 'revoked') throw new \App\Core\HttpException(403, 'global authorization required'); }
+        public function increaseGate(): array { throw new \RuntimeException('Capacity saves must not request health.'); }
     }
-    final class SafeErrorPresenter { public static function message(\Throwable $error, string $fallback, array $context = []): string { return $fallback; } }
+    // Keep the real SafeErrorPresenter; only replace its filesystem logging boundary.
+    final class Logger {
+        public static function redactString(string $value): string { return '[redacted fixture]'; }
+        public static function write(string $level, string $message, array $context = []): void {}
+    }
     // Persistence spy: no database/network; shared policy has independent real MySQL tests.
     final class CapacityPolicyService {
         public const TECHNICAL_MAX = 100;
@@ -29,10 +33,12 @@ namespace App\Services {
             if ($current === '101') throw new \InvalidArgumentException('invalid capacity');
             return ['current' => (int) $current, 'ceiling' => (int) $ceiling];
         }
-        public function save(string $module, mixed $current, mixed $ceiling, string $revision, callable $gate): array {
-            if ($revision !== 'rev-1') throw new \App\Core\HttpException(409, 'stale revision');
-            if ($current > 3 && empty($gate()['allowed'])) throw new \App\Core\HttpException(409, 'health blocked');
+        public function save(string $module, mixed $current, mixed $ceiling, string $revision): array {
+            if (func_num_args() !== 4) throw new \RuntimeException('Capacity saves accept no health callback.');
+            if ($revision !== 'rev-1') throw new \App\Core\HttpException(409, 'La capacidad cambió. Recargue y confirme los valores actuales.');
+            if (($GLOBALS['mode'] ?? '') === 'unknown') throw new \RuntimeException('private database detail');
             self::$writes++;
+            if (($GLOBALS['mode'] ?? '') === 'postwrite') throw new \RuntimeException('private post-commit detail');
             return compact('module', 'current', 'ceiling', 'revision');
         }
     }
@@ -40,7 +46,7 @@ namespace App\Services {
 namespace {
     require __DIR__ . '/k1b_bootstrap.php';
     if (!isset($argv[1])) {
-        foreach (['prepare', 'confirm', 'cancel', 'missing', 'tamper', 'stale', 'invalid', 'operator', 'temporary', 'csrf', 'origin', 'increase'] as $mode) {
+        foreach (['prepare', 'confirm', 'cancel', 'missing', 'tamper', 'stale', 'invalid', 'operator', 'temporary', 'csrf', 'origin', 'increase', 'revoked', 'unknown', 'postwrite'] as $mode) {
             $process = proc_open([PHP_BINARY, __FILE__, $mode], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
             $out = stream_get_contents($pipes[1]); $err = stream_get_contents($pipes[2]);
             fclose($pipes[1]); fclose($pipes[2]); $exit = proc_close($process);
@@ -60,8 +66,14 @@ namespace {
     $_POST = ['_token' => $mode === 'csrf' ? 'wrong' : 'test-csrf', 'capacity_action' => $mode === 'cancel' ? 'cancel' : 'confirm', 'confirmation_nonce' => $mode === 'tamper' ? 'wrong' : 'nonce-1'];
     if (in_array($mode, ['prepare', 'invalid'], true)) $_POST = ['_token' => 'test-csrf', 'manual_api_calls_per_step' => $mode === 'invalid' ? '101' : '2', 'manual_api_calls_ceiling' => '100', 'capacity_revision' => 'rev-1'];
     register_shutdown_function(static function () use ($mode): void {
-        $expected = $mode === 'confirm' ? 1 : 0;
+        $expected = in_array($mode, ['confirm', 'increase', 'postwrite'], true) ? 1 : 0;
         k1b_assert(App\Services\CapacityPolicyService::$writes === $expected, 'Only an authenticated confirmed valid proposal may persist.');
+        if (in_array($mode, ['unknown', 'postwrite'], true)) {
+            $message = (string) ($_SESSION['_flash']['error'] ?? '');
+            k1b_assert(str_contains($message, 'No se pudo confirmar') && !str_contains($message, 'No se guardó'), 'Unknown outcome must ask to verify current values, without claiming rollback.');
+            k1b_assert(!str_contains($message, 'private') && str_contains($message, 'Código de diagnóstico'), 'Real presenter must hide technical details and retain diagnostic reference.');
+        }
+        if ($mode === 'stale') k1b_assert(str_contains((string) ($_SESSION['_flash']['error'] ?? ''), 'La capacidad cambió'), 'Known stale revision keeps actionable safe message.');
         if ($mode === 'prepare') {
             k1b_assert(App\Services\CapacityPolicyService::$validations === 1, 'Controller must delegate pair validation to the policy.');
             k1b_assert(($GLOBALS['rendered']['view'] ?? '') === 'settings/capacity_confirmation', 'First submission only renders confirmation.');

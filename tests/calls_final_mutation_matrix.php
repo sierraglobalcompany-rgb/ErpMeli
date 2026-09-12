@@ -76,7 +76,7 @@ if(PHP_SAPI!=='cli')throw new RuntimeException('CLI_ONLY');
 $o=getopt('',['candidate:','root:','template:','mutants:','allow-owned-mysql']);$candidate=(string)($o['candidate']??'');
 if(!preg_match('/^[a-f0-9]{40}$/D',$candidate))throw new RuntimeException('explicit_full_candidate_commit_required');
 $root=rtrim(str_replace('\\','/',(string)($o['root']??'')),'/');$repo=str_replace('\\','/',dirname(__DIR__));
-if(!str_starts_with($root,'D:/Codex/')||in_array('..',explode('/',$root),true)||str_starts_with(strtolower($root.'/'),strtolower($repo.'/')))throw new RuntimeException('explicit_external_owned_root_required');
+if(!(str_starts_with($root,'D:/Codex/') || str_starts_with($root,'C:/codex/capacity-save-kiss/'))||in_array('..',explode('/',$root),true)||str_starts_with(strtolower($root.'/'),strtolower($repo.'/')))throw new RuntimeException('explicit_external_owned_root_required');
 $dir=$root.'/mutations-'.gmdate('Ymd\THis\Z').'-'.bin2hex(random_bytes(4));if(!mkdir($dir,0770,true))throw new RuntimeException('root_create_failed');
 $resolvedDir=strtolower(str_replace('\\','/',(string)realpath($dir)));
 $resolvedRepo=strtolower(str_replace('\\','/',(string)realpath($repo)));
@@ -84,7 +84,7 @@ if($resolvedDir===''||$resolvedRepo===''||str_starts_with($resolvedDir.'/',$reso
 $sealedTemplate=null;$sealedTemplateHash=null;
 if(isset($o['template'])){
     $originalTemplate=realpath((string)$o['template']);
-    if($originalTemplate===false||!str_starts_with(str_replace('\\','/',$originalTemplate),'D:/Codex/'))throw new RuntimeException('private_template_path_invalid');
+    if($originalTemplate===false||!(str_starts_with(str_replace('\\','/',$originalTemplate),'D:/Codex/') || str_starts_with(str_replace('\\','/',$originalTemplate),'C:/codex/capacity-save-kiss/')))throw new RuntimeException('private_template_path_invalid');
     $templateBytes=file_get_contents($originalTemplate);if(!is_string($templateBytes))throw new RuntimeException('private_template_read_failed');
     // One immutable external copy per run, never placed inside either archive.
     if(!mkdir($dir.'/private',0700))throw new RuntimeException('private_template_directory_failed');

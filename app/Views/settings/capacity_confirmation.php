@@ -12,7 +12,7 @@ $base = rtrim(Env::get('APP_URL', ''), '/');
       <dt>Presupuesto actual · llamadas API físicas</dt><dd><?= (int) $proposal['before']['current'] ?> → <?= (int) $proposal['current'] ?></dd>
       <dt>Techo permitido · llamadas API físicas</dt><dd><?= (int) $proposal['before']['ceiling'] ?> → <?= (int) $proposal['ceiling'] ?></dd>
     </dl>
-    <p>Subir sólo el techo no aumenta el presupuesto actual. Cualquier aumento del presupuesto se valida de nuevo con la salud del sistema al confirmar.</p>
+    <p>Subir sólo el techo no aumenta el presupuesto actual. Guardar la capacidad no inicia procesamiento ni elimina las protecciones de ejecución.</p>
     <form method="post" action="<?= View::e($base . $action) ?>">
       <input type="hidden" name="_token" value="<?= View::e(Csrf::token()) ?>">
       <input type="hidden" name="confirmation_nonce" value="<?= View::e($proposal['nonce']) ?>">

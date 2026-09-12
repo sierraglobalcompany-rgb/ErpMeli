@@ -3,8 +3,10 @@ declare(strict_types=1);
 
 // Execute only while holding the shared Migrator slot. Disposable MySQL, real
 // localhost requests, production Router/Auth/CSRF, cURL fake only at Meli wire.
-$runOutput = rtrim((string) (getenv('CALLS_VERIFY_RUN_OUTPUT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906'), '/\\');
+$runOutput = rtrim((string) (getenv('CALLS_VERIFY_RUN_OUTPUT') ?: getenv('CALLS_VERIFY_QA_ROOT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906'), '/\\');
 $root = rtrim((string) (getenv('CALLS_ENTRYPOINTS_ROOT') ?: $runOutput . '/entrypoints'), '/\\');
+$root = str_replace('\\', '/', $root);
+if (!(str_starts_with($root, 'D:/Codex/') || str_starts_with($root, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $root), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 foreach ([$root, $root . '/sessions'] as $directory) {
     if (!is_dir($directory)) mkdir($directory, 0770, true);
 }

@@ -6,7 +6,7 @@ require __DIR__ . '/k1b_bootstrap.php';
 require __DIR__ . '/K1dSafeTestDatabase.php';
 
 $root = rtrim(str_replace('\\', '/', (string) getenv('CALLS_VERIFY_QA_ROOT')), '/');
-k1b_assert(str_starts_with($root, 'D:/Codex/') && !in_array('..', explode('/', $root), true), 'EXPLICIT_LOCAL_EVIDENCE_ROOT');
+k1b_assert((str_starts_with($root, 'D:/Codex/') || str_starts_with($root, 'C:/codex/capacity-save-kiss/')) && !in_array('..', explode('/', $root), true), 'EXPLICIT_LOCAL_EVIDENCE_ROOT');
 foreach (['APP_ENV'=>'test','ML_WRITE_ENABLED'=>'false','DB_HOST'=>'127.0.0.1','DB_PORT'=>'33079','DB_USER'=>'root','DB_PASS'=>''] as $key=>$value) putenv($key . '=' . $value);
 $admin = new PDO('mysql:host=127.0.0.1;port=33079;charset=utf8mb4', 'root', '', [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION, PDO::ATTR_EMULATE_PREPARES=>false]);
 $ownerLog = $root . '/ownership-regression-owner.jsonl';

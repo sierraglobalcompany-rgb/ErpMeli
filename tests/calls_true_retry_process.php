@@ -8,7 +8,7 @@ require __DIR__.'/calls_true_seed_fixture.php';
 // Second, fresh PHP process for one scheduler execution; never creates or repairs fixture state.
 $options=getopt('',['context:']);
 $path=realpath((string)($options['context']??''));
-true_seed_assert($path!==false&&str_starts_with(str_replace('\\','/',$path),'D:/Codex/'),'RETRY_CONTEXT_LOCAL');
+true_seed_assert($path!==false&&(str_starts_with(str_replace('\\','/',$path),'D:/Codex/') || str_starts_with(str_replace('\\','/',$path),'C:/codex/capacity-save-kiss/')),'RETRY_CONTEXT_LOCAL');
 $context=json_decode(file_get_contents($path),true,512,JSON_THROW_ON_ERROR);
 K1dSafeTestDatabase::assertGuard((string)getenv('APP_ENV'),(string)getenv('ML_WRITE_ENABLED'),(string)getenv('DB_HOST'),(string)getenv('DB_NAME'));
 true_seed_assert(getenv('DB_NAME')===$context['db_name'],'RETRY_OWNED_DATABASE');

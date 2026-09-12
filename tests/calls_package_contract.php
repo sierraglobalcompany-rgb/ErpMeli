@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
-putenv('CAP2_PACKAGE_TMP=D:/Codex/tmp/erp-meli/calls-20260906/package-tests');
+$callsQaRoot = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_VERIFY_QA_ROOT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906')), '/');
+if (!(str_starts_with($callsQaRoot, 'D:/Codex/') || str_starts_with($callsQaRoot, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $callsQaRoot), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
+putenv('CAP2_PACKAGE_TMP=' . $callsQaRoot . '/package-tests');
 require __DIR__.'/cap2_package_artifact.php';
 // Reuse the RAW builder and its complete safety regression; no parallel builder.
 $calls=cap2BuildRawArtifact($repo,$base,$head,$case.'/calls',

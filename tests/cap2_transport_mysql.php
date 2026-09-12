@@ -14,9 +14,11 @@ use App\QueueV4Clean\QueueV4CleanCycleBudget as Budget;
 use App\QueueV4Clean\QueueV4CleanRepository as Repo;
 use App\QueueV4Clean\QueueV4CleanWorker as Worker;
 
+$transportQaRoot = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_VERIFY_QA_ROOT') ?: 'D:/Codex/tmp/erp-meli/cap2-20260905/qa')), '/');
+if (!(str_starts_with($transportQaRoot, 'D:/Codex/') || str_starts_with($transportQaRoot, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $transportQaRoot), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 foreach(['APP_ENV'=>'test','ML_WRITE_ENABLED'=>'false','DB_HOST'=>'127.0.0.1','DB_PORT'=>'33079','DB_USER'=>'root','DB_PASS'=>'','DB_NAME'=>'erp_meli_k1d_test_cap2_transport_'.bin2hex(random_bytes(4)),
-    'APP_KEY'=>'cap2-disposable-test-only-not-a-real-secret','PRIVATE_STORAGE_PATH'=>'D:/Codex/tmp/erp-meli/cap2-20260905/qa/transport-private','MELI_API_BASE'=>'https://cap2-wire.invalid'] as $k=>$v) putenv($k.'='.$v);
-if (!defined('ERP_INSTALLATION_ROOT')) define('ERP_INSTALLATION_ROOT','D:/Codex/tmp/erp-meli/cap2-20260905/qa/transport-install-'.bin2hex(random_bytes(4)));
+    'APP_KEY'=>'cap2-disposable-test-only-not-a-real-secret','PRIVATE_STORAGE_PATH'=>$transportQaRoot.'/transport-private','MELI_API_BASE'=>'https://cap2-wire.invalid'] as $k=>$v) putenv($k.'='.$v);
+if (!defined('ERP_INSTALLATION_ROOT')) define('ERP_INSTALLATION_ROOT',$transportQaRoot.'/transport-install-'.bin2hex(random_bytes(4)));
 if (!is_dir(ERP_INSTALLATION_ROOT)) mkdir(ERP_INSTALLATION_ROOT,0777,true);
 $h=K1dSafeTestDatabase::createFromEnvironment();
 try {

@@ -276,8 +276,8 @@
         },
         "runtime_app_controllers_settingscontroller_php": {
             "path": "app/Controllers/SettingsController.php",
-            "sha256": "6ed768fad5f2d7f1c3aa5002ee8bd41dfba415220ebd9224579cc364e5a12d4d",
-            "sha256_lf": "6ed768fad5f2d7f1c3aa5002ee8bd41dfba415220ebd9224579cc364e5a12d4d",
+            "sha256": "52045a88967d3c2acc594ec803d43dead7005cad990ca5d6013199f9f09b9648",
+            "sha256_lf": "52045a88967d3c2acc594ec803d43dead7005cad990ca5d6013199f9f09b9648",
             "text": true
         },
         "runtime_app_controllers_settingssectioncontroller_php": {
@@ -7470,8 +7470,8 @@
         },
         "runtime_resources_release_updater_authority_2_40_1_json": {
             "path": "resources/release/updater-authority-2.40.1.json",
-            "sha256": "72491fd52a36e98078777d994b3ff25cd70fb7812e86716f2bce7bc30a65eed2",
-            "sha256_lf": "72491fd52a36e98078777d994b3ff25cd70fb7812e86716f2bce7bc30a65eed2",
+            "sha256": "9dde65165e62e66449003822c90bd19429563186fb6bf86b4ec8895cfe934b0a",
+            "sha256_lf": "9dde65165e62e66449003822c90bd19429563186fb6bf86b4ec8895cfe934b0a",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

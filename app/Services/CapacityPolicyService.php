@@ -35,7 +35,7 @@ final class CapacityPolicyService
      * setting exists. Row locks fence existing raw and legacy dependencies.
      * @return array{module:string,ceiling:int,current:int,revision:string,legacy_derived:bool}
      */
-    public function save(string $module, mixed $current, mixed $ceiling, string $revision, callable $increaseGate): array
+    public function save(string $module, mixed $current, mixed $ceiling, string $revision): array
     {
         $this->keys($module);
         ['current' => $current, 'ceiling' => $ceiling] = $this->validatePair($current, $ceiling);
@@ -47,19 +47,13 @@ final class CapacityPolicyService
         $lock = $pdo->prepare('SELECT GET_LOCK(?,3)');
         $lock->execute([$lockName]);
         if ((int) $lock->fetchColumn() !== 1) {
-            throw new RuntimeException('Otro administrador está guardando esta capacidad. Intente de nuevo.');
+            throw new \App\Core\HttpException(409, 'Otro administrador está guardando esta capacidad. Intente de nuevo.');
         }
         try {
             $pdo->beginTransaction();
             $before = $this->read($pdo, $module, true);
             if (!hash_equals($before['revision'], $revision)) {
-                throw new RuntimeException('La capacidad cambió. Recargue y confirme los valores actuales.');
-            }
-            if ($current > $before['current']) {
-                $gate = $increaseGate($before, ['module'=>$module, 'current'=>$current, 'ceiling'=>$ceiling]);
-                if (!is_array($gate) || ($gate['allowed'] ?? false) !== true) {
-                    throw new RuntimeException(is_array($gate) ? (string) ($gate['message'] ?? 'No se pudo certificar la salud del procesamiento.') : 'No se pudo certificar la salud del procesamiento.');
-                }
+                throw new \App\Core\HttpException(409, 'La capacidad cambió. Recargue y confirme los valores actuales.');
             }
             $stmt = $pdo->prepare(
                 'INSERT INTO app_settings (setting_key,setting_value,is_encrypted,setting_group) VALUES (?,?,0,?)
@@ -69,19 +63,41 @@ final class CapacityPolicyService
                 $stmt->execute([$key, (string) $value, $module]);
             }
             $after = $this->read($pdo, $module, true);
-            $pdo->commit();
+            if (!$pdo->commit()) {
+                throw new RuntimeException('No se pudo confirmar el guardado de la capacidad. Recargue para verificar los valores.');
+            }
             foreach (self::KEYS[$module] as $key) {
                 AppSettingsService::clearCache($key);
             }
             return $after;
         } catch (Throwable $error) {
-            if ($pdo->inTransaction()) {
-                $pdo->rollBack();
+            try {
+                if ($pdo->inTransaction() && !$pdo->rollBack()) {
+                    $this->logCleanupFailure('rollback');
+                }
+            } catch (Throwable) {
+                $this->logCleanupFailure('rollback');
             }
             throw $error;
         } finally {
-            $release = $pdo->prepare('SELECT RELEASE_LOCK(?)');
-            $release->execute([$lockName]);
+            try {
+                $release = $pdo->prepare('SELECT RELEASE_LOCK(?)');
+                if (!$release->execute([$lockName]) || (int) $release->fetchColumn() !== 1) {
+                    $this->logCleanupFailure('release_lock');
+                }
+            } catch (Throwable) {
+                $this->logCleanupFailure('release_lock');
+            }
+        }
+    }
+
+    private function logCleanupFailure(string $operation): void
+    {
+        try {
+            // Fixed metadata only: no PDO messages, SQL, credentials or tokens.
+            Logger::writeLocal('warning', 'Capacity policy cleanup failed: ' . $operation);
+        } catch (Throwable) {
+            // Cleanup and local logging cannot replace the save outcome.
         }
     }
 

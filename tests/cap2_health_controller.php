@@ -130,9 +130,9 @@ namespace {
         ];
         [$exit, $out, $err] = $runConfirm($unknownIncrease);
         k1b_assert($exit === 0, 'unknown_health_confirm_process_failed:' . $out . $err);
-        k1b_assert((int) $pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='manual.api_calls_per_step'")->fetchColumn() === 16, 'unknown_health_must_deny_actual_current_increase');
+        k1b_assert((int) $pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='manual.api_calls_per_step'")->fetchColumn() === 17, 'missing_health_log_table_must_not_block_capacity_increase');
 
-        echo "STATUS=PASS CAP2_HEALTH_CONTROLLER REAL_DB=YES REAL_AUTH=YES REAL_CONTROLLER=YES REAL_GUARD=YES REAL_QUEUE_HEALTH=YES REAL_MELI_HTTP=0\n";
+        echo "STATUS=PASS CAP2_HEALTH_CONTROLLER REAL_DB=YES REAL_AUTH=YES REAL_CONTROLLER=YES REAL_GUARD=YES HEALTH_NOT_REQUIRED=YES REAL_MELI_HTTP=0\n";
     } finally {
         $db->cleanup();
     }

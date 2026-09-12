@@ -28,8 +28,8 @@ $cases=['continue','preview_readonly','future_pointer','future_source','pointer_
     'external_sale_changed','starvation','lock_input_change','lock_deadline',
     'all_checkpoints_complete','reservation_before_preview','reservation_after_preview','marker_malformed'];
 true_seed_assert(in_array($case,$cases,true),'MPC1_KNOWN_CASE');
-$root=rtrim((string)($options['root']??getenv('CALLS_TRUE_QA_ROOT')?:'D:/Codex/tmp/mpc1'),'/\\');
-true_seed_assert(str_starts_with(str_replace('\\','/',$root),'D:/Codex/')&&!in_array('..',explode('/',str_replace('\\','/',$root)),true),'MPC1_EXTERNAL_EVIDENCE_ROOT');
+$root=rtrim((string)($options['root']??getenv('CALLS_TRUE_QA_ROOT')?:(getenv('CALLS_VERIFY_QA_ROOT') ? rtrim((string) getenv('CALLS_VERIFY_QA_ROOT'), '/\\') . '/mpc1' : 'D:/Codex/tmp/mpc1')),'/\\');
+true_seed_assert((str_starts_with(str_replace('\\','/',$root),'D:/Codex/') || str_starts_with(str_replace('\\','/',$root),'C:/codex/capacity-save-kiss/'))&&!in_array('..',explode('/',str_replace('\\','/',$root)),true),'MPC1_EXTERNAL_EVIDENCE_ROOT');
 $dir=$root.'/mpc1-'.$case.'-'.bin2hex(random_bytes(4));
 true_seed_assert(mkdir($dir,0770,true),'MPC1_OWNED_DIRECTORY');
 foreach(['APP_ENV'=>'test','ML_WRITE_ENABLED'=>'false','DB_HOST'=>'127.0.0.1','DB_PORT'=>'33079',
@@ -140,7 +140,7 @@ try{
     $ledger['database_version']=$pdo->query('SELECT VERSION()')->fetchColumn();
     if(isset($options['template'])){
         $template=realpath($options['template']);
-        true_seed_assert($template!==false&&str_starts_with(str_replace('\\','/',$template),'D:/Codex/'),'MPC1_PRIVATE_TEMPLATE_PATH');
+        true_seed_assert($template!==false&&(str_starts_with(str_replace('\\','/',$template),'D:/Codex/') || str_starts_with(str_replace('\\','/',$template),'C:/codex/capacity-save-kiss/')),'MPC1_PRIVATE_TEMPLATE_PATH');
         $templateBytes=file_get_contents($template);
         true_seed_assert(is_string($templateBytes),'MPC1_TEMPLATE_READ');
         $ledger['template_sha256']=hash('sha256',$templateBytes);
@@ -432,7 +432,7 @@ try{
     file_put_contents($dir.'/result.json',json_encode($ledger,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR));
     if(isset($options['artifact'])){
         $artifact=str_replace('\\','/',(string)$options['artifact']);
-        true_seed_assert(str_starts_with($artifact,'D:/Codex/')&&!in_array('..',explode('/',$artifact),true),'MPC1_ARTIFACT_OWNED_PATH');
+        true_seed_assert((str_starts_with($artifact,'D:/Codex/') || str_starts_with($artifact,'C:/codex/capacity-save-kiss/'))&&!in_array('..',explode('/',$artifact),true),'MPC1_ARTIFACT_OWNED_PATH');
         file_put_contents($artifact,json_encode($ledger,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR));
     }
     echo 'MPC1_RESULT='.$dir.'/result.json'."\n";

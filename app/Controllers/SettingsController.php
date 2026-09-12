@@ -61,16 +61,26 @@ final class SettingsController
     {
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
-        $rhythm = (new \App\Services\ApiRhythmPolicyService())->preview();
-        $snapshot = $this->queueV4RhythmSnapshot();
-        $this->applyQueueV4RhythmSnapshot($rhythm, $snapshot);
-        $increaseGate = $this->queueV4RhythmIncreaseGate($snapshot);
-        if (empty($increaseGate['allowed'])) {
-            $rhythm['increase_blocker'] = $increaseGate['message'];
-        }
-        $rhythm['recent_rate_limit_incidents'] = $this->recentRateLimitIncidents();
+        // The saved budget is mandatory; diagnostics must not replace it with defaults.
         $capacity = (new CapacityPolicyService())->snapshot('automation');
-        View::render('settings/api_workload', compact('rhythm', 'capacity'));
+        $diagnosticsAvailable = false;
+        try {
+            $rhythm = (new \App\Services\ApiRhythmPolicyService(new AppSettingsService(strictReads: true)))->preview();
+            $snapshot = $this->queueV4RhythmSnapshot();
+            $this->applyQueueV4RhythmSnapshot($rhythm, $snapshot);
+            $increaseGate = $this->queueV4RhythmIncreaseGate($snapshot);
+            if (empty($increaseGate['allowed'])) {
+                $rhythm['increase_blocker'] = $increaseGate['message'];
+            }
+            $rhythm['recent_rate_limit_incidents'] = $this->recentRateLimitIncidents();
+            $this->assertRhythmDiagnosticsAvailable($rhythm, $snapshot);
+            $diagnosticsAvailable = true;
+        } catch (\App\Core\HttpException $error) {
+            throw $error;
+        } catch (\Throwable) {
+            $rhythm = [];
+        }
+        View::render('settings/api_workload', compact('rhythm', 'capacity', 'diagnosticsAvailable'));
     }
 
     public function saveCronRhythm(): void
@@ -202,10 +212,13 @@ final class SettingsController
             $capacityGuard->assertGlobalAuthorization();
             Session::forget($sessionKey);
             try {
-                $policy->save($module, $proposal['current'], $proposal['ceiling'], $proposal['revision'], fn (): array => $capacityGuard->increaseGate());
+                $policy->save($module, $proposal['current'], $proposal['ceiling'], $proposal['revision']);
                 Session::flash('success', 'Capacidad guardada. No se inició ningún procesamiento.');
             } catch (\Throwable $error) {
-                Session::flash('error', \App\Services\SafeErrorPresenter::message($error, 'No se guardó la capacidad. Recargue y revise los valores actuales.'));
+                $message = $error instanceof \App\Core\HttpException && $error->safe
+                    ? $error->publicMessage
+                    : \App\Services\SafeErrorPresenter::message($error, 'No se pudo confirmar el resultado del guardado. Recargue y revise los valores actuales antes de reintentar.');
+                Session::flash('error', $message);
             }
             $this->redirect($returnPath);
         }
@@ -329,7 +342,7 @@ final class SettingsController
         $this->requireAdminPermanent();
         $this->releaseReadOnlySession();
         try {
-            $preview = (new \App\Services\ApiRhythmPolicyService())->preview();
+            $preview = (new \App\Services\ApiRhythmPolicyService(new AppSettingsService(strictReads: true)))->preview();
             $snapshot = $this->queueV4RhythmSnapshot();
             $this->applyQueueV4RhythmSnapshot($preview, $snapshot);
             $increaseGate = $this->queueV4RhythmIncreaseGate($snapshot);
@@ -337,12 +350,23 @@ final class SettingsController
                 $preview['increase_blocker'] = $increaseGate['message'];
             }
             $preview['recent_rate_limit_incidents'] = $this->recentRateLimitIncidents();
+            $this->assertRhythmDiagnosticsAvailable($preview, $snapshot);
             $this->json(['ok' => true, 'preview' => $preview]);
         } catch (\App\Core\HttpException $e) {
             throw $e;
         } catch (\Throwable) {
             http_response_code(503);
             $this->json(['ok' => false, 'message' => 'No se pudo calcular el ritmo efectivo. No se modificó la configuración.']);
+        }
+    }
+
+    private function assertRhythmDiagnosticsAvailable(array $rhythm, array $snapshot): void
+    {
+        if (($rhythm['observed_state'] ?? null) !== 'complete'
+            || ($snapshot['ok'] ?? false) !== true
+            || ($snapshot['protocol'] ?? null) !== 'complete'
+            || ($snapshot['snapshot_state'] ?? null) !== 'complete') {
+            throw new \RuntimeException('Rhythm diagnostics are unavailable.');
         }
     }
 
@@ -399,15 +423,19 @@ final class SettingsController
     /** @return list<array<string,mixed>> */
     private function recentRateLimitIncidents(): array
     {
-        try {
-            return array_slice((new ApiHealthService())->incidents([
-                'hours' => 24,
-                'origin' => 'remote',
-                'http_status' => 429,
-            ], 5), 0, 5);
-        } catch (\Throwable) {
-            return [];
+        $health = new ApiHealthService();
+        if (!$health->classificationAvailable()) {
+            throw new \RuntimeException('Rate limit diagnostics are unavailable.');
         }
+        $incidents = $health->incidents([
+            'hours' => 24,
+            'origin' => 'remote',
+            'http_status' => 429,
+        ], 5);
+        if (!$health->dataAvailable()) {
+            throw new \RuntimeException('Rate limit diagnostics are unavailable.');
+        }
+        return array_slice($incidents, 0, 5);
     }
 
     public function save(): void

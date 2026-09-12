@@ -217,7 +217,8 @@ if (($argv[1] ?? '') === 'second-429-process') {
     exit(0);
 }
 
-$root = 'D:/Codex/tmp/erp-meli/calls-20260906/budget9';
+$root = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_VERIFY_QA_ROOT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906')), '/') . '/budget9';
+if (!(str_starts_with($root, 'D:/Codex/') || str_starts_with($root, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $root), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 foreach ([
     'APP_ENV' => 'test',
     'ML_WRITE_ENABLED' => 'false',

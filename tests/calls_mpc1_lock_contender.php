@@ -2,7 +2,7 @@
 declare(strict_types=1);
 require __DIR__.'/K1dSafeTestDatabase.php';
 $options=getopt('',['context:']);$file=realpath((string)($options['context']??''));
-if($file===false||!str_starts_with(str_replace('\\','/',$file),'D:/Codex/'))throw new RuntimeException('MPC1_OWNED_CONTEXT_REQUIRED');
+if($file===false||!(str_starts_with(str_replace('\\','/',$file),'D:/Codex/') || str_starts_with(str_replace('\\','/',$file),'C:/codex/capacity-save-kiss/')))throw new RuntimeException('MPC1_OWNED_CONTEXT_REQUIRED');
 $context=json_decode(file_get_contents($file),true,512,JSON_THROW_ON_ERROR);$dir=dirname($file);
 K1dSafeTestDatabase::assertGuard('test','false','127.0.0.1',$context['db_name']);
 $pdo=new PDO('mysql:host=127.0.0.1;port=33079;dbname='.$context['db_name'].';charset=utf8mb4','root','',[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_EMULATE_PREPARES=>false]);

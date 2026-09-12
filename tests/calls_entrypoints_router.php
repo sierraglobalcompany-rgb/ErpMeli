@@ -15,7 +15,9 @@ use App\Controllers\SettingsController;
 use App\Services\CallsBrowserStepWire;
 
 K1dSafeTestDatabase::assertGuard((string) getenv('APP_ENV'), (string) getenv('ML_WRITE_ENABLED'), (string) getenv('DB_HOST'), (string) getenv('DB_NAME'));
-$root = rtrim((string) (getenv('CALLS_ENTRYPOINTS_ROOT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906/entrypoints'), '/\\');
+$root = rtrim((string) (getenv('CALLS_ENTRYPOINTS_ROOT') ?: (getenv('CALLS_VERIFY_QA_ROOT') ? rtrim((string) getenv('CALLS_VERIFY_QA_ROOT'), '/\\') . '/entrypoints' : 'D:/Codex/tmp/erp-meli/calls-20260906/entrypoints')), '/\\');
+$root = str_replace('\\', '/', $root);
+if (!(str_starts_with($root, 'D:/Codex/') || str_starts_with($root, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $root), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 if (!is_dir($root)) { mkdir($root, 0770, true); }
 if (PHP_SAPI !== 'cli-server'
     || getenv('CALLS_ENTRYPOINTS_QA') !== '1'

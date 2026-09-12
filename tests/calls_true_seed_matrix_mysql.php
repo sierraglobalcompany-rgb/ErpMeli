@@ -4,7 +4,9 @@ require __DIR__.'/k1b_bootstrap.php';
 
 // Serial process runner; seed state, PHP caches and DBs never cross scenarios.
 $options=getopt('',['seeds:','template:']);
-$root=rtrim((string)(getenv('CALLS_TRUE_QA_ROOT')?:getenv('CALLS_VERIFY_RUN_OUTPUT')?:'D:/Codex/tmp/erp-meli/calls-20260906/true-final-seeds'),'/\\');
+$root=rtrim((string)(getenv('CALLS_TRUE_QA_ROOT')?:getenv('CALLS_VERIFY_RUN_OUTPUT')?:(getenv('CALLS_VERIFY_QA_ROOT') ? rtrim((string) getenv('CALLS_VERIFY_QA_ROOT'), '/\\') . '/true-seeds' : 'D:/Codex/tmp/erp-meli/calls-20260906/true-final-seeds')), '/\\');
+$root = str_replace('\\', '/', $root);
+if (!(str_starts_with($root, 'D:/Codex/') || str_starts_with($root, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $root), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 if(!is_dir($root))mkdir($root,0770,true);
 $seeds=isset($options['seeds'])?array_map('intval',explode(',',$options['seeds'])):range(1,100);
 k1b_assert(count($seeds)===count(array_unique($seeds))&&min($seeds)>=1&&max($seeds)<=100,'UNIQUE_SEED_SELECTION');

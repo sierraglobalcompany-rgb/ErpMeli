@@ -31,10 +31,9 @@ try {
     AppSettingsService::clearCache();
 
     $policy = new CapacityPolicyService($pdo);
-    $allow = static fn (): array => ['allowed' => true, 'message' => ''];
-    $save = static function (int $current, int $ceiling) use ($policy, $allow): void {
+    $save = static function (int $current, int $ceiling) use ($policy): void {
         $before = $policy->snapshot('automation');
-        $policy->save('automation', $current, $ceiling, $before['revision'], $allow);
+        $policy->save('automation', $current, $ceiling, $before['revision']);
         AppSettingsService::clearCache();
     };
     $budget = new AutomationCallBudgetService();
@@ -47,7 +46,7 @@ try {
     $ceilingOnly = $budget->resolve();
     k1b_assert($ceilingOnly['max_calls'] === 1, 'ceiling_only_does_not_raise_current');
 
-    foreach ([1, 2, 3, 15, 55, 100] as $current) {
+    foreach ([1, 2, 3, 5, 9, 10, 15, 50, 55, 100] as $current) {
         $save($current, max(55, $current));
         $resolved = $budget->resolve();
         k1b_assert($resolved['max_calls'] === $current, 'no_argument_boundary_' . $current);

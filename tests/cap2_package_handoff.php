@@ -24,7 +24,8 @@ function cap2HandoffRun(array $command, string $cwd): array
     return [proc_close($process), (string) $stdout, (string) $stderr];
 }
 
-$root = str_replace('\\', '/', getenv('CAP2_PACKAGE_TMP') ?: 'D:/Codex/tmp/erp-meli/cap2-20260905/qa/package-prep');
+$root = str_replace('\\', '/', getenv('CAP2_PACKAGE_TMP') ?: (getenv('CALLS_VERIFY_QA_ROOT') ? rtrim((string) getenv('CALLS_VERIFY_QA_ROOT'), '/\\') . '/package-tests' : 'D:/Codex/tmp/erp-meli/cap2-20260905/qa/package-prep'));
+if (!(str_starts_with($root, 'D:/Codex/') || str_starts_with($root, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $root), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 $case = $root . '/handoff-' . bin2hex(random_bytes(4));
 mkdir($case, 0777, true);
 $hash = hash('sha256', "head-a\n");

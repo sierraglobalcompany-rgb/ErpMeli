@@ -10,12 +10,14 @@ foreach (array_slice($argv, 1) as $argument) {
     elseif (str_starts_with($argument, '--reuse=')) $reuse = substr($argument, 8);
     else throw new RuntimeException('Unknown preflight fixture argument.');
 }
-if (!str_starts_with($release, 'D:/Codex/tmp/erp-meli/') || str_contains($release, '..')
+if (!(str_starts_with($release, 'D:/Codex/tmp/erp-meli/') || str_starts_with($release, 'C:/codex/capacity-save-kiss/')) || str_contains($release, '..')
     || !is_file($release . '/resources/runtime-manifest.json') || !is_file($release . '/jobs/queue_v4_clean.php')) {
     throw new RuntimeException('Explicit local RAW candidate root required; no SKIP.');
 }
 define('ERP_RELEASE_ROOT', rtrim($release, '/'));
-define('ERP_INSTALLATION_ROOT', 'D:/Codex/tmp/erp-meli/calls-20260906/readiness/preflight-' . bin2hex(random_bytes(6)));
+$callsQaRoot = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_VERIFY_QA_ROOT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906')), '/');
+if (!(str_starts_with($callsQaRoot, 'D:/Codex/') || str_starts_with($callsQaRoot, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $callsQaRoot), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
+define('ERP_INSTALLATION_ROOT', $callsQaRoot . '/readiness/preflight-' . bin2hex(random_bytes(6)));
 define('ERP_SHARED_ROOT', ERP_INSTALLATION_ROOT . '/shared');
 // Separate writable installation state from the supplied immutable RAW tree.
 mkdir(ERP_INSTALLATION_ROOT . '/jobs', 0770, true);
@@ -30,7 +32,7 @@ if ($reuse === null) {
 } else {
     // Optional only after the owning browser fixture explicitly yields its DB.
     $path = str_replace('\\', '/', $reuse);
-    if (!str_starts_with($path, 'D:/Codex/tmp/erp-meli/calls-20260906/') || str_contains($path, '..')) {
+    if (!(str_starts_with($path, 'D:/Codex/tmp/erp-meli/calls-20260906/') || str_starts_with($path, 'C:/codex/capacity-save-kiss/')) || str_contains($path, '..')) {
         throw new RuntimeException('Reuse metadata must be local fixture evidence.');
     }
     $metadata = json_decode((string) file_get_contents($path), true, 32, JSON_THROW_ON_ERROR);

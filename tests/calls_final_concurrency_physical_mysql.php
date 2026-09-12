@@ -206,6 +206,8 @@ if (($argv[1] ?? '') === 'child') {
 }
 
 $root = rtrim((string)(getenv('CALLS_VERIFY_QA_ROOT')?:'D:/Codex/tmp/erp-meli/calls-20260906/concurrency-physical'),'/\\').'/concurrency-'.bin2hex(random_bytes(4));
+$root = str_replace('\\', '/', $root);
+if (!(str_starts_with($root, 'D:/Codex/') || str_starts_with($root, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $root), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 if(!is_dir($root))mkdir($root,0770,true);
 putenv('CALLS_CONCURRENCY_OUTPUT_DIR='.$root);
 foreach ([
@@ -235,7 +237,7 @@ try {
     $options=getopt('',['template:']);
     if(isset($options['template'])){
         $template=realpath($options['template']);
-        calls_final_concurrency_assert($template!==false&&str_starts_with(str_replace('\\','/',$template),'D:/Codex/'),'local_schema_template');
+        calls_final_concurrency_assert($template!==false&&(str_starts_with(str_replace('\\','/',$template),'D:/Codex/') || str_starts_with(str_replace('\\','/',$template),'C:/codex/capacity-save-kiss/')),'local_schema_template');
         foreach(json_decode(file_get_contents($template),true,512,JSON_THROW_ON_ERROR)as $sql)$pdo->exec($sql);
     }else{
         (new App\Services\Migrator($pdo, __DIR__ . '/../database/migrations'))->run(301);

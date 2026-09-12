@@ -105,7 +105,7 @@ namespace {
         $policy = new CapacityPolicyService($pdo);
         foreach ([1,2,3,15,55,100] as $budget) {
             $before = $policy->snapshot('automation');
-            $policy->save('automation',$budget,$budget,$before['revision'],static fn (): array => ['allowed'=>true]);
+            $policy->save('automation',$budget,$budget,$before['revision']);
             SchedulerCapacityFixture::$events = [];
             SchedulerCapacityFixture::$transports = 0;
             SchedulerCapacityFixture::$workerArgument = null;

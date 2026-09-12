@@ -11,7 +11,7 @@ if (($argv[1] ?? '') !== 'pass') {
     exit(2);
 }
 require __DIR__ . '/k1b_bootstrap.php';
-if (!str_starts_with(str_replace('\\', '/', App\Core\AppPaths::storage()), 'D:/Codex/tmp/erp-meli/calls-20260906/')) {
+if (!(str_starts_with(str_replace('\\', '/', App\Core\AppPaths::storage()), 'D:/Codex/tmp/erp-meli/calls-20260906/') || str_starts_with(str_replace('\\', '/', App\Core\AppPaths::storage()), 'C:/codex/capacity-save-kiss/'))) {
     throw new RuntimeException('RUNNER_STORAGE_NOT_ON_D');
 }
 echo "CONTINUED_AFTER_FAILURE\n";

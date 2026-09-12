@@ -77,7 +77,7 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
       <input type="hidden" name="capacity_revision" value="<?= View::e($capacity['revision']) ?>">
       <div class="manual-config-grid">
         <label class="field">Techo permitido de llamadas API<input class="input" type="number" name="manual_api_calls_ceiling" min="1" max="100" value="<?= (int) $capacity['ceiling'] ?>" required><small>Inicial: 55. Límite técnico: 100. Cambiar sólo el techo conserva el presupuesto actual.</small></label>
-        <label class="field">Máximo de llamadas API por paso<input class="input" type="number" name="manual_api_calls_per_step" min="1" max="100" value="<?= $configuredLimit ?>" required><small>Debe ser menor o igual al techo elegido. Los aumentos requieren salud comprobada.</small></label>
+        <label class="field">Máximo de llamadas API por paso<input class="input" type="number" name="manual_api_calls_per_step" min="1" max="100" value="<?= $configuredLimit ?>" required><small>Debe ser menor o igual al techo elegido. Las protecciones se mantienen al procesar.</small></label>
       </div>
       <div class="manual-actions"><button class="btn" type="submit">Revisar y guardar capacidad</button></div>
     </form>

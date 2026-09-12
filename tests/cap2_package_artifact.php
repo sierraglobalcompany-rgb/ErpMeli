@@ -37,7 +37,8 @@ function cap2PkgWrite(string $path, string $bytes): void
     }
 }
 
-$tmpRoot = str_replace('\\', '/', getenv('CAP2_PACKAGE_TMP') ?: 'D:/Codex/tmp/erp-meli/cap2-20260905/qa/package-prep');
+$tmpRoot = str_replace('\\', '/', getenv('CAP2_PACKAGE_TMP') ?: (getenv('CALLS_VERIFY_QA_ROOT') ? rtrim((string) getenv('CALLS_VERIFY_QA_ROOT'), '/\\') . '/package-tests' : 'D:/Codex/tmp/erp-meli/cap2-20260905/qa/package-prep'));
+if (!(str_starts_with($tmpRoot, 'D:/Codex/') || str_starts_with($tmpRoot, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $tmpRoot), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 $case = $tmpRoot . '/artifact-' . bin2hex(random_bytes(4));
 $repo = $case . '/repo';
 $out = $case . '/out';

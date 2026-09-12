@@ -7,6 +7,7 @@ use App\Services\CapacityPolicyService;
 
 $base = rtrim(Env::get('APP_URL', ''), '/');
 $rhythm = is_array($rhythm ?? null) ? $rhythm : [];
+$diagnosticsAvailable = ($diagnosticsAvailable ?? false) === true;
 $capacity = $capacity ?? (new CapacityPolicyService())->snapshot('automation');
 $maxCalls = (int) $capacity['current'];
 $maxCallsSource = 'Configuración automática guardada';
@@ -112,11 +113,13 @@ $billingIntervalSeconds = max(1, min(3600, (int) ($rhythm['billing_min_interval_
     <strong data-rhythm-requested><?= $maxCalls ?> llamada<?= $maxCalls === 1 ? '' : 's' ?></strong>
     <p>Techo configurado: <?= (int) $capacity['ceiling'] ?> llamadas físicas por ciclo.</p>
   </article>
+  <?php if ($diagnosticsAvailable): ?>
   <article>
     <span>Ritmo Billing</span>
     <strong>1 llamada cada <?= $billingIntervalSeconds ?> segundos</strong>
     <p>Compartido por automático y manual; no cambia los presupuestos.</p>
   </article>
+  <?php endif; ?>
   <article>
     <span>Máximo teórico de 15 minutos</span>
     <strong><?= $maxCalls * 15 ?> llamadas</strong>
@@ -127,18 +130,26 @@ $billingIntervalSeconds = max(1, min(3600, (int) ($rhythm['billing_min_interval_
     <strong><?= View::e($maxCallsSource) ?></strong>
     <p>Presupuesto actual y techo independientes del procesamiento manual.</p>
   </article>
+  <?php if ($diagnosticsAvailable): ?>
   <article>
     <span>Último 429 / próxima hora segura</span>
     <strong><?= $last429SeenAt !== '' ? View::e($last429SeenAt) : 'Sin 429 reciente' ?></strong>
     <p><?= $last429NextSafeAt !== '' ? 'Próxima hora segura: ' . View::e($last429NextSafeAt) : 'Sin pausa 429 activa en esta lectura.' ?></p>
   </article>
   <article>
-    <span>Puerta de aumento</span>
+    <span>Puerta de aumento del ritmo</span>
     <strong><?= $safeToIncrease ? 'Disponible' : 'Bloqueada' ?></strong>
     <p><?= $safeToIncrease ? 'No hay bloqueo visible en esta lectura.' : View::e($increaseBlocker !== '' ? $increaseBlocker : 'Requiere más evidencia estable antes de subir.') ?></p>
   </article>
+  <?php endif; ?>
 </section>
 
+<?php if (!$diagnosticsAvailable): ?>
+<section class="alert warning" role="status">
+  <strong>Diagnóstico no disponible</strong>
+  <p>No fue posible verificar el ritmo ni los incidentes recientes. Puede revisar y guardar el presupuesto; los ajustes avanzados estarán disponibles al recuperar el diagnóstico.</p>
+</section>
+<?php else: ?>
 <section class="api-command-section rhythm-rate-limit-panel" aria-label="Rate limits recientes">
   <header>
     <div>
@@ -162,6 +173,7 @@ $billingIntervalSeconds = max(1, min(3600, (int) ($rhythm['billing_min_interval_
     </div>
   <?php endif; ?>
 </section>
+<?php endif; ?>
 
 <section class="card rhythm-editor" data-rhythm-editor data-saved-profile="<?= View::e($profile) ?>">
   <div class="card-header">
@@ -175,7 +187,7 @@ $billingIntervalSeconds = max(1, min(3600, (int) ($rhythm['billing_min_interval_
         <div>
           <span class="eyebrow">K1D · UNIDAD CANÓNICA</span>
           <h3>Máximo de llamadas API físicas por ciclo</h3>
-          <p>El valor seguro recomendado es 1. Subirlo requiere evidencia estable y sin 429 remoto reciente.</p>
+          <p>Guardar cambia el presupuesto, sin iniciar procesamiento. Las pausas 429 y las protecciones de ejecución siguen vigentes.</p>
         </div>
       </div>
       <label class="field"><span>Techo permitido de llamadas API por ciclo</span><input class="input" type="number" name="automation_api_calls_ceiling" min="1" max="100" value="<?= (int) $capacity['ceiling'] ?>" required><small>Inicial: 55. Límite técnico: 100. Subir el techo no cambia el presupuesto actual.</small></label>
@@ -190,6 +202,7 @@ $billingIntervalSeconds = max(1, min(3600, (int) ($rhythm['billing_min_interval_
       </div>
     </section>
   </form>
+  <?php if ($diagnosticsAvailable): ?>
   <details class="panel settings-advanced rhythm-advanced-settings">
     <summary><span><strong>Ajustes avanzados</strong><small>Perfiles HTTP, rampa, ventanas, jitter, backoff Billing y controles heredados.</small></span><span aria-hidden="true">⌄</span></summary>
   <form id="rhythm-profile-form" method="post" action="<?= View::e($base) ?>/settings/cron/rhythm">
@@ -305,4 +318,5 @@ $billingIntervalSeconds = max(1, min(3600, (int) ($rhythm['billing_min_interval_
     <noscript><p class="alert warning">Puede guardar el perfil sin JavaScript. La confirmación visual se actualizará al recargar.</p></noscript>
   </form>
   </details>
+  <?php endif; ?>
 </section>

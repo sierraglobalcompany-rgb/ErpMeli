@@ -116,7 +116,7 @@ try {
     AppSettingsService::clearCache();
     $rawLegacy = $policy->snapshot('automation');
     k1b_assert($rawLegacy['current'] === 55 && $rawLegacy['ceiling'] === 55, 'explicit_raw60_bounded_by_default_ceiling');
-    $ceilingOnly = $policy->save('automation', $rawLegacy['current'], 100, $rawLegacy['revision'], static fn (): array => throw new RuntimeException('ceiling_only_must_not_gate'));
+    $ceilingOnly = $policy->save('automation', $rawLegacy['current'], 100, $rawLegacy['revision']);
     k1b_assert($ceilingOnly['current'] === 55 && $ceilingOnly['ceiling'] === 100, 'ceiling_only_changed_current');
 
     foreach ([[0, 1], [1, 101], [3, 2], ['02', 55], ['2.5', 55], [true, 55]] as [$current, $ceiling]) {
@@ -144,7 +144,7 @@ try {
     k1b_assert(($legacyManual['legacy_derived'] ?? null) === false && $legacyManual['current'] === 1, 'manual_legacy_not_capacity');
     k1b_assert(!method_exists($policy, 'requiresManualAdoptionForRhythm'), 'legacy_rhythm_adoption_hook_removed');
 
-    $adopted = $policy->save('manual', 15, 55, $legacyManual['revision'], static fn (): array => ['allowed' => true, 'message' => '']);
+    $adopted = $policy->save('manual', 15, 55, $legacyManual['revision']);
     k1b_assert(($adopted['legacy_derived'] ?? null) === false, 'manual_pair_not_marked_adopted');
     $adoptedRevision = $adopted['revision'];
     $pdo->exec("UPDATE app_settings SET setting_value='conservative' WHERE setting_key='api.rhythm.profile'");

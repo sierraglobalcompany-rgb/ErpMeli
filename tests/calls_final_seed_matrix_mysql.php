@@ -55,7 +55,8 @@ function calls_final_seed_insert_order_job(PDO $pdo, int $externalOrderId, strin
     return (int) $pdo->lastInsertId();
 }
 
-$root = 'D:/Codex/tmp/erp-meli/calls-20260906/seed-matrix';
+$root = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_VERIFY_QA_ROOT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906')), '/') . '/seed-matrix';
+if (!(str_starts_with($root, 'D:/Codex/') || str_starts_with($root, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $root), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 foreach ([
     'APP_ENV' => 'test',
     'ML_WRITE_ENABLED' => 'false',

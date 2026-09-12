@@ -21,7 +21,8 @@ putenv('DB_USER=root');
 putenv('DB_PASS=');
 putenv('DB_NAME=erp_meli_k1d_test_cap2_domains_' . bin2hex(random_bytes(4)));
 putenv('APP_KEY=cap2-disposable-test-only-not-a-real-secret');
-$fixtureRoot = 'D:/Codex/tmp/erp-meli/calls-20260906/domains-' . bin2hex(random_bytes(8));
+$fixtureRoot = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_VERIFY_QA_ROOT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906')), '/') . '/domains-' . bin2hex(random_bytes(8));
+if (!(str_starts_with($fixtureRoot, 'D:/Codex/') || str_starts_with($fixtureRoot, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $fixtureRoot), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 define('ERP_INSTALLATION_ROOT', $fixtureRoot . '/install');
 foreach ([ERP_INSTALLATION_ROOT, $fixtureRoot . '/private'] as $directory) {
     if (!mkdir($directory, 0777, true) && !is_dir($directory)) {

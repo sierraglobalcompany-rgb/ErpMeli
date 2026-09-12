@@ -48,7 +48,7 @@
         },
         {
             "path": "app/Controllers/SettingsController.php",
-            "sha256": "c63b2083edaa1f37c50e351b5795b9a36a5294f5b0240fe7a0799fd6616dcafe"
+            "sha256": "52045a88967d3c2acc594ec803d43dead7005cad990ca5d6013199f9f09b9648"
         },
         {
             "path": "app/Controllers/SyncController.php",
@@ -428,7 +428,7 @@
         },
         {
             "path": "app/Views/settings/api_workload.php",
-            "sha256": "f29c177298052b356c3372aadf24dd4a2fc38a4b1b3695ca51fc9a4ff15aaf03"
+            "sha256": "787efc497cd709520ac53dd7c6116a3178d7c3522867aacf839f7fdc397a792f"
         },
         {
             "path": "app/Views/settings/backups.php",
@@ -464,7 +464,7 @@
         },
         {
             "path": "app/Views/settings/manual_processing.php",
-            "sha256": "b9669f47db688f0679ca3f4351380c91882774539ec0832050d678e32335f76c"
+            "sha256": "d88e5d59b0f1e077a2d2ff801c9c07ff65769e05904b037ae329e1464ad7cdd9"
         },
         {
             "path": "app/Views/settings/manual_processing_excluded.php",

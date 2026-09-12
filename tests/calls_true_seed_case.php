@@ -15,7 +15,9 @@ use App\QueueV4Clean\QueueV4CleanScheduler;
 $options=getopt('',['seed:','template:','export-template:','retry-process','direct-type:']);
 $seed=(int)($options['seed']??1);
 true_seed_assert($seed>=1&&$seed<=100,'SEED_RANGE');
-$root=rtrim((string)(getenv('CALLS_TRUE_QA_ROOT')?:'D:/Codex/tmp/erp-meli/calls-20260906/true-seeds'),'/\\');
+$root=rtrim((string)(getenv('CALLS_TRUE_QA_ROOT')?:(getenv('CALLS_VERIFY_QA_ROOT') ? rtrim((string) getenv('CALLS_VERIFY_QA_ROOT'), '/\\') . '/true-seeds' : 'D:/Codex/tmp/erp-meli/calls-20260906/true-seeds')), '/\\');
+$root = str_replace('\\', '/', $root);
+if (!(str_starts_with($root, 'D:/Codex/') || str_starts_with($root, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $root), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 $dir=$root.'/case-'.$seed.'-'.bin2hex(random_bytes(4));
 if(!is_dir($dir))mkdir($dir,0770,true);
 foreach(['APP_ENV'=>'test','ML_WRITE_ENABLED'=>'false','DB_HOST'=>'127.0.0.1','DB_PORT'=>'33079','DB_USER'=>'root','DB_PASS'=>'','DB_NAME'=>'erp_meli_k1d_test_true_seed_'.bin2hex(random_bytes(5)),'APP_KEY'=>'synthetic-true-final-only','ERP_PRIVATE_PATH'=>$dir.'/private','MELI_API_BASE'=>'https://calls-wire.invalid']as $k=>$v)putenv($k.'='.$v);
@@ -34,7 +36,7 @@ try{
     $ledger['database_version']=$pdo->query('SELECT VERSION()')->fetchColumn();
     if(isset($options['template'])){
         $template=realpath($options['template']);
-        true_seed_assert($template!==false&&str_starts_with(str_replace('\\','/',$template),'D:/Codex/'),'TEMPLATE_LOCAL_QA_PATH');
+        true_seed_assert($template!==false&&(str_starts_with(str_replace('\\','/',$template),'D:/Codex/') || str_starts_with(str_replace('\\','/',$template),'C:/codex/capacity-save-kiss/')),'TEMPLATE_LOCAL_QA_PATH');
         foreach(json_decode(file_get_contents($template),true,512,JSON_THROW_ON_ERROR)as $sql)$pdo->exec($sql);
     }else{
         (new App\Services\Migrator($pdo,__DIR__.'/../database/migrations'))->run(301);

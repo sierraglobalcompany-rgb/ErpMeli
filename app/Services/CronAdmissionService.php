@@ -103,6 +103,9 @@ final class CronAdmissionService
             )
         );
 
+        if (!$receipt->accepted && $receipt->workId === null) {
+            return $receipt->toLegacyCronAdmissionReceipt();
+        }
         $jobId = (int) $receipt->workId;
         $job = $this->pdo->prepare(
             'SELECT state,resource_id,available_at FROM queue_v4_clean_jobs
@@ -254,7 +257,8 @@ final class CronAdmissionService
         }
         if ($capability === 'order_enrichment_pack') {
             $source = $this->pdo->prepare(
-                'SELECT j.id,j.status,j.next_run_at,a.company_id,j.meli_account_id,j.resource_type,j.external_resource_id
+                'SELECT j.id,j.status,j.next_run_at,a.company_id,j.meli_account_id,j.resource_type,j.external_resource_id,
+                        j.failure_class,j.lock_token,j.locked_at,j.lease_generation,j.attempts
                  FROM order_resource_enrichment_jobs j
                  JOIN meli_accounts a ON a.id=j.meli_account_id
                  WHERE j.id=? AND a.company_id=? AND j.meli_account_id=? AND j.resource_type="pack"

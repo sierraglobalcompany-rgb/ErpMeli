@@ -103,6 +103,10 @@
             "sha256": "fff6b8d6cd6eef032940bff689052a0501398c3a2532a39a5b24f71f1b8eef23"
         },
         {
+            "path": "app/QueueV4Clean/PackDiscoveryOccupancyPolicy.php",
+            "sha256": "e5cf7a2a477b7eb236826b3f20317a97cf60c38c291b782ad57b9a0919ad54a2"
+        },
+        {
             "path": "app/QueueV4Clean/QueueV4CleanCycleBudget.php",
             "sha256": "51f9909d4346746c3af3c9e5cde09442a4ac450c535f7146c22849842d26718d"
         },
@@ -481,6 +485,10 @@
         {
             "path": "app/Views/sync/recurring.php",
             "sha256": "0cb22fe09ff7f135c8641d78ae18ec4227dc8dbe767eb14cce93da77b7232809"
+        },
+        {
+            "path": "app/Work/Adapters/QueueV4CanonicalWorkStore.php",
+            "sha256": "eb501760767d48ccc81a014100c2093a62e3ad75ef5043ef9c07a96c60854b40"
         },
         {
             "path": "database/migrations/296_queue_v4_clean_oauth_control_plane_2_38_3.sql",

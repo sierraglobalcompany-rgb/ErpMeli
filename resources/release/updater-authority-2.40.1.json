@@ -144,7 +144,7 @@
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanProducer.php",
-            "sha256": "99926238afd4c6b689394f63c8afccd12e0e069a841e67803236a8faaa06b9bd"
+            "sha256": "7bcb3e3050ffda1bcaaac8218317eb7c8e44ba4cacbb41a20a2767457fc968c7"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
@@ -252,7 +252,7 @@
         },
         {
             "path": "app/Services/CronAdmissionService.php",
-            "sha256": "991ecbc3baeb1b1699554dd719f55ced890cd655ae676cdccd0430b4677b87e1"
+            "sha256": "d3f54484b2cb77833f0867308be2f88713594f2c63ef4159bf514ff4cc1406ff"
         },
         {
             "path": "app/Services/CronApiRiskSummaryService.php",
@@ -664,7 +664,7 @@
         },
         {
             "path": "resources/release/managed-runtime-dependencies-2.40.1.json",
-            "sha256": "b23ca5f8a89af4e6522648116004e7ee9913c858450c88e9b849a8d018578f6b"
+            "sha256": "322955c7bc23a8e6420ebc9bebec6e9ca78754d727d31992cbde847c086aa67f"
         },
         {
             "path": "resources/release/queue-v4-canonical-db-contract-2.38.3.json",

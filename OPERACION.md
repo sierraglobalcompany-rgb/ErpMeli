@@ -6,8 +6,13 @@ merge ni deploy.
 
 ## Precondiciones y previsualización
 
-1. Confirmar el mismo commit, árbol, versión 2.40.1 y esquema 301 en el
-   candidato y en el runtime instalado. Si hay drift, detener.
+1. Antes de instalar, comprobar por SHA-256 RAW que las ocho rutas del
+   baseline previsto (`01aa479...`) coinciden con los bytes que se van a
+   reemplazar. Después de instalar, comprobar por SHA-256 RAW las mismas
+   rutas contra el candidato final (`8830b582...`) y verificar que
+   `PackDiscoveryOccupancyPolicy.php` sea la única incorporación. No exigir
+   que el servidor ya tenga el candidato antes de instalarlo; un drift en el
+   baseline detiene la instalación.
 2. Usar el scope certificado completo de R0/H3 y volver a comprobar cada una
    de las 77 unidades por empresa, cuenta, fuente, puntero, generación,
    estado, fechas, intentos y transporte. Un hash abreviado sólo localiza;
@@ -29,12 +34,16 @@ no se admite trabajo nuevo.
 
 ## Primer paso y continuación
 
-Recuperar un único puntero existente con
-`recoverPackSourcePendingAfterDomainSourceError()`, fuera de la transacción
-HTTP. Conservar intentos, generaciones y recibos; dejar que el worker normal
-procese la unidad cuando exista una autorización de operación. Verificar el
-cierre de fuente, puntero, integridad del pack y elegibilidad financiera antes
-de considerar la siguiente.
+Resolver un único puntero existente mediante sus identidades privadas
+empresa/cuenta/job y ejecutar, sólo con una autorización futura explícita,
+`recoverPackSourcePendingAfterDomainSourceError()` fuera de la transacción
+HTTP. La entrada preparada es
+`storage/operations/recover_pack_source_pending_once.php`; exige
+`--company`, `--account`, `--job` y `--apply`, no contiene IDs sintéticos y
+no descubre ni procesa una lista. Conservar intentos, generaciones y recibos;
+dejar que el worker normal procese la unidad cuando exista una autorización
+de operación. Verificar el cierre de fuente, puntero, integridad del pack y
+elegibilidad financiera antes de considerar la siguiente.
 
 La reentrada `waiting_rhythm` es válida únicamente para el tipo de pack
 admitido por el servicio: `available_at` y `next_run_at` deben estar vencidos,

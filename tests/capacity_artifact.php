@@ -393,14 +393,17 @@ function cap2ArtifactMain(array $argv): int
         return 0;
     }
     if ($mode !== 'build') {
-        throw new RuntimeException('usage: capacity_artifact.php build <ref> <absolute-output> [yyyymmdd] | updater-authority <40-hex-commit>');
+        throw new RuntimeException('usage: capacity_artifact.php build <ref> <absolute-output> [yyyymmdd] [family] [base-40-hex-commit] | updater-authority <40-hex-commit>');
     }
     $out = str_replace('\\', '/', $argv[3] ?? '');
     if (preg_match('#^[A-Za-z]:/#D', $out) !== 1) {
         throw new RuntimeException('absolute_output_required');
     }
     $date = $argv[4] ?? gmdate('Ymd');
-    $base = '191c5ee708d154471a442dfb6cca3324f8609b01';
+    $base = $argv[6] ?? '191c5ee708d154471a442dfb6cca3324f8609b01';
+    if (preg_match('/^[0-9a-fA-F]{40}$/D', $base) !== 1) {
+        throw new RuntimeException('build_base_commit_must_be_40_hex');
+    }
     $head = trim(cap2Git($root, ['rev-parse', $ref . '^{commit}'])['stdout']);
     $headEntries = App\Services\ManagedRuntimePublicationPolicy::packageEntries($root, $head);
     $baseEntries = App\Services\ManagedRuntimePublicationPolicy::packageEntries($root, $base);

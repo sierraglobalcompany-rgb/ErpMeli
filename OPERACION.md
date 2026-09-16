@@ -9,7 +9,7 @@ merge ni deploy.
 1. Antes de instalar, comprobar por SHA-256 RAW que las ocho rutas del
    baseline previsto (`01aa479...`) coinciden con los bytes que se van a
    reemplazar. Después de instalar, comprobar por SHA-256 RAW las mismas
-   rutas contra el candidato final (`8830b582...`) y verificar que
+   rutas contra el candidato final (`90405c2...`) y verificar que
    `PackDiscoveryOccupancyPolicy.php` sea la única incorporación. No exigir
    que el servidor ya tenga el candidato antes de instalarlo; un drift en el
    baseline detiene la instalación.

@@ -218,6 +218,170 @@ final class QueueV4CleanReviewService
         }
     }
 
+    /**
+     * Recuperacion focalizada para punteros historicos de descubrimiento de
+     * pack que quedaron en review por domain_source_error mientras su fuente
+     * canonica volvio a estar pendiente. No adjudica exito: solo devuelve el
+     * puntero existente a la cola normal, preservando intentos y evidencias.
+     *
+     * @return array<string,mixed>
+     */
+    public function recoverPackSourcePendingAfterDomainSourceError(int $companyId, int $accountId, int $jobId): array
+    {
+        if ($companyId < 1 || $accountId < 1 || $jobId < 1) {
+            throw new RuntimeException('queue_v4_pack_review_recovery_identity_invalid');
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            $jobStmt = $this->pdo->prepare(
+                "SELECT *
+                   FROM queue_v4_clean_jobs
+                  WHERE id=? AND company_id=? AND meli_account_id=?
+                    AND job_type='domain_exact'
+                  FOR UPDATE"
+            );
+            $jobStmt->execute([$jobId, $companyId, $accountId]);
+            $job = $jobStmt->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($job)) {
+                throw new RuntimeException('queue_v4_pack_review_recovery_job_missing');
+            }
+
+            if ((string) ($job['state'] ?? '') === 'ready'
+                && (string) ($job['last_error_class'] ?? '') === 'domain_source_recovered:order_enrichment_pack') {
+                $this->pdo->commit();
+                return [
+                    'ok' => true,
+                    'company_id' => $companyId,
+                    'meli_account_id' => $accountId,
+                    'job_id' => $jobId,
+                    'state' => 'ready',
+                    'idempotent_replay' => true,
+                ];
+            }
+
+            $jobState = (string) ($job['state'] ?? '');
+            $jobError = (string) ($job['last_error_class'] ?? '');
+            $isReviewDomainSourceError = $jobState === 'review' && $jobError === 'domain_source_error';
+            $isDueWaitingRhythm = $jobState === 'waiting' && $jobError === 'domain_source_waiting:order_enrichment_pack:waiting_rhythm';
+            if (!$isReviewDomainSourceError && !$isDueWaitingRhythm) {
+                throw new RuntimeException('queue_v4_pack_review_recovery_not_domain_source_error');
+            }
+            if ((int) ($job['attempt_count'] ?? 0) >= (int) ($job['max_attempts'] ?? 0)) {
+                throw new RuntimeException('queue_v4_pack_review_recovery_attempts_exhausted');
+            }
+            if ($isDueWaitingRhythm && !$this->safeDateDue($job['available_at'] ?? null)) {
+                throw new RuntimeException('queue_v4_pack_review_recovery_not_due');
+            }
+
+            $payload = json_decode((string) ($job['payload_json'] ?? ''), true, 64, JSON_THROW_ON_ERROR);
+            if (!is_array($payload)
+                || (string) ($payload['capability'] ?? '') !== 'order_enrichment_pack'
+                || (int) ($payload['source_id'] ?? 0) < 1
+                || (string) ((int) $payload['source_id']) !== (string) ($job['resource_id'] ?? '')) {
+                throw new RuntimeException('queue_v4_pack_review_recovery_payload_invalid');
+            }
+            $sourceId = (int) $payload['source_id'];
+
+            $sourceStmt = $this->pdo->prepare(
+                'SELECT j.*,a.company_id
+                   FROM order_resource_enrichment_jobs j
+                   INNER JOIN meli_accounts a ON a.id=j.meli_account_id
+                  WHERE j.id=? AND j.meli_account_id=? AND j.resource_type="pack"
+                    AND a.company_id=?
+                  FOR UPDATE'
+            );
+            $sourceStmt->execute([$sourceId, $accountId, $companyId]);
+            $source = $sourceStmt->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($source)) {
+                throw new RuntimeException('queue_v4_pack_review_recovery_source_missing');
+            }
+
+            $packId = trim((string) (($payload['payload']['pack_id'] ?? '') ?: ($payload['pack_id'] ?? '')));
+            if ($packId !== '' && !hash_equals((string) ($source['external_resource_id'] ?? ''), $packId)) {
+                throw new RuntimeException('queue_v4_pack_review_recovery_source_mismatch');
+            }
+            $sourceStatus = strtolower((string) ($source['status'] ?? ''));
+            if (!in_array($sourceStatus, ['pending', 'retry'], true)) {
+                throw new RuntimeException('queue_v4_pack_review_recovery_source_not_pending');
+            }
+            $sourceFailure = trim((string) ($source['failure_class'] ?? ''));
+            if ($isReviewDomainSourceError && $sourceFailure !== '') {
+                throw new RuntimeException('queue_v4_pack_review_recovery_source_failure_present');
+            }
+            if ($isDueWaitingRhythm
+                && ($sourceStatus !== 'retry'
+                    || $sourceFailure !== 'waiting_rhythm'
+                    || !$this->safeDateDue($source['next_run_at'] ?? null))) {
+                throw new RuntimeException('queue_v4_pack_review_recovery_waiting_rhythm_not_due');
+            }
+            if ($this->activeSourceLease($source)
+                || $this->activeQueueLease($job)
+                || $this->activeManualReservation($companyId, $accountId, $sourceId)) {
+                throw new RuntimeException('queue_v4_pack_review_recovery_active_guard');
+            }
+            if ($this->hasUnresolvedAttempt($companyId, $accountId, $jobId)
+                || $this->hasUnresolvedTransport($companyId, $accountId, $jobId)) {
+                throw new RuntimeException('queue_v4_pack_review_recovery_uncertain_transport');
+            }
+            $localAttemptId = $isDueWaitingRhythm
+                ? $this->localWaitingRhythmAttemptId($companyId, $accountId, $jobId, (int) ($job['lease_generation'] ?? 0), $jobError)
+                : $this->localDomainSourceErrorAttemptId($companyId, $accountId, $jobId, (int) ($job['lease_generation'] ?? 0));
+            if ($localAttemptId < 1) {
+                throw new RuntimeException('queue_v4_pack_review_recovery_attempt_evidence_missing');
+            }
+            if ($this->hasContradictoryTransportForAttempt($companyId, $accountId, $jobId, (int) ($job['lease_generation'] ?? 0), $localAttemptId)) {
+                throw new RuntimeException('queue_v4_pack_review_recovery_contradictory_transport');
+            }
+
+            $update = $this->pdo->prepare(
+                "UPDATE queue_v4_clean_jobs
+                    SET state='ready',
+                        available_at=UTC_TIMESTAMP(3),
+                        lease_owner=NULL,
+                        lease_expires_at=NULL,
+                        completed_at=NULL,
+                        last_error_class=?
+                  WHERE id=? AND company_id=? AND meli_account_id=?
+                    AND state=?
+                    AND last_error_class=?
+                    AND lease_generation=?
+                    AND attempt_count=?"
+            );
+            $update->execute([
+                $isDueWaitingRhythm
+                    ? 'domain_source_recovered:order_enrichment_pack:waiting_rhythm'
+                    : 'domain_source_recovered:order_enrichment_pack',
+                $jobId,
+                $companyId,
+                $accountId,
+                $jobState,
+                $jobError,
+                (int) ($job['lease_generation'] ?? 0),
+                (int) ($job['attempt_count'] ?? 0),
+            ]);
+            if ($update->rowCount() !== 1) {
+                throw new RuntimeException('queue_v4_pack_review_recovery_cas_lost');
+            }
+
+            $this->pdo->commit();
+            return [
+                'ok' => true,
+                'company_id' => $companyId,
+                'meli_account_id' => $accountId,
+                'job_id' => $jobId,
+                'source_id' => $sourceId,
+                'state' => 'ready',
+                'idempotent_replay' => false,
+            ];
+        } catch (Throwable $error) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
     public function classification(string $errorClass): string
     {
         $normalized = strtolower(trim($errorClass));
@@ -369,6 +533,168 @@ final class QueueV4CleanReviewService
             return 'NOT_PROVEN';
         }
         return $state . ($http !== null && $http !== '' ? ':HTTP_' . (string) $http : '');
+    }
+
+    /** @param array<string,mixed> $row */
+    private function activeQueueLease(array $row): bool
+    {
+        if (trim((string) ($row['lease_owner'] ?? '')) === '') {
+            return false;
+        }
+        $expires = strtotime((string) ($row['lease_expires_at'] ?? '') . ' UTC');
+        return $expires === false || $expires > time();
+    }
+
+    /** @param array<string,mixed> $row */
+    private function activeSourceLease(array $row): bool
+    {
+        if (trim((string) ($row['lock_token'] ?? '')) === '') {
+            return false;
+        }
+        $lockedAt = strtotime((string) ($row['locked_at'] ?? '') . ' UTC');
+        return $lockedAt === false || $lockedAt > time() - 600;
+    }
+
+    private function activeManualReservation(int $companyId, int $accountId, int $sourceId): bool
+    {
+        if (!$this->tableExists('manual_campaign_reservations') || !$this->tableExists('manual_campaigns')) {
+            return false;
+        }
+        $statement = $this->pdo->prepare(
+            "SELECT 1
+               FROM manual_campaign_reservations r
+               JOIN manual_campaigns c ON c.id=r.manual_campaign_id
+              WHERE r.queue_key='order_enrichment'
+                AND r.company_id=?
+                AND r.meli_account_id=?
+                AND r.source_id=?
+                AND r.status='active'
+                AND r.expires_at>UTC_TIMESTAMP(3)
+                AND c.status IN ('active','pausing','paused')
+              LIMIT 1 FOR UPDATE"
+        );
+        $statement->execute([$companyId, $accountId, (string) $sourceId]);
+
+        return $statement->fetchColumn() !== false;
+    }
+
+    private function hasUnresolvedAttempt(int $companyId, int $accountId, int $jobId): bool
+    {
+        $statement = $this->pdo->prepare(
+            "SELECT 1
+               FROM queue_v4_clean_attempts
+              WHERE company_id=? AND meli_account_id=? AND job_id=?
+                AND (
+                    outcome='running'
+                    OR dispatch_state='PHYSICAL_STARTED'
+                    OR error_class IN ('remote_result_uncertain','remoteresultuncertainexception','remote_result_uncertain_safe_get')
+                )
+              LIMIT 1 FOR UPDATE"
+        );
+        $statement->execute([$companyId, $accountId, $jobId]);
+
+        return $statement->fetchColumn() !== false;
+    }
+
+    private function hasUnresolvedTransport(int $companyId, int $accountId, int $jobId): bool
+    {
+        $statement = $this->pdo->prepare(
+            "SELECT 1
+               FROM queue_v4_clean_transport_events
+              WHERE company_id=? AND meli_account_id=? AND source_kind='queue' AND work_id=?
+                AND dispatch_state='PHYSICAL_STARTED' AND response_known_at IS NULL
+              LIMIT 1 FOR UPDATE"
+        );
+        $statement->execute([$companyId, $accountId, $jobId]);
+
+        return $statement->fetchColumn() !== false;
+    }
+
+    private function localDomainSourceErrorAttemptId(int $companyId, int $accountId, int $jobId, int $leaseGeneration): int
+    {
+        $statement = $this->pdo->prepare(
+            "SELECT id
+               FROM queue_v4_clean_attempts
+              WHERE company_id=? AND meli_account_id=? AND job_id=?
+                AND lease_generation=?
+                AND outcome='review'
+                AND error_class='domain_source_error'
+                AND dispatch_state='NOT_DISPATCHED'
+                AND physical_http_calls=0
+                AND physical_started_at IS NULL
+                AND response_known_at IS NULL
+                AND http_status IS NULL
+                AND finished_at IS NOT NULL
+                AND source_closed_at IS NOT NULL
+              ORDER BY id DESC
+              LIMIT 1 FOR UPDATE"
+        );
+        $statement->execute([$companyId, $accountId, $jobId, $leaseGeneration]);
+
+        return (int) ($statement->fetchColumn() ?: 0);
+    }
+
+    private function localWaitingRhythmAttemptId(int $companyId, int $accountId, int $jobId, int $leaseGeneration, string $errorClass): int
+    {
+        $statement = $this->pdo->prepare(
+            "SELECT id
+               FROM queue_v4_clean_attempts
+              WHERE company_id=? AND meli_account_id=? AND job_id=?
+                AND lease_generation=?
+                AND outcome='waiting'
+                AND error_class=?
+                AND dispatch_state='NOT_DISPATCHED'
+                AND physical_http_calls=0
+                AND physical_started_at IS NULL
+                AND response_known_at IS NULL
+                AND http_status IS NULL
+                AND finished_at IS NOT NULL
+                AND source_closed_at IS NOT NULL
+              ORDER BY id DESC
+              LIMIT 1 FOR UPDATE"
+        );
+        $statement->execute([$companyId, $accountId, $jobId, $leaseGeneration, $errorClass]);
+
+        return (int) ($statement->fetchColumn() ?: 0);
+    }
+
+    private function hasContradictoryTransportForAttempt(int $companyId, int $accountId, int $jobId, int $leaseGeneration, int $attemptId): bool
+    {
+        $statement = $this->pdo->prepare(
+            "SELECT 1
+               FROM queue_v4_clean_transport_events
+              WHERE company_id=? AND meli_account_id=? AND source_kind='queue' AND work_id=?
+                AND lease_generation=?
+                AND (
+                    attempt_id=?
+                    OR attempt_id IS NULL
+                )
+              LIMIT 1 FOR UPDATE"
+        );
+        $statement->execute([$companyId, $accountId, $jobId, $leaseGeneration, $attemptId]);
+
+        return $statement->fetchColumn() !== false;
+    }
+
+    private function tableExists(string $table): bool
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? LIMIT 1'
+        );
+        $statement->execute([$table]);
+
+        return $statement->fetchColumn() !== false;
+    }
+
+    private function safeDateDue(mixed $value): bool
+    {
+        $text = trim((string) $value);
+        if ($text === '') {
+            return false;
+        }
+        $timestamp = strtotime($text . ' UTC');
+
+        return $timestamp !== false && $timestamp <= time();
     }
 
     private function ageBucket(int $seconds): string

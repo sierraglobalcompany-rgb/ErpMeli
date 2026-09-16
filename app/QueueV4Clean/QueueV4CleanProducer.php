@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\QueueV4Clean;
 
 use App\Services\CronAdmissionService;
-use App\Services\OrderEnrichmentService;
 use App\Services\SyncSettingsService;
 use PDO;
 use RuntimeException;
@@ -171,44 +170,18 @@ final class QueueV4CleanProducer
         $this->pdo->beginTransaction();
         try {
             while ($created < self::PACK_DISCOVERY_OUTSTANDING_TARGET) {
-                if ($this->countOutstandingPackExactDiscovery($sourceTenantClauses, $params) >= self::PACK_DISCOVERY_OUTSTANDING_TARGET) {
+                if ((new PackDiscoveryOccupancyPolicy($this->pdo))->outstandingForAccounts($accounts) >= self::PACK_DISCOVERY_OUTSTANDING_TARGET) {
                     break;
                 }
 
-                $this->ensurePackExactDiscoverySourceCoverage($packTenantClauses, $params);
-                $candidate = $this->pdo->prepare(
-                    'SELECT j.id,a.company_id,j.meli_account_id,j.external_resource_id
-                     FROM order_resource_enrichment_jobs j
-                     JOIN meli_accounts a ON a.id=j.meli_account_id
-                     JOIN meli_packs p
-                       ON p.meli_account_id=j.meli_account_id
-                      AND p.external_pack_id=j.external_resource_id
-                     WHERE j.resource_type="pack"
-                       AND j.status IN ("pending","retry")
-                       AND j.next_run_at<=UTC_TIMESTAMP()
-                       AND (j.locked_at IS NULL OR j.locked_at<DATE_SUB(UTC_TIMESTAMP(),INTERVAL 10 MINUTE))
-                       AND (' . implode(' OR ', $sourceTenantClauses) . ')
-                       AND (p.expected_orders_count IS NULL
-                            OR p.expected_orders_count=0
-                            OR p.expected_orders_json IS NULL
-                            OR p.expected_orders_json=""
-                            OR p.expected_orders_json="[]")
-                       AND NOT EXISTS (
-                         SELECT 1 FROM queue_v4_clean_jobs q
-                         WHERE q.company_id=a.company_id
-                           AND q.meli_account_id=j.meli_account_id
-                           AND q.job_type="domain_exact"
-                           AND q.resource_id=CAST(j.id AS CHAR)
-                           AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability"))="order_enrichment_pack"
-                           AND q.state IN ("ready","running","waiting","review","completed")
-                       )
-                     ORDER BY j.next_run_at ASC,j.id ASC
-                     LIMIT 1 FOR UPDATE'
-                );
-                $candidate->execute($params);
-                $row = $candidate->fetch(PDO::FETCH_ASSOC);
+                $this->pdo->exec('SAVEPOINT r0_pack_discovery_pair');
+                $row = $this->packExactDiscoveryCandidate($sourceTenantClauses, $params);
                 if (!is_array($row)) {
-                    break;
+                    $row = $this->createPackExactDiscoverySourceCoverage($packTenantClauses, $params);
+                    if (!is_array($row)) {
+                        $this->pdo->exec('RELEASE SAVEPOINT r0_pack_discovery_pair');
+                        break;
+                    }
                 }
 
                 $receipt = (new CronAdmissionService($this->pdo))->submit(
@@ -221,8 +194,11 @@ final class QueueV4CleanProducer
                 );
                 if (!empty($receipt['accepted']) && empty($receipt['deduplicated'])) {
                     $created++;
+                    $this->pdo->exec('RELEASE SAVEPOINT r0_pack_discovery_pair');
                     continue;
                 }
+                $this->pdo->exec('ROLLBACK TO SAVEPOINT r0_pack_discovery_pair');
+                $this->pdo->exec('RELEASE SAVEPOINT r0_pack_discovery_pair');
                 break;
             }
             $this->pdo->commit();
@@ -265,24 +241,70 @@ final class QueueV4CleanProducer
     }
 
     /**
-     * F10C: Source coverage for pack-exact discovery.
-     *
-     * F10B only admitted existing order_resource_enrichment_jobs rows. That
-     * left older finance pack waits outside the pack-discovery path when the
-     * ERP already had the local pack and at least one linked local order but no
-     * enrichment source row. Create/reuse one source per natural scheduler
-     * cycle, then let the existing F10B admission path enqueue at most one
-     * order_enrichment_pack item.
-     *
-     * The caller owns the transaction and tenant list.
-     *
-     * @param list<string> $tenantClauses SQL fragments already scoped to certified accounts.
+     * @param list<string> $tenantClauses SQL fragments already scoped to certified accounts using aliases a/j.
      * @param list<int> $params Bound company/account pairs for $tenantClauses.
+     * @return array{id:int,company_id:int,meli_account_id:int,external_resource_id:string}|null
      */
-    private function ensurePackExactDiscoverySourceCoverage(array $tenantClauses, array $params): int
+    private function packExactDiscoveryCandidate(array $tenantClauses, array $params): ?array
     {
         if ($tenantClauses === []) {
-            return 0;
+            return null;
+        }
+
+        $candidate = $this->pdo->prepare(
+            'SELECT j.id,a.company_id,j.meli_account_id,j.external_resource_id
+             FROM order_resource_enrichment_jobs j
+             JOIN meli_accounts a ON a.id=j.meli_account_id
+             JOIN meli_packs p
+               ON p.meli_account_id=j.meli_account_id
+              AND p.external_pack_id=j.external_resource_id
+             WHERE j.resource_type="pack"
+               AND j.status IN ("pending","retry")
+               AND j.next_run_at<=UTC_TIMESTAMP()
+               AND (j.locked_at IS NULL OR j.locked_at<DATE_SUB(UTC_TIMESTAMP(),INTERVAL 10 MINUTE))
+               AND (' . implode(' OR ', $tenantClauses) . ')
+               AND COALESCE(j.failure_class,"") NOT IN ("remote_result_uncertain","remote_result_uncertain_safe_get")
+               AND (p.expected_orders_count IS NULL
+                    OR p.expected_orders_count=0
+                    OR p.expected_orders_json IS NULL
+                    OR p.expected_orders_json=""
+                    OR p.expected_orders_json="[]")
+               AND NOT EXISTS (
+                 SELECT 1 FROM queue_v4_clean_jobs q
+                 WHERE q.company_id=a.company_id
+                   AND q.meli_account_id=j.meli_account_id
+                   AND q.job_type="domain_exact"
+                   AND q.resource_id=CAST(j.id AS CHAR)
+                   AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,"$.capability"))="order_enrichment_pack"
+                   AND q.state IN ("ready","running","waiting","review","completed")
+               )
+             ORDER BY j.next_run_at ASC,j.id ASC
+             LIMIT 1 FOR UPDATE'
+        );
+        $candidate->execute($params);
+        $row = $candidate->fetch(PDO::FETCH_ASSOC);
+
+        return is_array($row) ? [
+            'id' => (int) $row['id'],
+            'company_id' => (int) $row['company_id'],
+            'meli_account_id' => (int) $row['meli_account_id'],
+            'external_resource_id' => (string) $row['external_resource_id'],
+        ] : null;
+    }
+
+    /**
+     * Creates one source and returns that exact source for admission. The
+     * caller owns the surrounding transaction/savepoint so a denied admission
+     * rolls back this coverage together with its pointer.
+     *
+     * @param list<string> $tenantClauses SQL fragments already scoped to certified accounts using aliases a/p.
+     * @param list<int> $params Bound company/account pairs for $tenantClauses.
+     * @return array{id:int,company_id:int,meli_account_id:int,external_resource_id:string}|null
+     */
+    private function createPackExactDiscoverySourceCoverage(array $tenantClauses, array $params): ?array
+    {
+        if ($tenantClauses === []) {
+            return null;
         }
 
         $candidate = $this->pdo->prepare(
@@ -316,18 +338,46 @@ final class QueueV4CleanProducer
         $candidate->execute($params);
         $row = $candidate->fetch(PDO::FETCH_ASSOC);
         if (!is_array($row)) {
-            return 0;
+            return null;
         }
 
-        $sourceId = (new OrderEnrichmentService())->enqueue(
-            (int) $row['meli_account_id'],
-            (int) $row['meli_order_id'],
-            'pack',
-            (string) $row['external_pack_id'],
-            10,
+        $insert = $this->pdo->prepare(
+            'INSERT INTO order_resource_enrichment_jobs
+             (meli_account_id,meli_order_id,resource_type,external_resource_id,status,priority,next_run_at)
+             VALUES (:account,:order_id,"pack",:external_id,"pending",10,UTC_TIMESTAMP())
+             ON DUPLICATE KEY UPDATE
+                priority=LEAST(priority,VALUES(priority)),
+                status=IF(status IN ("complete","running") OR failure_class IN ("remote_result_uncertain","remote_result_uncertain_safe_get"),status,"pending"),
+                next_run_at=IF(status IN ("complete","running") OR failure_class IN ("remote_result_uncertain","remote_result_uncertain_safe_get"),next_run_at,UTC_TIMESTAMP()),
+                last_error_message=IF(status IN ("complete","running") OR failure_class IN ("remote_result_uncertain","remote_result_uncertain_safe_get"),last_error_message,NULL),
+                last_error_diagnostic_id=IF(status IN ("complete","running") OR failure_class IN ("remote_result_uncertain","remote_result_uncertain_safe_get"),last_error_diagnostic_id,NULL),
+                last_error_code=IF(status IN ("complete","running") OR failure_class IN ("remote_result_uncertain","remote_result_uncertain_safe_get"),last_error_code,NULL),
+                failure_class=IF(status IN ("complete","running") OR failure_class IN ("remote_result_uncertain","remote_result_uncertain_safe_get"),failure_class,NULL),
+                reached_remote=IF(status IN ("complete","running") OR failure_class IN ("remote_result_uncertain","remote_result_uncertain_safe_get"),reached_remote,NULL),
+                updated_at=UTC_TIMESTAMP(),
+                id=LAST_INSERT_ID(id)'
         );
+        $insert->execute([
+            'account' => (int) $row['meli_account_id'],
+            'order_id' => (int) $row['meli_order_id'],
+            'external_id' => (string) $row['external_pack_id'],
+        ]);
+        $sourceId = (int) $this->pdo->lastInsertId();
+        if ($sourceId < 1) {
+            return null;
+        }
+        $this->pdo->prepare(
+            'INSERT IGNORE INTO order_resource_enrichment_job_orders
+             (order_resource_enrichment_job_id,meli_order_id)
+             VALUES (?,?)'
+        )->execute([$sourceId, (int) $row['meli_order_id']]);
 
-        return $sourceId > 0 ? 1 : 0;
+        return [
+            'id' => $sourceId,
+            'company_id' => (int) $row['company_id'],
+            'meli_account_id' => (int) $row['meli_account_id'],
+            'external_resource_id' => (string) $row['external_pack_id'],
+        ];
     }
 
     /**

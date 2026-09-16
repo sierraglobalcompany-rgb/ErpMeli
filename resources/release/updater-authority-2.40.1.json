@@ -103,6 +103,10 @@
             "sha256": "fff6b8d6cd6eef032940bff689052a0501398c3a2532a39a5b24f71f1b8eef23"
         },
         {
+            "path": "app/QueueV4Clean/PackDiscoveryOccupancyPolicy.php",
+            "sha256": "e5cf7a2a477b7eb236826b3f20317a97cf60c38c291b782ad57b9a0919ad54a2"
+        },
+        {
             "path": "app/QueueV4Clean/QueueV4CleanCycleBudget.php",
             "sha256": "51f9909d4346746c3af3c9e5cde09442a4ac450c535f7146c22849842d26718d"
         },
@@ -140,7 +144,7 @@
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanProducer.php",
-            "sha256": "99926238afd4c6b689394f63c8afccd12e0e069a841e67803236a8faaa06b9bd"
+            "sha256": "7bcb3e3050ffda1bcaaac8218317eb7c8e44ba4cacbb41a20a2767457fc968c7"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanReadinessService.php",
@@ -152,7 +156,7 @@
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanReviewService.php",
-            "sha256": "6589e0e81d502afe8442b60e968dd177797a1c5b07237e7b19331b06a061dc03"
+            "sha256": "6cafa8f6f07be3cc3c7066ed712ba89b3c8819934d0ee474ae1d851f570b6192"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanSafeDiagnosticService.php",
@@ -248,7 +252,7 @@
         },
         {
             "path": "app/Services/CronAdmissionService.php",
-            "sha256": "991ecbc3baeb1b1699554dd719f55ced890cd655ae676cdccd0430b4677b87e1"
+            "sha256": "d3f54484b2cb77833f0867308be2f88713594f2c63ef4159bf514ff4cc1406ff"
         },
         {
             "path": "app/Services/CronApiRiskSummaryService.php",
@@ -483,6 +487,10 @@
             "sha256": "0cb22fe09ff7f135c8641d78ae18ec4227dc8dbe767eb14cce93da77b7232809"
         },
         {
+            "path": "app/Work/Adapters/QueueV4CanonicalWorkStore.php",
+            "sha256": "eb501760767d48ccc81a014100c2093a62e3ad75ef5043ef9c07a96c60854b40"
+        },
+        {
             "path": "database/migrations/296_queue_v4_clean_oauth_control_plane_2_38_3.sql",
             "sha256": "6ac2493e1b4b61de0c768274452e43169f59345792ecef88af77061c7e1fc64e"
         },
@@ -656,7 +664,7 @@
         },
         {
             "path": "resources/release/managed-runtime-dependencies-2.40.1.json",
-            "sha256": "b23ca5f8a89af4e6522648116004e7ee9913c858450c88e9b849a8d018578f6b"
+            "sha256": "322955c7bc23a8e6420ebc9bebec6e9ca78754d727d31992cbde847c086aa67f"
         },
         {
             "path": "resources/release/queue-v4-canonical-db-contract-2.38.3.json",

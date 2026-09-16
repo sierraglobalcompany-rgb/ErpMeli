@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
     "authority_id": "worker-cycle-control-single-truth-release-2.40.1-runtime-dependencies",
-    "runtime_manifest_paths_sha256": "16fbf6a60b6c633a4f36cf8ac7d58ac339259bc2ff3d459a79b73bcc945d17a6",
+    "runtime_manifest_paths_sha256": "081a4a3de613643f78bb5a882da39eb91f4bcaa5cbba7bd8443522ce8197a1bd",
     "coverage_base_commit": "6cb102595d0f2e5d47b07fa868aec8bbc22f8653",
     "classifications": {
         "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",
@@ -78,6 +78,29 @@
     ],
     "runtime_dependencies": [
         {
+            "id": "pack-discovery-occupancy-policy",
+            "path": "app/QueueV4Clean/PackDiscoveryOccupancyPolicy.php",
+            "classification": "RUNTIME_REQUIRED",
+            "required_in_runtime_manifest": true,
+            "consumers": [
+                {
+                    "source_path": "app/QueueV4Clean/QueueV4CleanProducer.php",
+                    "symbol": "App\\QueueV4Clean\\PackDiscoveryOccupancyPolicy",
+                    "path_literal": "PackDiscoveryOccupancyPolicy"
+                },
+                {
+                    "source_path": "app/Work/Adapters/QueueV4CanonicalWorkStore.php",
+                    "symbol": "App\\QueueV4Clean\\PackDiscoveryOccupancyPolicy",
+                    "path_literal": "PackDiscoveryOccupancyPolicy"
+                }
+            ],
+            "provenance": {
+                "kind": "tracked_php_autoload",
+                "generator": "r0-h3 local integration metadata"
+            },
+            "missing_effect": "Pack discovery admission cannot enforce exact H3 occupancy and may retain or create units incorrectly."
+        },
+        {
             "id": "capacity-change-guard",
             "path": "app/Services/CapacityChangeGuard.php",
             "classification": "RUNTIME_REQUIRED",
@@ -144,6 +167,24 @@
                 "kind": "tracked_php_view",
                 "generator": "capacity-config from main 191c5ee"
             }
+        },
+        {
+            "id": "queue-v4-canonical-work-store",
+            "path": "app/Work/Adapters/QueueV4CanonicalWorkStore.php",
+            "classification": "RUNTIME_REQUIRED",
+            "required_in_runtime_manifest": true,
+            "consumers": [
+                {
+                    "source_path": "app/Services/CronAdmissionService.php",
+                    "symbol": "App\\Work\\Adapters\\QueueV4CanonicalWorkStore",
+                    "path_literal": "QueueV4CanonicalWorkStore"
+                }
+            ],
+            "provenance": {
+                "kind": "tracked_php_autoload",
+                "generator": "r0-h3 local integration metadata"
+            },
+            "missing_effect": "Canonical work admission can fail to route through the Queue V4 adapter used by Cron admission."
         },
         {
             "id": "managed-runtime-dependency-registry",

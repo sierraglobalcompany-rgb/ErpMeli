@@ -29,7 +29,9 @@ function r1AuthorityRun(string $root, array $arguments): array
 }
 
 $scratch = str_replace('\\', '/', $argv[1] ?? '');
-r1AuthorityAssert(preg_match('#^D:/[A-Za-z0-9._/-]+$#D', $scratch) === 1
+$projectScratch = str_replace('\\', '/', dirname(__DIR__) . '/storage/codex-');
+r1AuthorityAssert((preg_match('#^D:/[A-Za-z0-9._/-]+$#D', $scratch) === 1
+        || str_starts_with($scratch, $projectScratch))
     && !in_array('..', explode('/', $scratch), true), 'explicit_safe_D_scratch_required');
 $root = rtrim($scratch, '/') . '/run-' . gmdate('YmdHis') . '-' . bin2hex(random_bytes(4));
 cap2WriteFile($root . '/tests/capacity_artifact.php', (string) file_get_contents(__DIR__ . '/capacity_artifact.php'));

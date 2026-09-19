@@ -446,7 +446,8 @@ final class NotificationCollationRecoveryService
             $receipt = $work->admitCanonicalWork(
                 (int) $source['id'],
                 (int) ($source['meli_account_id'] ?? 0),
-                $pdo
+                $pdo,
+                'collation_recovery',
             );
             if (!$receipt['accepted']) {
                 throw new \RuntimeException('notification_collation_recovery_admission_denied:' . $receipt['reason']);

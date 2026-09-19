@@ -78,7 +78,8 @@ final class NotificationWorkerRecoveryService
                     $receipt = $work->admitCanonicalWork(
                         (int) $source['id'],
                         (int) ($source['meli_account_id'] ?? 0),
-                        $pdo
+                        $pdo,
+                        'worker_recovery',
                     );
                     if (!$receipt['accepted']) {
                         throw new \RuntimeException('notification_worker_recovery_admission_denied:' . $receipt['reason']);

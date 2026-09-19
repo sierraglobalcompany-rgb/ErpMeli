@@ -38,6 +38,7 @@ final class CronAdmissionService
         int $sourceId,
         string $idempotencyKey,
         array $payload = [],
+        ?string $reentryReason = null,
     ): array {
         $capability = trim($capability);
         if (!isset(self::SOURCES[$capability])) {
@@ -72,6 +73,10 @@ final class CronAdmissionService
             return $this->receipt(false, null, false, 'SOURCE_NOT_ELIGIBLE');
         }
         $sourceFutureAt = $this->sourceFutureAvailabilityAt($capability, $sourceRow);
+        $storedKey = 'domain:' . $capability . ':' . trim($idempotencyKey);
+        if (strlen($storedKey) > 190) {
+            throw new RuntimeException('cron_admission_idempotency_key_too_long');
+        }
         if ($capability === 'notification_work_item') {
             $active = $this->activeNotificationPointer($companyId, $accountId, $sourceId);
             if ($active !== null) {
@@ -81,10 +86,17 @@ final class CronAdmissionService
                 }
                 return $this->receipt(true, $jobId, true, 'ALREADY_QUEUED');
             }
-        }
-        $storedKey = 'domain:' . $capability . ':' . trim($idempotencyKey);
-        if (strlen($storedKey) > 190) {
-            throw new RuntimeException('cron_admission_idempotency_key_too_long');
+            $resumed = $this->resumeProtectedNotificationPointer(
+                $companyId,
+                $accountId,
+                $sourceId,
+                $storedKey,
+                $sourceFutureAt,
+                $reentryReason,
+            );
+            if ($resumed !== null) {
+                return $this->receipt(true, (int) $resumed['id'], true, 'REQUEUED_FROM_PAUSE');
+            }
         }
         $document = ['capability' => $capability, 'source_id' => $sourceId];
         if ($payload !== []) {
@@ -333,6 +345,107 @@ final class CronAdmissionService
         }
 
         return isset($rows[0]) && is_array($rows[0]) ? $rows[0] : null;
+    }
+
+    /** @return array{id:int}|null */
+    private function resumeProtectedNotificationPointer(
+        int $companyId,
+        int $accountId,
+        int $sourceId,
+        string $storedKey,
+        ?string $sourceFutureAt,
+        ?string $reentryReason,
+    ): ?array {
+        $policy = match ($reentryReason) {
+            'resume_paused' => [
+                'states' => ['review'],
+                'errors' => ['domain_source_paused'],
+                'allow_null_error' => false,
+            ],
+            'retry_failed', 'worker_recovery' => [
+                'states' => ['review'],
+                'errors' => [
+                    'domain_source_error',
+                    'domain_source_quarantined',
+                    'notification_work_item_error',
+                    'notification_work_item_action_required',
+                ],
+                'allow_null_error' => false,
+            ],
+            'collation_recovery' => [
+                'states' => ['review', 'completed'],
+                'errors' => [
+                    'domain_source_error',
+                    'notification_work_item_error',
+                ],
+                'allow_null_error' => true,
+            ],
+            default => null,
+        };
+        if ($policy === null) {
+            return null;
+        }
+        $stateSql = implode(',', array_fill(0, count($policy['states']), '?'));
+        $errorSql = implode(',', array_fill(0, count($policy['errors']), '?'));
+        $errorPredicate = 'last_error_class IN (' . $errorSql . ')';
+        if ($policy['allow_null_error']) {
+            $errorPredicate = '(' . $errorPredicate . ' OR last_error_class IS NULL)';
+        }
+        $select = $this->pdo->prepare(
+            'SELECT id
+             FROM queue_v4_clean_jobs
+             WHERE company_id=? AND meli_account_id=?
+               AND job_type="domain_exact" AND resource_id=?
+               AND idempotency_key=?
+               AND state IN (' . $stateSql . ')
+               AND ' . $errorPredicate . '
+               AND attempt_count<max_attempts
+               AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="notification_work_item"
+               AND ((lease_owner IS NULL AND lease_expires_at IS NULL)
+                    OR (lease_owner IS NOT NULL AND lease_owner<>""
+                        AND lease_expires_at IS NOT NULL AND lease_expires_at<=UTC_TIMESTAMP(3)))
+               AND NOT EXISTS (
+                   SELECT 1 FROM queue_v4_clean_transport_events e
+                    WHERE e.company_id=queue_v4_clean_jobs.company_id
+                      AND e.meli_account_id=queue_v4_clean_jobs.meli_account_id
+                      AND e.source_kind="queue" AND e.work_id=queue_v4_clean_jobs.id
+                      AND e.dispatch_state="PHYSICAL_STARTED" AND e.response_known_at IS NULL
+               )
+             ORDER BY id DESC LIMIT 2 FOR UPDATE'
+        );
+        $select->execute(array_merge(
+            [$companyId, $accountId, (string) $sourceId, $storedKey],
+            $policy['states'],
+            $policy['errors'],
+        ));
+        $rows = $select->fetchAll(PDO::FETCH_ASSOC);
+        if (count($rows) > 1) {
+            throw new RuntimeException('notification_canonical_multiple_paused_pointers');
+        }
+        if (!isset($rows[0]) || !is_array($rows[0])) {
+            return null;
+        }
+
+        $jobId = (int) $rows[0]['id'];
+        $state = $sourceFutureAt === null ? 'ready' : 'waiting';
+        $availableAt = $sourceFutureAt ?? gmdate('Y-m-d H:i:s');
+        $update = $this->pdo->prepare(
+            'UPDATE queue_v4_clean_jobs
+             SET state=?,available_at=?,last_error_class=NULL,completed_at=NULL
+             WHERE id=? AND company_id=? AND meli_account_id=?
+               AND state IN (' . $stateSql . ')
+               AND ' . $errorPredicate
+        );
+        $update->execute(array_merge(
+            [$state, $availableAt, $jobId, $companyId, $accountId],
+            $policy['states'],
+            $policy['errors'],
+        ));
+        if ($update->rowCount() !== 1) {
+            throw new RuntimeException('notification_paused_pointer_reentry_cas_lost');
+        }
+
+        return ['id' => $jobId];
     }
 
     private function alignPointerAvailability(

@@ -432,7 +432,12 @@ final class NotificationWorkItemService
                 );
                 $update->execute($ids);
                 foreach ($sources as $source) {
-                    $receipt = $this->admitCanonicalWork((int) $source['id'], (int) ($source['meli_account_id'] ?? 0), $pdo);
+                    $receipt = $this->admitCanonicalWork(
+                        (int) $source['id'],
+                        (int) ($source['meli_account_id'] ?? 0),
+                        $pdo,
+                        'resume_paused',
+                    );
                     if (!$receipt['accepted']) {
                         throw new \RuntimeException('notification_resume_admission_denied:' . $receipt['reason']);
                     }
@@ -487,7 +492,12 @@ final class NotificationWorkItemService
                 );
                 $update->execute($ids);
                 foreach ($sources as $source) {
-                    $receipt = $this->admitCanonicalWork((int) $source['id'], (int) ($source['meli_account_id'] ?? 0), $pdo);
+                    $receipt = $this->admitCanonicalWork(
+                        (int) $source['id'],
+                        (int) ($source['meli_account_id'] ?? 0),
+                        $pdo,
+                        'retry_failed',
+                    );
                     if (!$receipt['accepted']) {
                         throw new \RuntimeException('notification_retry_admission_denied:' . $receipt['reason']);
                     }
@@ -777,7 +787,12 @@ final class NotificationWorkItemService
      *
      * @return array{accepted:bool,job_id:?int,deduplicated:bool,reason:string}
      */
-    public function admitCanonicalWork(int $workId, ?int $accountId, ?PDO $pdo = null): array
+    public function admitCanonicalWork(
+        int $workId,
+        ?int $accountId,
+        ?PDO $pdo = null,
+        ?string $reentryReason = null,
+    ): array
     {
         if ($workId < 1 || $accountId === null || $accountId < 1) {
             return ['accepted' => false, 'job_id' => null, 'deduplicated' => false, 'reason' => 'INVALID_SOURCE'];
@@ -817,7 +832,9 @@ final class NotificationWorkItemService
                 (int) $row['company_id'],
                 (int) $row['meli_account_id'],
                 $workId,
-                $generationKey
+                $generationKey,
+                [],
+                $reentryReason,
             );
             if (!$receipt['accepted']) {
                 throw new \RuntimeException('notification_canonical_admission_denied:' . $receipt['reason']);

@@ -7,13 +7,16 @@ require __DIR__ . '/K1dSafeTestDatabase.php';
 require __DIR__ . '/cap2_domains_wire_fixture.php';
 
 use App\Core\Crypto;
+use App\Core\Database;
 use App\QueueV4Clean\QueueV4CleanCycleBudget;
 use App\QueueV4Clean\QueueV4CleanRepository;
 use App\QueueV4Clean\QueueV4CleanWorker;
 use App\Services\AppSettingsService;
 use App\Services\Cap2DomainsWire;
 use App\Services\Migrator;
+use App\Services\NotificationCollationRecoveryService;
 use App\Services\NotificationWorkItemService;
+use App\Services\NotificationWorkerRecoveryService;
 use App\Services\WebhookService;
 
 $root = dirname(__DIR__);
@@ -51,12 +54,23 @@ try {
     $pdo->exec("INSERT INTO companies(id,name,status) VALUES(9201,'K2 company A',1),(9202,'K2 company B',1)");
     $pdo->exec("INSERT INTO meli_accounts(id,company_id,account_name,meli_user_id,status) VALUES
         (9211,9201,'K2 account A',99211,'conectado'),
-        (9221,9202,'K2 account B',99221,'conectado')");
+        (9221,9202,'K2 account B',99221,'conectado'),
+        (9231,9201,'K2 account race',99231,'conectado'),
+        (9241,9201,'K2 account debounce',99241,'conectado'),
+        (9251,9202,'K2 account retry',99251,'conectado'),
+        (9261,9201,'K2 account worker recovery',99261,'conectado'),
+        (9271,9202,'K2 account collation recovery',99271,'conectado'),
+        (9281,9201,'K2 account uncertainty',99281,'conectado'),
+        (9291,9201,'K2 account concurrent',99291,'conectado')");
     $token = Crypto::encrypt('k2-test-access');
     $refresh = Crypto::encrypt('k2-test-refresh');
     $tokens = $pdo->prepare('INSERT INTO meli_tokens(meli_account_id,access_token_encrypted,refresh_token_encrypted,expires_at) VALUES(?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 DAY))');
     $tokens->execute([9211, $token, $refresh]);
     $tokens->execute([9221, $token, $refresh]);
+    $tokens->execute([9231, $token, $refresh]);
+    foreach ([9241, 9251, 9261, 9271, 9281, 9291] as $tokenAccountId) {
+        $tokens->execute([$tokenAccountId, $token, $refresh]);
+    }
     $pdo->exec("UPDATE queue_v4_clean_control SET engine_state='ACTIVE',readiness_state='CERTIFIED' WHERE control_key='primary'");
     $pdo->exec("UPDATE queue_engine_control SET active_engine='v4'");
     $settings = new AppSettingsService();
@@ -75,19 +89,16 @@ try {
 
     // Two independent PHP receivers cross the same barrier and must converge
     // on one durable source and one executable canonical pointer.
-    $concurrent = k2_receive_concurrently($pdo, $qaRoot, 99211, 9302);
+    $concurrent = k2_receive_concurrently($pdo, $qaRoot, 99291, 9302);
     k1b_assert(
         $concurrent['accepted'] === 2,
         'K2_CONCURRENT_RECEIVERS_ACCEPTED:' . json_encode($concurrent['outputs'], JSON_UNESCAPED_SLASHES)
     );
-    $concurrentWork = (int) $pdo->query("SELECT id FROM meli_notification_work_items WHERE meli_account_id=9211 AND resource_type='question' AND remote_resource_id='9302'")->fetchColumn();
+    $concurrentWork = (int) $pdo->query("SELECT id FROM meli_notification_work_items WHERE meli_account_id=9291 AND resource_type='question' AND remote_resource_id='9302'")->fetchColumn();
     k1b_assert($concurrentWork > 0, 'K2_CONCURRENT_SOURCE_CREATED');
-    k1b_assert(k2_pointer_count($pdo, 9201, 9211, $concurrentWork) === 1, 'K2_CONCURRENT_ONE_LOGICAL_POINTER');
+    k1b_assert(k2_pointer_count($pdo, 9201, 9291, $concurrentWork) === 1, 'K2_CONCURRENT_ONE_LOGICAL_POINTER');
     k1b_assert((int) $pdo->query('SELECT occurrence_count FROM meli_notification_work_items WHERE id=' . $concurrentWork)->fetchColumn() === 2, 'K2_CONCURRENT_OCCURRENCES_RETAINED');
     k1b_assert(Cap2DomainsWire::$calls === [], 'K2_CONCURRENT_ADMISSION_ZERO_HTTP');
-    $concurrentPointer = k2_active_pointer($pdo, 9201, 9211, $concurrentWork);
-    $pdo->exec('UPDATE queue_v4_clean_jobs SET state="waiting",available_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 DAY) WHERE id=' . $concurrentPointer);
-    $pdo->exec('UPDATE meli_notification_work_items SET next_run_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 DAY) WHERE id=' . $concurrentWork);
 
     $duplicate = k2_receive($service, 'k2-first', 99211, 9301, '2026-09-19T10:00:00Z');
     k1b_assert($duplicate['accepted'] === true && $duplicate['duplicate'] === true, 'K2_IDENTICAL_REPLAY_DEDUPED');
@@ -113,19 +124,25 @@ try {
     k1b_assert($source['processing_event_id'] === null, 'K2_DURING_RUN_PROCESSING_FENCE_CLOSED');
     k1b_assert((string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=' . $pointerId)->fetchColumn() === 'waiting', 'K2_DURING_RUN_POINTER_REMAINS_EXECUTABLE');
 
-    $pdo->exec('UPDATE queue_v4_clean_jobs SET state="ready",available_at=UTC_TIMESTAMP(3) WHERE id=' . $pointerId . ' AND state="waiting"');
+    k2_wait_until_pointer_due($pdo, $pointerId);
     $secondRun = k2_run($pdo, 1, 9211);
-    k1b_assert($secondRun['physical_http_calls'] === 1, 'K2_RERUN_ONE_PHYSICAL_GET');
+    $rerunState = $pdo->query('SELECT state,available_at,attempt_count,max_attempts,lease_generation,last_error_class FROM queue_v4_clean_jobs WHERE id=' . $pointerId)->fetch(PDO::FETCH_ASSOC);
+    $rerunSource = $pdo->query('SELECT status,next_run_at,locked_by,lock_expires_at FROM meli_notification_work_items WHERE id=' . $workId)->fetch(PDO::FETCH_ASSOC);
+    k1b_assert($secondRun['physical_http_calls'] === 1, 'K2_RERUN_ONE_PHYSICAL_GET:' . json_encode([$secondRun, $rerunState, $rerunSource], JSON_UNESCAPED_SLASHES));
     k1b_assert((string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=' . $workId)->fetchColumn() === 'complete', 'K2_RERUN_SOURCE_COMPLETED');
     k1b_assert((string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=' . $pointerId)->fetchColumn() === 'completed', 'K2_RERUN_POINTER_COMPLETED');
 
     // A later legitimate event must create one new generation after the old pointer completed.
     k2_receive($service, 'k2-after-close', 99211, 9301, '2026-09-19T10:00:03Z');
     k1b_assert(k2_pointer_count($pdo, 9201, 9211, $workId) === 2, 'K2_AFTER_CLOSE_NEW_CANONICAL_GENERATION');
-    k1b_assert(k2_active_pointer($pdo, 9201, 9211, $workId) > 0, 'K2_AFTER_CLOSE_NEW_GENERATION_EXECUTABLE');
+    $afterClosePointer = k2_active_pointer($pdo, 9201, 9211, $workId);
+    k1b_assert($afterClosePointer > 0, 'K2_AFTER_CLOSE_NEW_GENERATION_EXECUTABLE');
     k1b_assert(count(Cap2DomainsWire::$calls) === 2, 'K2_AFTER_CLOSE_ADMISSION_ZERO_HTTP');
+    k2_wait_until_pointer_due($pdo, $afterClosePointer);
     $afterCloseRun = k2_run($pdo, 1, 9211);
-    k1b_assert($afterCloseRun['physical_http_calls'] === 1, 'K2_AFTER_CLOSE_GENERATION_ONE_PHYSICAL_GET');
+    $afterCloseState = $pdo->query('SELECT state,available_at,last_error_class FROM queue_v4_clean_jobs WHERE id=' . $afterClosePointer)->fetch(PDO::FETCH_ASSOC);
+    $afterCloseSource = $pdo->query('SELECT status,next_run_at FROM meli_notification_work_items WHERE id=' . $workId)->fetch(PDO::FETCH_ASSOC);
+    k1b_assert($afterCloseRun['physical_http_calls'] === 1, 'K2_AFTER_CLOSE_GENERATION_ONE_PHYSICAL_GET:' . json_encode([$afterCloseRun, $afterCloseState, $afterCloseSource], JSON_UNESCAPED_SLASHES));
     k1b_assert((string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=' . $workId)->fetchColumn() === 'complete', 'K2_AFTER_CLOSE_GENERATION_COMPLETED');
 
     // An older out-of-order event is durable but must not reopen or downgrade the source.
@@ -139,7 +156,73 @@ try {
     k2_receive($service, 'k2-company-b', 99221, 9301, '2026-09-19T10:00:04Z');
     $tenantBWork = (int) $pdo->query("SELECT id FROM meli_notification_work_items WHERE meli_account_id=9221 AND remote_resource_id='9301'")->fetchColumn();
     k1b_assert($tenantBWork > 0 && $tenantBWork !== $workId, 'K2_TENANT_SOURCE_ISOLATED');
-    k1b_assert(k2_active_pointer($pdo, 9202, 9221, $tenantBWork) > 0, 'K2_TENANT_POINTER_ISOLATED');
+    $tenantBPointer = k2_active_pointer($pdo, 9202, 9221, $tenantBWork);
+    k1b_assert($tenantBPointer > 0, 'K2_TENANT_POINTER_ISOLATED');
+
+    // A legitimate pause can put the canonical pointer in review before the
+    // notification domain increments its own attempts. Resume must reopen
+    // exactly that protected pointer without manufacturing a new identity.
+    $paused = (new NotificationWorkItemService())->pause(9221, [9221]);
+    k1b_assert($paused === 1, 'K2_PAUSE_SOURCE_WITH_ZERO_DOMAIN_ATTEMPTS');
+    k2_wait_until_pointer_due($pdo, $tenantBPointer);
+    $pausedRun = k2_run($pdo, 1, 9221);
+    k1b_assert($pausedRun['physical_http_calls'] === 0, 'K2_PAUSED_CYCLE_ZERO_HTTP');
+    k1b_assert((string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=' . $tenantBPointer)->fetchColumn() === 'review', 'K2_PAUSED_POINTER_REVIEW_HELD');
+    k1b_assert((int) $pdo->query('SELECT attempts FROM meli_notification_work_items WHERE id=' . $tenantBWork)->fetchColumn() === 0, 'K2_PAUSED_SOURCE_ATTEMPTS_UNCHANGED');
+    $resumedWithoutSyntheticAttempt = (new NotificationWorkItemService())->resume(9221, [9221]);
+    k1b_assert($resumedWithoutSyntheticAttempt === 1, 'K2_RESUME_WITH_REAL_COUNTER_REACTIVATED');
+    k1b_assert(k2_active_pointer($pdo, 9202, 9221, $tenantBWork) === $tenantBPointer, 'K2_RESUME_REUSES_EXACT_PAUSED_POINTER');
+    k1b_assert((new NotificationWorkItemService())->resume(9221, [9221]) === 0, 'K2_RESUME_REPLAY_NO_DUPLICATE');
+    k1b_assert(k2_pointer_count($pdo, 9202, 9221, $tenantBWork) === 1, 'K2_RESUME_REPLAY_ONE_LOGICAL_POINTER');
+
+    // Exact race window: A has already calculated completed, B commits E2
+    // through the real receiver on a second PDO, then A finalizes its pointer.
+    $raceFirst = k2_receive($service, 'k2-race-e1', 99231, 9350, '2026-09-19T10:00:10Z');
+    k1b_assert($raceFirst['accepted'] === true, 'K2_RACE_E1_ACCEPTED');
+    $raceWork = (int) $pdo->query("SELECT id FROM meli_notification_work_items WHERE meli_account_id=9231 AND remote_resource_id='9350'")->fetchColumn();
+    $racePointer = k2_active_pointer($pdo, 9201, 9231, $raceWork);
+    k2_wait_until_pointer_due($pdo, $racePointer);
+    Cap2DomainsWire::$responses['/questions/9350'] = [200, ['id' => 9350, 'text' => 'K2 race question', 'status' => 'UNANSWERED', 'seller_id' => 99231]];
+    $barrierReached = false;
+    $raceSecond = null;
+    $raceRun = k2_run_with_finalize_barrier(
+        $pdo,
+        1,
+        9231,
+        static function (array $job, array $outcome) use ($pdo, &$barrierReached, &$raceSecond): void {
+            if ((string) ($outcome['state'] ?? '') !== 'completed') {
+                return;
+            }
+            $barrierReached = true;
+            $pdoB = new PDO(
+                'mysql:host=' . getenv('DB_HOST') . ';port=' . getenv('DB_PORT') . ';dbname=' . getenv('DB_NAME') . ';charset=utf8mb4',
+                (string) getenv('DB_USER'),
+                (string) getenv('DB_PASS'),
+                [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false]
+            );
+            $pdoB->exec("SET time_zone='+00:00'");
+            Database::setConnection($pdoB);
+            try {
+                $raceSecond = k2_receive(new WebhookService(), 'k2-race-e2', 99231, 9350, '2026-09-19T10:00:11Z');
+            } finally {
+                Database::setConnection($pdo);
+            }
+        }
+    );
+    k1b_assert($barrierReached, 'K2_RACE_BARRIER_AFTER_DECISION_REACHED');
+    k1b_assert(is_array($raceSecond) && $raceSecond['accepted'] === true, 'K2_RACE_E2_COMMITTED');
+    k1b_assert($raceRun['physical_http_calls'] === 1, 'K2_RACE_A_ONE_PHYSICAL_GET');
+    k1b_assert((string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=' . $raceWork)->fetchColumn() === 'pending', 'K2_RACE_E2_REMAINS_PENDING');
+    k1b_assert((string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=' . $racePointer)->fetchColumn() === 'waiting', 'K2_RACE_POINTER_REMAINS_EXECUTABLE');
+    k2_wait_until_pointer_due($pdo, $racePointer);
+    $raceClose = k2_run($pdo, 1, 9231);
+    k1b_assert($raceClose['physical_http_calls'] === 1, 'K2_RACE_E2_PROCESSED_ONCE');
+    k1b_assert((string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=' . $raceWork)->fetchColumn() === 'complete', 'K2_RACE_SOURCE_COMPLETED');
+    k1b_assert((string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=' . $racePointer)->fetchColumn() === 'completed', 'K2_RACE_POINTER_COMPLETED');
+    $racePointersBeforeReplay = k2_pointer_count($pdo, 9201, 9231, $raceWork);
+    $raceReplay = k2_receive($service, 'k2-race-e2', 99231, 9350, '2026-09-19T10:00:11Z');
+    k1b_assert($raceReplay['duplicate'] === true, 'K2_RACE_E2_EXACT_REPLAY_DEDUPED');
+    k1b_assert(k2_pointer_count($pdo, 9201, 9231, $raceWork) === $racePointersBeforeReplay, 'K2_RACE_E2_REPLAY_ZERO_NEW_POINTERS');
 
     $beforeUnknown = (int) $pdo->query('SELECT COUNT(*) FROM meli_notification_work_items')->fetchColumn();
     $unknown = k2_receive($service, 'k2-unknown-account', 99999991, 9303, '2026-09-19T10:00:05Z');
@@ -155,13 +238,82 @@ try {
     $invalid = $service->receiveResult('{not-json', 'k2_local_test', false);
     k1b_assert($invalid['accepted'] === false && $invalid['http_status'] === 400, 'K2_INVALID_PAYLOAD_REJECTED');
 
-    // A recovery transition must restore canonical executability, not only change source status.
-    $active = k2_latest_pointer($pdo, 9201, 9211, $workId);
-    $pdo->exec('UPDATE queue_v4_clean_jobs SET state="completed" WHERE id=' . $active);
-    $pdo->exec('UPDATE meli_notification_work_items SET status="error",attempts=attempts+1 WHERE id=' . $workId);
-    $retried = (new NotificationWorkItemService())->retry($workId, [9211]);
+    // Retry reopens exactly the review produced by the normal worker without
+    // changing the notification attempt counter or fabricating a new event.
+    k2_receive($service, 'k2-retry-e1', 99251, 9360, '2026-09-19T10:00:20Z');
+    $retryWork = (int) $pdo->query("SELECT id FROM meli_notification_work_items WHERE meli_account_id=9251 AND remote_resource_id='9360'")->fetchColumn();
+    $retryPointer = k2_active_pointer($pdo, 9202, 9251, $retryWork);
+    $pdo->exec('UPDATE meli_notification_work_items SET status="error" WHERE id=' . $retryWork);
+    k2_wait_until_pointer_due($pdo, $retryPointer);
+    $retryReviewRun = k2_run($pdo, 1, 9251);
+    k1b_assert($retryReviewRun['physical_http_calls'] === 0, 'K2_RETRY_REVIEW_ZERO_HTTP');
+    k1b_assert((string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=' . $retryPointer)->fetchColumn() === 'review', 'K2_RETRY_POINTER_REVIEW_HELD');
+    k1b_assert((int) $pdo->query('SELECT attempts FROM meli_notification_work_items WHERE id=' . $retryWork)->fetchColumn() === 0, 'K2_RETRY_REAL_ATTEMPT_COUNTER_ZERO');
+    $retried = (new NotificationWorkItemService())->retry($retryWork, [9251]);
     k1b_assert($retried === 1, 'K2_RETRY_SOURCE_REACTIVATED');
-    k1b_assert(k2_active_pointer($pdo, 9201, 9211, $workId) > 0, 'K2_RETRY_CANONICAL_POINTER_RESTORED');
+    k1b_assert(k2_active_pointer($pdo, 9202, 9251, $retryWork) === $retryPointer, 'K2_RETRY_REUSES_EXACT_REVIEW_POINTER');
+    k1b_assert((new NotificationWorkItemService())->retry($retryWork, [9251]) === 0, 'K2_RETRY_REPLAY_NO_DUPLICATE');
+    Cap2DomainsWire::$responses['/questions/9360'] = [200, ['id' => 9360, 'text' => 'K2 retry question', 'status' => 'UNANSWERED', 'seller_id' => 99251]];
+    k2_wait_until_pointer_due($pdo, $retryPointer);
+    k1b_assert(k2_run($pdo, 1, 9251)['physical_http_calls'] === 1, 'K2_RETRY_NATURAL_CLOSE_ONE_GET');
+
+    // The selective worker recovery executes its real candidate query and
+    // restores the same review pointer within the recovery transaction.
+    k2_receive($service, 'k2-worker-recovery-e1', 99261, 9361, '2026-09-19T10:00:21Z');
+    $workerRecoveryWork = (int) $pdo->query("SELECT id FROM meli_notification_work_items WHERE meli_account_id=9261 AND remote_resource_id='9361'")->fetchColumn();
+    $workerRecoveryPointer = k2_active_pointer($pdo, 9201, 9261, $workerRecoveryWork);
+    $pdo->exec('UPDATE meli_notification_work_items SET status="error",last_error_code="processing_error",last_error_stage="processing",last_error_diagnostic_id="K2-WR-1",last_processed_at=UTC_TIMESTAMP() WHERE id=' . $workerRecoveryWork);
+    k2_wait_until_pointer_due($pdo, $workerRecoveryPointer);
+    k2_run($pdo, 1, 9261);
+    $pdo->prepare('INSERT INTO system_logs(level,message,context_json) VALUES("error","K2 worker recovery fixture",?)')->execute([
+        json_encode(['reference' => 'K2-WR-1', 'module' => 'notifications', 'stage' => 'processing', 'error' => 'There is already an active transaction'], JSON_THROW_ON_ERROR),
+    ]);
+    $workerRecovery = (new NotificationWorkerRecoveryService())->recoverKnownErrors(5, true, [9261]);
+    k1b_assert(($workerRecovery['recovered'] ?? 0) === 1, 'K2_WORKER_RECOVERY_EXECUTED');
+    k1b_assert(k2_active_pointer($pdo, 9201, 9261, $workerRecoveryWork) === $workerRecoveryPointer, 'K2_WORKER_RECOVERY_POINTER_RESTORED');
+
+    // The public collation canary uses the modified reactivation entry with
+    // a minimal confirmed 1267 fixture; no reflection or text-only proof.
+    k2_receive($service, 'k2-collation-recovery-e1', 99271, 9362, '2026-09-19T10:00:22Z');
+    $collationWork = (int) $pdo->query("SELECT id FROM meli_notification_work_items WHERE meli_account_id=9271 AND remote_resource_id='9362'")->fetchColumn();
+    $collationPointer = k2_active_pointer($pdo, 9202, 9271, $collationWork);
+    $pdo->exec('UPDATE meli_notification_work_items SET status="error",last_error_code="processing_error",last_error_stage="processing",last_error_diagnostic_id="K2-COLL-1",last_processed_at=UTC_TIMESTAMP() WHERE id=' . $collationWork);
+    k2_wait_until_pointer_due($pdo, $collationPointer);
+    k2_run($pdo, 1, 9271);
+    $pdo->prepare('INSERT INTO system_logs(level,message,context_json) VALUES("error","K2 collation recovery fixture",?)')->execute([
+        json_encode([
+            'reference' => 'K2-COLL-1',
+            'module' => 'notifications',
+            'stage' => 'processing',
+            'driver_code' => '1267',
+            'error' => 'Illegal mix of collations utf8mb4_general_ci and utf8mb4_unicode_ci (1267)',
+        ], JSON_THROW_ON_ERROR),
+    ]);
+    $collationRecovery = (new NotificationCollationRecoveryService())->createCanary(0, [9271]);
+    k1b_assert(in_array((string) ($collationRecovery['status'] ?? ''), ['canary_running', 'canary_passed'], true), 'K2_COLLATION_RECOVERY_EXECUTED');
+    k1b_assert(k2_active_pointer($pdo, 9202, 9271, $collationWork) === $collationPointer, 'K2_COLLATION_RECOVERY_POINTER_RESTORED');
+
+    // An unresolved physical marker keeps a review protected. Retry rolls its
+    // source transition back instead of claiming a successful reactivation.
+    k2_receive($service, 'k2-uncertain-e1', 99281, 9363, '2026-09-19T10:00:23Z');
+    $uncertainWork = (int) $pdo->query("SELECT id FROM meli_notification_work_items WHERE meli_account_id=9281 AND remote_resource_id='9363'")->fetchColumn();
+    $uncertainPointer = k2_active_pointer($pdo, 9201, 9281, $uncertainWork);
+    $pdo->exec('UPDATE meli_notification_work_items SET status="error" WHERE id=' . $uncertainWork);
+    k2_wait_until_pointer_due($pdo, $uncertainPointer);
+    k2_run($pdo, 1, 9281);
+    $uncertainGeneration = (int) $pdo->query('SELECT lease_generation FROM queue_v4_clean_jobs WHERE id=' . $uncertainPointer)->fetchColumn();
+    $pdo->prepare("INSERT INTO queue_v4_clean_transport_events(company_id,meli_account_id,source_kind,work_id,lease_generation,request_id,method,endpoint_key,dispatch_state,physical_started_at) VALUES(9201,9281,'queue',?,?,?,'GET','notification_work_item','PHYSICAL_STARTED',UTC_TIMESTAMP(3))")
+        ->execute([$uncertainPointer, $uncertainGeneration, 'k2-uncertain-' . bin2hex(random_bytes(4))]);
+    $uncertainDenied = false;
+    $uncertainReason = '';
+    try {
+        (new NotificationWorkItemService())->retry($uncertainWork, [9281]);
+    } catch (Throwable $error) {
+        $uncertainReason = $error->getMessage();
+        $uncertainDenied = str_contains($error->getMessage(), 'REVIEW_HELD');
+    }
+    k1b_assert($uncertainDenied, 'K2_UNCERTAIN_REVIEW_NOT_REOPENED:' . $uncertainReason);
+    k1b_assert((string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=' . $uncertainWork)->fetchColumn() === 'error', 'K2_UNCERTAIN_RETRY_SOURCE_ROLLED_BACK');
 
     // Failure at canonical insertion must roll back the event and source atomically.
     $pdo->exec("CREATE TRIGGER k2_fail_admission BEFORE INSERT ON queue_v4_clean_jobs FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='K2_SYNTHETIC_ADMISSION_FAILURE'");
@@ -172,25 +324,63 @@ try {
     k1b_assert((int) $pdo->query('SELECT COUNT(*) FROM meli_notification_events')->fetchColumn() === $eventCount, 'K2_ADMISSION_FAILURE_ROLLS_BACK_EVENT');
     k1b_assert((int) $pdo->query("SELECT COUNT(*) FROM meli_notification_work_items WHERE remote_resource_id='9399'")->fetchColumn() === 0, 'K2_ADMISSION_FAILURE_ROLLS_BACK_SOURCE');
 
-    // Administrative resume restores the canonical pointer in the same
-    // transaction instead of merely changing the source status.
-    $pdo->exec('UPDATE queue_v4_clean_jobs SET state="completed" WHERE id=' . $concurrentPointer);
-    $pdo->exec('UPDATE meli_notification_work_items SET status="paused",attempts=attempts+1 WHERE id=' . $concurrentWork);
-    $resumed = (new NotificationWorkItemService())->resume(9211, [9211]);
-    k1b_assert($resumed === 1, 'K2_RESUME_SOURCE_REACTIVATED');
-    k1b_assert(k2_active_pointer($pdo, 9201, 9211, $concurrentWork) > 0, 'K2_RESUME_CANONICAL_POINTER_RESTORED');
-
     // Debounce is still an availability fence and never performs HTTP while
     // receiving or admitting the event.
     $settings->set('notifications.debounce_seconds', '2', 'notifications');
     AppSettingsService::clearCache();
     $beforeDebounceCalls = count(Cap2DomainsWire::$calls);
-    k2_receive($service, 'k2-debounce', 99211, 9310, '2026-09-19T10:00:08Z');
-    $debouncedWork = (int) $pdo->query("SELECT id FROM meli_notification_work_items WHERE meli_account_id=9211 AND remote_resource_id='9310'")->fetchColumn();
-    $debouncedPointer = k2_active_pointer($pdo, 9201, 9211, $debouncedWork);
+    k2_receive($service, 'k2-debounce', 99241, 9310, '2026-09-19T10:00:30Z');
+    $debouncedWork = (int) $pdo->query("SELECT id FROM meli_notification_work_items WHERE meli_account_id=9241 AND remote_resource_id='9310'")->fetchColumn();
+    $debouncedPointer = k2_active_pointer($pdo, 9201, 9241, $debouncedWork);
     k1b_assert($debouncedPointer > 0, 'K2_DEBOUNCE_POINTER_DURABLE');
     k1b_assert((int) $pdo->query('SELECT available_at>UTC_TIMESTAMP(3) FROM queue_v4_clean_jobs WHERE id=' . $debouncedPointer)->fetchColumn() === 1, 'K2_DEBOUNCE_AVAILABILITY_PRESERVED');
     k1b_assert(count(Cap2DomainsWire::$calls) === $beforeDebounceCalls, 'K2_DEBOUNCE_ADMISSION_ZERO_HTTP');
+    k1b_assert(k2_run($pdo, 1, 9241)['physical_http_calls'] === 0, 'K2_DEBOUNCE_BEFORE_DUE_ZERO_HTTP');
+    Cap2DomainsWire::$responses['/questions/9310'] = [200, ['id' => 9310, 'text' => 'K2 debounce question', 'status' => 'UNANSWERED', 'seller_id' => 99241]];
+    k2_wait_until_pointer_due($pdo, $debouncedPointer);
+    k1b_assert(k2_run($pdo, 1, 9241)['physical_http_calls'] === 1, 'K2_DEBOUNCE_AFTER_DUE_ONE_HTTP');
+    k1b_assert((string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=' . $debouncedPointer)->fetchColumn() === 'completed', 'K2_DEBOUNCE_NATURAL_CLOSE');
+
+    // Due time is necessary but not sufficient: source leases, manual
+    // reservations, unresolved transport and query failures all fail closed.
+    k2_receive($service, 'k2-wakeup-fences', 99241, 9311, '2026-09-19T10:00:31Z');
+    $fencedWork = (int) $pdo->query("SELECT id FROM meli_notification_work_items WHERE meli_account_id=9241 AND remote_resource_id='9311'")->fetchColumn();
+    $fencedPointer = k2_active_pointer($pdo, 9201, 9241, $fencedWork);
+    k2_wait_until_pointer_due($pdo, $fencedPointer);
+    $pdo->exec('UPDATE meli_notification_work_items SET locked_by="k2-active-lease",locked_at=UTC_TIMESTAMP(),lock_expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 5 MINUTE) WHERE id=' . $fencedWork);
+    k1b_assert((new QueueV4CleanRepository($pdo))->releaseDueNotificationWaiting([9241], 9241) === 0, 'K2_WAKEUP_ACTIVE_SOURCE_LEASE_BLOCKED');
+    k1b_assert((string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=' . $fencedPointer)->fetchColumn() === 'waiting', 'K2_WAKEUP_LEASE_PRESERVES_WAITING');
+    $pdo->exec('UPDATE meli_notification_work_items SET locked_by=NULL,locked_at=NULL,lock_expires_at=NULL WHERE id=' . $fencedWork);
+
+    $pdo->exec("INSERT INTO manual_campaigns(campaign_token,created_by_user_id,company_scope_key,scope_key,preset,status,configuration_json) VALUES('k2-wakeup-reservation-fixture-0000000001',1,9201,'account:9241','safe','active','{}')");
+    $campaignId = (int) $pdo->lastInsertId();
+    $pdo->prepare("INSERT INTO manual_campaign_operations(manual_campaign_id,queue_key,operation_key,meli_account_id,company_id) VALUES(?,'notification_fallback','question_exact',9241,9201)")->execute([$campaignId]);
+    $operationId = (int) $pdo->lastInsertId();
+    $pdo->prepare("INSERT INTO manual_campaign_items(manual_campaign_id,operation_id,queue_key,operation_key,source_id,meli_account_id,company_id,human_label,position_no) VALUES(?,?,'notification_fallback','question_exact',?,9241,9201,'K2 reservation fixture',1)")->execute([$campaignId, $operationId, (string) $fencedWork]);
+    $campaignItemId = (int) $pdo->lastInsertId();
+    $pdo->prepare("INSERT INTO manual_campaign_reservations(manual_campaign_id,manual_campaign_item_id,queue_key,source_id,company_id,meli_account_id,status,expires_at) VALUES(?,?,'notification_fallback',?,9201,9241,'active',DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 5 MINUTE))")
+        ->execute([$campaignId, $campaignItemId, (string) $fencedWork]);
+    $reservationId = (int) $pdo->lastInsertId();
+    k1b_assert((new QueueV4CleanRepository($pdo))->releaseDueNotificationWaiting([9241], 9241) === 0, 'K2_WAKEUP_ACTIVE_RESERVATION_BLOCKED');
+    $pdo->exec('UPDATE manual_campaign_reservations SET status="released",released_at=UTC_TIMESTAMP(3) WHERE id=' . $reservationId);
+
+    $pdo->prepare("INSERT INTO queue_v4_clean_transport_events(company_id,meli_account_id,source_kind,work_id,lease_generation,request_id,method,endpoint_key,dispatch_state,physical_started_at) VALUES(9201,9241,'queue',?,0,?,'GET','notification_work_item','PHYSICAL_STARTED',UTC_TIMESTAMP(3))")
+        ->execute([$fencedPointer, 'k2-wakeup-unresolved-' . bin2hex(random_bytes(4))]);
+    $transportId = (int) $pdo->lastInsertId();
+    k1b_assert((new QueueV4CleanRepository($pdo))->releaseDueNotificationWaiting([9241], 9241) === 0, 'K2_WAKEUP_UNRESOLVED_TRANSPORT_BLOCKED');
+    $pdo->exec('UPDATE queue_v4_clean_transport_events SET dispatch_state="RESPONSE_KNOWN",response_known_at=UTC_TIMESTAMP(3),http_status=503 WHERE id=' . $transportId);
+
+    $pdo->exec("CREATE TRIGGER k2_fail_notification_wakeup BEFORE UPDATE ON queue_v4_clean_jobs FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='K2_SYNTHETIC_WAKEUP_QUERY_FAILURE'");
+    $wakeupFailedClosed = false;
+    try {
+        (new QueueV4CleanRepository($pdo))->releaseDueNotificationWaiting([9241], 9241);
+    } catch (Throwable $error) {
+        $wakeupFailedClosed = str_contains($error->getMessage(), 'K2_SYNTHETIC_WAKEUP_QUERY_FAILURE');
+    } finally {
+        $pdo->exec('DROP TRIGGER k2_fail_notification_wakeup');
+    }
+    k1b_assert($wakeupFailedClosed, 'K2_WAKEUP_INFRASTRUCTURE_ERROR_PROPAGATES');
+    k1b_assert((string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=' . $fencedPointer)->fetchColumn() === 'waiting', 'K2_WAKEUP_QUERY_FAILURE_NOT_FALSE_RELEASED');
 
     k1b_assert((string) getenv('ML_WRITE_ENABLED') === 'false', 'K2_REMOTE_WRITES_DISABLED');
     echo "STATUS=PASS K2_NOTIFICATION_CANONICAL_ADMISSION_MYSQL\n";
@@ -325,12 +515,32 @@ function k2_latest_pointer(PDO $pdo, int $companyId, int $accountId, int $workId
     return (int) ($stmt->fetchColumn() ?: 0);
 }
 
+function k2_wait_until_pointer_due(PDO $pdo, int $pointerId): void
+{
+    $statement = $pdo->prepare('SELECT TIMESTAMPDIFF(MICROSECOND,UTC_TIMESTAMP(3),available_at) FROM queue_v4_clean_jobs WHERE id=?');
+    $statement->execute([$pointerId]);
+    $remainingMicros = max(0, (int) $statement->fetchColumn());
+    usleep(max(1_200_000, min(5_000_000, $remainingMicros + 150_000)));
+}
+
 /** @return array<string,mixed> */
 function k2_run(PDO $pdo, int $budget, int $accountId): array
 {
     QueueV4CleanCycleBudget::start($budget);
     try {
         return (new QueueV4CleanWorker($pdo, new QueueV4CleanRepository($pdo)))
+            ->run('test', $budget, 45, [$accountId], $accountId);
+    } finally {
+        QueueV4CleanCycleBudget::clear();
+    }
+}
+
+/** @return array<string,mixed> */
+function k2_run_with_finalize_barrier(PDO $pdo, int $budget, int $accountId, callable $barrier): array
+{
+    QueueV4CleanCycleBudget::start($budget);
+    try {
+        return (new QueueV4CleanWorker($pdo, new QueueV4CleanRepository($pdo), null, null, null, null, null, $barrier))
             ->run('test', $budget, 45, [$accountId], $accountId);
     } finally {
         QueueV4CleanCycleBudget::clear();

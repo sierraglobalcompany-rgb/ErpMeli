@@ -436,6 +436,22 @@ final class NotificationCollationRecoveryService
                  consecutive_failures=0,processing_event_id=NULL,completed_at=NULL
              WHERE id IN (' . $placeholders . ') AND status IN ("error","retry","complete")'
         )->execute($ids);
+        $sources = $pdo->prepare(
+            'SELECT id,meli_account_id FROM meli_notification_work_items
+             WHERE id IN (' . $placeholders . ') AND status="pending" ORDER BY id'
+        );
+        $sources->execute($ids);
+        $work = new NotificationWorkItemService();
+        foreach ($sources->fetchAll(PDO::FETCH_ASSOC) as $source) {
+            $receipt = $work->admitCanonicalWork(
+                (int) $source['id'],
+                (int) ($source['meli_account_id'] ?? 0),
+                $pdo
+            );
+            if (!$receipt['accepted']) {
+                throw new \RuntimeException('notification_collation_recovery_admission_denied:' . $receipt['reason']);
+            }
+        }
     }
 
     /** @param array<string,mixed> $item */

@@ -3,7 +3,11 @@ declare(strict_types=1);
 
 // Real schema 301, launchers, handlers, PDO guards and receipts. Only curl_exec is fake.
 $callsQaRoot = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_VERIFY_QA_ROOT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906')), '/');
-if (!(str_starts_with($callsQaRoot, 'D:/Codex/') || str_starts_with($callsQaRoot, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $callsQaRoot), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
+$projectQaRoot = str_replace('\\', '/', dirname(__DIR__) . '/storage/codex-');
+if (!(str_starts_with($callsQaRoot, 'D:/Codex/')
+        || str_starts_with($callsQaRoot, 'C:/codex/capacity-save-kiss/')
+        || str_starts_with($callsQaRoot, $projectQaRoot))
+    || in_array('..', explode('/', $callsQaRoot), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 putenv('CAP2_MANUAL_QA_ROOT=' . $callsQaRoot . '/domains-regression');
 putenv('CALLS_QA_STORAGE_ROOT=' . $callsQaRoot . '/domains-regression/storage');
 require __DIR__.'/cap2_manual_fixture.php';

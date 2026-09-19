@@ -55,7 +55,11 @@ final class NotificationWorkItemService
               id=LAST_INSERT_ID(id),
               meli_account_id=COALESCE(VALUES(meli_account_id),meli_account_id),
               meli_user_id=COALESCE(VALUES(meli_user_id),meli_user_id),
-              canonical_topic=VALUES(canonical_topic),
+              canonical_topic=CASE
+                WHEN VALUES(latest_event_sent_at) IS NULL
+                  OR latest_event_sent_at IS NULL
+                  OR VALUES(latest_event_sent_at)>=latest_event_sent_at
+                THEN VALUES(canonical_topic) ELSE canonical_topic END,
               latest_event_id=CASE
                 WHEN VALUES(latest_event_sent_at) IS NULL
                   OR latest_event_sent_at IS NULL
@@ -66,12 +70,14 @@ final class NotificationWorkItemService
                 THEN VALUES(latest_event_sent_at) ELSE latest_event_sent_at END,
               priority=LEAST(priority,VALUES(priority)),
               occurrence_count=occurrence_count+1,
-              rerun_requested=IF(status="running",1,rerun_requested),
+              rerun_requested=IF(status="running" AND latest_event_id=VALUES(latest_event_id),1,rerun_requested),
               status=CASE
+                WHEN latest_event_id<>VALUES(latest_event_id) THEN status
                 WHEN status="running" THEN status
                 WHEN VALUES(status) IN ("ignored","quarantined") THEN VALUES(status)
                 ELSE "pending" END,
               next_run_at=CASE
+                WHEN latest_event_id<>VALUES(latest_event_id) THEN next_run_at
                 WHEN status="running" THEN next_run_at
                 ELSE DATE_ADD(UTC_TIMESTAMP(),INTERVAL ? SECOND) END,
               last_received_at=UTC_TIMESTAMP(),
@@ -80,10 +86,10 @@ final class NotificationWorkItemService
                   OR latest_event_sent_at IS NULL
                   OR VALUES(latest_event_sent_at)>=latest_event_sent_at
                 THEN 0 ELSE consecutive_failures END,
-              last_error_code=NULL,
-              last_error_message=NULL,
-              last_error_diagnostic_id=NULL,
-              last_error_stage=NULL'
+              last_error_code=IF(latest_event_id=VALUES(latest_event_id),NULL,last_error_code),
+              last_error_message=IF(latest_event_id=VALUES(latest_event_id),NULL,last_error_message),
+              last_error_diagnostic_id=IF(latest_event_id=VALUES(latest_event_id),NULL,last_error_diagnostic_id),
+              last_error_stage=IF(latest_event_id=VALUES(latest_event_id),NULL,last_error_stage)'
         );
         $params = [
             $accountId,
@@ -107,13 +113,16 @@ final class NotificationWorkItemService
         ];
         $stmt->execute($params);
         $workId = (int) $pdo->lastInsertId();
-        $correlationStmt = $pdo->prepare('SELECT correlation_id FROM meli_notification_work_items WHERE id=? LIMIT 1');
+        $correlationStmt = $pdo->prepare('SELECT correlation_id,latest_event_id,status FROM meli_notification_work_items WHERE id=? LIMIT 1');
         $correlationStmt->execute([$workId]);
-        $workCorrelationId = (string) ($correlationStmt->fetchColumn() ?: $correlationId);
+        $workState = $correlationStmt->fetch(PDO::FETCH_ASSOC);
+        $workCorrelationId = (string) (($workState['correlation_id'] ?? '') ?: $correlationId);
+        $latestEvent = (int) ($workState['latest_event_id'] ?? 0) === $eventId;
         $pdo->prepare(
             'UPDATE meli_notification_events
              SET work_item_id=?,canonical_topic=?,resource_type=?,remote_resource_id=?,
-                 validation_status=?,disposition=?,correlation_id=?,acknowledged_at=UTC_TIMESTAMP()
+                 validation_status=?,disposition=?,status=IF(?=1,status,"ignored"),
+                 correlation_id=?,acknowledged_at=UTC_TIMESTAMP()
              WHERE id=?'
         )->execute([
             $workId,
@@ -121,11 +130,14 @@ final class NotificationWorkItemService
             $classification['resource_type'],
             $classification['resource_id'],
             !empty($classification['valid']) ? 'valid' : 'invalid',
-            $status,
+            $latestEvent ? $status : 'out_of_order',
+            $latestEvent ? 1 : 0,
             $workCorrelationId,
             $eventId,
         ]);
-        $this->admitCanonicalWork($workId, $accountId);
+        if ($latestEvent) {
+            $this->admitCanonicalWork($workId, $accountId, $pdo);
+        }
         return $workId;
     }
 
@@ -391,25 +403,52 @@ final class NotificationWorkItemService
         if (!$this->available()) {
             return 0;
         }
-        $sql = 'UPDATE meli_notification_work_items SET status="pending",next_run_at=UTC_TIMESTAMP(),last_error_code=NULL,last_error_message=NULL,last_error_diagnostic_id=NULL,last_error_stage=NULL WHERE status="paused"';
+        $where = 'status="paused"';
         $params = [];
         if ($allowedAccountIds !== null) {
             if ($allowedAccountIds === []) {
                 return 0;
             }
-            $sql .= ' AND meli_account_id IN (' . implode(',', array_fill(0, count($allowedAccountIds), '?')) . ')';
+            $where .= ' AND meli_account_id IN (' . implode(',', array_fill(0, count($allowedAccountIds), '?')) . ')';
             array_push($params, ...$allowedAccountIds);
         }
         if ($accountId !== null && $accountId > 0) {
-            $sql .= ' AND meli_account_id=?';
+            $where .= ' AND meli_account_id=?';
             $params[] = $accountId;
         }
-        $stmt = Database::connection()->prepare($sql);
-        $stmt->execute($params);
+        $pdo = Database::connection();
+        $pdo->beginTransaction();
+        try {
+            $select = $pdo->prepare('SELECT id,meli_account_id FROM meli_notification_work_items WHERE ' . $where . ' ORDER BY id FOR UPDATE');
+            $select->execute($params);
+            $sources = $select->fetchAll(PDO::FETCH_ASSOC);
+            if ($sources !== []) {
+                $ids = array_map(static fn (array $row): int => (int) $row['id'], $sources);
+                $update = $pdo->prepare(
+                    'UPDATE meli_notification_work_items
+                     SET status="pending",next_run_at=UTC_TIMESTAMP(),last_error_code=NULL,last_error_message=NULL,
+                         last_error_diagnostic_id=NULL,last_error_stage=NULL
+                     WHERE id IN (' . implode(',', array_fill(0, count($ids), '?')) . ') AND status="paused"'
+                );
+                $update->execute($ids);
+                foreach ($sources as $source) {
+                    $receipt = $this->admitCanonicalWork((int) $source['id'], (int) ($source['meli_account_id'] ?? 0), $pdo);
+                    if (!$receipt['accepted']) {
+                        throw new \RuntimeException('notification_resume_admission_denied:' . $receipt['reason']);
+                    }
+                }
+            }
+            $pdo->commit();
+        } catch (Throwable $error) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
+        }
         if ($accountId === null && $allowedAccountIds === null) {
             $this->settings->set('notifications.enabled', '1', 'notifications');
         }
-        return $stmt->rowCount();
+        return count($sources);
     }
 
     /** @param list<int>|null $allowedAccountIds */
@@ -418,25 +457,50 @@ final class NotificationWorkItemService
         if (!$this->available()) {
             return 0;
         }
-        $sql = 'UPDATE meli_notification_work_items
-                SET status="pending",consecutive_failures=0,processing_event_id=NULL,next_run_at=UTC_TIMESTAMP(),
-                    last_error_code=NULL,last_error_message=NULL,last_error_diagnostic_id=NULL,last_error_stage=NULL
-                WHERE status IN ("error","quarantined")';
+        $where = 'status IN ("error","quarantined")';
         $params = [];
         if ($allowedAccountIds !== null) {
             if ($allowedAccountIds === []) {
                 return 0;
             }
-            $sql .= ' AND meli_account_id IN (' . implode(',', array_fill(0, count($allowedAccountIds), '?')) . ')';
+            $where .= ' AND meli_account_id IN (' . implode(',', array_fill(0, count($allowedAccountIds), '?')) . ')';
             array_push($params, ...$allowedAccountIds);
         }
         if ($workId !== null && $workId > 0) {
-            $sql .= ' AND id=?';
+            $where .= ' AND id=?';
             $params[] = $workId;
         }
-        $stmt = Database::connection()->prepare($sql);
-        $stmt->execute($params);
-        return $stmt->rowCount();
+        $pdo = Database::connection();
+        $pdo->beginTransaction();
+        try {
+            $select = $pdo->prepare('SELECT id,meli_account_id FROM meli_notification_work_items WHERE ' . $where . ' ORDER BY id FOR UPDATE');
+            $select->execute($params);
+            $sources = $select->fetchAll(PDO::FETCH_ASSOC);
+            if ($sources !== []) {
+                $ids = array_map(static fn (array $row): int => (int) $row['id'], $sources);
+                $update = $pdo->prepare(
+                    'UPDATE meli_notification_work_items
+                     SET status="pending",consecutive_failures=0,processing_event_id=NULL,next_run_at=UTC_TIMESTAMP(),
+                         last_error_code=NULL,last_error_message=NULL,last_error_diagnostic_id=NULL,last_error_stage=NULL
+                     WHERE id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')
+                       AND status IN ("error","quarantined")'
+                );
+                $update->execute($ids);
+                foreach ($sources as $source) {
+                    $receipt = $this->admitCanonicalWork((int) $source['id'], (int) ($source['meli_account_id'] ?? 0), $pdo);
+                    if (!$receipt['accepted']) {
+                        throw new \RuntimeException('notification_retry_admission_denied:' . $receipt['reason']);
+                    }
+                }
+            }
+            $pdo->commit();
+            return count($sources);
+        } catch (Throwable $error) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
+        }
     }
 
     public function inspectExact(int $workId, int $accountId, int $companyId = 0, bool $queueV4Exact = false): CampaignItemState
@@ -706,42 +770,101 @@ final class NotificationWorkItemService
         }
     }
 
-    private function admitCanonicalWork(int $workId, ?int $accountId): void
+    /**
+     * Restores or reuses the one canonical executable pointer for a durable
+     * notification source. Callers may pass their transaction PDO so source
+     * and admission are confirmed atomically.
+     *
+     * @return array{accepted:bool,job_id:?int,deduplicated:bool,reason:string}
+     */
+    public function admitCanonicalWork(int $workId, ?int $accountId, ?PDO $pdo = null): array
     {
         if ($workId < 1 || $accountId === null || $accountId < 1) {
-            return;
+            return ['accepted' => false, 'job_id' => null, 'deduplicated' => false, 'reason' => 'INVALID_SOURCE'];
         }
-        $pdo = Database::connection();
+        $pdo ??= Database::connection();
         $ownsTransaction = !$pdo->inTransaction();
         if ($ownsTransaction) {
             $pdo->beginTransaction();
         }
         try {
             $lookup = $pdo->prepare(
-                'SELECT w.id,w.status,a.company_id,w.meli_account_id
+                'SELECT w.id,w.status,w.latest_event_id,w.attempts,a.company_id,w.meli_account_id
                  FROM meli_notification_work_items w
                  JOIN meli_accounts a ON a.id=w.meli_account_id
                  WHERE w.id=? AND w.meli_account_id=? LIMIT 1 FOR UPDATE'
             );
             $lookup->execute([$workId, $accountId]);
             $row = $lookup->fetch(PDO::FETCH_ASSOC);
-            if (!is_array($row) || !in_array((string) ($row['status'] ?? ''), ['pending', 'retry'], true)) {
+            if (!is_array($row)) {
                 if ($ownsTransaction) {
                     $pdo->commit();
                 }
-                return;
+                return ['accepted' => false, 'job_id' => null, 'deduplicated' => false, 'reason' => 'INVALID_SOURCE'];
             }
 
-            (new CronAdmissionService($pdo))->submit(
+            $active = $pdo->prepare(
+                'SELECT id,idempotency_key,state
+                 FROM queue_v4_clean_jobs
+                 WHERE company_id=? AND meli_account_id=?
+                   AND job_type="domain_exact" AND resource_id=?
+                   AND state IN ("ready","running","waiting")
+                   AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="notification_work_item"
+                 ORDER BY id DESC LIMIT 2 FOR UPDATE'
+            );
+            $active->execute([(int) $row['company_id'], (int) $row['meli_account_id'], (string) $workId]);
+            $activeRows = $active->fetchAll(PDO::FETCH_ASSOC);
+            if (count($activeRows) > 1) {
+                throw new \RuntimeException('notification_canonical_multiple_active_pointers');
+            }
+            if ($activeRows !== []) {
+                $pointer = $activeRows[0];
+                $receipt = [
+                    'accepted' => true,
+                    'job_id' => (int) $pointer['id'],
+                    'deduplicated' => true,
+                    'reason' => 'ALREADY_QUEUED',
+                ];
+                $prefix = 'domain:notification_work_item:';
+                $storedKey = (string) ($pointer['idempotency_key'] ?? '');
+                if ((string) $row['status'] !== 'running' && str_starts_with($storedKey, $prefix)) {
+                    $receipt = (new CronAdmissionService($pdo))->submit(
+                        'notification_work_item',
+                        (int) $row['company_id'],
+                        (int) $row['meli_account_id'],
+                        $workId,
+                        substr($storedKey, strlen($prefix))
+                    );
+                }
+                if ($ownsTransaction) {
+                    $pdo->commit();
+                }
+                return $receipt;
+            }
+
+            if (!in_array((string) ($row['status'] ?? ''), ['pending', 'retry'], true)) {
+                if ($ownsTransaction) {
+                    $pdo->commit();
+                }
+                return ['accepted' => false, 'job_id' => null, 'deduplicated' => false, 'reason' => 'SOURCE_NOT_ELIGIBLE'];
+            }
+
+            $latestEventId = (int) ($row['latest_event_id'] ?? 0);
+            $generationKey = 'source:' . $workId . ':event:' . $latestEventId . ':attempt:' . (int) ($row['attempts'] ?? 0);
+            $receipt = (new CronAdmissionService($pdo))->submit(
                 'notification_work_item',
                 (int) $row['company_id'],
                 (int) $row['meli_account_id'],
                 $workId,
-                'source:' . $workId
+                $generationKey
             );
+            if (!$receipt['accepted']) {
+                throw new \RuntimeException('notification_canonical_admission_denied:' . $receipt['reason']);
+            }
             if ($ownsTransaction) {
                 $pdo->commit();
             }
+            return $receipt;
         } catch (Throwable $error) {
             if ($ownsTransaction && $pdo->inTransaction()) {
                 $pdo->rollBack();

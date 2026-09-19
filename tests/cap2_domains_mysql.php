@@ -22,7 +22,11 @@ putenv('DB_PASS=');
 putenv('DB_NAME=erp_meli_k1d_test_cap2_domains_' . bin2hex(random_bytes(4)));
 putenv('APP_KEY=cap2-disposable-test-only-not-a-real-secret');
 $fixtureRoot = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_VERIFY_QA_ROOT') ?: 'D:/Codex/tmp/erp-meli/calls-20260906')), '/') . '/domains-' . bin2hex(random_bytes(8));
-if (!(str_starts_with($fixtureRoot, 'D:/Codex/') || str_starts_with($fixtureRoot, 'C:/codex/capacity-save-kiss/')) || in_array('..', explode('/', $fixtureRoot), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
+$projectQaRoot = str_replace('\\', '/', dirname(__DIR__) . '/storage/codex-');
+if (!(str_starts_with($fixtureRoot, 'D:/Codex/')
+        || str_starts_with($fixtureRoot, 'C:/codex/capacity-save-kiss/')
+        || str_starts_with($fixtureRoot, $projectQaRoot))
+    || in_array('..', explode('/', $fixtureRoot), true)) throw new RuntimeException('EXPLICIT_LOCAL_QA_ROOT_REQUIRED');
 define('ERP_INSTALLATION_ROOT', $fixtureRoot . '/install');
 foreach ([ERP_INSTALLATION_ROOT, $fixtureRoot . '/private'] as $directory) {
     if (!mkdir($directory, 0777, true) && !is_dir($directory)) {
@@ -106,7 +110,14 @@ try {
     $firstEvent=(int)$pdo->query("SELECT latest_event_id FROM meli_notification_work_items WHERE id={$rerunWork}")->fetchColumn();
     Cap2DomainsWire::$responses['/questions/8177']=[200,['id'=>8177,'text'=>'rerun','status'=>'UNANSWERED','seller_id'=>99011]];
     Cap2DomainsWire::$onWire=static function () use($pdo): void { cap2_domains_notification($pdo,'question','8177','/questions/8177'); };
-    try { cap2_domains_assert_run($pdo,$rerunJob,'/questions/8177','question_exact'); }
+    try {
+        usleep(1100000);
+        $before=count(Cap2DomainsWire::$calls);
+        $rerunResult=cap2_domains_run($pdo,1);
+        k1b_assert(count(Cap2DomainsWire::$calls)===$before+1 && $rerunResult['physical_http_calls']===1 && $rerunResult['cycle_used']===1,'question_exact_rerun_one_wire');
+        k1b_assert((int)$rerunResult['deferred']===1 && $pdo->query("SELECT state FROM queue_v4_clean_jobs WHERE id={$rerunJob}")->fetchColumn()==='waiting','question_exact_rerun_pointer_waits:'.json_encode($rerunResult));
+        echo "PASS=question_exact_rerun\n";
+    }
     finally { Cap2DomainsWire::$onWire=null; }
     $rerun=$pdo->query("SELECT status,latest_event_id,processing_event_id FROM meli_notification_work_items WHERE id={$rerunWork}")->fetch();
     k1b_assert($rerun['status']==='pending' && (int)$rerun['latest_event_id']>$firstEvent && $rerun['processing_event_id']===null,'rerun_source_preserved');
@@ -231,7 +242,7 @@ function cap2_domains_notification(PDO $pdo, string $type, string $id, string $p
 
 function cap2_domains_pointer(PDO $pdo, string $capability, int $source): int
 {
-    $existing = $pdo->prepare("SELECT id FROM queue_v4_clean_jobs WHERE company_id=9001 AND meli_account_id=9011 AND job_type='domain_exact' AND resource_id=? AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.capability'))=? LIMIT 1");
+    $existing = $pdo->prepare("SELECT id FROM queue_v4_clean_jobs WHERE company_id=9001 AND meli_account_id=9011 AND job_type='domain_exact' AND resource_id=? AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.capability'))=? ORDER BY state IN ('ready','running','waiting') DESC,id DESC LIMIT 1");
     $existing->execute([(string)$source, $capability]);
     if ($id = $existing->fetchColumn()) { return (int)$id; }
     $pdo->prepare("INSERT INTO queue_v4_clean_jobs(company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json) VALUES(9001,9011,'domain_exact',?,?,?)")

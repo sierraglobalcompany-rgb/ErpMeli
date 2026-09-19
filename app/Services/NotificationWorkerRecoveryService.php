@@ -68,6 +68,22 @@ final class NotificationWorkerRecoveryService
                      WHERE id IN (' . $placeholders . ') AND status IN ("error","retry")'
                 );
                 $stmt->execute($matched);
+                $sources = $pdo->prepare(
+                    'SELECT id,meli_account_id FROM meli_notification_work_items
+                     WHERE id IN (' . $placeholders . ') AND status="pending" ORDER BY id'
+                );
+                $sources->execute($matched);
+                $work = new NotificationWorkItemService();
+                foreach ($sources->fetchAll(PDO::FETCH_ASSOC) as $source) {
+                    $receipt = $work->admitCanonicalWork(
+                        (int) $source['id'],
+                        (int) ($source['meli_account_id'] ?? 0),
+                        $pdo
+                    );
+                    if (!$receipt['accepted']) {
+                        throw new \RuntimeException('notification_worker_recovery_admission_denied:' . $receipt['reason']);
+                    }
+                }
                 $pdo->commit();
             } catch (Throwable $error) {
                 if ($pdo->inTransaction()) {

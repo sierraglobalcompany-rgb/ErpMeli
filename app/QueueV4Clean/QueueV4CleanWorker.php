@@ -839,7 +839,10 @@ final class QueueV4CleanWorker
                 ),
             );
             if ((string) ($result['status'] ?? '') === 'complete') {
-                return ['state' => 'completed'];
+                $source = $this->domainSource($capability, $sourceId, $companyId, $accountId);
+                return $source === null
+                    ? ['state' => 'review', 'classification' => 'domain_source_missing_after_process']
+                    : $this->domainOutcome($capability, $source);
             }
             if (in_array((string) ($result['status'] ?? ''), ['action_required', 'error'], true)) {
                 return ['state' => 'review', 'classification' => 'notification_work_item_' . $this->safeToken((string) ($result['status'] ?? 'error'))];

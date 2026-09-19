@@ -60,3 +60,24 @@ These are documented in `docs/architecture/K1B_V4_COUPLING_AUDIT.csv`. They are 
 ## Fail-safe drainer rule
 
 K1B does not implement a second active drainer. If a future/manual drainer tries to use the current V4 drainer adapter directly, it is denied fail-closed; FIFO is not skipped and no remote call is made.
+
+## K2 notification admission
+
+Notifications keep `meli_notification_events` as the durable receipt and
+`meli_notification_work_items` as the coalesced domain source. Neither table is
+a second executable queue. An actionable source is admitted through
+`CronAdmissionService` into the canonical store in the same PDO transaction.
+
+The executable identity is one active pointer per tenant and source. A later
+event received after a terminal pointer uses the source event/attempt generation
+to create a new pointer; a later event received while processing leaves the
+current pointer waiting through `rerun_requested`. Old out-of-order events stay
+durable but cannot reopen or downgrade the source. Retry, resume, and the two
+existing selective notification recoveries restore canonical admission in the
+same transaction as their source transition.
+
+Simultaneous webhook transactions may deadlock while coalescing the same source.
+The receiver retries that fully rolled-back local transaction once. It does not
+perform business HTTP during reception, create an outbox, or add another
+drainer. `ML_WRITE_ENABLED=false` continues to deny commercial remote mutations;
+it does not disable local event persistence or authorized GET processing.

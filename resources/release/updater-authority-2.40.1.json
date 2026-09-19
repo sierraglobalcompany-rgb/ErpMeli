@@ -252,7 +252,7 @@
         },
         {
             "path": "app/Services/CronAdmissionService.php",
-            "sha256": "d3f54484b2cb77833f0867308be2f88713594f2c63ef4159bf514ff4cc1406ff"
+            "sha256": "a555b7972644c8ee90f4b8376714f53a250d19f0107b7780f401af9bf854e5ed"
         },
         {
             "path": "app/Services/CronApiRiskSummaryService.php",

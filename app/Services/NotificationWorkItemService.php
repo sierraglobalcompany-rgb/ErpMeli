@@ -135,7 +135,7 @@ final class NotificationWorkItemService
             $workCorrelationId,
             $eventId,
         ]);
-        if ($latestEvent) {
+        if ($latestEvent && (string) ($workState['status'] ?? '') !== 'running') {
             $this->admitCanonicalWork($workId, $accountId, $pdo);
         }
         return $workId;
@@ -801,45 +801,6 @@ final class NotificationWorkItemService
                     $pdo->commit();
                 }
                 return ['accepted' => false, 'job_id' => null, 'deduplicated' => false, 'reason' => 'INVALID_SOURCE'];
-            }
-
-            $active = $pdo->prepare(
-                'SELECT id,idempotency_key,state
-                 FROM queue_v4_clean_jobs
-                 WHERE company_id=? AND meli_account_id=?
-                   AND job_type="domain_exact" AND resource_id=?
-                   AND state IN ("ready","running","waiting")
-                   AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="notification_work_item"
-                 ORDER BY id DESC LIMIT 2 FOR UPDATE'
-            );
-            $active->execute([(int) $row['company_id'], (int) $row['meli_account_id'], (string) $workId]);
-            $activeRows = $active->fetchAll(PDO::FETCH_ASSOC);
-            if (count($activeRows) > 1) {
-                throw new \RuntimeException('notification_canonical_multiple_active_pointers');
-            }
-            if ($activeRows !== []) {
-                $pointer = $activeRows[0];
-                $receipt = [
-                    'accepted' => true,
-                    'job_id' => (int) $pointer['id'],
-                    'deduplicated' => true,
-                    'reason' => 'ALREADY_QUEUED',
-                ];
-                $prefix = 'domain:notification_work_item:';
-                $storedKey = (string) ($pointer['idempotency_key'] ?? '');
-                if ((string) $row['status'] !== 'running' && str_starts_with($storedKey, $prefix)) {
-                    $receipt = (new CronAdmissionService($pdo))->submit(
-                        'notification_work_item',
-                        (int) $row['company_id'],
-                        (int) $row['meli_account_id'],
-                        $workId,
-                        substr($storedKey, strlen($prefix))
-                    );
-                }
-                if ($ownsTransaction) {
-                    $pdo->commit();
-                }
-                return $receipt;
             }
 
             if (!in_array((string) ($row['status'] ?? ''), ['pending', 'retry'], true)) {

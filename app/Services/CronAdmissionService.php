@@ -72,6 +72,16 @@ final class CronAdmissionService
             return $this->receipt(false, null, false, 'SOURCE_NOT_ELIGIBLE');
         }
         $sourceFutureAt = $this->sourceFutureAvailabilityAt($capability, $sourceRow);
+        if ($capability === 'notification_work_item') {
+            $active = $this->activeNotificationPointer($companyId, $accountId, $sourceId);
+            if ($active !== null) {
+                $jobId = (int) $active['id'];
+                if ($sourceFutureAt !== null) {
+                    $this->alignPointerAvailability($capability, $jobId, $companyId, $accountId, $sourceId, $sourceFutureAt);
+                }
+                return $this->receipt(true, $jobId, true, 'ALREADY_QUEUED');
+            }
+        }
         $storedKey = 'domain:' . $capability . ':' . trim($idempotencyKey);
         if (strlen($storedKey) > 190) {
             throw new RuntimeException('cron_admission_idempotency_key_too_long');
@@ -302,6 +312,27 @@ final class CronAdmissionService
         }
 
         return gmdate('Y-m-d H:i:s', $timestamp);
+    }
+
+    /** @return array{id:int,state:string}|null */
+    private function activeNotificationPointer(int $companyId, int $accountId, int $sourceId): ?array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT id,state
+             FROM queue_v4_clean_jobs
+             WHERE company_id=? AND meli_account_id=?
+               AND job_type="domain_exact" AND resource_id=?
+               AND state IN ("ready","running","waiting")
+               AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,"$.capability"))="notification_work_item"
+             ORDER BY id DESC LIMIT 2 FOR UPDATE'
+        );
+        $statement->execute([$companyId, $accountId, (string) $sourceId]);
+        $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        if (count($rows) > 1) {
+            throw new RuntimeException('notification_canonical_multiple_active_pointers');
+        }
+
+        return isset($rows[0]) && is_array($rows[0]) ? $rows[0] : null;
     }
 
     private function alignPointerAvailability(

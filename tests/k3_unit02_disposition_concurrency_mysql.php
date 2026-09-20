@@ -100,4 +100,3 @@ echo json_encode([
     'metrics' => $metrics,
     'real_meli_http' => 0,
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL;
-

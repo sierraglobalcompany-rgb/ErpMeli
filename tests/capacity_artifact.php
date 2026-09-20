@@ -327,8 +327,8 @@ function cap2BuildRawArtifact(
     ];
 }
 
-/** Rehash only the existing dependency entries; every input is from one immutable commit. */
-function cap2UpdaterAuthority(string $root, string $commit): array
+/** Rehash existing entries and add explicitly named runtime blobs from one immutable commit. */
+function cap2UpdaterAuthority(string $root, string $commit, array $additionalPaths = []): array
 {
     if (preg_match('/^[0-9a-fA-F]{40}$/D', $commit) !== 1) {
         throw new RuntimeException('updater_authority_explicit_40_hex_commit_required');
@@ -360,6 +360,27 @@ function cap2UpdaterAuthority(string $root, string $commit): array
         }
         $entry->sha256 = hash('sha256', cap2GitBlob($root, $commit, $entry->path));
     }
+    foreach ($additionalPaths as $path) {
+        if (!is_string($path) || trim($path) !== $path || $path === '') {
+            throw new RuntimeException('updater_authority_additional_path_invalid');
+        }
+        cap2AssertRuntimePackagePath($path);
+        if (isset($seen[$path]) || $path === $authorityPath) {
+            throw new RuntimeException('updater_authority_duplicate_or_self_dependency:' . $path);
+        }
+        if (trim(cap2Git($root, ['cat-file', '-t', $commit . ':' . $path])['stdout']) !== 'blob') {
+            throw new RuntimeException('updater_authority_dependency_blob_required:' . $path);
+        }
+        $seen[$path] = true;
+        $entry = new stdClass();
+        $entry->path = $path;
+        $entry->sha256 = hash('sha256', cap2GitBlob($root, $commit, $path));
+        $authority->new_runtime_dependencies[] = $entry;
+    }
+    usort(
+        $authority->new_runtime_dependencies,
+        static fn (stdClass $left, stdClass $right): int => strcmp((string) $left->path, (string) $right->path)
+    );
     return get_object_vars($authority);
 }
 
@@ -368,7 +389,7 @@ function cap2ArtifactMain(array $argv): int
     $root = dirname(__DIR__);
     $mode = $argv[1] ?? '';
     if ($mode === 'updater-authority') {
-        $authority = cap2UpdaterAuthority($root, $argv[2] ?? '');
+        $authority = cap2UpdaterAuthority($root, $argv[2] ?? '', array_slice($argv, 3));
         // Validate/read every blob before any write: malformed input leaves the file unchanged.
         cap2WriteFile($root . '/resources/release/updater-authority-2.40.1.json', cap2Json($authority));
         echo 'UPDATER_AUTHORITY_DEPENDENCIES=' . count($authority['new_runtime_dependencies']) . "\n";
@@ -393,7 +414,7 @@ function cap2ArtifactMain(array $argv): int
         return 0;
     }
     if ($mode !== 'build') {
-        throw new RuntimeException('usage: capacity_artifact.php build <ref> <absolute-output> [yyyymmdd] [family] [base-40-hex-commit] | updater-authority <40-hex-commit>');
+        throw new RuntimeException('usage: capacity_artifact.php build <ref> <absolute-output> [yyyymmdd] [family] [base-40-hex-commit] | updater-authority <40-hex-commit> [additional-runtime-path ...]');
     }
     $out = str_replace('\\', '/', $argv[3] ?? '');
     if (preg_match('#^[A-Za-z]:/#D', $out) !== 1) {

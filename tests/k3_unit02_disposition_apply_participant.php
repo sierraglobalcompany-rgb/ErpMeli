@@ -13,7 +13,6 @@ if ($evidencePath === '' || $startPath === '' || $readyPath === '') {
     fwrite(STDERR, "k3_unit02_participant_arguments_required\n");
     exit(2);
 }
-
 try {
     $decoded = json_decode((string) file_get_contents($evidencePath), true, 64, JSON_THROW_ON_ERROR);
     if (!is_array($decoded)) {
@@ -38,4 +37,3 @@ try {
     fwrite(STDERR, $error::class . ':' . $error->getMessage() . PHP_EOL);
     exit(1);
 }
-

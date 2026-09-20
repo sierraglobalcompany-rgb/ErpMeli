@@ -18,4 +18,3 @@ try {
     fwrite(STDERR, $error::class . ':' . $error->getMessage() . PHP_EOL);
     exit(1);
 }
-

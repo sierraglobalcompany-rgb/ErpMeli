@@ -1186,11 +1186,7 @@ final class PackDiscoveryOccupancyPolicy
             'SELECT * FROM queue_v4_clean_attempts WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=? AND lease_generation=? FOR UPDATE',
             [(int) $identity['historical_attempt_id'], (int) $identity['queue_id'], (int) $identity['company_id'], (int) $identity['meli_account_id'], (int) $identity['historical_generation']]
         );
-        if (!is_array($attempt)
-            || (string) ($attempt['dispatch_state'] ?? '') !== 'PHYSICAL_STARTED'
-            || (int) ($attempt['physical_http_calls'] ?? 0) !== 1
-            || !in_array((string) ($attempt['error_class'] ?? ''), self::UNIT02_HISTORICAL_ATTEMPT_ERROR_CLASSES, true)
-            || !empty($attempt['response_known_at'])) {
+        if (!is_array($attempt)) {
             return false;
         }
         $event = $this->fetchOne(
@@ -1198,7 +1194,34 @@ final class PackDiscoveryOccupancyPolicy
             [(int) $identity['historical_transport_event_id'], (int) $identity['queue_id'], (int) $identity['historical_attempt_id'], (int) $identity['company_id'], (int) $identity['meli_account_id'], (int) $identity['historical_generation']]
         );
 
-        return is_array($event)
+        return is_array($event) && $this->historicalUnknownRowsMatch($identity, $attempt, $event);
+    }
+
+    /**
+     * Pure row predicate shared with the private evidence verifier.
+     *
+     * @param array<string,mixed> $identity
+     * @param array<string,mixed> $attempt
+     * @param array<string,mixed> $event
+     */
+    private function historicalUnknownRowsMatch(array $identity, array $attempt, array $event): bool
+    {
+        return (int) ($attempt['id'] ?? 0) === (int) ($identity['historical_attempt_id'] ?? 0)
+            && (int) ($attempt['job_id'] ?? 0) === (int) ($identity['queue_id'] ?? 0)
+            && (int) ($attempt['company_id'] ?? 0) === (int) ($identity['company_id'] ?? 0)
+            && (int) ($attempt['meli_account_id'] ?? 0) === (int) ($identity['meli_account_id'] ?? 0)
+            && (int) ($attempt['lease_generation'] ?? 0) === (int) ($identity['historical_generation'] ?? 0)
+            && (string) ($attempt['dispatch_state'] ?? '') === 'PHYSICAL_STARTED'
+            && (int) ($attempt['physical_http_calls'] ?? 0) === 1
+            && in_array((string) ($attempt['error_class'] ?? ''), self::UNIT02_HISTORICAL_ATTEMPT_ERROR_CLASSES, true)
+            && empty($attempt['response_known_at'])
+            && (int) ($event['id'] ?? 0) === (int) ($identity['historical_transport_event_id'] ?? 0)
+            && (string) ($event['source_kind'] ?? '') === 'queue'
+            && (int) ($event['work_id'] ?? 0) === (int) ($identity['queue_id'] ?? 0)
+            && (int) ($event['attempt_id'] ?? 0) === (int) ($identity['historical_attempt_id'] ?? 0)
+            && (int) ($event['company_id'] ?? 0) === (int) ($identity['company_id'] ?? 0)
+            && (int) ($event['meli_account_id'] ?? 0) === (int) ($identity['meli_account_id'] ?? 0)
+            && (int) ($event['lease_generation'] ?? 0) === (int) ($identity['historical_generation'] ?? 0)
             && (string) ($event['dispatch_state'] ?? '') === 'PHYSICAL_STARTED'
             && !empty($event['physical_started_at'])
             && empty($event['response_known_at'])

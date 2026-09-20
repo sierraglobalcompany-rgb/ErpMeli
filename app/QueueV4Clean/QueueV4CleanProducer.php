@@ -13,6 +13,10 @@ use Throwable;
 final class QueueV4CleanProducer
 {
     private const PACK_DISCOVERY_OUTSTANDING_TARGET = 2;
+    private const PACK_DISCOVERY_ROUTE_NONE = 0;
+    private const PACK_DISCOVERY_ROUTE_EXISTING = 1;
+    private const PACK_DISCOVERY_ROUTE_COVERAGE = 2;
+    private const PACK_DISCOVERY_FAIRNESS_KEY = 'pack_discovery_fairness';
 
     public function __construct(
         private readonly PDO $pdo,
@@ -169,15 +173,35 @@ final class QueueV4CleanProducer
         $created = 0;
         $this->pdo->beginTransaction();
         try {
+            $occupancy = new PackDiscoveryOccupancyPolicy($this->pdo);
+            $occupancy->lockAdmissionAuthority();
+            $lastSuccessfulRoute = $this->lockPackDiscoveryFairnessCursor();
             while ($created < self::PACK_DISCOVERY_OUTSTANDING_TARGET) {
-                if ((new PackDiscoveryOccupancyPolicy($this->pdo))->outstandingForAccounts($accounts) >= self::PACK_DISCOVERY_OUTSTANDING_TARGET) {
+                if ($occupancy->outstandingForAccounts($accounts) >= self::PACK_DISCOVERY_OUTSTANDING_TARGET) {
                     break;
                 }
 
                 $this->pdo->exec('SAVEPOINT r0_pack_discovery_pair');
-                $row = $this->packExactDiscoveryCandidate($sourceTenantClauses, $params);
+                $preferredRoute = $lastSuccessfulRoute === self::PACK_DISCOVERY_ROUTE_EXISTING
+                    ? self::PACK_DISCOVERY_ROUTE_COVERAGE
+                    : self::PACK_DISCOVERY_ROUTE_EXISTING;
+                $route = $preferredRoute;
+                $row = $this->packDiscoveryCandidateForRoute(
+                    $route,
+                    $sourceTenantClauses,
+                    $packTenantClauses,
+                    $params,
+                );
                 if (!is_array($row)) {
-                    $row = $this->createPackExactDiscoverySourceCoverage($packTenantClauses, $params);
+                    $route = $preferredRoute === self::PACK_DISCOVERY_ROUTE_EXISTING
+                        ? self::PACK_DISCOVERY_ROUTE_COVERAGE
+                        : self::PACK_DISCOVERY_ROUTE_EXISTING;
+                    $row = $this->packDiscoveryCandidateForRoute(
+                        $route,
+                        $sourceTenantClauses,
+                        $packTenantClauses,
+                        $params,
+                    );
                     if (!is_array($row)) {
                         $this->pdo->exec('RELEASE SAVEPOINT r0_pack_discovery_pair');
                         break;
@@ -193,6 +217,8 @@ final class QueueV4CleanProducer
                     ['pack_id' => (string) $row['external_resource_id']],
                 );
                 if (!empty($receipt['accepted']) && empty($receipt['deduplicated'])) {
+                    $this->recordPackDiscoverySuccessfulRoute($route);
+                    $lastSuccessfulRoute = $route;
                     $created++;
                     $this->pdo->exec('RELEASE SAVEPOINT r0_pack_discovery_pair');
                     continue;
@@ -210,6 +236,69 @@ final class QueueV4CleanProducer
             }
             throw $error;
         }
+    }
+
+    private function lockPackDiscoveryFairnessCursor(): int
+    {
+        // This producer-specific checkpoint stores a route enum in last_job_id,
+        // not a Queue V4 job id. Persisting the last successful route keeps the
+        // next preference stable across scheduler processes without new schema.
+        $insert = $this->pdo->prepare(
+            'INSERT IGNORE INTO queue_v4_clean_checkpoints
+             (producer_key,company_id,meli_account_id,watermark_at,next_due_at,last_job_id)
+             VALUES (?,0,0,NULL,UTC_TIMESTAMP(3),?)'
+        );
+        $insert->execute([self::PACK_DISCOVERY_FAIRNESS_KEY, self::PACK_DISCOVERY_ROUTE_NONE]);
+
+        $select = $this->pdo->prepare(
+            'SELECT COALESCE(last_job_id,0)
+               FROM queue_v4_clean_checkpoints
+              WHERE producer_key=? AND company_id=0 AND meli_account_id=0
+              FOR UPDATE'
+        );
+        $select->execute([self::PACK_DISCOVERY_FAIRNESS_KEY]);
+        $route = (int) $select->fetchColumn();
+        if (!in_array($route, [
+            self::PACK_DISCOVERY_ROUTE_NONE,
+            self::PACK_DISCOVERY_ROUTE_EXISTING,
+            self::PACK_DISCOVERY_ROUTE_COVERAGE,
+        ], true)) {
+            throw new RuntimeException('queue_v4_clean_pack_discovery_fairness_cursor_invalid');
+        }
+
+        return $route;
+    }
+
+    /**
+     * @param list<string> $sourceTenantClauses
+     * @param list<string> $packTenantClauses
+     * @param list<int> $params
+     * @return array{id:int,company_id:int,meli_account_id:int,external_resource_id:string}|null
+     */
+    private function packDiscoveryCandidateForRoute(
+        int $route,
+        array $sourceTenantClauses,
+        array $packTenantClauses,
+        array $params,
+    ): ?array {
+        return match ($route) {
+            self::PACK_DISCOVERY_ROUTE_EXISTING => $this->packExactDiscoveryCandidate($sourceTenantClauses, $params),
+            self::PACK_DISCOVERY_ROUTE_COVERAGE => $this->createPackExactDiscoverySourceCoverage($packTenantClauses, $params),
+            default => throw new RuntimeException('queue_v4_clean_pack_discovery_route_invalid'),
+        };
+    }
+
+    private function recordPackDiscoverySuccessfulRoute(int $route): void
+    {
+        if (!in_array($route, [self::PACK_DISCOVERY_ROUTE_EXISTING, self::PACK_DISCOVERY_ROUTE_COVERAGE], true)) {
+            throw new RuntimeException('queue_v4_clean_pack_discovery_route_invalid');
+        }
+        $update = $this->pdo->prepare(
+            'UPDATE queue_v4_clean_checkpoints
+                SET last_job_id=?
+              WHERE producer_key=? AND company_id=0 AND meli_account_id=0'
+        );
+        $update->execute([$route, self::PACK_DISCOVERY_FAIRNESS_KEY]);
     }
 
     /**

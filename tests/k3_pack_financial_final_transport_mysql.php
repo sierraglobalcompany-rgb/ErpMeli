@@ -12,8 +12,10 @@ r0h3_prepare_transport_fixture($pdo, 1);
 r0h3_clear_positive_scope($pdo);
 r0h3_defer_fresh_order_discovery($pdo);
 
-$packExternal = '870001';
-$orders = ['970001', '970002'];
+$suffix = (string) random_int(100000, 999999);
+$packExternal = '87' . $suffix;
+$saleKey = 'P:' . $packExternal;
+$orders = ['97' . $suffix . '1', '97' . $suffix . '2'];
 $packId = r0h3_insert($pdo, 'meli_packs', [
     'meli_account_id' => 7201,
     'external_pack_id' => $packExternal,
@@ -49,11 +51,11 @@ foreach ($orders as $externalOrder) {
     r0h3_insert($pdo, 'meli_pack_orders', ['meli_pack_id' => $packId, 'meli_order_id' => $orderId]);
 }
 
-$state = (new SaleFinancialStateService())->projectSale(7200, 7201, 'P:' . $packExternal);
+$state = (new SaleFinancialStateService())->projectSale(7200, 7201, $saleKey);
 $sourceId = r0h3_insert($pdo, 'sale_financial_reconciliation_jobs', [
     'company_id' => 7200,
     'meli_account_id' => 7201,
-    'sale_key' => 'P:' . $packExternal,
+    'sale_key' => $saleKey,
     'external_sale_id' => $packExternal,
     'input_version' => (string) $state['input_version'],
     'status' => 'pending',
@@ -93,16 +95,20 @@ Cap2DomainsWire::$onWire = static function (): void {
 $first = r0h3_worker_run($pdo, 1, [7201]);
 $firstIds = array_map(static fn (array $call): string => (string) ($call['query']['order_ids'] ?? ''), Cap2DomainsWire::$calls);
 r0h3_assert($firstIds === [$orders[0]], 'k3_financial_first_window_one_order_get', ['calls' => Cap2DomainsWire::$calls, 'run' => $first]);
-$checkpointsAfterFirst = (int) $pdo->query(
+$checkpointCount = $pdo->prepare(
     "SELECT COUNT(*) FROM sale_financial_evidence
-      WHERE company_id=7200 AND meli_account_id=7201 AND sale_key='P:870001'
+      WHERE company_id=7200 AND meli_account_id=7201 AND sale_key=?
         AND evidence_type='billing_capture' AND evidence_json LIKE '%\"format\":\"billing_order_v2\"%'"
-)->fetchColumn();
-$publicationsAfterFirst = (int) $pdo->query(
+);
+$publicationCount = $pdo->prepare(
     "SELECT COUNT(*) FROM meli_sale_financial_history h
       JOIN meli_sale_financials f ON f.id=h.meli_sale_financial_id
-      WHERE f.company_id=7200 AND f.meli_account_id=7201 AND f.sale_key='P:870001' AND h.source='billing_official'"
-)->fetchColumn();
+      WHERE f.company_id=7200 AND f.meli_account_id=7201 AND f.sale_key=? AND h.source='billing_official'"
+);
+$checkpointCount->execute([$saleKey]);
+$checkpointsAfterFirst = (int) $checkpointCount->fetchColumn();
+$publicationCount->execute([$saleKey]);
+$publicationsAfterFirst = (int) $publicationCount->fetchColumn();
 r0h3_assert($checkpointsAfterFirst === 1 && $publicationsAfterFirst === 0, 'k3_financial_no_early_publication', [
     'checkpoints' => $checkpointsAfterFirst,
     'publications' => $publicationsAfterFirst,
@@ -123,16 +129,10 @@ while (time() <= $dueAt + 1) {
 r0h3_wait_for_global_rhythm($pdo);
 $second = r0h3_worker_run($pdo, 1, [7201]);
 $allIds = array_map(static fn (array $call): string => (string) ($call['query']['order_ids'] ?? ''), Cap2DomainsWire::$calls);
-$checkpointsFinal = (int) $pdo->query(
-    "SELECT COUNT(*) FROM sale_financial_evidence
-      WHERE company_id=7200 AND meli_account_id=7201 AND sale_key='P:870001'
-        AND evidence_type='billing_capture' AND evidence_json LIKE '%\"format\":\"billing_order_v2\"%'"
-)->fetchColumn();
-$publicationsFinal = (int) $pdo->query(
-    "SELECT COUNT(*) FROM meli_sale_financial_history h
-      JOIN meli_sale_financials f ON f.id=h.meli_sale_financial_id
-      WHERE f.company_id=7200 AND f.meli_account_id=7201 AND f.sale_key='P:870001' AND h.source='billing_official'"
-)->fetchColumn();
+$checkpointCount->execute([$saleKey]);
+$checkpointsFinal = (int) $checkpointCount->fetchColumn();
+$publicationCount->execute([$saleKey]);
+$publicationsFinal = (int) $publicationCount->fetchColumn();
 $sourceFinal = (string) $pdo->query('SELECT status FROM sale_financial_reconciliation_jobs WHERE id=' . $sourceId)->fetchColumn();
 $queueFinal = (string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=' . $queueId)->fetchColumn();
 

@@ -7,10 +7,10 @@
     "publication_policy": {
         "base_commit": "b9d1644522e7b36d5729c5ba090279b3ffc50fb8",
         "authority_model": "FULL_MANAGED_RUNTIME",
-        "package_file_count": 1248,
-        "component_count": 1247,
-        "paths_sha256": "081a4a3de613643f78bb5a882da39eb91f4bcaa5cbba7bd8443522ce8197a1bd",
-        "dependency_registry_sha256": "322955c7bc23a8e6420ebc9bebec6e9ca78754d727d31992cbde847c086aa67f",
+        "package_file_count": 1249,
+        "component_count": 1248,
+        "paths_sha256": "df5c736148d29a9720b79b47ad956121fa2ca76aacb9b1f6beed9127eb72bc55",
+        "dependency_registry_sha256": "5ad4f7ea9dc5a2d93f54d9bc41a01c4c1c3a06f0c03332dd5fe3741663e8f9c4",
         "raw_git_blobs": true,
         "protected_external_state_excluded": true,
         "build_only_excluded": true
@@ -1110,8 +1110,14 @@
         },
         "runtime_app_queuev4clean_packdiscoveryoccupancypolicy_php": {
             "path": "app/QueueV4Clean/PackDiscoveryOccupancyPolicy.php",
-            "sha256": "e5cf7a2a477b7eb236826b3f20317a97cf60c38c291b782ad57b9a0919ad54a2",
-            "sha256_lf": "e5cf7a2a477b7eb236826b3f20317a97cf60c38c291b782ad57b9a0919ad54a2",
+            "sha256": "c9b4294bf9ed4a88006f61e74cc1402ab3567edca3aed0a333ec7acd8eef38c5",
+            "sha256_lf": "c9b4294bf9ed4a88006f61e74cc1402ab3567edca3aed0a333ec7acd8eef38c5",
+            "text": true
+        },
+        "runtime_app_queuev4clean_packdiscoveryunit02dispositionservice_php": {
+            "path": "app/QueueV4Clean/PackDiscoveryUnit02DispositionService.php",
+            "sha256": "d27e59f45b30cb387284ce36e760a1f638a0bc09d916359567321a10eafeb341",
+            "sha256_lf": "d27e59f45b30cb387284ce36e760a1f638a0bc09d916359567321a10eafeb341",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleancontrolservice_php": {
@@ -7104,8 +7110,8 @@
         },
         "runtime_resources_release_managed_runtime_dependencies_2_40_1_json": {
             "path": "resources/release/managed-runtime-dependencies-2.40.1.json",
-            "sha256": "322955c7bc23a8e6420ebc9bebec6e9ca78754d727d31992cbde847c086aa67f",
-            "sha256_lf": "322955c7bc23a8e6420ebc9bebec6e9ca78754d727d31992cbde847c086aa67f",
+            "sha256": "5ad4f7ea9dc5a2d93f54d9bc41a01c4c1c3a06f0c03332dd5fe3741663e8f9c4",
+            "sha256_lf": "5ad4f7ea9dc5a2d93f54d9bc41a01c4c1c3a06f0c03332dd5fe3741663e8f9c4",
             "text": true
         },
         "runtime_resources_release_production_legacy_quarantine_2_36_1_json": {
@@ -7476,8 +7482,8 @@
         },
         "runtime_resources_release_updater_authority_2_40_1_json": {
             "path": "resources/release/updater-authority-2.40.1.json",
-            "sha256": "88bb073645aae123244e810cd23da5733593871fdd4fc3f30ea908831fda8105",
-            "sha256_lf": "88bb073645aae123244e810cd23da5733593871fdd4fc3f30ea908831fda8105",
+            "sha256": "556fd6a1c1d875e87d2fcb21ad4fd0d6cd810c5e334c82877f8c70fc01d435ad",
+            "sha256_lf": "556fd6a1c1d875e87d2fcb21ad4fd0d6cd810c5e334c82877f8c70fc01d435ad",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

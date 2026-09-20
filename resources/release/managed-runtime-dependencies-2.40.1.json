@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
     "authority_id": "worker-cycle-control-single-truth-release-2.40.1-runtime-dependencies",
-    "runtime_manifest_paths_sha256": "081a4a3de613643f78bb5a882da39eb91f4bcaa5cbba7bd8443522ce8197a1bd",
+    "runtime_manifest_paths_sha256": "df5c736148d29a9720b79b47ad956121fa2ca76aacb9b1f6beed9127eb72bc55",
     "coverage_base_commit": "6cb102595d0f2e5d47b07fa868aec8bbc22f8653",
     "classifications": {
         "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

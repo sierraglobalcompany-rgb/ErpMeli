@@ -23,6 +23,14 @@ final class PackDiscoveryOccupancyPolicy
     public const UNIT02_DISPOSITION_STATUS = 'occupancy_withdrawn_historical_transport_unknown';
     public const OUTSTANDING_TARGET = 2;
 
+    /** @var list<string> */
+    private const UNIT02_HISTORICAL_ATTEMPT_ERROR_CLASSES = [
+        'remote_result_uncertain',
+        'remoteresultuncertainexception',
+        'remote_result_uncertain_safe_get',
+        'domain_source_waiting:order_enrichment_pack:remote_uncertain_safe_get',
+    ];
+
     public function __construct(private readonly PDO $pdo)
     {
     }
@@ -1181,7 +1189,7 @@ final class PackDiscoveryOccupancyPolicy
         if (!is_array($attempt)
             || (string) ($attempt['dispatch_state'] ?? '') !== 'PHYSICAL_STARTED'
             || (int) ($attempt['physical_http_calls'] ?? 0) !== 1
-            || !in_array((string) ($attempt['error_class'] ?? ''), ['remote_result_uncertain', 'remoteresultuncertainexception', 'remote_result_uncertain_safe_get'], true)
+            || !in_array((string) ($attempt['error_class'] ?? ''), self::UNIT02_HISTORICAL_ATTEMPT_ERROR_CLASSES, true)
             || !empty($attempt['response_known_at'])) {
             return false;
         }

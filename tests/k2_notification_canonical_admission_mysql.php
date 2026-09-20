@@ -61,14 +61,16 @@ try {
         (9261,9201,'K2 account worker recovery',99261,'conectado'),
         (9271,9202,'K2 account collation recovery',99271,'conectado'),
         (9281,9201,'K2 account uncertainty',99281,'conectado'),
-        (9291,9201,'K2 account concurrent',99291,'conectado')");
+        (9291,9201,'K2 account concurrent',99291,'conectado'),
+        (9301,9201,'K2 account uncertainty real attempt',99301,'conectado'),
+        (9302,9202,'K2 account uncertainty isolation',99302,'conectado')");
     $token = Crypto::encrypt('k2-test-access');
     $refresh = Crypto::encrypt('k2-test-refresh');
     $tokens = $pdo->prepare('INSERT INTO meli_tokens(meli_account_id,access_token_encrypted,refresh_token_encrypted,expires_at) VALUES(?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 DAY))');
     $tokens->execute([9211, $token, $refresh]);
     $tokens->execute([9221, $token, $refresh]);
     $tokens->execute([9231, $token, $refresh]);
-    foreach ([9241, 9251, 9261, 9271, 9281, 9291] as $tokenAccountId) {
+    foreach ([9241, 9251, 9261, 9271, 9281, 9291, 9301, 9302] as $tokenAccountId) {
         $tokens->execute([$tokenAccountId, $token, $refresh]);
     }
     $pdo->exec("UPDATE queue_v4_clean_control SET engine_state='ACTIVE',readiness_state='CERTIFIED' WHERE control_key='primary'");
@@ -310,7 +312,8 @@ try {
         (new NotificationWorkItemService())->retry($uncertainWork, [9281]);
     } catch (Throwable $error) {
         $uncertainReason = $error->getMessage();
-        $uncertainDenied = str_contains($error->getMessage(), 'REVIEW_HELD');
+        $uncertainDenied = str_contains($error->getMessage(), 'REVIEW_HELD')
+            || str_contains($error->getMessage(), 'UNRESOLVED_TRANSPORT_HELD');
     }
     k1b_assert($uncertainDenied, 'K2_UNCERTAIN_REVIEW_NOT_REOPENED:' . $uncertainReason);
     k1b_assert((string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=' . $uncertainWork)->fetchColumn() === 'error', 'K2_UNCERTAIN_RETRY_SOURCE_ROLLED_BACK');
@@ -381,6 +384,179 @@ try {
     }
     k1b_assert($wakeupFailedClosed, 'K2_WAKEUP_INFRASTRUCTURE_ERROR_PROPAGATES');
     k1b_assert((string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=' . $fencedPointer)->fetchColumn() === 'waiting', 'K2_WAKEUP_QUERY_FAILURE_NOT_FALSE_RELEASED');
+
+    // C1: the domain itself leases the source, incrementing attempts from 0
+    // to 1. The simulated wire crosses the physical boundary but returns no
+    // knowable response, leaving the real queue transport journal unresolved.
+    // This scenario runs last because an unresolved physical attempt correctly
+    // keeps the shared rhythm permit occupied until it is adjudicated.
+    k2_receive($service, 'k2-uncertain-real-e1', 99301, 9364, '2026-09-19T10:00:24Z');
+    $uncertainRealWork = (int) $pdo->query("SELECT id FROM meli_notification_work_items WHERE meli_account_id=9301 AND remote_resource_id='9364'")->fetchColumn();
+    $uncertainRealPointer = k2_active_pointer($pdo, 9201, 9301, $uncertainRealWork);
+    $uncertainRealPointersBefore = k2_pointer_count($pdo, 9201, 9301, $uncertainRealWork);
+    Cap2DomainsWire::$responses['/questions/9364'] = [0, [], 'K2_SYNTHETIC_TIMEOUT_AFTER_PHYSICAL_START'];
+    k2_wait_until_pointer_due($pdo, $uncertainRealPointer);
+    $uncertainRealCallsBefore = count(Cap2DomainsWire::$calls);
+    $uncertainRealRun = k2_run($pdo, 1, 9301);
+    $uncertainRealSourceBeforeRetry = $pdo->query(
+        'SELECT status,attempts,last_error_code,last_error_stage FROM meli_notification_work_items WHERE id=' . $uncertainRealWork
+    )->fetch(PDO::FETCH_ASSOC);
+    $uncertainRealTransport = (int) $pdo->query(
+        "SELECT COUNT(*) FROM queue_v4_clean_transport_events WHERE company_id=9201 AND meli_account_id=9301"
+        . " AND source_kind='queue' AND work_id=" . $uncertainRealPointer
+        . " AND dispatch_state='PHYSICAL_STARTED' AND response_known_at IS NULL"
+    )->fetchColumn();
+    k1b_assert(count(Cap2DomainsWire::$calls) === $uncertainRealCallsBefore + 1, 'K2_UNCERTAIN_REAL_ONE_SIMULATED_PHYSICAL_ATTEMPT');
+    k1b_assert(
+        array_key_exists('physical_http_calls', $uncertainRealRun)
+        && $uncertainRealRun['physical_http_calls'] === null
+        && ($uncertainRealRun['physical_http_calls_certainty'] ?? '') === 'UNKNOWN'
+        && (int) ($uncertainRealRun['unresolved_dispatches'] ?? 0) === 1
+        && (int) ($uncertainRealRun['possible_physical_calls_max'] ?? 0) === 1
+        && (int) (($uncertainRealRun['call_budget']['known_physical_calls'] ?? 0)) === 1,
+        'K2_UNCERTAIN_REAL_RECEIPT_PRESERVES_UNKNOWN:' . json_encode($uncertainRealRun, JSON_UNESCAPED_SLASHES)
+    );
+    k1b_assert((int) ($uncertainRealSourceBeforeRetry['attempts'] ?? 0) === 1, 'K2_UNCERTAIN_REAL_DOMAIN_LEASE_INCREMENTED_ATTEMPT');
+    k1b_assert(
+        ($uncertainRealSourceBeforeRetry['status'] ?? '') === 'error'
+        && ($uncertainRealSourceBeforeRetry['last_error_code'] ?? '') === 'remote_result_uncertain',
+        'K2_UNCERTAIN_REAL_SOURCE_RETAINED_ERROR:' . json_encode($uncertainRealSourceBeforeRetry, JSON_UNESCAPED_SLASHES)
+    );
+    k1b_assert((string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=' . $uncertainRealPointer)->fetchColumn() === 'review', 'K2_UNCERTAIN_REAL_POINTER_REVIEW_HELD');
+    k1b_assert($uncertainRealTransport === 1, 'K2_UNCERTAIN_REAL_TRANSPORT_JOURNAL_UNRESOLVED');
+
+    Cap2DomainsWire::$responses['/questions/9364'] = [200, ['id' => 9364, 'text' => 'Must remain held', 'status' => 'UNANSWERED', 'seller_id' => 99301]];
+    $uncertainRealDenied = false;
+    $uncertainRealReason = '';
+    try {
+        (new NotificationWorkItemService())->retry($uncertainRealWork, [9301]);
+    } catch (Throwable $error) {
+        $uncertainRealReason = $error->getMessage();
+        $uncertainRealDenied = str_contains($uncertainRealReason, 'REVIEW_HELD')
+            || str_contains($uncertainRealReason, 'UNRESOLVED_TRANSPORT_HELD');
+    }
+    $uncertainRealSourceAfterRetry = $pdo->query(
+        'SELECT status,attempts,last_error_code,last_error_stage FROM meli_notification_work_items WHERE id=' . $uncertainRealWork
+    )->fetch(PDO::FETCH_ASSOC);
+    $uncertainRealAfter = [
+        'denied' => $uncertainRealDenied,
+        'reason' => $uncertainRealReason,
+        'source' => $uncertainRealSourceAfterRetry,
+        'pointer_count' => k2_pointer_count($pdo, 9201, 9301, $uncertainRealWork),
+        'active_pointer' => k2_active_pointer($pdo, 9201, 9301, $uncertainRealWork),
+        'review_state' => (string) $pdo->query('SELECT state FROM queue_v4_clean_jobs WHERE id=' . $uncertainRealPointer)->fetchColumn(),
+        'unresolved_transport' => (int) $pdo->query(
+            "SELECT COUNT(*) FROM queue_v4_clean_transport_events WHERE company_id=9201 AND meli_account_id=9301"
+            . " AND source_kind='queue' AND work_id=" . $uncertainRealPointer
+            . " AND dispatch_state='PHYSICAL_STARTED' AND response_known_at IS NULL"
+        )->fetchColumn(),
+    ];
+    k1b_assert($uncertainRealDenied, 'K2_UNCERTAIN_REAL_RETRY_NOT_REOPENED:' . json_encode($uncertainRealAfter, JSON_UNESCAPED_SLASHES));
+    k1b_assert(
+        ($uncertainRealSourceAfterRetry['status'] ?? '') === 'error'
+        && (int) ($uncertainRealSourceAfterRetry['attempts'] ?? 0) === 1
+        && ($uncertainRealSourceAfterRetry['last_error_code'] ?? '') === 'remote_result_uncertain',
+        'K2_UNCERTAIN_REAL_RETRY_SOURCE_ROLLED_BACK:' . json_encode($uncertainRealAfter, JSON_UNESCAPED_SLASHES)
+    );
+    k1b_assert($uncertainRealAfter['pointer_count'] === $uncertainRealPointersBefore, 'K2_UNCERTAIN_REAL_RETRY_ZERO_NEW_POINTERS');
+    k1b_assert($uncertainRealAfter['active_pointer'] === 0 && $uncertainRealAfter['review_state'] === 'review', 'K2_UNCERTAIN_REAL_RETRY_NO_EXECUTABLE_POINTER');
+    k1b_assert($uncertainRealAfter['unresolved_transport'] === 1, 'K2_UNCERTAIN_REAL_RETRY_PRESERVES_TRANSPORT');
+
+    // C3: a later accepted event changes both event identity and admission key,
+    // but must remain durably coalesced behind the same unresolved source
+    // fence already established by C1; no second physical attempt is needed.
+    $uncertainLaterFirstEvent = (int) $pdo->query('SELECT latest_event_id FROM meli_notification_work_items WHERE id=' . $uncertainRealWork)->fetchColumn();
+    $uncertainLaterAccepted = k2_receive($service, 'k2-uncertain-real-e2', 99301, 9364, '2026-09-19T10:00:25Z');
+    $uncertainLaterLatestEvent = (int) $pdo->query('SELECT latest_event_id FROM meli_notification_work_items WHERE id=' . $uncertainRealWork)->fetchColumn();
+    k1b_assert($uncertainLaterAccepted['accepted'] === true, 'K2_UNCERTAIN_LATER_EVENT_DURABLY_ACCEPTED');
+    k1b_assert($uncertainLaterLatestEvent > $uncertainLaterFirstEvent, 'K2_UNCERTAIN_LATER_EVENT_ID_ADVANCED');
+    k1b_assert(k2_pointer_count($pdo, 9201, 9301, $uncertainRealWork) === 1, 'K2_UNCERTAIN_LATER_EVENT_ZERO_ALTERNATE_POINTERS');
+    $uncertainLaterPointers = $pdo->query(
+        'SELECT id,state,last_error_class,idempotency_key FROM queue_v4_clean_jobs WHERE company_id=9201 AND meli_account_id=9301'
+        . ' AND resource_id=' . $uncertainRealWork . ' ORDER BY id'
+    )->fetchAll(PDO::FETCH_ASSOC);
+    k1b_assert(
+        k2_active_pointer($pdo, 9201, 9301, $uncertainRealWork) === 0,
+        'K2_UNCERTAIN_LATER_EVENT_ZERO_EXECUTABLE_POINTERS:' . json_encode($uncertainLaterPointers, JSON_UNESCAPED_SLASHES)
+    );
+
+    // The same shared frontier also protects resume when an accepted later
+    // event was subsequently paused. Its source transition must roll back.
+    k1b_assert((new NotificationWorkItemService())->pause(9301, [9301]) === 1, 'K2_UNCERTAIN_LATER_SOURCE_PAUSED');
+    $uncertainLaterResumeDenied = false;
+    try {
+        (new NotificationWorkItemService())->resume(9301, [9301]);
+    } catch (Throwable $error) {
+        $uncertainLaterResumeDenied = str_contains($error->getMessage(), 'UNRESOLVED_TRANSPORT_HELD')
+            || str_contains($error->getMessage(), 'REVIEW_HELD');
+    }
+    k1b_assert($uncertainLaterResumeDenied, 'K2_UNCERTAIN_LATER_RESUME_NOT_REOPENED');
+    k1b_assert((string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=' . $uncertainRealWork)->fetchColumn() === 'paused', 'K2_UNCERTAIN_LATER_RESUME_SOURCE_ROLLED_BACK');
+
+    // C5: unresolved evidence in another tenant/source does not contaminate a
+    // normal recoverable review in company B.
+    k2_receive($service, 'k2-uncertain-isolation-e1', 99302, 9366, '2026-09-19T10:00:27Z');
+    $uncertainIsolationWork = (int) $pdo->query("SELECT id FROM meli_notification_work_items WHERE meli_account_id=9302 AND remote_resource_id='9366'")->fetchColumn();
+    $uncertainIsolationPointer = k2_active_pointer($pdo, 9202, 9302, $uncertainIsolationWork);
+    $pdo->exec('UPDATE meli_notification_work_items SET status="error" WHERE id=' . $uncertainIsolationWork);
+    k2_wait_until_pointer_due($pdo, $uncertainIsolationPointer);
+    k2_run($pdo, 1, 9302);
+    k1b_assert((new NotificationWorkItemService())->retry($uncertainIsolationWork, [9302]) === 1, 'K2_UNCERTAIN_OTHER_TENANT_DOES_NOT_BLOCK_SAFE_RETRY');
+    k1b_assert(k2_active_pointer($pdo, 9202, 9302, $uncertainIsolationWork) === $uncertainIsolationPointer, 'K2_UNCERTAIN_ISOLATION_REUSES_SAFE_POINTER');
+
+    // C6 worker recovery reaches the same admission frontier. The recovery
+    // transaction must roll back when historical transport remains unknown.
+    $pdo->prepare('UPDATE meli_notification_work_items SET status="error",last_error_code="processing_error",last_error_stage="processing",last_error_diagnostic_id="K2-U-WR",last_processed_at=UTC_TIMESTAMP() WHERE id=?')->execute([$uncertainRealWork]);
+    $pdo->prepare('INSERT INTO system_logs(level,message,context_json) VALUES("error","K2 uncertain worker recovery fixture",?)')->execute([
+        json_encode(['reference' => 'K2-U-WR', 'module' => 'notifications', 'stage' => 'processing', 'error' => 'There is already an active transaction'], JSON_THROW_ON_ERROR),
+    ]);
+    $uncertainWorkerRecoveryDenied = false;
+    try {
+        (new NotificationWorkerRecoveryService())->recoverKnownErrors(5, true, [9301]);
+    } catch (Throwable $error) {
+        $uncertainWorkerRecoveryDenied = str_contains($error->getMessage(), 'UNRESOLVED_TRANSPORT_HELD')
+            || str_contains($error->getMessage(), 'REVIEW_HELD');
+    }
+    k1b_assert($uncertainWorkerRecoveryDenied, 'K2_UNCERTAIN_WORKER_RECOVERY_NOT_REOPENED');
+    k1b_assert((string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=' . $uncertainRealWork)->fetchColumn() === 'error', 'K2_UNCERTAIN_WORKER_RECOVERY_SOURCE_ROLLED_BACK');
+    k1b_assert(k2_pointer_count($pdo, 9201, 9301, $uncertainRealWork) === $uncertainRealPointersBefore, 'K2_UNCERTAIN_WORKER_RECOVERY_ZERO_NEW_POINTERS');
+
+    // The collation-recovery entry shares the same canonical frontier. Its
+    // run and source mutations must also roll back on unresolved transport.
+    $pdo->prepare('UPDATE meli_notification_work_items SET status="error",last_error_code="processing_error",last_error_stage="processing",last_error_diagnostic_id="K2-U-COLL",last_processed_at=UTC_TIMESTAMP() WHERE id=?')->execute([$uncertainRealWork]);
+    $pdo->prepare('INSERT INTO system_logs(level,message,context_json) VALUES("error","K2 uncertain collation recovery fixture",?)')->execute([
+        json_encode([
+            'reference' => 'K2-U-COLL',
+            'module' => 'notifications',
+            'stage' => 'processing',
+            'driver_code' => '1267',
+            'error' => 'Illegal mix of collations utf8mb4_general_ci and utf8mb4_unicode_ci (1267)',
+        ], JSON_THROW_ON_ERROR),
+    ]);
+    $uncertainCollationRunsBefore = (int) $pdo->query('SELECT COUNT(*) FROM meli_notification_recovery_runs')->fetchColumn();
+    $uncertainCollationDenied = false;
+    try {
+        (new NotificationCollationRecoveryService())->createCanary(0, [9301]);
+    } catch (Throwable $error) {
+        $uncertainCollationDenied = str_contains($error->getMessage(), 'UNRESOLVED_TRANSPORT_HELD')
+            || str_contains($error->getMessage(), 'REVIEW_HELD');
+    }
+    k1b_assert($uncertainCollationDenied, 'K2_UNCERTAIN_COLLATION_RECOVERY_NOT_REOPENED');
+    k1b_assert((string) $pdo->query('SELECT status FROM meli_notification_work_items WHERE id=' . $uncertainRealWork)->fetchColumn() === 'error', 'K2_UNCERTAIN_COLLATION_SOURCE_ROLLED_BACK');
+    k1b_assert((int) $pdo->query('SELECT COUNT(*) FROM meli_notification_recovery_runs')->fetchColumn() === $uncertainCollationRunsBefore, 'K2_UNCERTAIN_COLLATION_RUN_ROLLED_BACK');
+    k1b_assert(k2_pointer_count($pdo, 9201, 9301, $uncertainRealWork) === $uncertainRealPointersBefore, 'K2_UNCERTAIN_COLLATION_ZERO_NEW_POINTERS');
+
+    // Positive control: once the exact durable transport is adjudicated as a
+    // known response, its old history no longer blocks a legitimate retry.
+    $pdo->prepare('UPDATE queue_v4_clean_transport_events SET dispatch_state="RESPONSE_KNOWN",response_known_at=UTC_TIMESTAMP(3),http_status=503 WHERE company_id=9201 AND meli_account_id=9301 AND source_kind="queue" AND work_id=? AND dispatch_state="PHYSICAL_STARTED" AND response_known_at IS NULL')->execute([$uncertainRealPointer]);
+    k1b_assert((int) $pdo->query(
+        "SELECT COUNT(*) FROM queue_v4_clean_transport_events WHERE company_id=9201 AND meli_account_id=9301"
+        . " AND source_kind='queue' AND work_id=" . $uncertainRealPointer
+        . " AND dispatch_state='PHYSICAL_STARTED' AND response_known_at IS NULL"
+    )->fetchColumn() === 0, 'K2_RESOLVED_TRANSPORT_NO_LONGER_UNCERTAIN');
+    k1b_assert((new NotificationWorkItemService())->retry($uncertainRealWork, [9301]) === 1, 'K2_RESOLVED_TRANSPORT_ALLOWS_LEGITIMATE_RETRY');
+    k1b_assert(k2_pointer_count($pdo, 9201, 9301, $uncertainRealWork) === $uncertainRealPointersBefore + 1, 'K2_RESOLVED_TRANSPORT_ONE_NEW_ATTEMPT_POINTER');
+    k1b_assert(k2_active_pointer($pdo, 9201, 9301, $uncertainRealWork) > 0, 'K2_RESOLVED_TRANSPORT_EXECUTABLE_POINTER_RESTORED');
 
     k1b_assert((string) getenv('ML_WRITE_ENABLED') === 'false', 'K2_REMOTE_WRITES_DISABLED');
     echo "STATUS=PASS K2_NOTIFICATION_CANONICAL_ADMISSION_MYSQL\n";

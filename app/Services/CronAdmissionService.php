@@ -78,6 +78,24 @@ final class CronAdmissionService
             throw new RuntimeException('cron_admission_idempotency_key_too_long');
         }
         if ($capability === 'notification_work_item') {
+            $uncertain = $this->unresolvedNotificationTransportPointer(
+                $companyId,
+                $accountId,
+                $sourceId,
+            );
+            if ($uncertain !== null) {
+                // A later webhook event is already durable in the source
+                // transaction and may be acknowledged, but it cannot create or
+                // reopen executable work while any physical result for this
+                // exact logical source remains unknown. Explicit recovery
+                // actions must fail so their source transition rolls back.
+                return $this->receipt(
+                    $reentryReason === null,
+                    (int) $uncertain['id'],
+                    true,
+                    'UNRESOLVED_TRANSPORT_HELD',
+                );
+            }
             $active = $this->activeNotificationPointer($companyId, $accountId, $sourceId);
             if ($active !== null) {
                 $jobId = (int) $active['id'];
@@ -324,6 +342,33 @@ final class CronAdmissionService
         }
 
         return gmdate('Y-m-d H:i:s', $timestamp);
+    }
+
+    /** @return array{id:int}|null */
+    private function unresolvedNotificationTransportPointer(
+        int $companyId,
+        int $accountId,
+        int $sourceId,
+    ): ?array {
+        $statement = $this->pdo->prepare(
+            'SELECT j.id
+             FROM queue_v4_clean_jobs j
+             INNER JOIN queue_v4_clean_transport_events e
+               ON e.company_id=j.company_id
+              AND e.meli_account_id=j.meli_account_id
+              AND e.source_kind="queue"
+              AND e.work_id=j.id
+              AND e.dispatch_state="PHYSICAL_STARTED"
+              AND e.response_known_at IS NULL
+             WHERE j.company_id=? AND j.meli_account_id=?
+               AND j.job_type="domain_exact" AND j.resource_id=?
+               AND JSON_UNQUOTE(JSON_EXTRACT(j.payload_json,"$.capability"))="notification_work_item"
+             ORDER BY j.id DESC,e.id DESC
+             LIMIT 1 FOR UPDATE'
+        );
+        $statement->execute([$companyId, $accountId, (string) $sourceId]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        return is_array($row) ? ['id' => (int) $row['id']] : null;
     }
 
     /** @return array{id:int,state:string}|null */

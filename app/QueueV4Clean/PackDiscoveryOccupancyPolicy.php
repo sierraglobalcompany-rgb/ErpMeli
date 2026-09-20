@@ -18,6 +18,9 @@ use Throwable;
 final class PackDiscoveryOccupancyPolicy
 {
     public const AUTHORITY_KEY = 'queue_v4.pack_discovery_h3_authority';
+    public const UNIT02_DISPOSITION_KEY = 'queue_v4.pack_discovery_unit02_disposition';
+    public const UNIT02_DISPOSITION_VERSION = 'k3-unit02-disposition-v1';
+    public const UNIT02_DISPOSITION_STATUS = 'occupancy_withdrawn_historical_transport_unknown';
     public const OUTSTANDING_TARGET = 2;
 
     public function __construct(private readonly PDO $pdo)
@@ -82,7 +85,7 @@ final class PackDiscoveryOccupancyPolicy
             return $this->decision(false, 'R0_SOURCE_NOT_ELIGIBLE', 0);
         }
         try {
-            $outstanding = $this->outstanding($authority);
+            $outstanding = $this->occupancy($authority)['outstanding'];
         } catch (Throwable) {
             return $this->decision(false, 'R0_OCCUPANCY_UNAVAILABLE', self::OUTSTANDING_TARGET);
         }
@@ -101,11 +104,20 @@ final class PackDiscoveryOccupancyPolicy
      */
     public function outstandingForAccounts(array $accounts): int
     {
+        return $this->measureForAccounts($accounts)['outstanding'];
+    }
+
+    /**
+     * @param list<array{company_id:int,meli_account_id:int}> $accounts
+     * @return array{outstanding:int,administrative_dispositions:int,historical_unknown_transports:int}
+     */
+    public function measureForAccounts(array $accounts): array
+    {
         if ($accounts === []) {
-            return 0;
+            return $this->occupancyDecision(0, 0, 0);
         }
         if (!$this->pdo->inTransaction()) {
-            return self::OUTSTANDING_TARGET;
+            return $this->occupancyDecision(self::OUTSTANDING_TARGET, 0, 0);
         }
 
         $this->lockControlRow();
@@ -114,17 +126,103 @@ final class PackDiscoveryOccupancyPolicy
         try {
             $historicalMatches = $authority['valid'] && $this->historicalAuthorityStillMatches($authority['historical']);
         } catch (Throwable) {
-            return self::OUTSTANDING_TARGET;
+            return $this->occupancyDecision(self::OUTSTANDING_TARGET, 0, 0);
         }
         if (!$authority['valid'] || !$historicalMatches) {
-            return self::OUTSTANDING_TARGET;
+            return $this->occupancyDecision(self::OUTSTANDING_TARGET, 0, 0);
         }
 
         try {
-            return $this->outstanding($authority);
+            return $this->occupancy($authority, $accounts);
         } catch (Throwable) {
-            return self::OUTSTANDING_TARGET;
+            return $this->occupancyDecision(self::OUTSTANDING_TARGET, 0, 0);
         }
+    }
+
+    /**
+     * Builds the only document that may later be persisted by the private
+     * application service. The caller owns a transaction and the global
+     * admission lock. No business row is changed here.
+     *
+     * @param array<string,mixed> $authorizedEvidence
+     * @return array<string,mixed>
+     */
+    public function prepareUnit02DispositionAuthority(
+        array $authorizedEvidence,
+        int $actorUserId,
+        string $approvedAtUtc,
+        string $reason,
+    ): array {
+        if (!$this->pdo->inTransaction()) {
+            throw new RuntimeException('k3_unit02_transaction_required');
+        }
+        $this->lockControlRow();
+        if ($actorUserId < 1 || !$this->validUtcTimestamp($approvedAtUtc)) {
+            throw new RuntimeException('k3_unit02_approval_invalid');
+        }
+        $reason = trim($reason);
+        if (strlen($reason) < 20 || strlen($reason) > 1000) {
+            throw new RuntimeException('k3_unit02_reason_invalid');
+        }
+        $evidence = $this->normalizeAuthorizedEvidence($authorizedEvidence);
+        if ($evidence === null) {
+            throw new RuntimeException('k3_unit02_evidence_invalid');
+        }
+        $row = $this->fetchDispositionOccupant($evidence['identity']);
+        if (!is_array($row) || !$this->authorizedEvidenceMatches($evidence, $row)) {
+            throw new RuntimeException('k3_unit02_evidence_mismatch');
+        }
+        $packIntegrityHash = $this->packIntegrityHash($evidence['identity']);
+        if ($packIntegrityHash === null) {
+            throw new RuntimeException('k3_unit02_pack_integrity_invalid');
+        }
+
+        return $this->canonicalize([
+            'version' => self::UNIT02_DISPOSITION_VERSION,
+            'status' => self::UNIT02_DISPOSITION_STATUS,
+            'non_renewable' => true,
+            'max_units' => 1,
+            'approved_by_user_id' => $actorUserId,
+            'approved_at_utc' => $approvedAtUtc,
+            'reason' => $reason,
+            'identity' => $evidence['identity'],
+            'hashes' => $evidence['hashes'] + [
+                'pack_integrity_sha256' => $packIntegrityHash,
+                'policy_sha256' => hash_file('sha256', __FILE__),
+            ],
+        ]);
+    }
+
+    /** @param array<string,mixed> $document */
+    public function canonicalDispositionJson(array $document): string
+    {
+        return json_encode($this->canonicalize($document), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    }
+
+    /** @return array<string,mixed>|null */
+    public function storedUnit02Disposition(): ?array
+    {
+        if (!$this->pdo->inTransaction()) {
+            throw new RuntimeException('k3_unit02_transaction_required');
+        }
+
+        return $this->loadUnit02Disposition(true);
+    }
+
+    /** @param array<string,mixed> $document @param array<string,mixed> $authorizedEvidence */
+    public function dispositionRepresentsEvidence(array $document, array $authorizedEvidence, int $actorUserId, string $reason): bool
+    {
+        $evidence = $this->normalizeAuthorizedEvidence($authorizedEvidence);
+        $normalized = $this->normalizeDispositionDocument($document);
+        if ($evidence === null || $normalized === null) {
+            return false;
+        }
+
+        return (int) $normalized['approved_by_user_id'] === $actorUserId
+            && hash_equals((string) $normalized['reason'], trim($reason))
+            && $normalized['identity'] === $evidence['identity']
+            && $this->hashSubsetMatches($normalized['hashes'], $evidence['hashes'])
+            && $this->dispositionMatchesCurrentState($normalized);
     }
 
     /** @return array{valid:bool,reason:string,scope:list<array{company_id:int,meli_account_id:int}>,historical:list<array<string,mixed>>} */
@@ -336,8 +434,11 @@ final class PackDiscoveryOccupancyPolicy
         );
     }
 
-    /** @param list<array{company_id:int,meli_account_id:int}>|null $accounts */
-    private function outstanding(array $authority, ?array $accounts = null): int
+    /**
+     * @param list<array{company_id:int,meli_account_id:int}>|null $accounts
+     * @return array{outstanding:int,administrative_dispositions:int,historical_unknown_transports:int}
+     */
+    private function occupancy(array $authority, ?array $accounts = null): array
     {
         $scope = $accounts ?? $authority['scope'];
         $clauses = [];
@@ -351,10 +452,10 @@ final class PackDiscoveryOccupancyPolicy
             $params[] = (int) $row['meli_account_id'];
         }
         if ($clauses === []) {
-            return 0;
+            return $this->occupancyDecision(0, 0, 0);
         }
         if ($this->malformedOccupantExists($authority['scope'])) {
-            return self::OUTSTANDING_TARGET;
+            return $this->occupancyDecision(self::OUTSTANDING_TARGET, 0, 0);
         }
         $historical = [];
         foreach ($authority['historical'] as $entry) {
@@ -382,22 +483,48 @@ final class PackDiscoveryOccupancyPolicy
               FOR UPDATE'
         );
         $statement->execute($params);
-        $seen = [];
+        $disposition = $this->loadUnit02Disposition(true);
+        $units = [];
         foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
             if (!$this->validOccupant($row)) {
-                return self::OUTSTANDING_TARGET;
+                return $this->occupancyDecision(self::OUTSTANDING_TARGET, 0, 0);
             }
             $key = (int) $row['company_id'] . ':' . (int) $row['meli_account_id'] . ':' . (int) $row['source_id'];
-            if (in_array($key, $historical, true) || isset($seen[$key])) {
+            if (in_array($key, $historical, true)) {
                 continue;
             }
-            if ($this->isClosed($row)) {
+            $units[$key][] = $row;
+        }
+
+        $seen = [];
+        $disposed = [];
+        $unknown = [];
+        foreach ($units as $key => $rows) {
+            $allClosed = true;
+            $matchesDisposition = false;
+            foreach ($rows as $row) {
+                if ($this->hasUnresolvedAttempt((int) $row['company_id'], (int) $row['meli_account_id'], (int) $row['queue_id'])
+                    || $this->hasUnresolvedTransport((int) $row['company_id'], (int) $row['meli_account_id'], (int) $row['queue_id'])) {
+                    $unknown[$key] = true;
+                }
+                if (!$this->isClosed($row)) {
+                    $allClosed = false;
+                }
+                if (is_array($disposition) && $this->dispositionMatchesRow($disposition, $row)) {
+                    $matchesDisposition = true;
+                }
+            }
+            if ($allClosed) {
+                continue;
+            }
+            if ($matchesDisposition) {
+                $disposed[$key] = true;
                 continue;
             }
             $seen[$key] = true;
         }
 
-        return count($seen);
+        return $this->occupancyDecision(count($seen), count($disposed), count($unknown));
     }
 
     /** @param list<array{company_id:int,meli_account_id:int}> $scope */
@@ -722,6 +849,465 @@ final class PackDiscoveryOccupancyPolicy
         $statement->execute([$companyId, $accountId, $queueId]);
 
         return $this->hashValue($statement->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    /** @return array<string,mixed>|null */
+    private function loadUnit02Disposition(bool $forUpdate): ?array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT setting_value,is_encrypted FROM app_settings WHERE setting_key=? LIMIT 1'
+            . ($forUpdate ? ' FOR UPDATE' : '')
+        );
+        $statement->execute([self::UNIT02_DISPOSITION_KEY]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return null;
+        }
+        if ((int) ($row['is_encrypted'] ?? 1) !== 0) {
+            return null;
+        }
+        $raw = (string) ($row['setting_value'] ?? '');
+        try {
+            $decoded = json_decode($raw, true, 64, JSON_THROW_ON_ERROR);
+        } catch (Throwable) {
+            return null;
+        }
+        if (!is_array($decoded)) {
+            return null;
+        }
+        $normalized = $this->normalizeDispositionDocument($decoded);
+        if ($normalized === null || !hash_equals($this->canonicalDispositionJson($normalized), $raw)) {
+            return null;
+        }
+
+        return $normalized;
+    }
+
+    /** @param array<string,mixed> $row @param array<string,mixed> $document */
+    private function dispositionMatchesRow(array $document, array $row): bool
+    {
+        $identity = $document['identity'] ?? null;
+        if (!is_array($identity)
+            || (int) ($row['company_id'] ?? 0) !== (int) ($identity['company_id'] ?? 0)
+            || (int) ($row['meli_account_id'] ?? 0) !== (int) ($identity['meli_account_id'] ?? 0)
+            || (int) ($row['source_id'] ?? 0) !== (int) ($identity['source_id'] ?? 0)
+            || (int) ($row['queue_id'] ?? 0) !== (int) ($identity['queue_id'] ?? 0)) {
+            return false;
+        }
+
+        return $this->dispositionMatchesCurrentState($document, $row);
+    }
+
+    /** @param array<string,mixed> $document @param array<string,mixed>|null $knownRow */
+    private function dispositionMatchesCurrentState(array $document, ?array $knownRow = null): bool
+    {
+        $normalized = $this->normalizeDispositionDocument($document);
+        if ($normalized === null
+            || !hash_equals((string) $normalized['hashes']['policy_sha256'], (string) hash_file('sha256', __FILE__))) {
+            return false;
+        }
+        $row = $knownRow ?? $this->fetchDispositionOccupant($normalized['identity']);
+        if (!is_array($row)) {
+            return false;
+        }
+        $evidence = [
+            'identity' => $normalized['identity'],
+            'hashes' => [
+                'source_sha256' => $normalized['hashes']['source_sha256'],
+                'queue_sha256' => $normalized['hashes']['queue_sha256'],
+                'attempts_sha256' => $normalized['hashes']['attempts_sha256'],
+                'transport_events_sha256' => $normalized['hashes']['transport_events_sha256'],
+                'evidence_zip_sha256' => $normalized['hashes']['evidence_zip_sha256'],
+            ],
+        ];
+        if (!$this->authorizedEvidenceMatches($evidence, $row)) {
+            return false;
+        }
+        $packHash = $this->packIntegrityHash($normalized['identity']);
+
+        return is_string($packHash)
+            && hash_equals((string) $normalized['hashes']['pack_integrity_sha256'], $packHash);
+    }
+
+    /** @param array<string,mixed> $identity @return array<string,mixed>|null */
+    private function fetchDispositionOccupant(array $identity): ?array
+    {
+        $statement = $this->pdo->prepare(
+            "SELECT q.id queue_id,q.company_id,q.meli_account_id,q.resource_id,
+                    CAST(q.resource_id AS UNSIGNED) source_id,
+                    q.payload_json,q.idempotency_key,q.state,q.completed_at,
+                    q.last_error_class,q.lease_owner,q.lease_expires_at,q.lease_generation,
+                    j.status source_status,j.completed_at source_completed_at,j.failure_class,
+                    j.resource_type,j.external_resource_id,
+                    j.lock_token source_lock_token,j.locked_at source_locked_at,
+                    a.company_id source_company_id
+               FROM queue_v4_clean_jobs q
+               JOIN order_resource_enrichment_jobs j
+                 ON j.id=CAST(q.resource_id AS UNSIGNED)
+                AND j.meli_account_id=q.meli_account_id
+               JOIN meli_accounts a
+                 ON a.id=j.meli_account_id AND a.company_id=q.company_id
+              WHERE q.id=? AND q.company_id=? AND q.meli_account_id=?
+                AND q.job_type='domain_exact' AND q.resource_id=?
+                AND j.id=? AND j.resource_type='pack'
+              LIMIT 1 FOR UPDATE"
+        );
+        $statement->execute([
+            (int) ($identity['queue_id'] ?? 0),
+            (int) ($identity['company_id'] ?? 0),
+            (int) ($identity['meli_account_id'] ?? 0),
+            (string) ((int) ($identity['source_id'] ?? 0)),
+            (int) ($identity['source_id'] ?? 0),
+        ]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+
+        return is_array($row) ? $row : null;
+    }
+
+    /** @param array<string,mixed> $evidence @param array<string,mixed> $row */
+    private function authorizedEvidenceMatches(array $evidence, array $row): bool
+    {
+        $identity = $evidence['identity'];
+        $hashes = $evidence['hashes'];
+        if ((int) $row['company_id'] !== (int) $identity['company_id']
+            || (int) $row['meli_account_id'] !== (int) $identity['meli_account_id']
+            || (int) $row['source_id'] !== (int) $identity['source_id']
+            || (int) $row['queue_id'] !== (int) $identity['queue_id']
+            || !hash_equals((string) $row['external_resource_id'], (string) $identity['external_pack_id'])
+            || !$this->validOccupant($row)
+            || (string) $row['state'] !== 'completed'
+            || (string) $row['source_status'] !== 'complete'
+            || empty($row['completed_at']) || empty($row['source_completed_at'])
+            || (string) ($row['failure_class'] ?? '') !== ''
+            || (string) ($row['last_error_class'] ?? '') !== ''
+            || $this->activeQueueLease($row)
+            || $this->activeSourceLease(['lock_token' => $row['source_lock_token'] ?? null, 'locked_at' => $row['source_locked_at'] ?? null])
+            || $this->activeManualReservation((int) $identity['company_id'], (int) $identity['meli_account_id'], (int) $identity['source_id'])
+            || $this->historicalSourceHasAdditionalPointers((int) $identity['company_id'], (int) $identity['meli_account_id'], (int) $identity['source_id'], (int) $identity['queue_id'])) {
+            return false;
+        }
+        $source = $this->fetchOne(
+            'SELECT * FROM order_resource_enrichment_jobs WHERE id=? AND meli_account_id=? AND resource_type="pack" FOR UPDATE',
+            [(int) $identity['source_id'], (int) $identity['meli_account_id']]
+        );
+        $queue = $this->fetchOne(
+            'SELECT * FROM queue_v4_clean_jobs WHERE id=? AND company_id=? AND meli_account_id=? FOR UPDATE',
+            [(int) $identity['queue_id'], (int) $identity['company_id'], (int) $identity['meli_account_id']]
+        );
+        if (!is_array($source) || !is_array($queue)
+            || !hash_equals((string) $hashes['source_sha256'], $this->hashValue($source))
+            || !hash_equals((string) $hashes['queue_sha256'], $this->hashValue($queue))
+            || !hash_equals((string) $hashes['attempts_sha256'], $this->attemptsHash((int) $identity['company_id'], (int) $identity['meli_account_id'], (int) $identity['queue_id']))
+            || !hash_equals((string) $hashes['transport_events_sha256'], $this->transportEventsHash((int) $identity['company_id'], (int) $identity['meli_account_id'], (int) $identity['queue_id']))) {
+            return false;
+        }
+
+        return $this->exactHistoricalUnknownMatches($identity)
+            && $this->exactClosureAttemptMatches($identity)
+            && $this->onlyAuthorizedHistoricalUncertainty($identity);
+    }
+
+    /** @param array<string,mixed> $identity */
+    private function exactHistoricalUnknownMatches(array $identity): bool
+    {
+        $attempt = $this->fetchOne(
+            'SELECT * FROM queue_v4_clean_attempts WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=? AND lease_generation=? FOR UPDATE',
+            [(int) $identity['historical_attempt_id'], (int) $identity['queue_id'], (int) $identity['company_id'], (int) $identity['meli_account_id'], (int) $identity['historical_generation']]
+        );
+        if (!is_array($attempt)
+            || (string) ($attempt['dispatch_state'] ?? '') !== 'PHYSICAL_STARTED'
+            || (int) ($attempt['physical_http_calls'] ?? 0) !== 1
+            || !in_array((string) ($attempt['error_class'] ?? ''), ['remote_result_uncertain', 'remoteresultuncertainexception', 'remote_result_uncertain_safe_get'], true)
+            || !empty($attempt['response_known_at'])) {
+            return false;
+        }
+        $event = $this->fetchOne(
+            'SELECT * FROM queue_v4_clean_transport_events WHERE id=? AND source_kind="queue" AND work_id=? AND attempt_id=? AND company_id=? AND meli_account_id=? AND lease_generation=? FOR UPDATE',
+            [(int) $identity['historical_transport_event_id'], (int) $identity['queue_id'], (int) $identity['historical_attempt_id'], (int) $identity['company_id'], (int) $identity['meli_account_id'], (int) $identity['historical_generation']]
+        );
+
+        return is_array($event)
+            && (string) ($event['dispatch_state'] ?? '') === 'PHYSICAL_STARTED'
+            && !empty($event['physical_started_at'])
+            && empty($event['response_known_at'])
+            && empty($event['http_status'])
+            && (string) ($event['method'] ?? '') === (string) ($attempt['transport_method'] ?? '')
+            && (string) ($event['endpoint_key'] ?? '') === (string) ($attempt['endpoint_key'] ?? '');
+    }
+
+    /** @param array<string,mixed> $identity */
+    private function exactClosureAttemptMatches(array $identity): bool
+    {
+        $attempt = $this->fetchOne(
+            'SELECT * FROM queue_v4_clean_attempts WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=? AND lease_generation=? FOR UPDATE',
+            [(int) $identity['closure_attempt_id'], (int) $identity['queue_id'], (int) $identity['company_id'], (int) $identity['meli_account_id'], (int) $identity['closure_generation']]
+        );
+        if (!is_array($attempt)
+            || (string) ($attempt['outcome'] ?? '') !== 'completed'
+            || !empty($attempt['error_class'])
+            || (string) ($attempt['dispatch_state'] ?? '') !== 'RESPONSE_KNOWN'
+            || (int) ($attempt['physical_http_calls'] ?? 0) !== 1
+            || empty($attempt['finished_at']) || empty($attempt['source_closed_at'])
+            || empty($attempt['physical_started_at']) || empty($attempt['response_known_at'])
+            || (int) ($attempt['http_status'] ?? 0) < 200 || (int) ($attempt['http_status'] ?? 0) >= 300) {
+            return false;
+        }
+        $event = $this->fetchOne(
+            'SELECT * FROM queue_v4_clean_transport_events WHERE id=? AND source_kind="queue" AND work_id=? AND attempt_id=? AND company_id=? AND meli_account_id=? AND lease_generation=? FOR UPDATE',
+            [(int) $identity['closure_transport_event_id'], (int) $identity['queue_id'], (int) $identity['closure_attempt_id'], (int) $identity['company_id'], (int) $identity['meli_account_id'], (int) $identity['closure_generation']]
+        );
+
+        return is_array($event)
+            && (string) ($event['dispatch_state'] ?? '') === 'RESPONSE_KNOWN'
+            && !empty($event['physical_started_at']) && !empty($event['response_known_at'])
+            && (int) ($event['http_status'] ?? 0) === (int) $attempt['http_status']
+            && (string) ($event['method'] ?? '') === (string) ($attempt['transport_method'] ?? '')
+            && (string) ($event['endpoint_key'] ?? '') === (string) ($attempt['endpoint_key'] ?? '');
+    }
+
+    /** @param array<string,mixed> $identity */
+    private function onlyAuthorizedHistoricalUncertainty(array $identity): bool
+    {
+        $attempts = $this->pdo->prepare(
+            "SELECT id FROM queue_v4_clean_attempts
+             WHERE company_id=? AND meli_account_id=? AND job_id=?
+               AND (outcome='running' OR dispatch_state='PHYSICAL_STARTED'
+                    OR error_class IN ('remote_result_uncertain','remoteresultuncertainexception','remote_result_uncertain_safe_get'))
+             ORDER BY id FOR UPDATE"
+        );
+        $attempts->execute([(int) $identity['company_id'], (int) $identity['meli_account_id'], (int) $identity['queue_id']]);
+        $attemptIds = array_map('intval', $attempts->fetchAll(PDO::FETCH_COLUMN));
+        $events = $this->pdo->prepare(
+            "SELECT id FROM queue_v4_clean_transport_events
+             WHERE company_id=? AND meli_account_id=? AND source_kind='queue' AND work_id=?
+               AND dispatch_state='PHYSICAL_STARTED' AND response_known_at IS NULL
+             ORDER BY id FOR UPDATE"
+        );
+        $events->execute([(int) $identity['company_id'], (int) $identity['meli_account_id'], (int) $identity['queue_id']]);
+        $eventIds = array_map('intval', $events->fetchAll(PDO::FETCH_COLUMN));
+
+        return $attemptIds === [(int) $identity['historical_attempt_id']]
+            && $eventIds === [(int) $identity['historical_transport_event_id']];
+    }
+
+    /** @param array<string,mixed> $identity */
+    private function packIntegrityHash(array $identity): ?string
+    {
+        $statement = $this->pdo->prepare(
+            "SELECT p.id,p.meli_account_id,p.external_pack_id,p.status,p.integrity_status,
+                    p.expected_orders_count,p.linked_orders_count,p.expected_orders_json,p.orders_fingerprint
+               FROM meli_packs p
+               JOIN order_resource_enrichment_jobs j
+                 ON j.meli_account_id=p.meli_account_id AND j.external_resource_id=p.external_pack_id
+               JOIN meli_accounts a ON a.id=p.meli_account_id
+              WHERE p.id=? AND p.meli_account_id=? AND p.external_pack_id=?
+                AND j.id=? AND j.resource_type='pack' AND a.company_id=?
+              LIMIT 1 FOR UPDATE"
+        );
+        $statement->execute([
+            (int) $identity['pack_row_id'], (int) $identity['meli_account_id'], (string) $identity['external_pack_id'],
+            (int) $identity['source_id'], (int) $identity['company_id'],
+        ]);
+        $pack = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($pack) || (string) ($pack['integrity_status'] ?? '') !== 'complete') {
+            return null;
+        }
+        $expected = $this->strictOrderIds((string) ($pack['expected_orders_json'] ?? ''));
+        if ($expected === null || $expected === []) {
+            return null;
+        }
+        $linkedStatement = $this->pdo->prepare(
+            'SELECT DISTINCT o.external_order_id
+               FROM meli_pack_orders po
+               JOIN meli_orders o
+                 ON o.id=po.meli_order_id AND o.meli_account_id=? AND o.external_pack_id=?
+              WHERE po.meli_pack_id=? ORDER BY o.external_order_id FOR UPDATE'
+        );
+        $linkedStatement->execute([(int) $identity['meli_account_id'], (string) $identity['external_pack_id'], (int) $identity['pack_row_id']]);
+        $linked = [];
+        foreach ($linkedStatement->fetchAll(PDO::FETCH_COLUMN) as $value) {
+            $id = trim((string) $value);
+            if ($id === '' || !ctype_digit($id) || isset($linked[$id])) {
+                return null;
+            }
+            $linked[$id] = $id;
+        }
+        $linked = array_values($linked);
+        sort($linked, SORT_STRING);
+        if ($expected !== $linked
+            || (int) ($pack['expected_orders_count'] ?? -1) !== count($expected)
+            || (int) ($pack['linked_orders_count'] ?? -1) !== count($linked)
+            || !hash_equals(hash('sha256', implode('|', $expected)), (string) ($pack['orders_fingerprint'] ?? ''))) {
+            return null;
+        }
+
+        return $this->hashValue($this->canonicalize([
+            'pack_row_id' => (int) $pack['id'],
+            'meli_account_id' => (int) $pack['meli_account_id'],
+            'external_pack_id' => (string) $pack['external_pack_id'],
+            'status' => (string) $pack['status'],
+            'integrity_status' => (string) $pack['integrity_status'],
+            'expected_order_ids' => $expected,
+            'linked_order_ids' => $linked,
+            'orders_fingerprint' => (string) $pack['orders_fingerprint'],
+        ]));
+    }
+
+    /** @return list<string>|null */
+    private function strictOrderIds(string $raw): ?array
+    {
+        try {
+            $decoded = json_decode($raw, true, 64, JSON_THROW_ON_ERROR);
+        } catch (Throwable) {
+            return null;
+        }
+        if (!is_array($decoded) || !array_is_list($decoded)) {
+            return null;
+        }
+        $ids = [];
+        foreach ($decoded as $value) {
+            if (!is_string($value) && !is_int($value)) {
+                return null;
+            }
+            $id = trim((string) $value);
+            if ($id === '' || !ctype_digit($id) || isset($ids[$id])) {
+                return null;
+            }
+            $ids[$id] = $id;
+        }
+        $ids = array_values($ids);
+        sort($ids, SORT_STRING);
+
+        return $ids;
+    }
+
+    /** @param array<string,mixed> $evidence @return array<string,mixed>|null */
+    private function normalizeAuthorizedEvidence(array $evidence): ?array
+    {
+        if (!$this->exactKeys($evidence, ['hashes', 'identity'])
+            || !is_array($evidence['identity']) || !is_array($evidence['hashes'])) {
+            return null;
+        }
+        $identityKeys = [
+            'closure_attempt_id', 'closure_generation', 'closure_transport_event_id', 'company_id',
+            'external_pack_id', 'historical_attempt_id', 'historical_generation', 'historical_transport_event_id',
+            'meli_account_id', 'pack_row_id', 'queue_id', 'source_id',
+        ];
+        $hashKeys = ['attempts_sha256', 'evidence_zip_sha256', 'queue_sha256', 'source_sha256', 'transport_events_sha256'];
+        if (!$this->exactKeys($evidence['identity'], $identityKeys) || !$this->exactKeys($evidence['hashes'], $hashKeys)) {
+            return null;
+        }
+        foreach ($identityKeys as $key) {
+            if ($key === 'external_pack_id') {
+                if (!is_string($evidence['identity'][$key]) || trim($evidence['identity'][$key]) === '') {
+                    return null;
+                }
+                continue;
+            }
+            if (!is_int($evidence['identity'][$key]) || $evidence['identity'][$key] < 1) {
+                return null;
+            }
+        }
+        foreach ($hashKeys as $key) {
+            if (!is_string($evidence['hashes'][$key]) || preg_match('/^[a-f0-9]{64}$/D', $evidence['hashes'][$key]) !== 1) {
+                return null;
+            }
+        }
+
+        return $this->canonicalize($evidence);
+    }
+
+    /** @param array<string,mixed> $document @return array<string,mixed>|null */
+    private function normalizeDispositionDocument(array $document): ?array
+    {
+        $top = ['approved_at_utc', 'approved_by_user_id', 'hashes', 'identity', 'max_units', 'non_renewable', 'reason', 'status', 'version'];
+        if (!$this->exactKeys($document, $top)
+            || $document['version'] !== self::UNIT02_DISPOSITION_VERSION
+            || $document['status'] !== self::UNIT02_DISPOSITION_STATUS
+            || $document['non_renewable'] !== true
+            || $document['max_units'] !== 1
+            || !is_int($document['approved_by_user_id']) || $document['approved_by_user_id'] < 1
+            || !is_string($document['approved_at_utc']) || !$this->validUtcTimestamp($document['approved_at_utc'])
+            || !is_string($document['reason']) || strlen(trim($document['reason'])) < 20 || strlen(trim($document['reason'])) > 1000
+            || !is_array($document['identity']) || !is_array($document['hashes'])) {
+            return null;
+        }
+        $evidenceHashes = $document['hashes'];
+        $packHash = $evidenceHashes['pack_integrity_sha256'] ?? null;
+        $policyHash = $evidenceHashes['policy_sha256'] ?? null;
+        unset($evidenceHashes['pack_integrity_sha256'], $evidenceHashes['policy_sha256']);
+        $evidence = $this->normalizeAuthorizedEvidence(['identity' => $document['identity'], 'hashes' => $evidenceHashes]);
+        if ($evidence === null
+            || !is_string($packHash) || preg_match('/^[a-f0-9]{64}$/D', $packHash) !== 1
+            || !is_string($policyHash) || preg_match('/^[a-f0-9]{64}$/D', $policyHash) !== 1
+            || !$this->exactKeys($document['hashes'], [
+                'attempts_sha256', 'evidence_zip_sha256', 'pack_integrity_sha256', 'policy_sha256',
+                'queue_sha256', 'source_sha256', 'transport_events_sha256',
+            ])) {
+            return null;
+        }
+        $document['identity'] = $evidence['identity'];
+        $document['hashes'] = $this->canonicalize($document['hashes']);
+        $document['reason'] = trim($document['reason']);
+
+        return $this->canonicalize($document);
+    }
+
+    /** @param array<string,mixed> $actual @param array<string,mixed> $expected */
+    private function hashSubsetMatches(array $actual, array $expected): bool
+    {
+        foreach ($expected as $key => $value) {
+            if (!isset($actual[$key]) || !is_string($actual[$key]) || !hash_equals((string) $value, $actual[$key])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /** @param array<string,mixed> $value @param list<string> $keys */
+    private function exactKeys(array $value, array $keys): bool
+    {
+        $actual = array_keys($value);
+        sort($actual, SORT_STRING);
+        sort($keys, SORT_STRING);
+
+        return $actual === $keys;
+    }
+
+    private function validUtcTimestamp(string $value): bool
+    {
+        $date = \DateTimeImmutable::createFromFormat('!Y-m-d\\TH:i:s\\Z', $value, new \DateTimeZone('UTC'));
+        $errors = \DateTimeImmutable::getLastErrors();
+
+        return $date !== false
+            && ($errors === false || ((int) $errors['warning_count'] === 0 && (int) $errors['error_count'] === 0))
+            && $date->format('Y-m-d\\TH:i:s\\Z') === $value;
+    }
+
+    /** @return array<string,mixed> */
+    private function canonicalize(array $value): array
+    {
+        if (!array_is_list($value)) {
+            ksort($value, SORT_STRING);
+        }
+        foreach ($value as $key => $item) {
+            if (is_array($item)) {
+                $value[$key] = $this->canonicalize($item);
+            }
+        }
+
+        return $value;
+    }
+
+    /** @return array{outstanding:int,administrative_dispositions:int,historical_unknown_transports:int} */
+    private function occupancyDecision(int $outstanding, int $dispositions, int $unknown): array
+    {
+        return [
+            'outstanding' => $outstanding,
+            'administrative_dispositions' => $dispositions,
+            'historical_unknown_transports' => $unknown,
+        ];
     }
 
     /** @return array<string,mixed>|null */

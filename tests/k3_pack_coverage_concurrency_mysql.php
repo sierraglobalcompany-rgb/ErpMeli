@@ -64,16 +64,76 @@ foreach ([2, 5, 20] as $participants) {
     }
 
     $readyFiles = k3c_wait($runDir, 'ready', $participants, microtime(true) + 15.0);
-    usleep(750000);
     $connectionIds = [];
+    $readyByConnection = [];
     foreach ($readyFiles as $path) {
         $row = json_decode((string) file_get_contents($path), true, 64, JSON_THROW_ON_ERROR);
         $connectionIds[] = (int) $row['connection_id'];
+        $readyByConnection[(int) $row['connection_id']] = $row;
     }
     $placeholders = implode(',', array_fill(0, count($connectionIds), '?'));
-    $processlist = $pdo->prepare("SELECT ID,COMMAND,STATE FROM information_schema.PROCESSLIST WHERE ID IN ($placeholders) ORDER BY ID");
-    $processlist->execute($connectionIds);
-    $active = array_values(array_filter($processlist->fetchAll(PDO::FETCH_ASSOC), static fn (array $row): bool => (string) $row['COMMAND'] !== 'Sleep'));
+    $processlist = $pdo->prepare("SELECT ID,COMMAND,STATE,INFO FROM information_schema.PROCESSLIST WHERE ID IN ($placeholders) ORDER BY ID");
+    $parentConnectionId = (int) $pdo->query('SELECT CONNECTION_ID()')->fetchColumn();
+    $lockWaits = $pdo->prepare(
+        "SELECT w.requesting_trx_id,w.requested_lock_id,w.blocking_trx_id,w.blocking_lock_id,
+                r.trx_mysql_thread_id requesting_thread_id,r.trx_state requesting_state,
+                r.trx_wait_started,r.trx_query requesting_query,
+                b.trx_mysql_thread_id blocking_thread_id,b.trx_state blocking_state,b.trx_query blocking_query
+           FROM information_schema.INNODB_LOCK_WAITS w
+           JOIN information_schema.INNODB_TRX r ON r.trx_id=w.requesting_trx_id
+           JOIN information_schema.INNODB_TRX b ON b.trx_id=w.blocking_trx_id
+          WHERE r.trx_mysql_thread_id IN ($placeholders)
+          ORDER BY r.trx_mysql_thread_id"
+    );
+    $observationDeadline = microtime(true) + 10.0;
+    $processlistRows = [];
+    $lockWaitRows = [];
+    $correlatedWaiters = [];
+    do {
+        $processlist->execute($connectionIds);
+        $processlistRows = $processlist->fetchAll(PDO::FETCH_ASSOC);
+        $lockWaits->execute($connectionIds);
+        $lockWaitRows = $lockWaits->fetchAll(PDO::FETCH_ASSOC);
+        $waitByConnection = [];
+        foreach ($lockWaitRows as $waitRow) {
+            $waitByConnection[(int) $waitRow['requesting_thread_id']] = $waitRow;
+        }
+        $correlatedWaiters = array_values(array_filter($processlistRows, static function (array $row) use ($readyByConnection, $waitByConnection): bool {
+            $id = (int) ($row['ID'] ?? 0);
+            $info = strtolower((string) ($row['INFO'] ?? ''));
+            return isset($readyByConnection[$id])
+                && isset($waitByConnection[$id])
+                && (string) ($waitByConnection[$id]['requesting_state'] ?? '') === 'LOCK WAIT'
+                && str_contains($info, 'queue_v4_clean_control')
+                && str_contains(strtolower((string) ($waitByConnection[$id]['requesting_query'] ?? '')), 'queue_v4_clean_control');
+        }));
+        if (count($correlatedWaiters) === $participants) {
+            break;
+        }
+        usleep(50000);
+    } while (microtime(true) < $observationDeadline);
+    $active = array_values(array_filter($processlistRows, static fn (array $row): bool => (string) $row['COMMAND'] !== 'Sleep'));
+    $processlistPath = $runDir . DIRECTORY_SEPARATOR . 'processlist.json';
+    file_put_contents($processlistPath, json_encode([
+        'captured_before_parent_lock_release' => true,
+        'captured_at_utc' => gmdate('c'),
+        'parent_connection_id' => $parentConnectionId,
+        'participant_ready_receipts' => array_values($readyByConnection),
+        'processlist' => $processlistRows,
+        'innodb_lock_waits' => $lockWaitRows,
+        'correlated_waiting_connection_ids' => array_map(static fn (array $row): int => (int) $row['ID'], $correlatedWaiters),
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+    r0h3_assert(is_file($processlistPath), 'k3_raw_processlist_capture_must_exist_before_lock_release', [
+        'participants' => $participants,
+        'path' => $processlistPath,
+        'rows' => $processlistRows,
+    ]);
+    r0h3_assert(count($correlatedWaiters) === $participants, 'k3_every_participant_must_wait_on_real_authority_lock', [
+        'participants' => $participants,
+        'ready' => $readyByConnection,
+        'processlist' => $processlistRows,
+        'correlated' => $correlatedWaiters,
+    ]);
     $pdo->commit();
 
     foreach ($processes as $process) {
@@ -124,6 +184,8 @@ foreach ([2, 5, 20] as $participants) {
     $row = [
         'participants' => $participants,
         'active_overlap' => count($active),
+        'authority_lock_waits' => count($correlatedWaiters),
+        'processlist_evidence' => $processlistPath,
         'created' => $created,
         'open' => $open,
         'source_delta' => $sourceCountAfter - $sourceCountBefore,

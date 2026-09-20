@@ -104,7 +104,11 @@
         },
         {
             "path": "app/QueueV4Clean/PackDiscoveryOccupancyPolicy.php",
-            "sha256": "e5cf7a2a477b7eb236826b3f20317a97cf60c38c291b782ad57b9a0919ad54a2"
+            "sha256": "c9b4294bf9ed4a88006f61e74cc1402ab3567edca3aed0a333ec7acd8eef38c5"
+        },
+        {
+            "path": "app/QueueV4Clean/PackDiscoveryUnit02DispositionService.php",
+            "sha256": "d27e59f45b30cb387284ce36e760a1f638a0bc09d916359567321a10eafeb341"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanCycleBudget.php",

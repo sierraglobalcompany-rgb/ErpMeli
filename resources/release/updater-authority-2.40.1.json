@@ -104,11 +104,11 @@
         },
         {
             "path": "app/QueueV4Clean/PackDiscoveryOccupancyPolicy.php",
-            "sha256": "c9b4294bf9ed4a88006f61e74cc1402ab3567edca3aed0a333ec7acd8eef38c5"
+            "sha256": "ad922894c1438fd8e9caeb40db974d6f782ce5c17dca410eb23c283ca9e7cf3e"
         },
         {
             "path": "app/QueueV4Clean/PackDiscoveryUnit02DispositionService.php",
-            "sha256": "d27e59f45b30cb387284ce36e760a1f638a0bc09d916359567321a10eafeb341"
+            "sha256": "8c7bee55fbfddb120bde1ff4d2af83908381cd0fb0d696e80fc66ed79332efcd"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanCycleBudget.php",
@@ -668,7 +668,7 @@
         },
         {
             "path": "resources/release/managed-runtime-dependencies-2.40.1.json",
-            "sha256": "322955c7bc23a8e6420ebc9bebec6e9ca78754d727d31992cbde847c086aa67f"
+            "sha256": "5ad4f7ea9dc5a2d93f54d9bc41a01c4c1c3a06f0c03332dd5fe3741663e8f9c4"
         },
         {
             "path": "resources/release/queue-v4-canonical-db-contract-2.38.3.json",

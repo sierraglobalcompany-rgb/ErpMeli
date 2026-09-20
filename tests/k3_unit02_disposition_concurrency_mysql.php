@@ -88,7 +88,9 @@ $pdo->commit();
 r0h3_assert($metrics === [
     'outstanding' => 1,
     'administrative_dispositions' => 1,
-    'historical_unknown_transports' => 2,
+    'physical_unknown_dispatches' => 2,
+    'measurement_status' => 'CERTIFIED',
+    'measurement_scope' => 'H3_CERTIFIED_NON_H3_PACK_DISCOVERY',
 ], 'k3_unit02_concurrency_final_occupancy', $metrics);
 
 echo json_encode([

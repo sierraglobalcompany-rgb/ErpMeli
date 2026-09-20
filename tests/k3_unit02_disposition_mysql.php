@@ -8,7 +8,7 @@ use App\QueueV4Clean\PackDiscoveryOccupancyPolicy;
 use App\QueueV4Clean\PackDiscoveryUnit02DispositionService;
 use App\Services\CronAdmissionService;
 
-/** @return array{outstanding:int,administrative_dispositions:int,historical_unknown_transports:int} */
+/** @return array{outstanding:int,administrative_dispositions:?int,physical_unknown_dispatches:?int,measurement_status:string,measurement_scope:string} */
 function k3u2_measure(PDO $pdo): array
 {
     $pdo->beginTransaction();
@@ -45,7 +45,9 @@ function k3u2_assert_drift_fails_closed(PDO $pdo, string $assertion, callable $m
     r0h3_assert($measured === [
         'outstanding' => 2,
         'administrative_dispositions' => 0,
-        'historical_unknown_transports' => 2,
+        'physical_unknown_dispatches' => 2,
+        'measurement_status' => 'CERTIFIED',
+        'measurement_scope' => 'H3_CERTIFIED_NON_H3_PACK_DISCOVERY',
     ], $assertion, $measured);
 }
 
@@ -58,7 +60,9 @@ $before = k3u2_measure($pdo);
 r0h3_assert($before === [
     'outstanding' => 2,
     'administrative_dispositions' => 0,
-    'historical_unknown_transports' => 2,
+    'physical_unknown_dispatches' => 2,
+    'measurement_status' => 'CERTIFIED',
+    'measurement_scope' => 'H3_CERTIFIED_NON_H3_PACK_DISCOVERY',
 ], 'k3_unit02_current_contract_two_occupants', $before);
 
 $evidence = k3u2_authorized_evidence($pdo, $fixture['unit02']);
@@ -68,7 +72,9 @@ r0h3_assert(($applied['status'] ?? '') === 'APPLIED'
     && $after === [
         'outstanding' => 1,
         'administrative_dispositions' => 1,
-        'historical_unknown_transports' => 2,
+        'physical_unknown_dispatches' => 2,
+        'measurement_status' => 'CERTIFIED',
+        'measurement_scope' => 'H3_CERTIFIED_NON_H3_PACK_DISCOVERY',
     ], 'k3_unit02_exact_disposition_withdraws_only_occupancy', ['applied' => $applied, 'after' => $after]);
 r0h3_assert(k3u2_unit_evidence_hash($pdo, $fixture['unit01']) === $beforeHashes['unit01']
     && k3u2_unit_evidence_hash($pdo, $fixture['unit02']) === $beforeHashes['unit02'],
@@ -197,7 +203,9 @@ $pdo->prepare(
 r0h3_assert(k3u2_measure($pdo) === [
     'outstanding' => 2,
     'administrative_dispositions' => 0,
-    'historical_unknown_transports' => 2,
+    'physical_unknown_dispatches' => 2,
+    'measurement_status' => 'CERTIFIED',
+    'measurement_scope' => 'H3_CERTIFIED_NON_H3_PACK_DISCOVERY',
 ], 'k3_unit02_malformed_authority_fails_closed');
 
 $fixture = k3u2_seed($pdo);

@@ -43,6 +43,7 @@ final class PackDiscoveryUnit02DispositionService
             $this->assertPermanentAdmin($actorUserId);
             $policy = new PackDiscoveryOccupancyPolicy($this->pdo);
             $policy->lockAdmissionAuthority();
+            $policy->assertUnit02ApplicationContext($authorizedEvidence);
             $existing = $policy->storedUnit02Disposition();
             if (is_array($existing)) {
                 if (!$policy->dispositionRepresentsEvidence($existing, $authorizedEvidence, $actorUserId, $reason)) {

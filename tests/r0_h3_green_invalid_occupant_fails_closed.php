@@ -18,5 +18,4 @@ $receipt = (new App\Services\CronAdmissionService($pdo))->submit('order_enrichme
 $pdo->commit();
 
 echo json_encode(['receipt' => $receipt], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL;
-r0h3_assert(empty($receipt['accepted']) && ($receipt['reason'] ?? '') === 'R0_OCCUPANCY_EXHAUSTED', 'invalid_existing_occupant_must_fail_closed_as_full', ['receipt' => $receipt]);
-
+r0h3_assert(empty($receipt['accepted']) && ($receipt['reason'] ?? '') === 'R0_OCCUPANCY_UNAVAILABLE', 'invalid_existing_occupant_must_fail_closed_as_unavailable', ['receipt' => $receipt]);

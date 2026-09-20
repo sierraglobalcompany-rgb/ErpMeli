@@ -33,7 +33,7 @@ function k3u2_admit(PDO $pdo, array $target, int $sourceId): array
     }
 }
 
-/** @return array{outstanding:int,administrative_dispositions:int,historical_unknown_transports:int} */
+/** @return array{outstanding:int,administrative_dispositions:?int,physical_unknown_dispatches:?int,measurement_status:string,measurement_scope:string} */
 function k3u2_continuity_measure(PDO $pdo): array
 {
     $pdo->beginTransaction();
@@ -83,7 +83,9 @@ $restartMetrics = json_decode(trim((string) file_get_contents($restartOut)), tru
 r0h3_assert($restartExit === 0 && $restartMetrics === [
     'outstanding' => 1,
     'administrative_dispositions' => 1,
-    'historical_unknown_transports' => 2,
+    'physical_unknown_dispatches' => 2,
+    'measurement_status' => 'CERTIFIED',
+    'measurement_scope' => 'H3_CERTIFIED_NON_H3_PACK_DISCOVERY',
 ], 'k3_unit02_restart_reads_same_authority', ['exit' => $restartExit, 'metrics' => $restartMetrics]);
 
 $first = $fixture['healthy'][0];
@@ -182,7 +184,9 @@ $uncertainMetrics = k3u2_continuity_measure($pdo);
 r0h3_assert($uncertainMetrics === [
     'outstanding' => 2,
     'administrative_dispositions' => 1,
-    'historical_unknown_transports' => 3,
+    'physical_unknown_dispatches' => 3,
+    'measurement_status' => 'CERTIFIED',
+    'measurement_scope' => 'H3_CERTIFIED_NON_H3_PACK_DISCOVERY',
 ], 'k3_unit02_new_uncertainty_occupies_normally', $uncertainMetrics);
 
 $thirdSource = (new OrderEnrichmentService())->enqueue(

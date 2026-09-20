@@ -109,15 +109,12 @@ final class PackDiscoveryOccupancyPolicy
 
     /**
      * @param list<array{company_id:int,meli_account_id:int}> $accounts
-     * @return array{outstanding:int,administrative_dispositions:int,historical_unknown_transports:int}
+     * @return array{outstanding:int,administrative_dispositions:?int,physical_unknown_dispatches:?int,measurement_status:string,measurement_scope:string}
      */
     public function measureForAccounts(array $accounts): array
     {
-        if ($accounts === []) {
-            return $this->occupancyDecision(0, 0, 0);
-        }
         if (!$this->pdo->inTransaction()) {
-            return $this->occupancyDecision(self::OUTSTANDING_TARGET, 0, 0);
+            return $this->unavailableOccupancyDecision(false);
         }
 
         $this->lockControlRow();
@@ -126,16 +123,58 @@ final class PackDiscoveryOccupancyPolicy
         try {
             $historicalMatches = $authority['valid'] && $this->historicalAuthorityStillMatches($authority['historical']);
         } catch (Throwable) {
-            return $this->occupancyDecision(self::OUTSTANDING_TARGET, 0, 0);
+            return $this->unavailableOccupancyDecision(false);
         }
         if (!$authority['valid'] || !$historicalMatches) {
-            return $this->occupancyDecision(self::OUTSTANDING_TARGET, 0, 0);
+            return $this->unavailableOccupancyDecision(false);
+        }
+        if ($accounts === []) {
+            return $this->occupancyDecision(0, 0, 0);
         }
 
         try {
             return $this->occupancy($authority, $accounts);
         } catch (Throwable) {
-            return $this->occupancyDecision(self::OUTSTANDING_TARGET, 0, 0);
+            return $this->unavailableOccupancyDecision(true);
+        }
+    }
+
+    /** @param array<string,mixed> $authorizedEvidence */
+    public function assertUnit02ApplicationContext(array $authorizedEvidence): void
+    {
+        if (!$this->pdo->inTransaction()) {
+            throw new RuntimeException('k3_unit02_transaction_required');
+        }
+        $this->lockControlRow();
+
+        $evidence = $this->normalizeAuthorizedEvidence($authorizedEvidence);
+        if ($evidence === null) {
+            throw new RuntimeException('k3_unit02_evidence_invalid');
+        }
+        $authority = $this->loadAuthority(true);
+        if (!$authority['valid']) {
+            throw new RuntimeException($this->unit02H3FailureReason((string) $authority['reason']));
+        }
+        try {
+            $historicalMatches = $this->historicalAuthorityStillMatches($authority['historical']);
+        } catch (Throwable $error) {
+            throw new RuntimeException('k3_unit02_h3_authority_unavailable', 0, $error);
+        }
+        if (!$historicalMatches) {
+            throw new RuntimeException('k3_unit02_h3_authority_changed');
+        }
+
+        $identity = $evidence['identity'];
+        if (!$this->inScope($authority['scope'], (int) $identity['company_id'], (int) $identity['meli_account_id'])) {
+            throw new RuntimeException('k3_unit02_h3_scope_denied');
+        }
+        foreach ($authority['historical'] as $historical) {
+            if ((int) $historical['company_id'] === (int) $identity['company_id']
+                && (int) $historical['meli_account_id'] === (int) $identity['meli_account_id']
+                && (int) $historical['source_id'] === (int) $identity['source_id']
+                && (int) $historical['queue_id'] === (int) $identity['queue_id']) {
+                throw new RuntimeException('k3_unit02_h3_identity_conflict');
+            }
         }
     }
 
@@ -436,7 +475,7 @@ final class PackDiscoveryOccupancyPolicy
 
     /**
      * @param list<array{company_id:int,meli_account_id:int}>|null $accounts
-     * @return array{outstanding:int,administrative_dispositions:int,historical_unknown_transports:int}
+     * @return array{outstanding:int,administrative_dispositions:?int,physical_unknown_dispatches:?int,measurement_status:string,measurement_scope:string}
      */
     private function occupancy(array $authority, ?array $accounts = null): array
     {
@@ -455,7 +494,7 @@ final class PackDiscoveryOccupancyPolicy
             return $this->occupancyDecision(0, 0, 0);
         }
         if ($this->malformedOccupantExists($authority['scope'])) {
-            return $this->occupancyDecision(self::OUTSTANDING_TARGET, 0, 0);
+            throw new RuntimeException('r0_pack_discovery_occupancy_malformed');
         }
         $historical = [];
         foreach ($authority['historical'] as $entry) {
@@ -487,7 +526,7 @@ final class PackDiscoveryOccupancyPolicy
         $units = [];
         foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
             if (!$this->validOccupant($row)) {
-                return $this->occupancyDecision(self::OUTSTANDING_TARGET, 0, 0);
+                throw new RuntimeException('r0_pack_discovery_occupant_invalid');
             }
             $key = (int) $row['company_id'] . ':' . (int) $row['meli_account_id'] . ':' . (int) $row['source_id'];
             if (in_array($key, $historical, true)) {
@@ -498,15 +537,10 @@ final class PackDiscoveryOccupancyPolicy
 
         $seen = [];
         $disposed = [];
-        $unknown = [];
         foreach ($units as $key => $rows) {
             $allClosed = true;
             $matchesDisposition = false;
             foreach ($rows as $row) {
-                if ($this->hasUnresolvedAttempt((int) $row['company_id'], (int) $row['meli_account_id'], (int) $row['queue_id'])
-                    || $this->hasUnresolvedTransport((int) $row['company_id'], (int) $row['meli_account_id'], (int) $row['queue_id'])) {
-                    $unknown[$key] = true;
-                }
                 if (!$this->isClosed($row)) {
                     $allClosed = false;
                 }
@@ -524,7 +558,137 @@ final class PackDiscoveryOccupancyPolicy
             $seen[$key] = true;
         }
 
-        return $this->occupancyDecision(count($seen), count($disposed), count($unknown));
+        return $this->occupancyDecision(
+            count($seen),
+            count($disposed),
+            $this->physicalUnknownDispatches($units),
+        );
+    }
+
+    /** @param array<string,list<array<string,mixed>>> $units */
+    private function physicalUnknownDispatches(array $units): int
+    {
+        $queueScope = [];
+        foreach ($units as $rows) {
+            foreach ($rows as $row) {
+                $queueId = (int) $row['queue_id'];
+                $queueScope[$queueId] = [
+                    'company_id' => (int) $row['company_id'],
+                    'meli_account_id' => (int) $row['meli_account_id'],
+                ];
+            }
+        }
+        if ($queueScope === []) {
+            return 0;
+        }
+
+        $ids = array_keys($queueScope);
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $attemptStatement = $this->pdo->prepare(
+            "SELECT id,job_id,company_id,meli_account_id,lease_generation,outcome,error_class,
+                    dispatch_state,transport_method,endpoint_key,physical_http_calls,
+                    physical_started_at,response_known_at,http_status
+               FROM queue_v4_clean_attempts
+              WHERE job_id IN ($placeholders)
+              ORDER BY id FOR UPDATE"
+        );
+        $attemptStatement->execute($ids);
+        $attempts = [];
+        foreach ($attemptStatement->fetchAll(PDO::FETCH_ASSOC) as $attempt) {
+            $jobId = (int) $attempt['job_id'];
+            $scope = $queueScope[$jobId] ?? null;
+            if (!is_array($scope)
+                || (int) $attempt['company_id'] !== $scope['company_id']
+                || (int) $attempt['meli_account_id'] !== $scope['meli_account_id']) {
+                throw new RuntimeException('r0_pack_discovery_attempt_scope_inconsistent');
+            }
+            $attempts[(int) $attempt['id']] = $attempt;
+        }
+
+        $eventStatement = $this->pdo->prepare(
+            "SELECT id,work_id,attempt_id,company_id,meli_account_id,lease_generation,
+                    method,endpoint_key,dispatch_state,physical_started_at,response_known_at,http_status
+               FROM queue_v4_clean_transport_events
+              WHERE source_kind='queue' AND work_id IN ($placeholders)
+              ORDER BY id FOR UPDATE"
+        );
+        $eventStatement->execute($ids);
+        $eventsByAttempt = [];
+        foreach ($eventStatement->fetchAll(PDO::FETCH_ASSOC) as $event) {
+            $workId = (int) $event['work_id'];
+            $scope = $queueScope[$workId] ?? null;
+            if (!is_array($scope)
+                || (int) $event['company_id'] !== $scope['company_id']
+                || (int) $event['meli_account_id'] !== $scope['meli_account_id']) {
+                throw new RuntimeException('r0_pack_discovery_transport_scope_inconsistent');
+            }
+            $attemptId = (int) ($event['attempt_id'] ?? 0);
+            if ($attemptId < 1) {
+                if ((string) $event['dispatch_state'] === 'PHYSICAL_STARTED' && empty($event['response_known_at'])) {
+                    throw new RuntimeException('r0_pack_discovery_transport_orphaned');
+                }
+                continue;
+            }
+            $eventsByAttempt[$attemptId][] = $event;
+        }
+
+        $unknown = 0;
+        foreach ($attempts as $attemptId => $attempt) {
+            $dispatch = (string) ($attempt['dispatch_state'] ?? '');
+            $events = $eventsByAttempt[$attemptId] ?? [];
+            if ($dispatch === 'NOT_DISPATCHED') {
+                if ((int) ($attempt['physical_http_calls'] ?? -1) !== 0
+                    || !empty($attempt['physical_started_at'])
+                    || !empty($attempt['response_known_at'])
+                    || !empty($attempt['http_status'])
+                    || $events !== []) {
+                    throw new RuntimeException('r0_pack_discovery_not_dispatched_inconsistent');
+                }
+                continue;
+            }
+            if ($dispatch === 'RESPONSE_KNOWN') {
+                foreach ($events as $event) {
+                    if ((string) $event['dispatch_state'] === 'PHYSICAL_STARTED' && empty($event['response_known_at'])) {
+                        throw new RuntimeException('r0_pack_discovery_known_attempt_has_unknown_transport');
+                    }
+                }
+                continue;
+            }
+            if ($dispatch !== 'PHYSICAL_STARTED'
+                || (int) ($attempt['physical_http_calls'] ?? 0) !== 1
+                || empty($attempt['physical_started_at'])
+                || !empty($attempt['response_known_at'])
+                || !empty($attempt['http_status'])
+                || (string) ($attempt['transport_method'] ?? '') === ''
+                || (string) ($attempt['endpoint_key'] ?? '') === ''
+                || count($events) !== 1) {
+                throw new RuntimeException('r0_pack_discovery_unknown_attempt_inconsistent');
+            }
+            $event = $events[0];
+            if ((int) $event['work_id'] !== (int) $attempt['job_id']
+                || (int) $event['company_id'] !== (int) $attempt['company_id']
+                || (int) $event['meli_account_id'] !== (int) $attempt['meli_account_id']
+                || (int) $event['lease_generation'] !== (int) $attempt['lease_generation']
+                || (string) $event['method'] !== (string) $attempt['transport_method']
+                || (string) $event['endpoint_key'] !== (string) $attempt['endpoint_key']
+                || (string) $event['dispatch_state'] !== 'PHYSICAL_STARTED'
+                || empty($event['physical_started_at'])
+                || !empty($event['response_known_at'])
+                || !empty($event['http_status'])) {
+                throw new RuntimeException('r0_pack_discovery_unknown_transport_mismatch');
+            }
+            $unknown++;
+            unset($eventsByAttempt[$attemptId]);
+        }
+        foreach ($eventsByAttempt as $events) {
+            foreach ($events as $event) {
+                if ((string) $event['dispatch_state'] === 'PHYSICAL_STARTED' && empty($event['response_known_at'])) {
+                    throw new RuntimeException('r0_pack_discovery_transport_attempt_missing');
+                }
+            }
+        }
+
+        return $unknown;
     }
 
     /** @param list<array{company_id:int,meli_account_id:int}> $scope */
@@ -1300,14 +1464,40 @@ final class PackDiscoveryOccupancyPolicy
         return $value;
     }
 
-    /** @return array{outstanding:int,administrative_dispositions:int,historical_unknown_transports:int} */
+    /** @return array{outstanding:int,administrative_dispositions:?int,physical_unknown_dispatches:?int,measurement_status:string,measurement_scope:string} */
     private function occupancyDecision(int $outstanding, int $dispositions, int $unknown): array
     {
         return [
             'outstanding' => $outstanding,
             'administrative_dispositions' => $dispositions,
-            'historical_unknown_transports' => $unknown,
+            'physical_unknown_dispatches' => $unknown,
+            'measurement_status' => 'CERTIFIED',
+            'measurement_scope' => 'H3_CERTIFIED_NON_H3_PACK_DISCOVERY',
         ];
+    }
+
+    /** @return array{outstanding:int,administrative_dispositions:null,physical_unknown_dispatches:null,measurement_status:string,measurement_scope:string} */
+    private function unavailableOccupancyDecision(bool $h3ScopeVerified): array
+    {
+        return [
+            'outstanding' => self::OUTSTANDING_TARGET,
+            'administrative_dispositions' => null,
+            'physical_unknown_dispatches' => null,
+            'measurement_status' => 'UNAVAILABLE',
+            'measurement_scope' => $h3ScopeVerified ? 'H3_CERTIFIED_NON_H3_PACK_DISCOVERY' : 'UNVERIFIED',
+        ];
+    }
+
+    private function unit02H3FailureReason(string $reason): string
+    {
+        return match ($reason) {
+            'R0_H3_AUTHORITY_MISSING' => 'k3_unit02_h3_authority_missing',
+            'R0_H3_AUTHORITY_MALFORMED' => 'k3_unit02_h3_authority_malformed',
+            'R0_H3_AUTHORITY_VERSION_INVALID' => 'k3_unit02_h3_authority_version_invalid',
+            'R0_H3_AUTHORITY_INCOMPLETE' => 'k3_unit02_h3_authority_incomplete',
+            'R0_H3_AUTHORITY_SCOPE_MISMATCH' => 'k3_unit02_h3_authority_scope_mismatch',
+            default => 'k3_unit02_h3_authority_unavailable',
+        };
     }
 
     /** @return array<string,mixed>|null */

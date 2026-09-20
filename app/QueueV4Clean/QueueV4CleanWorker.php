@@ -49,6 +49,8 @@ final class QueueV4CleanWorker
     private ?\Closure $jobHandler;
     /** @var null|\Closure(string,int,int):void */
     private ?\Closure $domainHandler;
+    /** @var null|\Closure(array<string,mixed>,array<string,mixed>):void */
+    private ?\Closure $beforePointerFinalize;
     /** @var \Closure():SaleFinancialService */
     private \Closure $financialFactory;
     private bool $confirmedManualSelectionActive = false;
@@ -59,6 +61,7 @@ final class QueueV4CleanWorker
      * @param null|callable(array<string,mixed>):void $jobHandler Test-only/local fixture seam.
      * @param null|callable(string,int,int):void $domainHandler Test-only domain source seam.
      * @param null|callable():SaleFinancialService $financialFactory Test-only billing transport seam.
+     * @param null|callable(array<string,mixed>,array<string,mixed>):void $beforePointerFinalize Test-only post-decision barrier.
      */
     public function __construct(
         private readonly PDO $pdo,
@@ -68,6 +71,7 @@ final class QueueV4CleanWorker
         ?callable $jobHandler = null,
         ?callable $domainHandler = null,
         ?callable $financialFactory = null,
+        ?callable $beforePointerFinalize = null,
     ) {
         $this->clientFactory = $clientFactory !== null
             ? \Closure::fromCallable($clientFactory)
@@ -80,6 +84,9 @@ final class QueueV4CleanWorker
         $this->financialFactory = $financialFactory !== null
             ? \Closure::fromCallable($financialFactory)
             : static fn (): SaleFinancialService => new SaleFinancialService();
+        $this->beforePointerFinalize = $beforePointerFinalize !== null
+            ? \Closure::fromCallable($beforePointerFinalize)
+            : null;
     }
 
     /**
@@ -195,6 +202,7 @@ final class QueueV4CleanWorker
             if ($confirmedSelection === null) {
                 $this->repository->expireLeases($authorizedAccountIds, $accountId);
                 $this->repository->releaseDueRetryableDirectWaiting($authorizedAccountIds, $accountId);
+                $this->repository->releaseDueNotificationWaiting($authorizedAccountIds, $accountId);
                 try {
                     $this->repository->releaseDueWaiting($authorizedAccountIds, $accountId);
                 } catch (Throwable $error) {
@@ -240,6 +248,25 @@ final class QueueV4CleanWorker
                 $claimedJobIds[] = (int) $job['id'];
                 try {
                     $outcome = $this->handle($job);
+                    if ($this->beforePointerFinalize !== null) {
+                        ($this->beforePointerFinalize)($job, $outcome);
+                    }
+                    if ($this->jobCapability($job) === 'notification_work_item') {
+                        try {
+                            $outcome = $this->repository->finalizeNotificationPointer($job, $runId);
+                        } catch (Throwable $finalizeError) {
+                            // The durable source may already contain a newer event or a
+                            // completed result. Do not turn an infrastructure failure in
+                            // the atomic close into a generic 30-second business retry.
+                            // Leaving the claimed pointer under its lease makes the next
+                            // cycle recover it through the existing lease-expiry path.
+                            throw new RuntimeException(
+                                'notification_pointer_finalize_failed',
+                                0,
+                                $finalizeError,
+                            );
+                        }
+                    }
                 } catch (OAuthRefreshRequiredException $error) {
                     $this->repository->deferWithoutAttemptPenalty(
                         $job,
@@ -399,6 +426,9 @@ final class QueueV4CleanWorker
                     }
                     continue;
                 } catch (RuntimeException $error) {
+                    if ($error->getMessage() === 'notification_pointer_finalize_failed') {
+                        throw $error;
+                    }
                     $this->functionalFailure($job, $runId, $error);
                     $failureClass = $this->failureClass($error);
                     $receiptJobs[] = $this->cycleJobReceipt($job, 'waiting', $failureClass, false, null, null, null);
@@ -410,12 +440,14 @@ final class QueueV4CleanWorker
                     continue;
                 }
                 if (($outcome['state'] ?? '') === 'waiting') {
-                    $this->repository->deferWithoutAttemptPenalty(
-                        $job,
-                        $runId,
-                        (string) ($outcome['classification'] ?? 'domain_source_waiting'),
-                        isset($outcome['next_safe_at']) ? (string) $outcome['next_safe_at'] : null,
-                    );
+                    if ($this->jobCapability($job) !== 'notification_work_item') {
+                        $this->repository->deferWithoutAttemptPenalty(
+                            $job,
+                            $runId,
+                            (string) ($outcome['classification'] ?? 'domain_source_waiting'),
+                            isset($outcome['next_safe_at']) ? (string) $outcome['next_safe_at'] : null,
+                        );
+                    }
                     $receiptJobs[] = $this->cycleJobReceipt(
                         $job,
                         'waiting',
@@ -433,11 +465,13 @@ final class QueueV4CleanWorker
                     continue;
                 }
                 if (($outcome['state'] ?? '') === 'review') {
-                    $this->repository->review(
-                        $job,
-                        $runId,
-                        (string) ($outcome['classification'] ?? 'domain_source_review'),
-                    );
+                    if ($this->jobCapability($job) !== 'notification_work_item') {
+                        $this->repository->review(
+                            $job,
+                            $runId,
+                            (string) ($outcome['classification'] ?? 'domain_source_review'),
+                        );
+                    }
                     $receiptJobs[] = $this->cycleJobReceipt(
                         $job,
                         'review',
@@ -458,7 +492,9 @@ final class QueueV4CleanWorker
                 if (($outcome['state'] ?? '') !== 'completed') {
                     throw new RuntimeException('queue_v4_clean_worker_outcome_invalid');
                 }
-                $this->repository->complete($job, $runId);
+                if ($this->jobCapability($job) !== 'notification_work_item') {
+                    $this->repository->complete($job, $runId);
+                }
                 $receiptJobs[] = $this->cycleJobReceipt($job, 'completed', 'completed', (bool) ($outcome['reached_remote'] ?? false), null, null, null);
                 $completed++;
             }
@@ -839,7 +875,10 @@ final class QueueV4CleanWorker
                 ),
             );
             if ((string) ($result['status'] ?? '') === 'complete') {
-                return ['state' => 'completed'];
+                $source = $this->domainSource($capability, $sourceId, $companyId, $accountId);
+                return $source === null
+                    ? ['state' => 'review', 'classification' => 'domain_source_missing_after_process']
+                    : $this->domainOutcome($capability, $source);
             }
             if (in_array((string) ($result['status'] ?? ''), ['action_required', 'error'], true)) {
                 return ['state' => 'review', 'classification' => 'notification_work_item_' . $this->safeToken((string) ($result['status'] ?? 'error'))];

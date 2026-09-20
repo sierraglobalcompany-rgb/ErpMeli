@@ -25,6 +25,18 @@ final class WebhookService
      */
     public function receiveResult(string $raw, string $source = 'webhook', bool $allowSpool = true): array
     {
+        return $this->receiveResultAttempt($raw, $source, $allowSpool, 0);
+    }
+
+    /**
+     * A deadlock aborts the complete local transaction, so one bounded retry
+     * is safe and keeps simultaneous webhook receptions idempotent. Other
+     * failures retain the existing spool/error contract.
+     *
+     * @return array{accepted:bool,http_status:int,event_id:?int,duplicate:bool,spooled:bool,terminal:bool,quarantined:bool,message:string}
+     */
+    private function receiveResultAttempt(string $raw, string $source, bool $allowSpool, int $transientRetry): array
+    {
         $receiverStarted = microtime(true);
         $spool = new WebhookSpoolService();
         $validation = $spool->validateIngress($raw);
@@ -195,6 +207,11 @@ final class WebhookService
             return ['accepted' => true, 'http_status' => 200, 'event_id' => $eventId, 'duplicate' => false, 'spooled' => false, 'terminal' => false, 'quarantined' => false, 'message' => 'Evento recibido.'];
         } catch (PDOException $error) {
             $this->rollback($pdo);
+            $driverCode = (int) ($error->errorInfo[1] ?? 0);
+            if ($transientRetry < 1 && ($error->getCode() === '40001' || in_array($driverCode, [1205, 1213], true))) {
+                usleep(random_int(10000, 30000));
+                return $this->receiveResultAttempt($raw, $source, $allowSpool, $transientRetry + 1);
+            }
             if (($error->getCode() === '23000' || (int) ($error->errorInfo[1] ?? 0) === 1062)) {
                 $existingId = $this->existingEventId($payloadHash, $notificationId);
                 return ['accepted' => true, 'http_status' => 200, 'event_id' => $existingId, 'duplicate' => true, 'spooled' => false, 'terminal' => false, 'quarantined' => false, 'message' => 'Evento duplicado reconocido.'];

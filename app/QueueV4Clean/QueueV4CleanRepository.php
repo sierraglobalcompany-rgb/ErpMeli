@@ -914,6 +914,75 @@ final class QueueV4CleanRepository
         $this->finish($job, $runId, 'completed', 'completed', null, null);
     }
 
+    /**
+     * Finalize a notification pointer while holding the durable source row.
+     * This closes the post-processing race without keeping a transaction open
+     * during HTTP: a later webhook either commits first and is observed here,
+     * or waits and creates/reopens executable work after this commit.
+     *
+     * @param array<string,mixed> $job
+     * @return array{state:string,classification:string,next_safe_at?:string}
+     */
+    public function finalizeNotificationPointer(array $job, int $runId): array
+    {
+        $companyId = (int) ($job['company_id'] ?? 0);
+        $accountId = (int) ($job['meli_account_id'] ?? 0);
+        $sourceId = (int) ($job['resource_id'] ?? 0);
+        $this->assertTenant($companyId, $accountId);
+        if ($sourceId < 1) {
+            throw new RuntimeException('notification_pointer_source_invalid');
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            $source = $this->pdo->prepare(
+                'SELECT w.status,w.next_run_at
+                 FROM meli_notification_work_items w
+                 INNER JOIN meli_accounts ma ON ma.id=w.meli_account_id AND ma.company_id=?
+                 WHERE w.id=? AND w.meli_account_id=? LIMIT 1 FOR UPDATE'
+            );
+            $source->execute([$companyId, $sourceId, $accountId]);
+            $row = $source->fetch(PDO::FETCH_ASSOC);
+            $status = is_array($row) ? strtolower(trim((string) ($row['status'] ?? ''))) : '';
+
+            if (in_array($status, ['complete', 'ignored'], true)) {
+                $outcome = ['state' => 'completed', 'classification' => 'completed'];
+                $this->finishInTransaction($job, $runId, 'completed', 'completed', null, true, null, false, null);
+            } elseif (in_array($status, ['pending', 'retry', 'running'], true)) {
+                $nextSafeAt = $this->safeUtcDateTime(is_array($row) ? (string) ($row['next_run_at'] ?? '') : null);
+                $outcome = [
+                    'state' => 'waiting',
+                    'classification' => 'domain_source_waiting:notification_work_item',
+                    'next_safe_at' => $nextSafeAt,
+                ];
+                $this->finishInTransaction(
+                    $job,
+                    $runId,
+                    'waiting',
+                    'waiting',
+                    $outcome['classification'],
+                    false,
+                    $nextSafeAt,
+                    true,
+                    null,
+                );
+            } else {
+                $classification = 'domain_source_' . ($status !== ''
+                    ? substr(preg_replace('/[^a-z0-9_]+/', '_', $status) ?: 'unknown', 0, 100)
+                    : 'missing');
+                $outcome = ['state' => 'review', 'classification' => $classification];
+                $this->finishInTransaction($job, $runId, 'review', 'review', $classification, true, null, false, null);
+            }
+            $this->pdo->commit();
+            return $outcome;
+        } catch (Throwable $error) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $error;
+        }
+    }
+
     public function wait(array $job, int $runId, string $errorClass, int $delaySeconds = 30): void
     {
         $this->finish($job, $runId, 'waiting', 'waiting', $errorClass, max(1, min(3600, $delaySeconds)));
@@ -1176,6 +1245,81 @@ final class QueueV4CleanRepository
         return $statement->rowCount();
     }
 
+    /**
+     * Re-open only due notification pointers whose durable source and prior
+     * attempt still prove that another natural cycle is safe. Initial
+     * debounce pointers have no attempt yet; subsequent continuations must
+     * have one closed waiting attempt for the current generation.
+     *
+     * @param list<int>|null $authorizedAccountIds
+     */
+    public function releaseDueNotificationWaiting(?array $authorizedAccountIds = null, ?int $accountId = null): int
+    {
+        [$scopeSql, $scopeParams] = $this->accountScopeSql('q', $authorizedAccountIds, $accountId);
+        $statement = $this->pdo->prepare(
+            "UPDATE queue_v4_clean_jobs q
+             INNER JOIN meli_notification_work_items w
+                     ON w.id=CAST(q.resource_id AS UNSIGNED)
+                    AND w.meli_account_id=q.meli_account_id
+             INNER JOIN meli_accounts ma
+                     ON ma.id=w.meli_account_id
+                    AND ma.company_id=q.company_id
+             SET q.state='ready',q.last_error_class=NULL
+             WHERE q.job_type='domain_exact'
+               AND JSON_UNQUOTE(JSON_EXTRACT(q.payload_json,'$.capability'))='notification_work_item'
+               AND q.resource_id REGEXP '^[0-9]+$'
+               AND q.state='waiting'
+               AND q.available_at<=UTC_TIMESTAMP(3)
+               AND q.attempt_count<q.max_attempts
+               AND {$scopeSql}
+               AND w.status IN ('pending','retry')
+               AND w.next_run_at<=UTC_TIMESTAMP(3)
+               AND ((q.lease_owner IS NULL AND q.lease_expires_at IS NULL)
+                    OR (q.lease_owner IS NOT NULL AND q.lease_owner<>''
+                        AND q.lease_expires_at IS NOT NULL AND q.lease_expires_at<=UTC_TIMESTAMP(3)))
+               AND ((w.locked_by IS NULL AND w.lock_expires_at IS NULL)
+                    OR (w.locked_by IS NOT NULL AND w.locked_by<>''
+                        AND w.lock_expires_at IS NOT NULL AND w.lock_expires_at<=UTC_TIMESTAMP(3)))
+               AND NOT (" . $this->unresolvedPhysicalPredicate('q') . ")
+               AND NOT EXISTS (
+                   SELECT 1 FROM manual_campaign_reservations mcr
+                    WHERE mcr.queue_key='notification_fallback'
+                      AND mcr.source_id=CAST(w.id AS CHAR)
+                      AND mcr.company_id=q.company_id
+                      AND mcr.meli_account_id=q.meli_account_id
+                      AND mcr.status='active'
+                      AND mcr.expires_at>UTC_TIMESTAMP(3)
+               )
+               AND (
+                   (q.lease_generation=0 AND q.attempt_count=0
+                    AND NOT EXISTS (SELECT 1 FROM queue_v4_clean_attempts initial_attempt
+                                     WHERE initial_attempt.job_id=q.id))
+                   OR EXISTS (
+                       SELECT 1 FROM queue_v4_clean_attempts a
+                        WHERE a.job_id=q.id
+                          AND a.company_id=q.company_id
+                          AND a.meli_account_id=q.meli_account_id
+                          AND a.lease_generation=q.lease_generation
+                          AND a.outcome='waiting'
+                          AND a.finished_at IS NOT NULL
+                          AND a.source_closed_at IS NOT NULL
+                          AND a.error_class=q.last_error_class
+                          AND NOT EXISTS (
+                              SELECT 1 FROM queue_v4_clean_attempts newer
+                               WHERE newer.job_id=q.id
+                                 AND newer.company_id=q.company_id
+                                 AND newer.meli_account_id=q.meli_account_id
+                                 AND newer.lease_generation>=a.lease_generation
+                                 AND newer.id<>a.id
+                          )
+                   )
+               )
+             ORDER BY q.available_at,q.id LIMIT 200"
+        );
+        $statement->execute($scopeParams);
+        return $statement->rowCount();
+    }
+
     /** @param list<int>|null $authorizedAccountIds */
     public function releaseDueWaiting(?array $authorizedAccountIds = null, ?int $accountId = null): int
     {
@@ -1353,46 +1497,103 @@ final class QueueV4CleanRepository
         $this->assertTenant($companyId, $accountId);
         $this->pdo->beginTransaction();
         try {
-            $available = $delaySeconds === null
-                ? 'available_at'
-                : 'DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ' . (int) $delaySeconds . ' SECOND)';
-            $statement = $this->pdo->prepare(
-                "UPDATE queue_v4_clean_jobs
-                 SET state=?,available_at={$available},lease_owner=NULL,lease_expires_at=NULL,last_error_class=?,
-                     completed_at=IF(?='completed',UTC_TIMESTAMP(3),NULL)
-                 WHERE id=? AND company_id=? AND meli_account_id=? AND state='running'
-                   AND lease_owner=? AND lease_generation=?"
+            $this->finishInTransaction(
+                $job,
+                $runId,
+                $jobState,
+                $attemptOutcome,
+                $errorClass,
+                $delaySeconds === null,
+                null,
+                false,
+                $delaySeconds,
             );
-            $statement->execute([
-                $jobState, $errorClass, $jobState, (int) $job['id'], $companyId, $accountId,
-                (string) $job['lease_owner'], (int) $job['lease_generation'],
-            ]);
-            if ($statement->rowCount() !== 1) {
-                throw new RuntimeException('queue_v4_clean_finish_cas_lost');
-            }
-            $attempt = $this->pdo->prepare(
-                'UPDATE queue_v4_clean_attempts SET outcome=?,error_class=?,finished_at=UTC_TIMESTAMP(3),source_closed_at=UTC_TIMESTAMP(3)
-                 WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=?
-                   AND lease_owner=? AND lease_generation=? AND outcome=\'running\''
-            );
-            $attempt->execute([
-                $attemptOutcome, $errorClass, (int) $job['attempt_id'], (int) $job['id'],
-                $companyId, $accountId, (string) $job['lease_owner'], (int) $job['lease_generation'],
-            ]);
-            if ($attempt->rowCount() !== 1) {
-                throw new RuntimeException('queue_v4_clean_attempt_cas_lost');
-            }
-            $runColumn = $jobState === 'completed' ? 'jobs_completed' : 'jobs_deferred';
-            $run = $this->pdo->prepare(
-                "UPDATE queue_v4_clean_runs SET {$runColumn}={$runColumn}+1 WHERE id=? AND status='running'"
-            );
-            $run->execute([$runId]);
             $this->pdo->commit();
         } catch (Throwable $error) {
             if ($this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
             }
             throw $error;
+        }
+    }
+
+    /** @param array<string,mixed> $job */
+    private function finishInTransaction(
+        array $job,
+        int $runId,
+        string $jobState,
+        string $attemptOutcome,
+        ?string $errorClass,
+        bool $preserveAvailableAt,
+        ?string $availableAt,
+        bool $undoClaimAttempt,
+        ?int $delaySeconds,
+    ): void {
+        if (!$this->pdo->inTransaction()) {
+            throw new RuntimeException('queue_v4_clean_finish_transaction_required');
+        }
+        $companyId = (int) ($job['company_id'] ?? 0);
+        $accountId = (int) ($job['meli_account_id'] ?? 0);
+        $availableExpression = $preserveAvailableAt
+            ? 'available_at'
+            : ($delaySeconds === null
+                ? '?'
+                : 'DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ' . max(0, $delaySeconds) . ' SECOND)');
+        $statement = $this->pdo->prepare(
+            "UPDATE queue_v4_clean_jobs
+             SET state=?,available_at={$availableExpression},
+                 attempt_count=IF(?=1,GREATEST(attempt_count-1,0),attempt_count),
+                 lease_owner=NULL,lease_expires_at=NULL,last_error_class=?,
+                 completed_at=IF(?='completed',UTC_TIMESTAMP(3),NULL)
+             WHERE id=? AND company_id=? AND meli_account_id=? AND state='running'
+               AND lease_owner=? AND lease_generation=?"
+        );
+        $params = [
+            $jobState,
+        ];
+        if (!$preserveAvailableAt && $delaySeconds === null) {
+            $params[] = $availableAt;
+        }
+        array_push(
+            $params,
+            $undoClaimAttempt ? 1 : 0,
+            $errorClass,
+            $jobState,
+            (int) $job['id'],
+            $companyId,
+            $accountId,
+            (string) $job['lease_owner'],
+            (int) $job['lease_generation'],
+        );
+        $statement->execute($params);
+        if ($statement->rowCount() !== 1) {
+            throw new RuntimeException('queue_v4_clean_finish_cas_lost');
+        }
+        $attempt = $this->pdo->prepare(
+            'UPDATE queue_v4_clean_attempts SET outcome=?,error_class=?,finished_at=UTC_TIMESTAMP(3),source_closed_at=UTC_TIMESTAMP(3)
+             WHERE id=? AND job_id=? AND company_id=? AND meli_account_id=?
+               AND lease_owner=? AND lease_generation=? AND outcome=\'running\''
+        );
+        $attempt->execute([
+            $attemptOutcome,
+            $errorClass,
+            (int) $job['attempt_id'],
+            (int) $job['id'],
+            $companyId,
+            $accountId,
+            (string) $job['lease_owner'],
+            (int) $job['lease_generation'],
+        ]);
+        if ($attempt->rowCount() !== 1) {
+            throw new RuntimeException('queue_v4_clean_attempt_cas_lost');
+        }
+        $runColumn = $jobState === 'completed' ? 'jobs_completed' : 'jobs_deferred';
+        $run = $this->pdo->prepare(
+            "UPDATE queue_v4_clean_runs SET {$runColumn}={$runColumn}+1 WHERE id=? AND status='running'"
+        );
+        $run->execute([$runId]);
+        if ($run->rowCount() !== 1) {
+            throw new RuntimeException('queue_v4_clean_finish_run_cas_lost');
         }
     }
 

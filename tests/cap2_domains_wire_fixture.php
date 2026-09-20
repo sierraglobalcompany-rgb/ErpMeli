@@ -10,10 +10,11 @@ final class Cap2DomainsWire
     public static array $calls = [];
     public static int $status = 0;
     public static string $raw = '';
+    public static string $curlError = '';
     public static ?\Closure $onWire = null;
 }
 
-function curl_exec(\CurlHandle $handle): string
+function curl_exec(\CurlHandle $handle): string|false
 {
     $url = \curl_getinfo($handle, CURLINFO_EFFECTIVE_URL);
     $path = (string) parse_url($url, PHP_URL_PATH);
@@ -26,10 +27,14 @@ function curl_exec(\CurlHandle $handle): string
         'query' => $query,
         'meta' => ApiExecutionMetadataContext::current(),
     ];
-    [Cap2DomainsWire::$status, $body] = Cap2DomainsWire::$responses[$path];
+    [Cap2DomainsWire::$status, $body, Cap2DomainsWire::$curlError] = array_pad(
+        Cap2DomainsWire::$responses[$path],
+        3,
+        ''
+    );
     Cap2DomainsWire::$raw = json_encode($body, JSON_THROW_ON_ERROR);
     if (Cap2DomainsWire::$onWire !== null) { (Cap2DomainsWire::$onWire)(); }
-    return Cap2DomainsWire::$raw;
+    return Cap2DomainsWire::$curlError === '' ? Cap2DomainsWire::$raw : false;
 }
 
 function curl_getinfo(\CurlHandle $handle, ?int $option = null): mixed
@@ -41,4 +46,4 @@ function curl_getinfo(\CurlHandle $handle, ?int $option = null): mixed
     };
 }
 
-function curl_error(\CurlHandle $handle): string { return ''; }
+function curl_error(\CurlHandle $handle): string { return Cap2DomainsWire::$curlError; }

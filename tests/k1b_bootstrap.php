@@ -6,9 +6,11 @@ declare(strict_types=1);
 // this test bootstrap; existing independent fixtures retain their own roots.
 $callsQaStorage = str_replace('\\', '/', (string) getenv('CALLS_QA_STORAGE_ROOT'));
 if ($callsQaStorage !== '' && !defined('ERP_SHARED_ROOT')) {
+    $projectQaRoot = str_replace('\\', '/', dirname(__DIR__) . '/storage/codex-');
     if (PHP_SAPI !== 'cli'
         || !(str_starts_with($callsQaStorage, 'D:/Codex/tmp/erp-meli/calls-20260906/')
-            || str_starts_with($callsQaStorage, 'C:/codex/capacity-save-kiss/'))
+            || str_starts_with($callsQaStorage, 'C:/codex/capacity-save-kiss/')
+            || str_starts_with($callsQaStorage, $projectQaRoot))
         || str_contains($callsQaStorage, '..')) {
         throw new RuntimeException('Invalid calls QA storage root.');
     }

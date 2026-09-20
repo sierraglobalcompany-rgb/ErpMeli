@@ -99,7 +99,10 @@ final class K1dSafeTestDatabase
     {
         $root = rtrim(str_replace('\\', '/', (string) (getenv('CALLS_VERIFY_QA_ROOT')
             ?: 'D:/Codex/tmp/erp-meli/calls-20260906/database-ownership')), '/');
-        if (!(str_starts_with($root, 'D:/Codex/') || str_starts_with($root, 'C:/codex/capacity-save-kiss/'))
+        $projectStorage = rtrim(str_replace('\\', '/', dirname(__DIR__) . '/storage/codex-'), '/');
+        if (!(str_starts_with($root, 'D:/Codex/')
+                || str_starts_with($root, 'C:/codex/capacity-save-kiss/')
+                || str_starts_with($root, $projectStorage))
             || in_array('..', explode('/', $root), true)) {
             throw new RuntimeException('TEST_DB_OWNERSHIP_ROOT_NOT_LOCAL');
         }

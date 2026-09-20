@@ -144,7 +144,7 @@
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanProducer.php",
-            "sha256": "7bcb3e3050ffda1bcaaac8218317eb7c8e44ba4cacbb41a20a2767457fc968c7"
+            "sha256": "139781585c5c806ef9930b9b875d5849db0e508f1a4161fc4b9c24e89fdfb0ed"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanReadinessService.php",

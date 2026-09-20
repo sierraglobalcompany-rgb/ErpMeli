@@ -1176,8 +1176,8 @@
         },
         "runtime_app_queuev4clean_queuev4cleanproducer_php": {
             "path": "app/QueueV4Clean/QueueV4CleanProducer.php",
-            "sha256": "7bcb3e3050ffda1bcaaac8218317eb7c8e44ba4cacbb41a20a2767457fc968c7",
-            "sha256_lf": "7bcb3e3050ffda1bcaaac8218317eb7c8e44ba4cacbb41a20a2767457fc968c7",
+            "sha256": "139781585c5c806ef9930b9b875d5849db0e508f1a4161fc4b9c24e89fdfb0ed",
+            "sha256_lf": "139781585c5c806ef9930b9b875d5849db0e508f1a4161fc4b9c24e89fdfb0ed",
             "text": true
         },
         "runtime_app_queuev4clean_queuev4cleanreadinessservice_php": {
@@ -7476,8 +7476,8 @@
         },
         "runtime_resources_release_updater_authority_2_40_1_json": {
             "path": "resources/release/updater-authority-2.40.1.json",
-            "sha256": "64d24fac9fecd060f3bd34432e2c8d03226a7060c3d14695af4d629f762dfeac",
-            "sha256_lf": "64d24fac9fecd060f3bd34432e2c8d03226a7060c3d14695af4d629f762dfeac",
+            "sha256": "88bb073645aae123244e810cd23da5733593871fdd4fc3f30ea908831fda8105",
+            "sha256_lf": "88bb073645aae123244e810cd23da5733593871fdd4fc3f30ea908831fda8105",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

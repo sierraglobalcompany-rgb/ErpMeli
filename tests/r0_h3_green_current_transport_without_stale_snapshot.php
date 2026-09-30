@@ -39,8 +39,7 @@ $pdo->commit();
 
 echo json_encode(['third_receipt' => $thirdReceipt], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL;
 r0h3_assert(
-    empty($thirdReceipt['accepted']) && ($thirdReceipt['reason'] ?? '') === 'R0_OCCUPANCY_EXHAUSTED',
-    'current_unresolved_transport_must_keep_closed_unit_occupied',
+    empty($thirdReceipt['accepted']) && ($thirdReceipt['reason'] ?? '') === 'R0_OCCUPANCY_UNAVAILABLE',
+    'orphaned_current_transport_must_fail_closed_as_unavailable',
     ['receipt' => $thirdReceipt]
 );
-

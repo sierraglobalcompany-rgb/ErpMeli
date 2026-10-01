@@ -181,21 +181,16 @@ final class QueueV4CleanProducer
                     break;
                 }
 
-                $this->pdo->exec('SAVEPOINT r0_pack_discovery_pair');
                 $preferredRoute = $lastSuccessfulRoute === self::PACK_DISCOVERY_ROUTE_EXISTING
                     ? self::PACK_DISCOVERY_ROUTE_COVERAGE
                     : self::PACK_DISCOVERY_ROUTE_EXISTING;
-                $route = $preferredRoute;
-                $row = $this->packDiscoveryCandidateForRoute(
-                    $route,
-                    $sourceTenantClauses,
-                    $packTenantClauses,
-                    $params,
-                );
-                if (!is_array($row)) {
-                    $route = $preferredRoute === self::PACK_DISCOVERY_ROUTE_EXISTING
-                        ? self::PACK_DISCOVERY_ROUTE_COVERAGE
-                        : self::PACK_DISCOVERY_ROUTE_EXISTING;
+                $alternateRoute = $preferredRoute === self::PACK_DISCOVERY_ROUTE_EXISTING
+                    ? self::PACK_DISCOVERY_ROUTE_COVERAGE
+                    : self::PACK_DISCOVERY_ROUTE_EXISTING;
+                $admitted = false;
+                // One candidate per route, at most two attempts per vacancy.
+                foreach ([$preferredRoute, $alternateRoute] as $route) {
+                    $this->pdo->exec('SAVEPOINT r0_pack_discovery_pair');
                     $row = $this->packDiscoveryCandidateForRoute(
                         $route,
                         $sourceTenantClauses,
@@ -203,29 +198,33 @@ final class QueueV4CleanProducer
                         $params,
                     );
                     if (!is_array($row)) {
+                        $this->pdo->exec('ROLLBACK TO SAVEPOINT r0_pack_discovery_pair');
+                        $this->pdo->exec('RELEASE SAVEPOINT r0_pack_discovery_pair');
+                        continue;
+                    }
+
+                    $receipt = (new CronAdmissionService($this->pdo))->submit(
+                        'order_enrichment_pack',
+                        (int) $row['company_id'],
+                        (int) $row['meli_account_id'],
+                        (int) $row['id'],
+                        'source:' . (int) $row['id'],
+                        ['pack_id' => (string) $row['external_resource_id']],
+                    );
+                    if (!empty($receipt['accepted']) && empty($receipt['deduplicated'])) {
+                        $this->recordPackDiscoverySuccessfulRoute($route);
+                        $lastSuccessfulRoute = $route;
+                        $created++;
+                        $admitted = true;
                         $this->pdo->exec('RELEASE SAVEPOINT r0_pack_discovery_pair');
                         break;
                     }
-                }
-
-                $receipt = (new CronAdmissionService($this->pdo))->submit(
-                    'order_enrichment_pack',
-                    (int) $row['company_id'],
-                    (int) $row['meli_account_id'],
-                    (int) $row['id'],
-                    'source:' . (int) $row['id'],
-                    ['pack_id' => (string) $row['external_resource_id']],
-                );
-                if (!empty($receipt['accepted']) && empty($receipt['deduplicated'])) {
-                    $this->recordPackDiscoverySuccessfulRoute($route);
-                    $lastSuccessfulRoute = $route;
-                    $created++;
+                    $this->pdo->exec('ROLLBACK TO SAVEPOINT r0_pack_discovery_pair');
                     $this->pdo->exec('RELEASE SAVEPOINT r0_pack_discovery_pair');
-                    continue;
                 }
-                $this->pdo->exec('ROLLBACK TO SAVEPOINT r0_pack_discovery_pair');
-                $this->pdo->exec('RELEASE SAVEPOINT r0_pack_discovery_pair');
-                break;
+                if (!$admitted) {
+                    break;
+                }
             }
             $this->pdo->commit();
 
@@ -418,7 +417,10 @@ final class QueueV4CleanProducer
                  WHERE existing.meli_account_id=p.meli_account_id
                    AND existing.resource_type="pack"
                    AND existing.external_resource_id=p.external_pack_id
-                   AND existing.status IN ("pending","retry","running","complete")
+                   AND (
+                     existing.status IN ("pending","retry","running","complete")
+                     OR existing.failure_class IN ("remote_result_uncertain","remote_result_uncertain_safe_get")
+                   )
                )
              GROUP BY p.id,a.company_id,p.meli_account_id,p.external_pack_id
              ORDER BY p.id ASC

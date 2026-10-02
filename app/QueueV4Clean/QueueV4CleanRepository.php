@@ -1242,6 +1242,116 @@ final class QueueV4CleanRepository
         // A single bounded local UPDATE, never an HTTP budget or an unbounded draining loop.
         // Query failures propagate; they cannot certify absence of a transport restriction.
         $statement->execute(array_merge($scopeParams, $notDispatchedCauses));
+        return $statement->rowCount() + $this->releaseDueSafePackWaiting($authorizedAccountIds, $accountId);
+    }
+
+    /**
+     * Reenter the same admitted pack unit, not a new admission. Unlike direct
+     * GET reentry above, this branch NEVER accepts RESPONSE_KNOWN/429/5xx.
+     * One atomic, bounded UPDATE rechecks state and durable evidence under
+     * the database row locks. It does not change source, attempts or fences.
+     * @param list<int>|null $authorizedAccountIds
+     */
+    private function releaseDueSafePackWaiting(?array $authorizedAccountIds, ?int $accountId): int
+    {
+        [$scopeSql, $scopeParams] = $this->accountScopeSql('q', $authorizedAccountIds, $accountId);
+        // CASE prevents malformed JSON from being evaluated as an identity.
+        $payload = "(CASE WHEN JSON_VALID(q.payload_json) THEN q.payload_json ELSE '{}' END)";
+        $sourceId = "JSON_UNQUOTE(JSON_EXTRACT({$payload},'$.source_id'))";
+        $statement = $this->pdo->prepare(
+            "UPDATE queue_v4_clean_jobs q SET q.state='ready'
+             WHERE q.job_type='domain_exact' AND q.state='waiting'
+               AND q.company_id>0 AND q.meli_account_id>0 AND {$scopeSql}
+               AND q.available_at IS NOT NULL AND q.available_at<=UTC_TIMESTAMP(3)
+               AND q.attempt_count<q.max_attempts AND q.lease_generation>0
+               AND JSON_VALID(q.payload_json)=1
+               AND BINARY JSON_UNQUOTE(JSON_EXTRACT({$payload},'$.capability'))=BINARY 'order_enrichment_pack'
+               AND q.resource_id REGEXP '^[1-9][0-9]*$'
+               AND {$sourceId} REGEXP '^[1-9][0-9]*$'
+               AND BINARY {$sourceId}=BINARY q.resource_id
+               AND BINARY q.last_error_class IN (
+                   'domain_source_waiting:order_enrichment_pack:waiting_deadline',
+                   'domain_source_waiting:order_enrichment_pack:waiting_rhythm')
+               AND EXISTS (
+                   SELECT 1 FROM order_resource_enrichment_jobs s
+                   JOIN meli_accounts m ON m.id=s.meli_account_id AND m.company_id=q.company_id
+                   WHERE s.id=CAST(q.resource_id AS UNSIGNED) AND s.meli_account_id=q.meli_account_id
+                     AND BINARY CAST(s.id AS CHAR)=BINARY q.resource_id
+                     AND s.resource_type='pack'
+                     AND s.external_resource_id IS NOT NULL AND s.external_resource_id<>''
+                     AND (JSON_CONTAINS_PATH({$payload},'one','$.pack_id')=0
+                          OR BINARY JSON_UNQUOTE(JSON_EXTRACT({$payload},'$.pack_id'))=BINARY s.external_resource_id)
+                     AND (JSON_CONTAINS_PATH({$payload},'one','$.payload.pack_id')=0
+                          OR BINARY JSON_UNQUOTE(JSON_EXTRACT({$payload},'$.payload.pack_id'))=BINARY s.external_resource_id)
+                     AND s.next_run_at IS NOT NULL AND s.next_run_at<=UTC_TIMESTAMP()
+                     AND ((s.locked_at IS NULL AND s.lock_token IS NULL)
+                          OR (s.locked_at<DATE_SUB(UTC_TIMESTAMP(),INTERVAL 10 MINUTE)
+                              AND s.lock_token IS NOT NULL AND s.lock_token<>''))
+                     AND (
+                         (BINARY q.last_error_class=BINARY 'domain_source_waiting:order_enrichment_pack:waiting_deadline'
+                          AND ((s.status='pending' AND BINARY COALESCE(s.failure_class,'')=BINARY ''
+                                AND (s.reached_remote IS NULL OR s.reached_remote=0))
+                               OR (s.status='retry' AND BINARY s.failure_class=BINARY 'waiting_deadline' AND s.reached_remote=0)))
+                         OR (BINARY q.last_error_class=BINARY 'domain_source_waiting:order_enrichment_pack:waiting_rhythm'
+                             AND s.status='retry' AND BINARY s.failure_class=BINARY 'waiting_rhythm' AND s.reached_remote=0)
+                     )
+                     AND NOT EXISTS (
+                         SELECT 1 FROM manual_campaign_reservations r
+                         JOIN manual_campaigns c ON c.id=r.manual_campaign_id
+                         WHERE r.queue_key='order_enrichment' AND r.source_id=CAST(s.id AS CHAR)
+                           AND r.status='active' AND r.expires_at>UTC_TIMESTAMP(3)
+                           AND c.status IN ('active','pausing','paused'))
+               )
+               AND EXISTS (
+                   SELECT 1 FROM queue_v4_clean_attempts a
+                   WHERE a.job_id=q.id AND a.company_id=q.company_id AND a.meli_account_id=q.meli_account_id
+                     AND a.lease_generation=q.lease_generation AND a.outcome='waiting'
+                     AND BINARY a.error_class=BINARY q.last_error_class
+                     AND a.finished_at IS NOT NULL AND a.source_closed_at IS NOT NULL
+                     AND a.source_closed_at>=a.started_at AND a.finished_at>=a.source_closed_at
+                     AND a.dispatch_state='NOT_DISPATCHED' AND a.physical_http_calls=0
+                     AND a.physical_started_at IS NULL AND a.http_status IS NULL AND a.response_known_at IS NULL
+                     AND ((q.lease_owner IS NULL AND q.lease_expires_at IS NULL)
+                          OR (q.lease_owner=a.lease_owner AND q.lease_owner<>''
+                              AND q.lease_expires_at IS NOT NULL AND q.lease_expires_at<=UTC_TIMESTAMP(3)))
+                     AND NOT EXISTS (
+                         SELECT 1 FROM queue_v4_clean_attempts other
+                         WHERE other.job_id=q.id
+                           AND (other.company_id<>q.company_id OR other.meli_account_id<>q.meli_account_id
+                                OR (other.id<>a.id AND (other.id>a.id OR other.lease_generation>=a.lease_generation))
+                                OR other.outcome='running' OR other.dispatch_state='PHYSICAL_STARTED'
+                                OR other.error_class IN ('remote_result_uncertain','remoteresultuncertainexception',
+                                                        'remote_result_uncertain_safe_get')))
+                     AND NOT EXISTS (
+                         SELECT 1 FROM queue_v4_clean_transport_events e
+                         WHERE e.attempt_id=a.id
+                            OR (((e.source_kind='queue' AND e.work_id=q.id)
+                                 OR EXISTS (SELECT 1 FROM queue_v4_clean_attempts linked
+                                            WHERE linked.id=e.attempt_id AND linked.job_id=q.id))
+                                AND (e.source_kind<>'queue' OR e.work_id<>q.id
+                                     OR e.company_id<>q.company_id OR e.meli_account_id<>q.meli_account_id
+                                     OR e.lease_generation>=a.lease_generation
+                                     OR (e.dispatch_state='PHYSICAL_STARTED' AND e.response_known_at IS NULL)
+                                     OR NOT EXISTS (
+                                         SELECT 1 FROM queue_v4_clean_attempts ea
+                                         WHERE ea.id=e.attempt_id AND ea.job_id=q.id
+                                           AND ea.company_id=q.company_id AND ea.meli_account_id=q.meli_account_id
+                                           AND ea.lease_generation=e.lease_generation
+                                           AND ea.dispatch_state='RESPONSE_KNOWN' AND e.dispatch_state='RESPONSE_KNOWN'
+                                           AND BINARY ea.transport_method=BINARY e.method
+                                           AND BINARY ea.endpoint_key=BINARY e.endpoint_key AND ea.endpoint_key<>''
+                                           AND ea.http_status=e.http_status AND ea.physical_http_calls=1
+                                           AND ea.physical_started_at IS NOT NULL AND e.physical_started_at IS NOT NULL
+                                           AND ea.response_known_at IS NOT NULL AND e.response_known_at IS NOT NULL
+                                           AND ea.physical_started_at=e.physical_started_at
+                                           AND ea.response_known_at=e.response_known_at
+                                           AND ea.response_known_at>=ea.physical_started_at
+                                           AND (SELECT COUNT(*) FROM queue_v4_clean_transport_events duplicate_event
+                                                WHERE duplicate_event.attempt_id=ea.id)=1))))
+               )
+             ORDER BY q.available_at,q.id LIMIT 200"
+        );
+        $statement->execute($scopeParams);
         return $statement->rowCount();
     }
 

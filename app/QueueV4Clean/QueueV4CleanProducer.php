@@ -395,6 +395,14 @@ final class QueueV4CleanProducer
             return null;
         }
 
+        $financialTenantClauses = array_map(
+            static fn(string $clause): string => str_replace(
+                ['a.company_id', 'p.meli_account_id'],
+                ['financial_pointer.company_id', 'financial_pointer.meli_account_id'],
+                $clause,
+            ),
+            $tenantClauses,
+        );
         $candidate = $this->pdo->prepare(
             'SELECT p.id pack_id,a.company_id,p.meli_account_id,p.external_pack_id,MIN(o.id) meli_order_id
              FROM meli_packs p
@@ -404,6 +412,27 @@ final class QueueV4CleanProducer
                ON o.id=po.meli_order_id
               AND o.meli_account_id=p.meli_account_id
               AND o.external_pack_id=p.external_pack_id
+             LEFT JOIN (
+                 SELECT DISTINCT financial.company_id,financial.meli_account_id,financial.sale_key
+                 FROM queue_v4_clean_jobs financial_pointer
+                 JOIN sale_financial_reconciliation_jobs financial
+                   ON financial.company_id=financial_pointer.company_id
+                  AND financial.meli_account_id=financial_pointer.meli_account_id
+                  AND financial.id=CAST((CASE
+                    WHEN JSON_UNQUOTE(JSON_EXTRACT(financial_pointer.payload_json,"$.source_id")) REGEXP "^[0-9]+$"
+                      THEN JSON_UNQUOTE(JSON_EXTRACT(financial_pointer.payload_json,"$.source_id"))
+                    WHEN financial_pointer.resource_id REGEXP "^[0-9]+$"
+                      THEN financial_pointer.resource_id
+                    ELSE NULL
+                  END) AS UNSIGNED)
+                 WHERE (' . implode(' OR ', $financialTenantClauses) . ')
+                   AND financial_pointer.job_type="domain_exact"
+                   AND financial_pointer.state="waiting"
+                   AND JSON_UNQUOTE(JSON_EXTRACT(financial_pointer.payload_json,"$.capability"))="financial_reconciliation"
+             ) financial_waiting
+               ON financial_waiting.company_id=a.company_id
+              AND financial_waiting.meli_account_id=p.meli_account_id
+              AND financial_waiting.sale_key=CONCAT("P:",p.external_pack_id)
              WHERE (' . implode(' OR ', $tenantClauses) . ')
                AND p.external_pack_id IS NOT NULL
                AND p.external_pack_id<>""
@@ -423,10 +452,10 @@ final class QueueV4CleanProducer
                    )
                )
              GROUP BY p.id,a.company_id,p.meli_account_id,p.external_pack_id
-             ORDER BY p.id ASC
+             ORDER BY MAX(financial_waiting.sale_key IS NOT NULL) DESC,p.id ASC
              LIMIT 1 FOR UPDATE'
         );
-        $candidate->execute($params);
+        $candidate->execute(array_merge($params, $params));
         $row = $candidate->fetch(PDO::FETCH_ASSOC);
         if (!is_array($row)) {
             return null;

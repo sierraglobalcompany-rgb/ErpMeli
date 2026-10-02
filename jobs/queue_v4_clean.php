@@ -3,7 +3,8 @@
 declare(strict_types=1);
 
 use App\Core\Database;
-use App\QueueV4Clean\QueueV4CleanScheduler;
+use App\Work\Adapters\QueueV4CurrentDrainer;
+use App\Work\Contracts\DrainerContract;
 use App\QueueV4Clean\QueueV4CleanOAuthStageContext;
 use App\QueueV4Clean\QueueV4CleanSafeDiagnosticService;
 use App\QueueV4Clean\QueueV4CleanWorker;
@@ -41,7 +42,9 @@ try {
     );
     $requestedMaxCalls = (int) $budget['requested_max_calls'];
     CronDeadlineContext::start($runtime, max(1, $runtime - 5), 8, 3);
-    $result = (new QueueV4CleanScheduler(Database::connectionFresh()))->run($requestedMaxCalls, $runtime);
+    /** @var DrainerContract $drainer */
+    $drainer = new QueueV4CurrentDrainer(Database::connectionFresh());
+    $result = $drainer->drain('cron_v4', $requestedMaxCalls, $runtime)->metadata;
     $result['control_unit'] = 'PHYSICAL_API_CALL';
     $result['max_calls_source'] = $budget['max_calls_source'];
     $result['canonical_max_calls_input_used'] = $hasCanonicalMaxCalls;

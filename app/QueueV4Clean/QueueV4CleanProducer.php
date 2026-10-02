@@ -423,7 +423,25 @@ final class QueueV4CleanProducer
                    )
                )
              GROUP BY p.id,a.company_id,p.meli_account_id,p.external_pack_id
-             ORDER BY p.id ASC
+             ORDER BY EXISTS (
+                 SELECT 1 FROM sale_financial_reconciliation_jobs financial
+                 JOIN queue_v4_clean_jobs financial_pointer
+                   ON financial_pointer.company_id=financial.company_id
+                  AND financial_pointer.meli_account_id=financial.meli_account_id
+                  AND financial.id=CAST((CASE
+                    WHEN JSON_UNQUOTE(JSON_EXTRACT(financial_pointer.payload_json,"$.source_id")) REGEXP "^[0-9]+$"
+                      THEN JSON_UNQUOTE(JSON_EXTRACT(financial_pointer.payload_json,"$.source_id"))
+                    WHEN financial_pointer.resource_id REGEXP "^[0-9]+$"
+                      THEN financial_pointer.resource_id
+                    ELSE NULL
+                  END) AS UNSIGNED)
+                 WHERE financial.company_id=a.company_id
+                   AND financial.meli_account_id=p.meli_account_id
+                   AND financial.sale_key=CONCAT("P:",p.external_pack_id)
+                   AND financial_pointer.job_type="domain_exact"
+                   AND financial_pointer.state="waiting"
+                   AND JSON_UNQUOTE(JSON_EXTRACT(financial_pointer.payload_json,"$.capability"))="financial_reconciliation"
+             ) DESC,p.id ASC
              LIMIT 1 FOR UPDATE'
         );
         $candidate->execute($params);

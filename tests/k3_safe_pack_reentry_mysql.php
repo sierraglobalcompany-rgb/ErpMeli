@@ -1,6 +1,9 @@
 <?php
 declare(strict_types=1);
 require __DIR__.'/k3_safe_pack_reentry_fixture.inc.php';
+set_error_handler(static function(int $severity,string $message,string $file,int $line):never{
+    throw new ErrorException($message,0,$severity,$file,$line);
+});
 
 $cases=['deadline_pending','deadline_retry','rhythm_retry','queue_future','source_future','queue_lease','source_lease','source_orphan_token','manual_reservation','wrong_capability','wrong_tenant','wrong_source_account','source_mismatch','noncanonical_id','invalid_json','wrong_resource_type','pack_mismatch','nested_pack_mismatch','source_pair','rhythm_pair','budget','api','rate_limited','unknown','wrong_generation','newer_attempt','historical_running','historical_physical','historical_uncertain','null_calls','physical_calls','started','http','response','journal','orphan_journal','wrong_journal_generation','response_known_200','response_known_429','response_known_503','exhausted_attempts','missing_finish','missing_source_close','foreign_scope','history_identity','protected_h3_unit01_unit02'];
 $cases=array_merge($cases,['cause_case','cause_suffix','source_case','capability_case','payload_fraction','pending_remote','pending_failure_space','historical_mislinked_journal','historical_duplicate_journal','historical_known_exact']);
@@ -41,7 +44,7 @@ foreach($cases as $case){
             case 'manual_reservation':
                 $pdo->exec("DELETE FROM manual_campaigns WHERE campaign_token='".str_repeat('a',40)."'");
                 $pdo->exec("INSERT INTO users(id,name,email,password_hash,role,status,is_temporary) VALUES(5001,'Synthetic owner','reentry@example.invalid','unused','admin',1,0) ON DUPLICATE KEY UPDATE status=1");
-                k3u2_add_active_reservation($pdo,['company_id'=>7200,'meli_account_id'=>7201,'source_id'=>$s]);
+                k3u2_add_active_reservation($pdo,['company_id'=>7200,'meli_account_id'=>7201,'source_id'=>$s,'closure_generation'=>1]);
                 $pdo->exec("UPDATE manual_campaigns SET status='paused' WHERE campaign_token='".str_repeat('a',40)."'");break;
             case 'wrong_capability':$pdo->exec("UPDATE queue_v4_clean_jobs SET payload_json=JSON_SET(payload_json,'$.capability','financial_reconciliation') WHERE id=$q");break;
             case 'wrong_tenant':$pdo->exec("UPDATE queue_v4_clean_jobs SET company_id=7100 WHERE id=$q");break;

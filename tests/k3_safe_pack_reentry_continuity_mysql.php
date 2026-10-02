@@ -40,12 +40,20 @@ $observed[]=$measure();r0h3_assert($observed[2]===2,'new_real_unit_uses_slot');
 Cap2DomainsWire::$responses=[
     '/packs/860100'=>[200,r0h3_wire_pack_response('860100','960100','960101')],
     '/orders/960101'=>[200,r0h3_wire_order_response('960101','860100')],
+    // UNIT_B may legitimately refresh its existing child first, according to FIFO.
+    '/orders/920001'=>[200,r0h3_wire_order_response('920001',$t['external_pack_id'])],
 ];
 r0h3_wait_for_global_rhythm($pdo);$packRun=r0h3_worker_run($pdo,1,[7201]);
 r0h3_assert(r0h3_fetch_pack_state($pdo,7201,'860100')['integrity_status']!=='complete','pack_incomplete_before_child');
 r0h3_assert($repo->releaseDueWaiting([7201])===0,'finance_blocked_until_legitimate_child');
-r0h3_wait_for_global_rhythm($pdo);$childRun=r0h3_worker_run($pdo,1,[7201]);
-$pack=r0h3_fetch_pack_state($pdo,7201,'860100');
+$childRun=[];$deadline=microtime(true)+15;
+do{
+    r0h3_wait_for_global_rhythm($pdo);$childRun[]=r0h3_worker_run($pdo,1,[7201]);
+    $pack=r0h3_fetch_pack_state($pdo,7201,'860100');
+    if($pack['integrity_status']==='complete')break;
+    // Actual due times/pace remain untouched; observe the next normal local cycle.
+    usleep(100000);
+}while(microtime(true)<$deadline&&count($childRun)<20);
 r0h3_assert($pack['integrity_status']==='complete','integrity_by_real_persistence',$pack);
 $released=$repo->releaseDueWaiting([7201]);r0h3_assert($released===1,'finance_release_positive_after_integrity');
 r0h3_assert($heldHashes===[r0h3_source_hash($pdo,$held['source_id']),r0h3_queue_hash($pdo,$held['queue_id']),r0h3_attempts_hash($pdo,7200,7202,$held['queue_id']),r0h3_transport_hash($pdo,7200,7202,$held['queue_id'])],'unit_a_untouched');

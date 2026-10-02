@@ -37,7 +37,7 @@ function fpCoverage(PDO $db): ?array
 if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
 $cases = ['financial_first', 'financial_fifo', 'general_fifo', 'completed', 'review', 'dead',
     'foreign_company', 'foreign_account', 'homonym_account', 'payload_precedence', 'resource_fallback',
-    'wrong_capability', 'wrong_job_type', 'protected_uncertain', 'protected_safe_get', 'duplicate_pointers', 'real_scheduler_admission'];
+    'wrong_capability', 'wrong_job_type', 'protected_uncertain', 'protected_safe_get', 'duplicate_pointers', 'real_scheduler_admission', 'invalid_numeric_payload_no_fallback'];
 if (isset($argv[1])) { $cases = [$argv[1]]; }
 $results = []; $failures = 0; $httpLogDelta = 0;
 foreach ($cases as $case) {
@@ -59,6 +59,12 @@ foreach ($cases as $case) {
             case 'resource_fallback':
                 fpFinance($pdo, $h[8], 'waiting', ['payload_json' => json_encode(['capability' => 'financial_reconciliation', 'source_id' => 'invalid'])]);
                 $expected = $h[8]; break;
+            case 'invalid_numeric_payload_no_fallback':
+                // Numeric payload is authoritative even when its source does not exist.
+                // Falling back to the valid resource_id would incorrectly prioritize h[8].
+                fpFinance($pdo, $h[8], 'waiting', ['payload_json' => json_encode([
+                    'capability' => 'financial_reconciliation', 'source_id' => '999999999999999',
+                ])]); break;
             case 'wrong_capability': fpFinance($pdo, $h[8], 'waiting', ['payload_json' => '{"capability":"order_exact"}']); break;
             case 'wrong_job_type': fpFinance($pdo, $h[8], 'waiting', ['job_type' => 'order_exact']); break;
             case 'protected_uncertain': case 'protected_safe_get':

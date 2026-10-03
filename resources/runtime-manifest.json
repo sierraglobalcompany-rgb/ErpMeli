@@ -2598,8 +2598,8 @@
         },
         "runtime_app_services_meliapiclient_php": {
             "path": "app/Services/MeliApiClient.php",
-            "sha256": "cca53f4d10c1867ab24af6d08d24f22afe8614c1e631a5ab8243d002386d1bb1",
-            "sha256_lf": "cca53f4d10c1867ab24af6d08d24f22afe8614c1e631a5ab8243d002386d1bb1",
+            "sha256": "a553a10977bff09bc4163cc964ac51a18a19a1f67a4b789f3de17c2e6ade5809",
+            "sha256_lf": "a553a10977bff09bc4163cc964ac51a18a19a1f67a4b789f3de17c2e6ade5809",
             "text": true
         },
         "runtime_app_services_meliapiexception_php": {
@@ -7482,8 +7482,8 @@
         },
         "runtime_resources_release_updater_authority_2_40_1_json": {
             "path": "resources/release/updater-authority-2.40.1.json",
-            "sha256": "a6f095ea37e70c4be6e051bb669de102630627126e217ce9d570f1c1a5d8d01e",
-            "sha256_lf": "a6f095ea37e70c4be6e051bb669de102630627126e217ce9d570f1c1a5d8d01e",
+            "sha256": "8ae0a591e095de868c7e59a55eadc9f2b36fb890556aba081ce93a55065bafc0",
+            "sha256_lf": "8ae0a591e095de868c7e59a55eadc9f2b36fb890556aba081ce93a55065bafc0",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

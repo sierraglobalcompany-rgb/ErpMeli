@@ -233,11 +233,6 @@ final class MeliApiClient implements MeliReadClientInterface
                         'rhythm_authority_unavailable'
                     );
                 }
-                // Compatibilidad durante la ventana entre subir archivos y
-                // aplicar la migración que crea la autoridad persistente.
-                if (!$cronV3RemoteContext && empty($rhythmPermit['enabled'])) {
-                    (new ApiPacingService())->reserve($this->accountId, $method, $path, $meta);
-                }
                 \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
                     \App\QueueV4Clean\QueueV4CleanOAuthStageContext::BUDGET_RESERVATION
                 );

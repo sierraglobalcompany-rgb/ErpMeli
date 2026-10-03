@@ -67,4 +67,24 @@ $assert(str_contains($view, 'PROCESAR SELECCIÓN'), 'kiss_process_button');
 $assert(str_contains($view, 'BACKGROUND_CONTINUATION=0'), 'no_background_claim_visible');
 $assert(str_contains($view, 'ACTIVE_DRAINERS_MAX=1'), 'single_drainer_claim_visible');
 
+// Check the two available-queue copy regions, rather than an exact paragraph
+// or a notice placed only in the shared diagnostics/exact-manual branch.
+$confirmation = substr($view, (int) strpos($view, 'class="manual-confirm-form"'));
+preg_match('~<\?php if \(\$isAvailableQueuePreview\): \?>(.*?)<\?php else: \?>~s', $confirmation, $availableConfirmation);
+preg_match('~<\?php if \(\$manualAvailableQueueResult !== null\): \?>(.*?)<\?php endif; \?>~s', $view, $availableResult);
+$disclosesContinuation = static function (string $copy): bool {
+    $copy = strip_tags($copy);
+    return str_contains($copy, 'Si un descubrimiento')
+        && str_contains($copy, 'otra página')
+        && str_contains($copy, 'puede')
+        && (str_contains($copy, 'cola automática') || str_contains($copy, 'trabajo durable'))
+        && (str_contains($copy, 'Cron normal') || str_contains($copy, 'automatización normal'))
+        && str_contains($copy, 'proceso manual')
+        && str_contains($copy, 'segundo plano')
+        && (str_contains($copy, 'no queda') || str_contains($copy, 'no quedó'))
+        && str_contains($copy, 'no cancela');
+};
+$assert($disclosesContinuation($availableConfirmation[1] ?? '')
+    && $disclosesContinuation($availableResult[1] ?? ''), 'available_queue_discloses_possible_durable_continuation_without_manual_background');
+
 echo "STATUS=F5_MANUAL_KISS_CONTRACT_PASS\n";

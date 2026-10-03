@@ -300,7 +300,7 @@
         },
         {
             "path": "app/Services/MeliApiClient.php",
-            "sha256": "cca53f4d10c1867ab24af6d08d24f22afe8614c1e631a5ab8243d002386d1bb1"
+            "sha256": "a553a10977bff09bc4163cc964ac51a18a19a1f67a4b789f3de17c2e6ade5809"
         },
         {
             "path": "app/Services/MeliCliRuntimeCapabilityService.php",

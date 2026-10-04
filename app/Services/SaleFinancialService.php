@@ -177,6 +177,20 @@ final class SaleFinancialService
                 throw $error;
             }
             throw $error;
+        } catch (CronDeadlineDeferredException $error) {
+            if ($error->nextSafeAt === null) {
+                throw $error;
+            }
+            try {
+                $this->deferWithoutAttemptPenalty(
+                    $job,
+                    SafeErrorPresenter::message($error, 'Billing continuará en la próxima oportunidad segura del ciclo.'),
+                    $error->nextSafeAt
+                );
+            } catch (Throwable) {
+                throw $error;
+            }
+            throw $error;
         }
         $terminal = $result['status'] === 'reconciled' ? 'complete' : $result['status'];
         if (!($result['finalized'] ?? false)) {

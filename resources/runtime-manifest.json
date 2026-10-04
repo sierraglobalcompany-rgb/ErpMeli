@@ -3144,8 +3144,8 @@
         },
         "runtime_app_services_salefinancialservice_php": {
             "path": "app/Services/SaleFinancialService.php",
-            "sha256": "d5401cf653e5d85157066908abfd6630da50966453492191862dbed801dc5e38",
-            "sha256_lf": "d5401cf653e5d85157066908abfd6630da50966453492191862dbed801dc5e38",
+            "sha256": "14a179311e43254fc4ac8326c0b81282d36c94eb62cd2107fd59647d655a9ec8",
+            "sha256_lf": "14a179311e43254fc4ac8326c0b81282d36c94eb62cd2107fd59647d655a9ec8",
             "text": true
         },
         "runtime_app_services_salefinancialstateservice_php": {
@@ -7482,8 +7482,8 @@
         },
         "runtime_resources_release_updater_authority_2_40_1_json": {
             "path": "resources/release/updater-authority-2.40.1.json",
-            "sha256": "8ae0a591e095de868c7e59a55eadc9f2b36fb890556aba081ce93a55065bafc0",
-            "sha256_lf": "8ae0a591e095de868c7e59a55eadc9f2b36fb890556aba081ce93a55065bafc0",
+            "sha256": "b2de648fd06cae5e573fde8d547d4fe5d67355892fec58b14d32d02ea631eb22",
+            "sha256_lf": "b2de648fd06cae5e573fde8d547d4fe5d67355892fec58b14d32d02ea631eb22",
             "text": true
         },
         "runtime_resources_release_updater_locked_file_inventory_2_36_1_json": {

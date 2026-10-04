@@ -175,7 +175,8 @@ function postclaim_print_observation(string $case, string $reachability, array $
 {
     echo 'OBSERVED=' . json_encode([
         'case' => $case,
-        'naturally_reachable' => $reachability,
+        'code_reachability' => $reachability,
+        'production_occurrence' => $case === 'healthy' ? 'NOT_APPLICABLE' : 'UNKNOWN',
         'source_before_status' => $observation['source_before']['status'] ?? null,
         'source_before_attempts' => $observation['source_before']['attempts'] ?? null,
         'source_after_status' => $observation['source_after']['status'] ?? null,
@@ -354,13 +355,13 @@ postclaim_assert(in_array($case, $cases, true), 'known_case');
 
 $reachability = match ($case) {
     'healthy' => 'CONTROL',
-    'oauth_refresh' => 'YES_REAL_TOKEN_EXPIRY_GATE',
-    'manual_pause' => 'YES_REAL_MANUAL_PAUSE_GATE',
-    'known_http_500' => 'YES_REAL_RESPONSE_KNOWN_PATH',
-    'remote_uncertain' => 'YES_REAL_PHYSICAL_FAILURE_PATH',
-    'queue_pretransport' => 'YES_REAL_PRE_CURL_FAILURE_PATH',
-    'budget_infrastructure' => 'YES_REAL_RHYTHM_AUTHORITY_FAILURE',
-    'budget_sibling' => 'UNKNOWN_PRODUCTION_TEST_SEAM_ONLY',
+    'oauth_refresh' => 'YES_REAL_TOKEN_EXPIRY_STATE',
+    'manual_pause' => 'YES_REAL_ACTIVE_PAUSE_STATE',
+    'known_http_500' => 'YES_REAL_RESPONSE_PATH',
+    'remote_uncertain' => 'STRONG_INFERENCE_REAL_CURL_FAILURE_PATH',
+    'queue_pretransport' => 'STRONG_INFERENCE_PRE_CURL_OPTION_FAILURE_PATH',
+    'budget_infrastructure' => 'YES_REAL_MISSING_RHYTHM_AUTHORITY_STATE',
+    'budget_sibling' => 'TEST_SEAM_ONLY_PRODUCTION_REACHABILITY_UNKNOWN',
 };
 
 $root = (string) getenv('CALLS_QA_STORAGE_ROOT');

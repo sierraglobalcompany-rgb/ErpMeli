@@ -164,7 +164,20 @@ final class SaleFinancialService
         if ($job === null) {
             return ['summary' => $summary, 'outcomes' => $outcomes];
         }
-        $result = $this->captureAndReconcile($job, $allowSuccessor, true);
+        try {
+            $result = $this->captureAndReconcile($job, $allowSuccessor, true);
+        } catch (ApiRhythmDeferredException $error) {
+            try {
+                $this->deferWithoutAttemptPenalty(
+                    $job,
+                    SafeErrorPresenter::message($error, 'Billing continuará en su próxima oportunidad segura.'),
+                    $error->nextSafeAt
+                );
+            } catch (Throwable) {
+                throw $error;
+            }
+            throw $error;
+        }
         $terminal = $result['status'] === 'reconciled' ? 'complete' : $result['status'];
         if (!($result['finalized'] ?? false)) {
             $this->finish($job, $terminal, (string) $result['message']);

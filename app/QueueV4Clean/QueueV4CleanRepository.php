@@ -2062,7 +2062,7 @@ final class QueueV4CleanRepository
             AND NOT (" . $this->unresolvedPhysicalPredicate($queueAlias) . ")
             AND {$queueAlias}.available_at<=UTC_TIMESTAMP(3)
             AND ({$queueAlias}.lease_owner IS NULL OR {$queueAlias}.lease_expires_at IS NULL OR {$queueAlias}.lease_expires_at<=UTC_TIMESTAMP(3))
-            AND {$sourceAlias}.status IN ('pending','retry','ready','waiting','running','awaiting_remote')
+            AND {$sourceAlias}.status IN ('pending','retry','awaiting_remote')
             AND {$sourceAlias}.next_run_at IS NOT NULL
             AND {$sourceAlias}.next_run_at<=UTC_TIMESTAMP(3)
             AND (

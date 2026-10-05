@@ -191,6 +191,53 @@ final class SaleFinancialService
                 throw $error;
             }
             throw $error;
+        } catch (OAuthRefreshRequiredException|ApiManualPauseException|QueueV4PreTransportDeferredException|ApiBudgetInfrastructureException|ApiBudgetExhaustedException $error) {
+            $nextSafeAt = match (true) {
+                $error instanceof ApiManualPauseException => $error->resumeAt,
+                $error instanceof QueueV4PreTransportDeferredException => $error->nextSafeAt,
+                $error instanceof ApiBudgetInfrastructureException => gmdate('Y-m-d H:i:s', time() + 60),
+                $error instanceof ApiBudgetExhaustedException => $error->nextSafeAt,
+                default => null,
+            };
+            if ($nextSafeAt === null || trim($nextSafeAt) === '') {
+                $nextSafeAt = gmdate('Y-m-d H:i:s', time() + 1);
+            }
+            try {
+                $this->deferWithoutAttemptPenalty(
+                    $job,
+                    SafeErrorPresenter::message($error, 'Billing continuará cuando la protección local permita otro intento seguro.'),
+                    $nextSafeAt
+                );
+            } catch (Throwable) {
+                throw $error;
+            }
+            throw $error;
+        } catch (RemoteResultUncertainException $error) {
+            try {
+                $this->finish(
+                    $job,
+                    'review',
+                    SafeErrorPresenter::message($error, 'Resultado remoto pendiente de revisión.')
+                );
+            } catch (Throwable) {
+                throw $error;
+            }
+            throw $error;
+        } catch (MeliApiException $error) {
+            if ($error->httpStatus === null) {
+                throw $error;
+            }
+            $retry = !$this->retryDeadlineExceeded($job);
+            try {
+                $this->finish(
+                    $job,
+                    $retry ? 'retry' : 'error',
+                    SafeErrorPresenter::message($error, 'No fue posible completar la conciliación oficial.')
+                );
+            } catch (Throwable) {
+                throw $error;
+            }
+            throw $error;
         }
         $terminal = $result['status'] === 'reconciled' ? 'complete' : $result['status'];
         if (!($result['finalized'] ?? false)) {

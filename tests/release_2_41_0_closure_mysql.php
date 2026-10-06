@@ -76,6 +76,30 @@ function release2410LatestMigration(PDO $pdo): string
     return (string) $pdo->query('SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1')->fetchColumn();
 }
 
+/** @return list<array{status:string,version:string}> */
+function release2410RunMigrationsInBatches(Migrator $migrator, K1dSafeTestDatabase $harness, int $limit): array
+{
+    $remaining = $limit;
+    $completed = 0;
+    $results = [];
+    while ($remaining > 0) {
+        $batch = $migrator->run(min(40, $remaining));
+        if ($batch === []) {
+            throw new RuntimeException('MIGRATOR_STOPPED_BEFORE_EXPECTED_RELEASE_SCHEMA');
+        }
+        array_push($results, ...$batch);
+        $newlyApplied = count(array_filter($batch, static fn (array $result): bool => ($result['status'] ?? '') === 'applied'));
+        if ($newlyApplied === 0) {
+            throw new RuntimeException('MIGRATOR_APPLIED_NO_NEW_RELEASE_SCHEMA_MIGRATIONS');
+        }
+        $remaining -= $newlyApplied;
+        $completed += $newlyApplied;
+        $harness->keepAdminAlive();
+        echo 'MIGRATION_PROGRESS=' . $completed . '/' . $limit . PHP_EOL;
+    }
+    return $results;
+}
+
 function release2410SetAppVersion(PDO $pdo): void
 {
     $stmt = $pdo->prepare(
@@ -92,7 +116,7 @@ function release2410FreshInstall(string $qaRoot, string $migrationPath, string $
     $harness = K1dSafeTestDatabase::createFromEnvironment();
     try {
         $pdo = $harness->pdo();
-        (new Migrator($pdo, $migrationPath))->run();
+        release2410RunMigrationsInBatches(new Migrator($pdo, $migrationPath), $harness, 302);
         release2410Assert(release2410LatestMigration($pdo) === '302_financial_v2_billing_capture_authority.sql', 'fresh_schema_authority_is_302');
         release2410Assert((int) $pdo->query('SELECT COUNT(*) FROM schema_migrations')->fetchColumn() === 302, 'fresh_install_applied_302_migrations');
         release2410AssertCaptureSchema($pdo);
@@ -111,7 +135,7 @@ function release2410Upgrade301To302(string $qaRoot, string $migrationPath, strin
     try {
         $pdo = $harness->pdo();
         $migrator = new Migrator($pdo, $migrationPath);
-        $migrator->run(301);
+        release2410RunMigrationsInBatches($migrator, $harness, 301);
         release2410Assert(release2410LatestMigration($pdo) === '301_k1d_api_safety_2_40_1.sql', 'upgrade_baseline_is_schema301');
 
         $pdo->exec("INSERT INTO companies(id,name,status) VALUES(9001,'Release 2.41.0 upgrade fixture',1)");
@@ -128,7 +152,7 @@ function release2410Upgrade301To302(string $qaRoot, string $migrationPath, strin
         $before->execute([$captureId]);
         $beforeRow = $before->fetch(PDO::FETCH_ASSOC) ?: [];
 
-        $results = $migrator->run();
+        $results = release2410RunMigrationsInBatches($migrator, $harness, 1);
         $applied = count(array_filter($results, static fn (array $result): bool => ($result['status'] ?? '') === 'applied'));
         release2410Assert($applied === 1, 'upgrade_applied_only_migration302');
         release2410Assert(release2410LatestMigration($pdo) === '302_financial_v2_billing_capture_authority.sql', 'upgrade_schema_authority_is_302');

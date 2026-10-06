@@ -95,7 +95,7 @@ echo 'UPDATER_AUTHORITY_SHA256=' . $recordedSha256 . PHP_EOL;
 echo 'UPDATER_AUTHORITY_DEPENDENCIES_CHECKED=' . $authorityDependencyCount . PHP_EOL;
 echo 'CRLF_CONVERTED_SHA256=' . $crlfConvertedSha256 . PHP_EOL;
 
-if (!hash_equals('3b9678e51032bb3849683611f7c5b4569e5c4521b288da9dad7b81ec73f8739f', $gitBlobSha256)
+if (!hash_equals('3ebbab920f772f3529316ce8b707e00dd49740965e2eafaeaf1ab633a6777273', $gitBlobSha256)
     || !hash_equals($gitBlobSha256, $manifestSha256)
     || !hash_equals($gitBlobSha256, $manifestLfSha256)
     || !hash_equals($gitBlobSha256, $recordedSha256)) {

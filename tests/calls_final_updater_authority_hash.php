@@ -6,8 +6,8 @@ if (!is_string($root)) {
     throw new RuntimeException('FAIL:repo_root_not_found');
 }
 
-$authorityPath = 'resources/release/updater-authority-2.40.1.json';
-$migrationPath = 'database/migrations/301_k1d_api_safety_2_40_1.sql';
+$authorityPath = 'resources/release/updater-authority-2.41.0.json';
+$migrationPath = 'database/migrations/302_financial_v2_billing_capture_authority.sql';
 
 /** @return string */
 function calls_final_git_blob(string $root, string $path): string
@@ -68,7 +68,7 @@ foreach ((array) ($authority['new_runtime_dependencies'] ?? []) as $candidate) {
     }
 }
 if (!is_array($dependency)) {
-    throw new RuntimeException('FAIL:updater_authority_missing_migration301');
+    throw new RuntimeException('FAIL:updater_authority_missing_migration302');
 }
 
 $migrationGitBlob = calls_final_git_blob($root, $migrationPath);
@@ -84,7 +84,7 @@ foreach ((array) ($manifest['components'] ?? []) as $candidate) {
     }
 }
 if (!is_array($manifestComponent)) {
-    throw new RuntimeException('FAIL:runtime_manifest_missing_migration301_component');
+    throw new RuntimeException('FAIL:runtime_manifest_missing_migration302_component');
 }
 $manifestSha256 = (string) ($manifestComponent['sha256'] ?? '');
 $manifestLfSha256 = (string) ($manifestComponent['sha256_lf'] ?? '');
@@ -95,14 +95,14 @@ echo 'UPDATER_AUTHORITY_SHA256=' . $recordedSha256 . PHP_EOL;
 echo 'UPDATER_AUTHORITY_DEPENDENCIES_CHECKED=' . $authorityDependencyCount . PHP_EOL;
 echo 'CRLF_CONVERTED_SHA256=' . $crlfConvertedSha256 . PHP_EOL;
 
-if (!hash_equals($gitBlobSha256, $manifestSha256)
+if (!hash_equals('3b9678e51032bb3849683611f7c5b4569e5c4521b288da9dad7b81ec73f8739f', $gitBlobSha256)
+    || !hash_equals($gitBlobSha256, $manifestSha256)
     || !hash_equals($gitBlobSha256, $manifestLfSha256)
     || !hash_equals($gitBlobSha256, $recordedSha256)) {
-    throw new RuntimeException('FAIL:migration301_authority_must_use_raw_git_blob_sha256');
+    throw new RuntimeException('FAIL:migration302_authority_must_use_raw_git_blob_sha256');
 }
-if (!hash_equals($crlfConvertedSha256, '8170b7a8fe1f5c7a3d734a4af8f3032f2d83400abc7575e3b909014ac525465c')
-    || hash_equals($gitBlobSha256, $crlfConvertedSha256)) {
-    throw new RuntimeException('FAIL:migration301_crlf_probe_must_remain_distinct');
+if (hash_equals($gitBlobSha256, $crlfConvertedSha256)) {
+    throw new RuntimeException('FAIL:migration302_crlf_probe_must_remain_distinct');
 }
 
 echo "RAW_EQUALS_RUNTIME_MANIFEST=YES\n";

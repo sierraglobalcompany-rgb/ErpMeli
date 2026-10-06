@@ -41,11 +41,11 @@ cap2Git($root, ['config', 'core.autocrlf', 'false']);
 cap2Git($root, ['config', 'user.name', 'Synthetic Authority Test']);
 cap2Git($root, ['config', 'user.email', 'authority-test@example.invalid']);
 
-$authorityPath = 'resources/release/updater-authority-2.40.1.json';
-$raw = ['app/Synthetic.php' => "<?php\n// Raw LF Git blob.\n", 'VERSION' => "2.40.1\n"];
+$authorityPath = 'resources/release/updater-authority-2.41.0.json';
+$raw = ['app/Synthetic.php' => "<?php\n// Raw LF Git blob.\n", 'VERSION' => "2.41.0\n"];
 $source = [
     'schema_version' => 1,
-    'target_version' => '2.40.1',
+    'target_version' => '2.41.0',
     'contract' => 'Synthetic metadata remains unchanged.',
     'supersedes_inventory' => ['path' => 'original.json', 'sha256' => str_repeat('a', 64), 'file_count' => 29],
     'unchanged_locked' => ['file_count' => 27, 'sorted_path_hash_lines_sha256' => str_repeat('b', 64)],

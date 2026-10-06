@@ -37,7 +37,7 @@ try {
     $pdo = $harness->pdo();
     $migrationPath = realpath($root . '/database/migrations');
     k1b_assert(is_string($migrationPath), 'MIGRATION_PATH_FOUND');
-    (new Migrator($pdo, $migrationPath))->run(301);
+    (new Migrator($pdo, $migrationPath))->run();
     $version = trim((string) file_get_contents($root . '/VERSION'));
     $stmt = $pdo->prepare(
         'INSERT INTO app_settings (setting_key,setting_value,is_encrypted,setting_group)
@@ -64,7 +64,7 @@ try {
     k1b_assert(is_array($manifest), 'RUNTIME_MANIFEST_JSON');
     $publicationIssues = ManagedRuntimePublicationPolicy::installedManifestIssues($root, $manifest);
 
-    $registryPath = $root . '/resources/release/managed-runtime-dependencies-2.40.1.json';
+    $registryPath = $root . '/resources/release/managed-runtime-dependencies-2.41.0.json';
     $registry = json_decode((string) file_get_contents($registryPath), true, 32, JSON_THROW_ON_ERROR);
     $managedRegistryJson = is_array($registry) && (int) ($registry['schema_version'] ?? 0) === 1 ? 'PASS' : 'FAIL';
 

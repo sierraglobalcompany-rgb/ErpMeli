@@ -262,7 +262,7 @@ final class ManagedRuntimePublicationPolicy
         ],
         '2.40.0' => [
             'build_id' => 'erp-meli-2.40.0-k10-smart-manual-drain-rc1-20260826',
-            'minimum_migration' => self::MINIMUM_MIGRATION,
+            'minimum_migration' => '300_manual_drain_sessions_2_40_0.sql',
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.40.0.json',
         ],
         '2.40.1' => [

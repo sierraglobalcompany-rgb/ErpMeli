@@ -89,6 +89,34 @@ final class QueueV4CleanCycleBudget
         self::$attempts[$attemptId]['state'] = 'sent';
     }
 
+    /**
+     * Billing's durable authority is its last rejecting fence before cURL.
+     * Validate all process-local budget gates before that DB commit, then
+     * perform only this non-rejecting state transition immediately afterward.
+     */
+    public static function assertCanEnterTransport(string $attemptId): void
+    {
+        self::assertActive();
+        if ((self::$attempts[$attemptId]['state'] ?? '') !== 'reserved'
+            || self::$attempts[$attemptId]['identity'] !== ApiExecutionMetadataContext::current()) {
+            throw new RuntimeException('physical_budget_reservation_required');
+        }
+    }
+
+    /** This is bookkeeping only; all rejecting gates must already have passed. */
+    public static function enteringTransportAfterFinalFence(string $attemptId): void
+    {
+        if ((self::$attempts[$attemptId]['state'] ?? '') !== 'reserved'
+            || self::$attempts[$attemptId]['identity'] !== ApiExecutionMetadataContext::current()) {
+            // A process-local invariant violation is not a reason to stop
+            // between Financial's committed dispatch and curl_exec(). Keep
+            // the dispatch conservative and let the physical attempt proceed.
+            self::$stoppedReason ??= 'physical_budget_state_lost_after_final_fence';
+            return;
+        }
+        self::$attempts[$attemptId]['state'] = 'sent';
+    }
+
     public static function releaseBeforeTransport(?string $attemptId = null): bool
     {
         $attemptId ??= (string) (ApiExecutionMetadataContext::current()['transport_request_id'] ?? '');

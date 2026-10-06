@@ -214,9 +214,9 @@ foreach ([
     'APP_ENV' => 'test',
     'ML_WRITE_ENABLED' => 'false',
     'DB_HOST' => '127.0.0.1',
-    'DB_PORT' => '33079',
-    'DB_USER' => 'root',
-    'DB_PASS' => '',
+    'DB_PORT' => (string) (getenv('DB_PORT') ?: '33079'),
+    'DB_USER' => (string) (getenv('DB_USER') ?: 'root'),
+    'DB_PASS' => (string) (getenv('DB_PASS') ?: ''),
     'DB_NAME' => 'erp_meli_k1d_test_calls_billing_continuation_' . bin2hex(random_bytes(4)),
     'APP_KEY' => 'calls-disposable-test-only',
     'PRIVATE_STORAGE_PATH' => $root . '/private',
@@ -234,7 +234,7 @@ if (!is_dir(ERP_INSTALLATION_ROOT)) {
 $harness = K1dSafeTestDatabase::createFromEnvironment();
 try {
     $pdo = $harness->pdo();
-    (new App\Services\Migrator($pdo, __DIR__ . '/../database/migrations'))->run(301);
+    (new App\Services\Migrator($pdo, __DIR__ . '/../database/migrations'))->run(302);
     calls_final_billing_continue_seed_scope($pdo, $budget, $billingIntervalSeconds);
     $fixture = calls_final_billing_continue_seed_pack($pdo, $orderCount);
     calls_final_billing_continue_configure_wire();

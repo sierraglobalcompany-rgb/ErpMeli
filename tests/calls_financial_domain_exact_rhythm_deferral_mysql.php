@@ -189,7 +189,7 @@ mkdir(ERP_INSTALLATION_ROOT, 0770, true);
 $harness = K1dSafeTestDatabase::createFromEnvironment();
 try {
     $pdo = $harness->pdo();
-    (new App\Services\Migrator($pdo, __DIR__ . '/../database/migrations'))->run(301);
+    (new App\Services\Migrator($pdo, __DIR__ . '/../database/migrations'))->run(302);
     financial_rhythm_seed_scope($pdo, 1, 1);
     $f = financial_rhythm_seed_pack($pdo, 2);
     financial_rhythm_configure_wire();

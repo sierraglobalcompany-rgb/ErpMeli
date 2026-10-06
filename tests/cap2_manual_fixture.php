@@ -7,7 +7,7 @@ require __DIR__.'/cap2_domains_wire_fixture.php';
 function cap2_manual_database(): K1dSafeTestDatabase
 {
     putenv('APP_ENV=test'); putenv('ML_WRITE_ENABLED=false');
-    putenv('DB_HOST=127.0.0.1'); putenv('DB_PORT=33079'); putenv('DB_USER=root'); putenv('DB_PASS=');
+    putenv('DB_HOST=127.0.0.1'); putenv('DB_PORT=' . (getenv('DB_PORT') ?: '33079')); putenv('DB_USER=' . (getenv('DB_USER') ?: 'root')); putenv('DB_PASS=' . (getenv('DB_PASS') ?: ''));
     putenv('DB_NAME=erp_meli_k1d_test_cap2_manual_'.bin2hex(random_bytes(4)));
     putenv('APP_KEY=cap2-disposable-test-only-not-a-real-secret');
     $qaRoot=rtrim(str_replace('\\', '/', (string)(getenv('CAP2_MANUAL_QA_ROOT') ?: (getenv('CALLS_VERIFY_QA_ROOT') ? rtrim((string) getenv('CALLS_VERIFY_QA_ROOT'), '/\\') . '/manual-fixtures' : 'D:/Codex/tmp/erp-meli/cap2-20260905/qa'))), '/');
@@ -19,7 +19,7 @@ function cap2_manual_database(): K1dSafeTestDatabase
     if (!defined('ERP_INSTALLATION_ROOT')) define('ERP_INSTALLATION_ROOT',$qaRoot.'/manual-install-'.bin2hex(random_bytes(4)));
     if (!is_dir(ERP_INSTALLATION_ROOT)) mkdir(ERP_INSTALLATION_ROOT,0777,true);
     $h=K1dSafeTestDatabase::createFromEnvironment(); $pdo=$h->pdo();
-    try {(new App\Services\Migrator($pdo,__DIR__.'/../database/migrations'))->run(301);}
+    try {(new App\Services\Migrator($pdo,__DIR__.'/../database/migrations'))->run(302);}
     catch(Throwable $error) {$h->cleanup();throw $error;}
     $pdo->exec("INSERT INTO companies(id,name,status) VALUES(9001,'CAP2 manual',1),(9002,'Other scope',1)");
     $pdo->exec("INSERT INTO meli_accounts(id,company_id,account_name,meli_user_id,status) VALUES(9011,9001,'CAP2 account',99011,'conectado'),(9012,9002,'Other account',99012,'conectado')");

@@ -73,7 +73,7 @@ if ((string) getenv('CALLS_V2_PHASE4_REUSE_DB') === '1') {
     putenv('APP_ENV=test');
     putenv('ML_WRITE_ENABLED=false');
     putenv('DB_HOST=127.0.0.1');
-    putenv('DB_PORT=33079');
+    putenv('DB_PORT=' . (getenv('DB_PORT') ?: '33079'));
     putenv('DB_USER=root');
     putenv('DB_PASS=');
     putenv('APP_KEY=cap2-disposable-test-only-not-a-real-secret');

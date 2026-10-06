@@ -141,7 +141,7 @@ mkdir(ERP_INSTALLATION_ROOT, 0770, true);
 $harness = K1dSafeTestDatabase::createFromEnvironment();
 try {
     $pdo = $harness->pdo();
-    (new App\Services\Migrator($pdo, __DIR__ . '/../database/migrations'))->run(301);
+    (new App\Services\Migrator($pdo, __DIR__ . '/../database/migrations'))->run(302);
     recovery_seed_scope($pdo);
 
     if ($case === 'retry_wakes') {

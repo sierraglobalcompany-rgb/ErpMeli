@@ -249,6 +249,31 @@ final class SaleFinancialStateService
         return self::inputVersionFromSnapshot($this->inputSnapshot((int) $scope['meli_account_id'], $orders));
     }
 
+    /**
+     * Recomputes the canonical version from current source rows. With
+     * $forUpdate=true this must be called inside the caller's transaction and
+     * locks the order and snapshot rows so the transport authority compares a
+     * stable snapshot at its final pre-dispatch fence.
+     */
+    public function currentInputVersionForSale(int $companyId, int $accountId, string $saleKey, bool $forUpdate = false): string
+    {
+        $this->assertScope($companyId, $accountId, $saleKey);
+        if (!$this->available()) {
+            throw new RuntimeException('Falta ejecutar la migración de Finanzas V3.');
+        }
+        if ($forUpdate && !Database::connectionFresh()->inTransaction()) {
+            throw new RuntimeException('La lectura bloqueante de input_version requiere una transacción activa.');
+        }
+
+        $orders = $this->orders($companyId, $accountId, $saleKey, $forUpdate);
+        if ($orders === []) {
+            throw new RuntimeException('La venta no tiene órdenes dentro de la empresa y cuenta indicadas.');
+        }
+        return self::inputVersionFromSnapshot(
+            $this->inputSnapshot($accountId, $orders, $forUpdate)
+        );
+    }
+
     /** @param array<string,mixed> $snapshot */
     public static function inputVersionFromSnapshot(array $snapshot): string
     {
@@ -410,7 +435,7 @@ final class SaleFinancialStateService
     }
 
     /** @return list<array<string,mixed>> */
-    private function orders(int $companyId, int $accountId, string $saleKey): array
+    private function orders(int $companyId, int $accountId, string $saleKey, bool $forUpdate = false): array
     {
         $stmt = Database::connectionFresh()->prepare(
             'SELECT o.id,o.external_order_id,o.external_pack_id,o.external_shipping_id,o.status,
@@ -420,14 +445,14 @@ final class SaleFinancialStateService
              JOIN meli_accounts a ON a.id=o.meli_account_id AND a.company_id=?
              WHERE o.meli_account_id=?
                AND CONCAT(IF(o.external_pack_id IS NULL,"O:","P:"),COALESCE(o.external_pack_id,o.external_order_id))=?
-             ORDER BY o.external_order_id,o.id'
+             ORDER BY o.external_order_id,o.id' . ($forUpdate ? ' FOR UPDATE' : '')
         );
         $stmt->execute([$companyId, $accountId, $saleKey]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
     /** @param list<array<string,mixed>> $orders @return array<string,mixed> */
-    private function inputSnapshot(int $accountId, array $orders): array
+    private function inputSnapshot(int $accountId, array $orders, bool $forUpdate = false): array
     {
         $orderIds = array_map(static fn(array $row): int => (int) $row['id'], $orders);
         if ($orderIds === []) {
@@ -440,14 +465,14 @@ final class SaleFinancialStateService
             'SELECT meli_order_id,external_item_id,COALESCE(external_variation_id,0) external_variation_id,
                     quantity,unit_price,COALESCE(full_unit_price,0) full_unit_price,sale_fee
              FROM meli_order_items WHERE meli_account_id=? AND meli_order_id IN (' . $placeholders . ')
-             ORDER BY meli_order_id,external_item_id,external_variation_id,id'
+             ORDER BY meli_order_id,external_item_id,external_variation_id,id' . ($forUpdate ? ' FOR UPDATE' : '')
         );
         $items->execute($params);
         $payments = $pdo->prepare(
             'SELECT meli_order_id,external_payment_id,status,status_detail,transaction_amount,shipping_cost,
                     coupon_amount,total_paid_amount,marketplace_fee,date_approved_utc
              FROM meli_payments WHERE meli_account_id=? AND meli_order_id IN (' . $placeholders . ')
-             ORDER BY meli_order_id,external_payment_id,id'
+             ORDER BY meli_order_id,external_payment_id,id' . ($forUpdate ? ' FOR UPDATE' : '')
         );
         $payments->execute($params);
         $shippingIds = array_values(array_unique(array_filter(array_map(
@@ -461,7 +486,7 @@ final class SaleFinancialStateService
                         discounts
                  FROM meli_shipments WHERE meli_account_id=? AND external_shipment_id IN ('
                 . implode(',', array_fill(0, count($shippingIds), '?')) . ')
-                 ORDER BY external_shipment_id,id'
+                 ORDER BY external_shipment_id,id' . ($forUpdate ? ' FOR UPDATE' : '')
             );
             $shipmentStmt->execute(array_merge([$accountId], $shippingIds));
             $shipments = $shipmentStmt->fetchAll(PDO::FETCH_ASSOC);

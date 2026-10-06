@@ -80,6 +80,10 @@ foreach ($expected['new_runtime_dependencies'] as &$entry) {
     $entry['sha256'] = hash('sha256', $raw[$entry['path']]);
 }
 unset($entry);
+usort(
+    $expected['new_runtime_dependencies'],
+    static fn (array $left, array $right): int => strcmp($left['path'], $right['path'])
+);
 r1AuthorityAssert($actual === cap2Json($expected), 'raw_blob_hashes_and_all_metadata_structure_order_preserved');
 foreach ($raw as $path => $bytes) {
     r1AuthorityAssert(hash_file('sha256', $root . '/' . $path) !== hash('sha256', $bytes), 'CRLF_fixture_must_differ:' . $path);

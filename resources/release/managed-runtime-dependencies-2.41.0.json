@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
     "authority_id": "financial-v2-release-2.41.0-runtime-dependencies",
-    "runtime_manifest_paths_sha256": "df5c736148d29a9720b79b47ad956121fa2ca76aacb9b1f6beed9127eb72bc55",
+    "runtime_manifest_paths_sha256": "ea9b6e2c01c0f6c32d16ff68013cd09e84a8e862e434ee69be3eb1079c255aa9",
     "coverage_base_commit": "6cb102595d0f2e5d47b07fa868aec8bbc22f8653",
     "classifications": {
         "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

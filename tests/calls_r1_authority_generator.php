@@ -41,11 +41,11 @@ cap2Git($root, ['config', 'core.autocrlf', 'false']);
 cap2Git($root, ['config', 'user.name', 'Synthetic Authority Test']);
 cap2Git($root, ['config', 'user.email', 'authority-test@example.invalid']);
 
-$authorityPath = 'resources/release/updater-authority-2.40.1.json';
-$raw = ['app/Synthetic.php' => "<?php\n// Raw LF Git blob.\n", 'VERSION' => "2.40.1\n"];
+$authorityPath = 'resources/release/updater-authority-2.41.0.json';
+$raw = ['app/Synthetic.php' => "<?php\n// Raw LF Git blob.\n", 'VERSION' => "2.41.0\n"];
 $source = [
     'schema_version' => 1,
-    'target_version' => '2.40.1',
+    'target_version' => '2.41.0',
     'contract' => 'Synthetic metadata remains unchanged.',
     'supersedes_inventory' => ['path' => 'original.json', 'sha256' => str_repeat('a', 64), 'file_count' => 29],
     'unchanged_locked' => ['file_count' => 27, 'sorted_path_hash_lines_sha256' => str_repeat('b', 64)],
@@ -80,6 +80,10 @@ foreach ($expected['new_runtime_dependencies'] as &$entry) {
     $entry['sha256'] = hash('sha256', $raw[$entry['path']]);
 }
 unset($entry);
+usort(
+    $expected['new_runtime_dependencies'],
+    static fn (array $left, array $right): int => strcmp($left['path'], $right['path'])
+);
 r1AuthorityAssert($actual === cap2Json($expected), 'raw_blob_hashes_and_all_metadata_structure_order_preserved');
 foreach ($raw as $path => $bytes) {
     r1AuthorityAssert(hash_file('sha256', $root . '/' . $path) !== hash('sha256', $bytes), 'CRLF_fixture_must_differ:' . $path);

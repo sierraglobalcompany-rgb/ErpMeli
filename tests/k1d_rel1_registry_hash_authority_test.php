@@ -7,7 +7,7 @@ require __DIR__ . '/k1b_bootstrap.php';
 $root = realpath(__DIR__ . '/..');
 k1b_assert(is_string($root), 'repo_root_not_found');
 
-$registryPath = 'resources/release/managed-runtime-dependencies-2.40.1.json';
+$registryPath = 'resources/release/managed-runtime-dependencies-2.41.0.json';
 $manifestPath = $root . '/resources/runtime-manifest.json';
 $registryWorktreePath = $root . '/' . $registryPath;
 

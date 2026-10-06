@@ -120,7 +120,7 @@ final class QueueV4DiagnosticBundleService
         $manifest = [
             'generated_at_utc' => $this->now(),
             'bundle_version' => 'Queue V4 Diagnostic Bundle V1',
-            'production_version_expected' => '2.40.1',
+            'production_version_expected' => '2.41.0',
             'schema_changed' => false,
             'new_queue' => false,
             'new_cron' => false,
@@ -209,8 +209,8 @@ final class QueueV4DiagnosticBundleService
             $versionFile = is_file(AppPaths::releaseRoot() . '/VERSION')
                 ? trim((string) file_get_contents(AppPaths::releaseRoot() . '/VERSION'))
                 : 'NOT_FOUND';
-            if ($versionFile !== '2.40.1') {
-                $result['hard_stop_reason'] = 'version_file_not_2401:' . $versionFile;
+            if ($versionFile !== '2.41.0') {
+                $result['hard_stop_reason'] = 'version_file_not_2410:' . $versionFile;
                 return $result;
             }
 

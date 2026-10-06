@@ -398,3 +398,9 @@ Nota 2.5.0: el modo asistido de sincronizaciones ahora puede procesar manualment
 - “Todo” distingue trabajo listo, futuro, ocupado, completado y con intervención pendiente.
 - Las notificaciones Webhook-First seguras pueden procesarse individualmente sin competir con Automatización.
 - Cada paso manual admite como máximo una salida remota; una renovación OAuth aplaza la consulta principal.
+# 2.41.0 — Financial V2 Billing capture authority
+
+- Introduces durable Billing capture authority for Financial V2, with one automatically unresolved physical flight per remote order and a final Financial fence before transport.
+- Persists a Billing result independently of a later Financial lease and supports certainty-aware recovery plus offline reconciliation of durable results.
+- Preserves multi-order capture, recapture policy, and `input_version` provenance; uncertain physical outcomes are not described as automatically safe to retry.
+- Adds migration `302_financial_v2_billing_capture_authority.sql`.

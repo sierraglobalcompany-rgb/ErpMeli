@@ -22,17 +22,7 @@ final class K1dSafeTestDatabase
         $this->dbName = (string) getenv('DB_NAME');
         $this->assertGuard((string) getenv('APP_ENV'), (string) getenv('ML_WRITE_ENABLED'), $this->host, $this->dbName);
 
-        $this->admin = new PDO(
-            sprintf('mysql:host=%s;port=%s;charset=utf8mb4', $this->host, $this->port),
-            (string) getenv('DB_USER'),
-            (string) getenv('DB_PASS'),
-            [
-                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                PDO::ATTR_EMULATE_PREPARES => false,
-                PDO::ATTR_PERSISTENT => false,
-            ]
-        );
+        $this->admin = $this->openAdminConnection();
     }
 
     public static function assertGuard(string $appEnv, string $writeEnabled, string $host, string $dbName): void
@@ -84,12 +74,28 @@ final class K1dSafeTestDatabase
         return $pdo;
     }
 
+    /** Keep this instance's disposable-database admin connection alive between long migration batches. */
+    public function keepAdminAlive(): void
+    {
+        self::assertGuard((string) getenv('APP_ENV'), (string) getenv('ML_WRITE_ENABLED'), $this->host, $this->dbName);
+        try {
+            $this->admin->query('SELECT 1')->fetchColumn();
+        } catch (PDOException $exception) {
+            if (!in_array((int) ($exception->errorInfo[1] ?? 0), [2006, 2013], true)) {
+                throw $exception;
+            }
+            $this->admin = $this->openAdminConnection();
+            $this->admin->query('SELECT 1')->fetchColumn();
+        }
+    }
+
     public function cleanup(): void
     {
         if (!$this->created) {
             return;
         }
         self::assertGuard((string) getenv('APP_ENV'), (string) getenv('ML_WRITE_ENABLED'), $this->host, $this->dbName);
+        $this->keepAdminAlive();
         $this->admin->exec('DROP DATABASE IF EXISTS `' . $this->dbName . '`');
         $this->created = false;
         $this->recordOwnershipEvent('dropped');
@@ -122,6 +128,21 @@ final class K1dSafeTestDatabase
             $this->cleanup();
             throw $error;
         }
+    }
+
+    private function openAdminConnection(): PDO
+    {
+        return new PDO(
+            sprintf('mysql:host=%s;port=%s;charset=utf8mb4', $this->host, $this->port),
+            (string) getenv('DB_USER'),
+            (string) getenv('DB_PASS'),
+            [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false,
+                PDO::ATTR_PERSISTENT => false,
+            ]
+        );
     }
 
     private function recordOwnershipEvent(string $event): void

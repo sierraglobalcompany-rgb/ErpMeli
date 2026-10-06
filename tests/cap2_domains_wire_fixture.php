@@ -12,6 +12,7 @@ final class Cap2DomainsWire
     public static string $raw = '';
     public static string $curlError = '';
     public static ?\Closure $onWire = null;
+    public static ?\Closure $afterResponseBeforeDurable = null;
 }
 
 function curl_exec(\CurlHandle $handle): string|false
@@ -46,4 +47,12 @@ function curl_getinfo(\CurlHandle $handle, ?int $option = null): mixed
     };
 }
 
-function curl_error(\CurlHandle $handle): string { return Cap2DomainsWire::$curlError; }
+function curl_error(\CurlHandle $handle): string
+{
+    if (Cap2DomainsWire::$afterResponseBeforeDurable !== null) {
+        $hook = Cap2DomainsWire::$afterResponseBeforeDurable;
+        Cap2DomainsWire::$afterResponseBeforeDurable = null;
+        $hook();
+    }
+    return Cap2DomainsWire::$curlError;
+}

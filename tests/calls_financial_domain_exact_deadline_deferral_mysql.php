@@ -305,7 +305,7 @@ $harness = K1dSafeTestDatabase::createFromEnvironment();
 
 try {
     $pdo = $harness->pdo();
-    (new App\Services\Migrator($pdo, __DIR__ . '/../database/migrations'))->run(301);
+    (new App\Services\Migrator($pdo, __DIR__ . '/../database/migrations'))->run(302);
     financial_deadline_seed_scope($pdo);
     $f = financial_deadline_seed_pack($pdo, 2);
     financial_deadline_configure_wire();
@@ -360,7 +360,15 @@ try {
         financial_deadline_assert(($after['lock_owner'] ?? '') === 'replacement-owner', 'fence_loss_replacement_owner_preserved');
         financial_deadline_assert((int) $after['lease_generation'] === (int) $before['lease_generation'] + 2, 'fence_loss_generation_preserved', ['before' => $before, 'after' => $after]);
         financial_deadline_assert((int) $after['attempts'] === (int) $before['attempts'] + 2, 'fence_loss_attempts_not_refunded_on_other_generation');
-        financial_deadline_assert(($pointer['state'] ?? '') === 'waiting' && ($pointer['last_error_class'] ?? '') === 'capacity_deferred:cron_deadline', 'fence_loss_original_deadline_reaches_worker');
+        financial_deadline_assert(
+            ($pointer['state'] ?? '') === 'waiting'
+                && count($attempts) === 1
+                && $attempts[0]['dispatch_state'] === 'NOT_DISPATCHED'
+                && (int) $attempts[0]['physical_http_calls'] === 0
+                && financial_deadline_journal($pdo, $f['queue_id']) === [],
+            'fence_loss_financial_authority_blocks_before_physical_dispatch',
+            ['pointer' => $pointer, 'attempts' => $attempts]
+        );
         financial_deadline_assert(count($attempts) === 1 && $attempts[0]['dispatch_state'] === 'NOT_DISPATCHED' && (int) $attempts[0]['physical_http_calls'] === 0, 'fence_loss_zero_http');
     } else {
         // First tick stores one real local checkpoint, then the second tick hits

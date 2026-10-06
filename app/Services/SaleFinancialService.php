@@ -128,7 +128,29 @@ final class SaleFinancialService
     /** @return array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} */
     public function processDue(int $limit = 1): array
     {
+        $this->recoverExpiredV2RunsForNaturalScheduler(max(1, min(10, $limit)));
         return $this->processSelected($limit, null);
+    }
+
+    private function recoverExpiredV2RunsForNaturalScheduler(int $limit): void
+    {
+        $stmt = Database::connectionFresh()->prepare(
+            'SELECT j.id,j.company_id,j.meli_account_id
+             FROM sale_financial_reconciliation_jobs j
+             JOIN meli_accounts a ON a.id=j.meli_account_id AND a.company_id=j.company_id
+             WHERE j.status="running" AND j.last_remote_state="billing_v2_claimed"
+               AND j.lease_expires_at IS NOT NULL AND j.lease_expires_at<UTC_TIMESTAMP()
+             ORDER BY j.lease_expires_at,j.id LIMIT ' . max(1, min(10, $limit))
+        );
+        $stmt->execute();
+        $authority = new BillingCaptureTransportAuthority();
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $job) {
+            $authority->recoverExpiredRunning(
+                (int) $job['id'],
+                (int) $job['company_id'],
+                (int) $job['meli_account_id']
+            );
+        }
     }
 
     /** @return array{processed:int,completed:int,errors:int,deferred:int,stop_reason:string} */
@@ -160,6 +182,7 @@ final class SaleFinancialService
 
         // Queue V4 automatic admission is one financial source per Billing
         // request. Do not claim adjacent sources as a transport batch.
+        (new BillingCaptureTransportAuthority())->recoverExpiredRunning($sourceIds[0], $companyId, $accountId);
         $job = $this->claimSpecificBillingJob($sourceIds[0], $companyId, $accountId);
         if ($job === null) {
             return ['summary' => $summary, 'outcomes' => $outcomes];
@@ -677,7 +700,7 @@ final class SaleFinancialService
             $generation = (int) $job['lease_generation'] + 1;
             $update = $pdo->prepare(
                 'UPDATE sale_financial_reconciliation_jobs
-                 SET status="running",lock_owner=?,lease_generation=?,
+                 SET status="running",last_remote_state="billing_v2_claimed",lock_owner=?,lease_generation=?,
                      lease_expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 3 MINUTE),
                      heartbeat_at=UTC_TIMESTAMP(),attempts=attempts+1
                  WHERE id=? AND company_id=? AND meli_account_id=?
@@ -699,6 +722,7 @@ final class SaleFinancialService
             $job['lock_owner'] = $owner;
             $job['lease_generation'] = $generation;
             $job['attempts'] = (int) $job['attempts'] + 1;
+            $job['last_remote_state'] = 'billing_v2_claimed';
             return $job;
         } catch (Throwable $error) {
             if ($pdo->inTransaction()) {
@@ -884,19 +908,103 @@ final class SaleFinancialService
         if ($requestedLocalOrderIds === []) {
             throw new \RuntimeException('La orden Billing pendiente no pertenece a la venta vigente.');
         }
-        $captureId = $this->beginCapture($job, $requestedOrderIds);
+        $authority = new BillingCaptureTransportAuthority();
+        $billingResourceKey = hash('sha256', 'billing_order:v1:' . $requestedOrderIds[0]);
+        $lookupMetadata = [
+            'company_id' => (int) $job['company_id'],
+            'meli_account_id' => (int) $job['meli_account_id'],
+            'sale_key' => (string) $job['sale_key'],
+            'input_version' => (string) $job['input_version'],
+            'external_order_id' => $requestedOrderIds[0],
+            'billing_resource_key' => $billingResourceKey,
+        ];
+        $durableCapture = $authority->findUnconsumedDurableResult($lookupMetadata);
         $api = ($this->clientFactory)((int) $job['meli_account_id']);
-        $response = $api->get(self::ENDPOINT, ['order_ids' => $requestedOrderIds[0]], [
-            'job_type' => 'billing',
-            'source' => 'cron',
-            'bulk' => false,
-            'estimated_total' => 1,
-            'response_count_strategy' => 'billing_orders',
-            'expected_resource_ids' => $requestedOrderIds[0],
-        ]);
-        $metadata = $api->lastResponseMetadata() ?? ['status' => 200, 'headers' => [], 'request_id' => ''];
-        $httpStatus = (int) $metadata['status'];
+        if (is_array($durableCapture)) {
+            $captureId = (int) $durableCapture['id'];
+            $rawBody = (string) $durableCapture['response_body_raw'];
+            $response = json_decode($rawBody, true);
+            $response = is_array($response) ? $response : [];
+            $httpStatus = (int) $durableCapture['http_status'];
+            $durableMissingFields = json_decode((string) ($durableCapture['missing_fields_json'] ?? '[]'), true);
+            $durableMissingFields = is_array($durableMissingFields)
+                ? array_values(array_filter(array_map('strval', $durableMissingFields), static fn (string $field): bool => trim($field) !== ''))
+                : [];
+            $metadata = [
+                'status' => $httpStatus,
+                'headers' => $durableMissingFields === []
+                    ? []
+                    : ['x-content-missing' => implode(',', $durableMissingFields)],
+                'request_id' => (string) $durableCapture['request_id'],
+                'response_item_count' => 0,
+                'response_count_state' => 'unknown',
+            ];
+        } else {
+            try {
+                $captureMetadata = $authority->reserve($job, $requestedOrderIds[0]);
+            } catch (\RuntimeException $error) {
+                if ($error->getMessage() === 'billing_v2_unresolved_capture_conflict') {
+                    throw new RemoteResultUncertainException('');
+                }
+                throw $error;
+            }
+            $captureId = (int) $captureMetadata['capture_run_id'];
+            try {
+                $response = ApiExecutionMetadataContext::run(
+                    $captureMetadata + [
+                        'job_type' => 'billing',
+                        'bulk' => false,
+                        'estimated_total' => 1,
+                        'response_count_strategy' => 'billing_orders',
+                        'expected_resource_ids' => $requestedOrderIds[0],
+                    ],
+                    fn (): array => $api->get(self::ENDPOINT, ['order_ids' => $requestedOrderIds[0]], [
+                        'job_type' => 'billing',
+                        'bulk' => false,
+                        'estimated_total' => 1,
+                        'response_count_strategy' => 'billing_orders',
+                        'expected_resource_ids' => $requestedOrderIds[0],
+                    ])
+                );
+            } catch (Throwable $error) {
+                $capture = $authority->loadCapture(
+                    $captureId,
+                    (int) $job['company_id'],
+                    (int) $job['meli_account_id']
+                );
+                if (($capture['dispatch_state'] ?? '') === 'reserved'
+                    && (string) ($capture['request_id'] ?? '') === (string) $captureMetadata['request_id']) {
+                    $authority->abortReserved($captureMetadata);
+                }
+                throw $error;
+            }
+            $capture = $authority->loadCapture(
+                $captureId,
+                (int) $job['company_id'],
+                (int) $job['meli_account_id']
+            );
+            if (($capture['dispatch_state'] ?? '') !== 'result_durable'
+                || $capture['http_status'] === null
+                || $capture['response_body_raw'] === null
+                || !is_string($capture['response_hash'] ?? null)
+                || !hash_equals((string) $capture['response_hash'], hash('sha256', (string) $capture['response_body_raw']))) {
+                throw new RemoteResultUncertainException((string) $captureMetadata['request_id']);
+            }
+            $response = json_decode((string) $capture['response_body_raw'], true);
+            $response = is_array($response) ? $response : [];
+            $httpStatus = (int) $capture['http_status'];
+            $metadata = $api->lastResponseMetadata() ?? [
+                'status' => $httpStatus,
+                'headers' => [],
+                'request_id' => (string) $capture['request_id'],
+                'response_item_count' => 0,
+                'response_count_state' => 'unknown',
+            ];
+            $metadata['request_id'] = (string) $capture['request_id'];
+            $metadata['status'] = $httpStatus;
+        }
         $lines = (new SaleBillingParser())->parse($response, $requestedOrderIds);
+        $metadata['response_item_count'] = (int) ($metadata['response_item_count'] ?? count($lines));
         $items = $this->items((int) $job['meli_account_id'], $requestedLocalOrderIds);
         $calculationItems = array_map(static fn(array $item): array => [
             'id' => (int) $item['id'],
@@ -1068,21 +1176,68 @@ final class SaleFinancialService
         try {
             $this->assertLeaseInTransaction($pdo, $job);
             $missingFields = $this->missingFields($metadata);
-            $responseHash = hash(
-                'sha256',
-                json_encode(Logger::redact($response), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+            $captureStmt = $pdo->prepare(
+                'SELECT dispatch_state,http_status,response_hash,response_body_raw,result_durable_at,request_id
+                 FROM meli_billing_capture_runs
+                 WHERE id=? AND company_id=? AND meli_account_id=? FOR UPDATE'
             );
-            $pdo->prepare(
-                'UPDATE meli_billing_capture_runs
-                 SET http_status=?,response_class=?,response_hash=?,missing_fields_json=?,
-                     safe_message=?,captured_at=UTC_TIMESTAMP()
-                 WHERE id=? AND meli_account_id=?'
-            )->execute([
-                $httpStatus, $responseClass,
-                $responseHash,
-                json_encode($missingFields, JSON_UNESCAPED_UNICODE),
-                $message, $captureId, (int) $job['meli_account_id'],
-            ]);
+            $captureStmt->execute([$captureId, (int) $job['company_id'], (int) $job['meli_account_id']]);
+            $capture = $captureStmt->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($capture)) {
+                throw new \RuntimeException('billing_capture_checkpoint_identity_missing');
+            }
+            $v2Capture = $capture['dispatch_state'] !== null;
+            if ($v2Capture) {
+                if ((string) $capture['dispatch_state'] !== 'result_durable'
+                    || $capture['http_status'] === null
+                    || $capture['response_body_raw'] === null
+                    || $capture['result_durable_at'] === null
+                    || (string) $capture['request_id'] !== (string) ($metadata['request_id'] ?? '')
+                    || !hash_equals((string) $capture['response_hash'], hash('sha256', (string) $capture['response_body_raw']))) {
+                    throw new \RuntimeException('billing_v2_checkpoint_requires_exact_durable_result');
+                }
+                $httpStatus = (int) $capture['http_status'];
+                $responseHash = (string) $capture['response_hash'];
+                $updateCapture = $pdo->prepare(
+                    'UPDATE meli_billing_capture_runs
+                     SET response_class=?,missing_fields_json=?,safe_message=?
+                     WHERE id=? AND company_id=? AND meli_account_id=? AND dispatch_state="result_durable"
+                       AND request_id=?'
+                );
+                $updateCapture->execute([
+                    $responseClass,
+                    json_encode($missingFields, JSON_UNESCAPED_UNICODE),
+                    $message,
+                    $captureId,
+                    (int) $job['company_id'],
+                    (int) $job['meli_account_id'],
+                    (string) $metadata['request_id'],
+                ]);
+            } else {
+                $responseHash = hash(
+                    'sha256',
+                    json_encode(Logger::redact($response), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+                );
+                $updateCapture = $pdo->prepare(
+                    'UPDATE meli_billing_capture_runs
+                     SET http_status=?,response_class=?,response_hash=?,missing_fields_json=?,
+                         safe_message=?,captured_at=UTC_TIMESTAMP()
+                     WHERE id=? AND company_id=? AND meli_account_id=? AND dispatch_state IS NULL'
+                );
+                $updateCapture->execute([
+                    $httpStatus,
+                    $responseClass,
+                    $responseHash,
+                    json_encode($missingFields, JSON_UNESCAPED_UNICODE),
+                    $message,
+                    $captureId,
+                    (int) $job['company_id'],
+                    (int) $job['meli_account_id'],
+                ]);
+            }
+            if ($updateCapture->rowCount() !== 1) {
+                throw new \RuntimeException('billing_capture_checkpoint_update_lost');
+            }
             (new SaleFinancialStateService())->recordBillingOrderCheckpoint(
                 $pdo,
                 $job,
@@ -1594,7 +1749,7 @@ final class SaleFinancialService
             $generation = (int) $job['lease_generation'] + 1;
             $pdo->prepare(
                 'UPDATE sale_financial_reconciliation_jobs
-                 SET status="running",lock_owner=?,lease_generation=?,
+                 SET status="running",last_remote_state="billing_v2_claimed",lock_owner=?,lease_generation=?,
                      lease_expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 3 MINUTE),
                      heartbeat_at=UTC_TIMESTAMP(),attempts=attempts+1
                  WHERE id=?'
@@ -1603,6 +1758,7 @@ final class SaleFinancialService
             $job['lock_owner'] = $owner;
             $job['lease_generation'] = $generation;
             $job['attempts'] = (int) $job['attempts'] + 1;
+            $job['last_remote_state'] = 'billing_v2_claimed';
             return $job;
         } catch (Throwable $error) {
             if ($pdo->inTransaction()) {

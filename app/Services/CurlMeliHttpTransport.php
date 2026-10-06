@@ -8,6 +8,10 @@ use RuntimeException;
 
 final class CurlMeliHttpTransport implements MeliHttpTransportInterface
 {
+    public function __construct(private readonly ?BillingCaptureTransportAuthority $billingAuthority = null)
+    {
+    }
+
     public function request(
         string $method,
         string $url,
@@ -26,6 +30,11 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
 
     private function executeRequest(string $method, string $url, array $data, array $headers, bool $form, array $timeouts): array
     {
+        $billingMetadata = ApiExecutionMetadataContext::current();
+        $billingV2 = ($billingMetadata['billing_v2'] ?? false) === true;
+        if ($billingV2 && $this->billingAuthority === null) {
+            throw new RuntimeException('billing_v2_transport_authority_unavailable');
+        }
         \App\QueueV4Clean\QueueV4CleanCycleBudget::assertActive();
         if ((string) (ApiExecutionMetadataContext::current()['source'] ?? '') === MeliTransportSourcePolicy::QUEUE_V4_OAUTH) {
             $capabilities = (new MeliCliRuntimeCapabilityService())->inspect();
@@ -172,7 +181,35 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             CURLOPT_TIMEOUT => max(1, min($timeouts['timeout'], $freshTimeouts['timeout'])),
             CURLOPT_CONNECTTIMEOUT => max(1, min($timeouts['connect_timeout'], $freshTimeouts['connect_timeout'])),
         ])) { throw new RuntimeException('queue_v4_clean_curl_final_timeout_rejected'); }
-        \App\QueueV4Clean\QueueV4CleanCycleBudget::enteringTransport($requestId);
+        if ($billingV2) {
+            // Deadline/budget/identity checks are still rejectable and must
+            // precede Billing's durable dispatch permission.
+            \App\QueueV4Clean\QueueV4CleanCycleBudget::assertCanEnterTransport($requestId);
+            try {
+                $this->billingAuthority?->commitDispatch(ApiExecutionMetadataContext::current());
+            } catch (Throwable $blocked) {
+                try {
+                    $capture = $this->billingAuthority?->loadCapture(
+                        (int) ($billingMetadata['capture_run_id'] ?? 0),
+                        (int) ($billingMetadata['company_id'] ?? 0),
+                        (int) ($billingMetadata['meli_account_id'] ?? 0)
+                    );
+                } catch (Throwable) {
+                    $capture = null;
+                }
+                if (($capture['dispatch_state'] ?? '') !== 'reserved'
+                    || (string) ($capture['request_id'] ?? '') !== (string) ($billingMetadata['request_id'] ?? '')) {
+                    throw new RemoteResultUncertainException($requestId);
+                }
+                throw $blocked;
+            }
+            // No new deadline, budget, or policy rejection after
+            // dispatch_committed; this only records the already-reserved
+            // physical slot immediately before the wire boundary.
+            \App\QueueV4Clean\QueueV4CleanCycleBudget::enteringTransportAfterFinalFence($requestId);
+        } else {
+            \App\QueueV4Clean\QueueV4CleanCycleBudget::enteringTransport($requestId);
+        }
         } catch (\Throwable $blocked) {
             if ($blocked instanceof RemoteResultUncertainException) {
                 \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_result_uncertain');
@@ -212,6 +249,19 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             : (is_string($raw) ? strlen($raw) : 0);
         $curlError = curl_error($ch);
         unset($ch);
+        if ($billingV2 && $status > 0 && $curlError === '' && is_string($raw)) {
+            try {
+                $this->billingAuthority?->persistKnownResponse(
+                    ApiExecutionMetadataContext::current(),
+                    $status,
+                    $raw,
+                    $responseHeaders
+                );
+            } catch (Throwable $failure) {
+                \App\QueueV4Clean\QueueV4CleanCycleBudget::stop('remote_result_uncertain');
+                throw new RemoteResultUncertainException($requestId, 0, $failure);
+            }
+        }
         if (MeliTransportSourcePolicy::requiresCurrentOAuthFence($executionSource)
             && $status > 0 && $curlError === '') {
             \App\QueueV4Clean\QueueV4CleanOAuthStageContext::setForCurrentOAuth(
@@ -245,6 +295,7 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             'duration_ms' => (int) round((microtime(true) - $started) * 1000),
             'wire_bytes' => max(0, $wireBytes),
             'decoded_bytes' => is_string($raw) ? strlen($raw) : 0,
+            'raw_body' => is_string($raw) ? $raw : null,
         ];
     }
 }

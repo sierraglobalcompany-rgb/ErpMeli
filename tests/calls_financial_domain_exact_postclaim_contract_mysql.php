@@ -376,7 +376,7 @@ mkdir(ERP_INSTALLATION_ROOT, 0770, true);
 $harness = K1dSafeTestDatabase::createFromEnvironment();
 try {
     $pdo = $harness->pdo();
-    (new App\Services\Migrator($pdo, __DIR__ . '/../database/migrations'))->run(301);
+    (new App\Services\Migrator($pdo, __DIR__ . '/../database/migrations'))->run(302);
     postclaim_seed_scope($pdo);
     $fixture = postclaim_seed_work($pdo);
     postclaim_configure_wire($case);

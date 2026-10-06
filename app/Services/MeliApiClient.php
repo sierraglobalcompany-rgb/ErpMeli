@@ -24,7 +24,7 @@ final class MeliApiClient implements MeliReadClientInterface
         private readonly int $accountId,
         ?MeliHttpTransportInterface $transport = null
     ) {
-        $this->transport = $transport ?? new CurlMeliHttpTransport();
+        $this->transport = $transport ?? new CurlMeliHttpTransport(new BillingCaptureTransportAuthority());
     }
 
     public function get(string $path, array $query = [], array $meta = []): array
@@ -76,6 +76,10 @@ final class MeliApiClient implements MeliReadClientInterface
         $mutation = $mutation || strtoupper($method) !== 'GET';
         WriteGuard::assertAllowed($mutation);
         $meta = array_replace($meta, ApiExecutionMetadataContext::current());
+        $billingV2 = ($meta['billing_v2'] ?? false) === true;
+        if ($billingV2 && preg_match('/^[a-f0-9]{40}$/D', (string) ($meta['request_id'] ?? '')) !== 1) {
+            throw new RuntimeException('billing_v2_request_id_invalid');
+        }
         $requestGuard = new ApiGuardService();
         $requestGuard->assertMetadataScope($this->accountId, $meta);
         $requestGuard->assertAllowed($this->accountId, $method, $path);
@@ -155,6 +159,10 @@ final class MeliApiClient implements MeliReadClientInterface
         // El contexto del worker prevalece sobre etiquetas genéricas como
         // source=cron. Así cada llamada real puede atribuirse a su campaña.
         $meta = array_replace($meta, ApiExecutionMetadataContext::current());
+        $billingV2 = ($meta['billing_v2'] ?? false) === true;
+        if ($billingV2 && preg_match('/^[a-f0-9]{40}$/D', (string) ($meta['request_id'] ?? '')) !== 1) {
+            throw new RuntimeException('billing_v2_request_id_invalid');
+        }
         $method = strtoupper($method);
         $guard = new ApiGuardService();
         $budget = new ApiBudgetService();
@@ -201,10 +209,10 @@ final class MeliApiClient implements MeliReadClientInterface
         $queueV4ReadContext = MeliTransportSourcePolicy::requiresQueueV4ReadFence($source);
         $cronV3RemoteContext = (string) ($meta['source'] ?? '') === 'cron_v3_remote';
         $queueCoreContext = (string) ($meta['source'] ?? '') === 'queue_core';
-        $attempts = $singleDispatchAttempt ? 1 : $guard->maxAttempts($mutation, $method);
+        $attempts = ($singleDispatchAttempt || $billingV2) ? 1 : $guard->maxAttempts($mutation, $method);
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
             // One server-owned identity per physical attempt, never per work item.
-            $requestId = bin2hex(random_bytes(20));
+            $requestId = $billingV2 ? (string) $meta['request_id'] : bin2hex(random_bytes(20));
             $meta['transport_request_id'] = $requestId;
             ApiExecutionMetadataContext::markRemoteAttempted();
             $budgetReservation = [];

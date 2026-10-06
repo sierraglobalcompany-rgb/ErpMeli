@@ -28,7 +28,7 @@
     "new_runtime_dependencies": [
         {
             "path": "VERSION",
-            "sha256": "41a39e6fe55d4b5017a57ada401c997fa990445a32fc5d2d59f1fc0cc8ec29a2"
+            "sha256": "cf4e24156f2593439ad1fd6b7cc9c5b7f61ed4036d30a936b947968fa72c6eca"
         },
         {
             "path": "app/Controllers/ClaimController.php",
@@ -112,7 +112,7 @@
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanCycleBudget.php",
-            "sha256": "51f9909d4346746c3af3c9e5cde09442a4ac450c535f7146c22849842d26718d"
+            "sha256": "d9a22f8cf389d464bed3392de276d6fe1b1da11128f1eb182241e9f7b5867bf3"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanDatabaseContract.php",
@@ -156,7 +156,7 @@
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanRepository.php",
-            "sha256": "fa8144cdff916f5753a13bf4a0854ceb27331000347f85b7b042e97150a73c4e"
+            "sha256": "60c7d7da3ed6704e44d0dcb9b7835ce98318ef900ba1efe2ceb3341b9c3596e7"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanReviewService.php",
@@ -276,7 +276,7 @@
         },
         {
             "path": "app/Services/CurlMeliHttpTransport.php",
-            "sha256": "5bcd08548b480823068befedf22d1f0643e2f119dcd25c36384e30433abd8816"
+            "sha256": "4bfa7b6367d5d335080d98fbae9ac7d386474e1170c5c98776a9250d2da2879e"
         },
         {
             "path": "app/Services/DiagnosticService.php",
@@ -288,7 +288,7 @@
         },
         {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "20f3530a428912611c939efaac35f761dfde106f84ee5da8dc5a32be202641c8"
+            "sha256": "52c9a01d78b505a8492ddb16aa91fdd13ab4792e97b12cd8f5f358fee759d0dc"
         },
         {
             "path": "app/Services/ManualProcessingService.php",
@@ -300,7 +300,7 @@
         },
         {
             "path": "app/Services/MeliApiClient.php",
-            "sha256": "a553a10977bff09bc4163cc964ac51a18a19a1f67a4b789f3de17c2e6ade5809"
+            "sha256": "d5ac04bb1038a136fef643ed6a0b5f7079a8729befab30ddb7c36aeb72339b12"
         },
         {
             "path": "app/Services/MeliCliRuntimeCapabilityService.php",
@@ -348,7 +348,7 @@
         },
         {
             "path": "app/Services/SaleFinancialService.php",
-            "sha256": "14a179311e43254fc4ac8326c0b81282d36c94eb62cd2107fd59647d655a9ec8"
+            "sha256": "ebd47bb15b8a61f8555e11cc96cce3f684e117bfe1430e17f359bf47d2e0d460"
         },
         {
             "path": "app/Services/SalesAuditExactRepairService.php",
@@ -519,6 +519,10 @@
             "sha256": "dd0908ab4e05ece3e6c2d0950c3dc18fefa89390cfe68d8d626c26da610ed84a"
         },
         {
+            "path": "database/migrations/302_financial_v2_billing_capture_authority.sql",
+            "sha256": "3ebbab920f772f3529316ce8b707e00dd49740965e2eafaeaf1ab633a6777273"
+        },
+        {
             "path": "jobs/_retired_job.php",
             "sha256": "8917705e4eda4e631e930e5bb22780dd986cb1a62184805992e6d209bffb3e96"
         },
@@ -669,6 +673,10 @@
         {
             "path": "resources/release/managed-runtime-dependencies-2.40.1.json",
             "sha256": "5ad4f7ea9dc5a2d93f54d9bc41a01c4c1c3a06f0c03332dd5fe3741663e8f9c4"
+        },
+        {
+            "path": "resources/release/managed-runtime-dependencies-2.41.0.json",
+            "sha256": "b17829a6468a4b3f570fed62c0e1ca484d74d2a6dd1798a54092546bba23c732"
         },
         {
             "path": "resources/release/queue-v4-canonical-db-contract-2.38.3.json",

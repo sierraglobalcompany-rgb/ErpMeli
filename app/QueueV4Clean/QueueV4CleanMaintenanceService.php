@@ -6,6 +6,7 @@ namespace App\QueueV4Clean;
 
 use App\Services\ApiIncidentMaterializerService;
 use App\Services\TechnicalRetentionCliService;
+use App\Core\Database;
 use Throwable;
 
 /** Local-only bounded maintenance owned by the single Queue V4 scheduler. */
@@ -16,6 +17,13 @@ final class QueueV4CleanMaintenanceService
     {
         $limit = max(1, min(500, $limit));
         $result = ['materialized' => 0, 'retained' => 0, 'warnings' => 0];
+        try {
+            $outer = OuterCronHttpReceipt::retainStep(Database::connection());
+            $result['outer_http_receipts_deleted'] = $outer['deleted'];
+            $result['outer_http_retention_deferred'] = $outer['deferred'];
+        } catch (Throwable) {
+            $result['warnings']++;
+        }
         try {
             $incidentService = new ApiIncidentMaterializerService();
             $materialized = $incidentService->refreshStep($limit);

@@ -140,7 +140,8 @@ try {
         $receipt=OuterCronHttpReceipt::read($pdo,$token);
         k1b_assert($receipt['terminal_status']==='incomplete' && $receipt['ended_at']===null,'crash cannot fabricate terminal');
         if ($mode==='known') { k1b_assert($receipt['physical_http_known']===1 && $receipt['physical_http_unknown']===0,'Crash C known durable'); }
-        else { k1b_assert($receipt['physical_http_total']===null && $receipt['physical_http_unknown']===1,'crash uncertainty retained'); }
+        elseif ($mode==='after') { k1b_assert($receipt['physical_http_total']===null && $receipt['physical_http_unknown']===1 && $receipt['pending_physical_request']!==null,'crash uncertainty retained'); }
+        else { k1b_assert($receipt['physical_http_total']===null && $receipt['physical_http_known']===0 && $receipt['pending_physical_request']===null,'pre-boundary crash never fabricates physical dispatch'); }
         echo ($mode==='before'?'T6':($mode==='after'?'T7':'T12'))." actual_process_crash_".$mode."=PASS\n";
     }
     foreach ([429,503,206] as $status) {
@@ -156,7 +157,7 @@ try {
     $pdo->exec("INSERT INTO duplicated_observers VALUES('0000000000000000000000000000000000000001','log'),('0000000000000000000000000000000000000001','permit'),('0000000000000000000000000000000000000001','capture'),('0000000000000000000000000000000000000001','journal')");
     k1b_assert(OuterCronHttpReceipt::read($pdo,$receipt['cycle_id'])['physical_http_total']===1,'T10 observers do not multiply physical identity');
     echo "T10 no_double_count=PASS\n";
-    $pdo->exec("CREATE TRIGGER deny_receipt_result BEFORE UPDATE ON system_execution_attempts FOR EACH ROW BEGIN IF NEW.http_state='known_result' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic_result_persistence_failure'; END IF; END");
+    $pdo->exec("CREATE TRIGGER deny_receipt_result BEFORE UPDATE ON system_execution_runs FOR EACH ROW BEGIN IF JSON_EXTRACT(NEW.http_receipt_json,'$.physical_http_known')>JSON_EXTRACT(OLD.http_receipt_json,'$.physical_http_known') THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic_result_persistence_failure'; END IF; END");
     $receipt=$cycle(static function () use ($physical): array { $physical(2,'/orders/101'); return ['status'=>'completed']; });
     k1b_assert($receipt['terminal_status']==='incomplete' && $receipt['physical_http_total']===null && $receipt['physical_http_unknown']===1,'result persistence fault remains uncertain');
     $pdo->exec('DROP TRIGGER deny_receipt_result');

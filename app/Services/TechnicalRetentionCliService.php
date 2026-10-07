@@ -25,9 +25,6 @@ final class TechnicalRetentionCliService
         'work_queue_runs',
         'manual_campaign_events',
         'api_request_logs',
-        // Detail first; a parent is never removed through an unchecked cascade.
-        'outer_http_attempts',
-        'outer_http_runs',
     ];
 
     /** @return array<string,mixed> */

@@ -1,57 +1,50 @@
-# Outer HTTP receipt retention — PR33 correction candidate
+# Outer HTTP receipt retention — parent-only PR33
 
-Status: BLOCKED, not release/install ready. The existing pipeline is reused;
-the two throughput/runtime blockers below must be resolved before approval.
+Outer telemetry uses one parent row per invocation and zero children.
+Refunded boundaries update the same parent; they are not physical calls.
+No outer-specific cold datasets, encryption, whole-month finalization,
+child archival/rollup/membership or round-robin dataset is used.
 
-## Scope and preservation
+## Existing maintenance lane
 
-`TechnicalRetentionCliService` appends `outer_http_attempts` followed by
-`outer_http_runs`. Existing dataset positions retain their meaning. No new
-Cron, queue, engine, setting, business journal or HTTP operation is introduced.
+QueueV4CleanMaintenanceService calls OuterCronHttpReceipt::retainStep on
+each maintenance invocation, independently of technical dataset rotation.
+No new Cron/worker/queue/setting. Existing canonical API log/permit retention
+is unchanged.
 
-Only `queue_v4_outer_http`, no manual campaign, terminal status with a valid
-closed JSON receipt and `finished_at` can enter archival. Running, malformed
-and incomplete receipts stay hot indefinitely; unknown dispatches are never
-resolved by retention. Recent 429 and unknown evidence remains intact.
+TTL is retention.incident_days, default90 and minimum30. The step selects
+at most100 raw parent IDs through the component/id index, before validating
+age/status/JSON, and performs at most10 exact-ID/identity/JSON-byte deletes.
+It reuses one namespaced checkpoint row (outer_http_receipts) in the existing
+system_retention_cli_state table. A monotonic ID cursor visits held evidence
+without letting a malformed or unknown prefix permanently starve later IDs.
+An empty window resets the cursor for the next maintenance invocation.
+This is constant progress metadata, not a per-request ledger, new dataset,
+rotation engine, table or setting. Existing technical lane checkpoints
+are separate and unchanged.
+No loop over months or unbounded delete. It checks canonical accept-work
+and effective remaining deadline before selection and each deletion, using
+a2-second reserve. Near-deadline and externally-owned transactions skip
+without mutation. Indexed/limited logical work is bounded, not a promise
+about wall-clock database outage latency.
 
-Both datasets are partitioned by the parent's actual **finish month**. The
-child archive contains the original full child row, including its original
-reservation timestamp. Partition membership is not inferred from that
-timestamp. A late close belongs to a later archive, not to an already-ready
-reservation-month archive.
+Only exact component, terminal and finished, valid consistent closed JSON,
+no pending, unknown0 and known total are eligible. Known ID list/count/
+uniqueness must agree; running/interrupted/incomplete/malformed evidence
+remains held. Existing FK children also hold a parent, avoiding cascading
+evidence deletion. DELETE revalidates exact bytes/component/status/TTL.
 
-Hot deletion reuses `retention.incident_days` (default 90), with a floor of
-30 days and no new setting. Archive verification, membership verification,
-rollup and exact row checksum precede deletion. Children are removed first;
-the parent's predicate requires absence of **all** children. The existing
-FK cascade therefore does not remove unverified child rows. Changed rows
-remain hot with stale membership. Closed receipt reads use their persisted
-aggregate, never zero inferred from archived detail. Incomplete receipt
-reads continue to census available children.
+With one natural Cron invocation/min, eligible service capacity is10/min
+and intake1/min: margin9/min. Tests drain100 eligible parents in10 bounded
+steps. Held evidence is explicitly outside this purge service model:
+it may remain indefinitely and must not be deleted to fabricate a bound.
+Mixed/invalid candidates can reduce actual deletion rate:10/min is eligible
+service capacity, not guaranteed throughput in every mixed window. Tests
+also preserve3000 held parents while ANALYZE reports100 examined rows, and
+advance past a held prefix to delete eligible parents behind it. Unknown
+backlog is intentionally not globally bounded or automatically resolved.
 
-The archive registry currently uses an ENUM, so migration303 necessarily
-appends exactly these two keys while retaining all previous values. Its
-column and unique-key DDL is canonical, exact-once, without `IF NOT EXISTS`.
-Migrator checksum drift blocks; partial DDL remains failed, not silently
-adopted. Production compatibility requires a later release preflight.
-
-## Bounds that this candidate does NOT yet establish
-
-The scheduler maintenance call passes at most 100 rows to retention. Each
-detail row needs one archival pass and one deletion pass. Even with every
-cycle dedicated to those two passes, the upper bound is 50 attempts/minute;
-other datasets, parents, daily rollups and archive finalization reduce it.
-At 55 known HTTP/minute, hot backlog grows by at least 7,200 attempts/day.
-Cancelled-before-transport rows and unresolved holds add to that growth.
-No finite steady-state hot-row maximum can honestly be certified.
-
-Archive batch writes/deletes are bounded, but finalization/encryption and
-verification still scan a whole monthly archive in the existing pipeline.
-Lease renewal is not a 45-second wall-clock bound. A tiny fixture passing
-R10 does not prove sustained scheduler capacity or finalization runtime.
-
-Required next correction: within the same retention pipeline, demonstrate
-service rate above 55/minute **including** both passes and other work, and
-bounded/resumable archive finalization/verification that cannot monopolize
-the scheduler. Merely increasing a batch number would not resolve both
-findings. Do not deploy this candidate or label these findings Minor.
+The previous cold-archive and boundary-ingress blockers are removed by
+changing row cardinality, not by increasing physical budget or altering
+refunds. HTTP history remains in existing logs/journals/permits/captures
+and their existing retention, not in this receipt forever.

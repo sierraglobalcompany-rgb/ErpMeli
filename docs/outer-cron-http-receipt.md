@@ -1,15 +1,57 @@
-# Durable outer Cron HTTP receipt — schema 303 candidate
+# Durable outer Cron HTTP receipt — parent-only schema303 candidate
 
-The scheduler creates a random `cron_cycle_id` before OAuth or any early return. The dedicated `queue_v4_outer_http` component uses the existing `system_execution_runs` and `system_execution_attempts`; it is an observer, not a drainer, business queue or second budget. The CLI retains `PHYSICAL_API_CALL` for compatibility; this receipt explicitly identifies `PHYSICAL_HTTP_CALL`.
+One outer invocation owns one random 40-hex cycle ID and one row in
+system_execution_runs, component queue_v4_outer_http. No outer HTTP child
+rows or child columns are added. This is telemetry, not a second execution
+or admission authority. CLI PHYSICAL_API_CALL remains compatible; the receipt
+uses PHYSICAL_HTTP_CALL.
 
-Each physical attempt has a 40-hex request ID, company, account, source, method and endpoint category, uniquely scoped to its outer execution run. Retries receive their existing fresh physical request IDs. Multiple logs, permits, capture rows and journals for that request do not multiply the receipt. Route-level correlation is `http_request_id` → `queue_v4_clean_transport_events.request_id/endpoint_key`, with matching tenant and attempt; OAuth has its existing operation authority. `http_other` is a category, not a route identity.
+## Synchronous pending lifecycle
 
-`reserved` is not sent. Durable `boundary_pending` is written before Billing's final `commitDispatch` fence, not after it. No new rejecting operation is added between that final fence and cURL. Process-local wire bookkeeping does not throw. A known HTTP response becomes `known_result`; a wire error remains `uncertain_result`. Proven local rejection becomes `cancelled_before_transport` and can record one physical-budget refund.
+reserve validates process-local company/account, source, method and endpoint
+category. Duplicate client/transport observation with identical identity is
+idempotent; conflicting identity fails closed. No request-specific DB write
+occurs before the physical transport boundary.
 
-The DB commit and cURL boundary cannot be atomic. A terminated process with a reservation or pre-wire marker has an unresolved count and NULL total, never fabricated zero or fabricated proof of dispatch. A completed receipt has an exact total only if all attempts are classified. `physical_http_known` is a lower bound; `physical_http_unknown` is unresolved evidence, not a certified count of sent calls. **All endpoint and HTTP-status counters describe known-result calls only.** HTTP 206 is also included in 2xx. Business reconciliation success is not inferred from HTTP success.
+boundary writes pending_physical_request into the parent after the existing
+rhythm, physical budget and prepared transport checks, before Billing's
+final commitDispatch. A second distinct pending is rejected before wire;
+an existing pending or persistence fault cannot be overwritten. Current
+transport is synchronous curl_exec, not curl_multi, a Fiber or background
+continuation. Header callbacks collect headers; progress callbacks check
+deadline/Queue Core heartbeat, not another MELI request.
 
-The receipt snapshots the shared budget's stop/exhaustion before clearing it and retains capacity provenance through CLI/drainer handoff and post-lease value revalidation. It does not change limits, pauses, rhythm, retries, OAuth, lease gates or execution output semantics besides adding `cron_cycle_id`. A budget depleted exactly at its configured limit is recorded as exhausted even without an eleventh attempt.
+No rejecting telemetry write occurs after Billing's final fence and before
+curl_exec. enteringWire is process-local/non-throwing. Existing transport
+journals, OAuth and Billing fences remain authoritative and unchanged.
 
-Request-result telemetry failure never replaces a known client response. The receipt remains incomplete/unknown. Failure to close the final receipt propagates an error and leaves its durable run incomplete, while existing response/capture authorities retain their evidence; it does not authorize resend. There is no new recovery or automatic cleanup of unresolved receipts in this slice.
+Known result persists counters and a unique physical_request_ids entry,
+then clears pending. IDs describe known physical responses only, not jobs,
+business success or pre-wire boundaries. Endpoint/status counters are known
+lower bounds; 206 is a subset of2xx. List length equals physical_http_known
+and is naturally bounded by the existing configured physical call limit.
 
-Migration `303_outer_cron_http_receipt.sql` only adds technical receipt columns and a unique request index. This DRAFT code-review candidate is **not installation-ready**: release manifest/updater authority still certify the previous release. A separate authorized release gate must regenerate them, include schema 303 and certify runtime hashes before deployment. Production migration, real HTTP and Phase 2 implementation were not performed.
+Certified pre-wire cancellation/refund clears pending and persists local
+counters in the same parent. Any number of safe refunds produces zero row
+growth and no known IDs. Preflight-only blocks remain in memory until close.
+
+Unknown response keeps the durable pending. Known-response telemetry failure
+does not replace the business response or authorize resend: pending stays,
+future boundaries reject, and closure is incomplete. Open/crashed receipts
+always have NULL total, including when the last known response was saved.
+A complete receipt requires no pending and no persistence failure.
+
+## Existing history and release boundary
+
+The same transport request ID is retained in api_request_logs, read/OAuth
+journals and Billing capture where applicable. They are not counted twice
+and their existing archival/rollup policies remain unchanged. A parent
+receipt is operational-window evidence, not eternal canonical HTTP history.
+
+Migration303 adds only http_receipt_json and the component/id retention
+index to system_execution_runs. No child schema or archive ENUM changes.
+Release manifest/updater remain frozen; this DRAFT candidate is not
+installation-ready. A separately authorized release/preflight gate must
+certify schema303 and metadata before deployment.
+
+No real MELI/OAuth, production access, recovery, merge, deploy or Phase2.

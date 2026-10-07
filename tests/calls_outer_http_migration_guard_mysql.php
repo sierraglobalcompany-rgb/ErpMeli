@@ -14,6 +14,13 @@ try {
     $migrator=new Migrator($pdo,$path);
     $migrator->run(303);
     $migrator->run(303);
+    $columns=$pdo->query('SHOW COLUMNS FROM system_execution_attempts')->fetchAll(PDO::FETCH_COLUMN);
+    k1b_assert(!in_array('http_request_id',$columns,true) && !in_array('http_state',$columns,true),'303 no child schema');
+    $type=$pdo->query("SHOW COLUMNS FROM system_cold_archives LIKE 'dataset_key'")->fetch(PDO::FETCH_ASSOC)['Type'];
+    k1b_assert(!str_contains($type,'outer_http_'),'303 no archive enum');
+    $indices=$pdo->query("SHOW INDEX FROM system_execution_runs WHERE Key_name='idx_execution_http_retention'")->fetchAll(PDO::FETCH_ASSOC);
+    k1b_assert(array_column($indices,'Column_name')===['component_key','id'],'303 exact retention index');
+    echo "MIGRATION_303_PARENT_ONLY_SCHEMA=PASS\n";
     k1b_assert((int)$pdo->query("SELECT COUNT(*) FROM schema_migrations WHERE version='".$file."'")->fetchColumn()===1,'migration once');
     $stmt=$pdo->prepare('SELECT checksum_sha256 FROM system_update_migrations WHERE migration_key=?');
     $stmt->execute([$file]);

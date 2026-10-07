@@ -123,12 +123,12 @@ try {
         return ['status'=>'completed'];
     });
     if ($receipt['physical_http_total']!==8) {
-        echo 'SHARED_DIAGNOSTIC='.json_encode(['wire_count'=>count(Cap2DomainsWire::$calls),'attempts'=>$pdo->query("SELECT http_state,http_source,http_endpoint,response_status FROM system_execution_attempts WHERE system_execution_run_id=(SELECT id FROM system_execution_runs ORDER BY id DESC LIMIT 1)")->fetchAll(PDO::FETCH_ASSOC)],JSON_THROW_ON_ERROR)."\n";
+        echo 'SHARED_DIAGNOSTIC='.json_encode(['wire_count'=>count(Cap2DomainsWire::$calls),'receipt'=>$receipt],JSON_THROW_ON_ERROR)."\n";
     }
     k1b_assert(count(Cap2DomainsWire::$calls)===8 && $receipt['physical_http_total']===8 && $receipt['http_oauth']===1 && $receipt['http_orders_exact']===5 && $receipt['http_billing']===2,'real shared OAuth/order/Financial total: '.json_encode($receipt));
     echo "REAL_SHARED_OAUTH_ORDERS_BILLING_8=PASS\n";
     $reset();
-    $pdo->exec("CREATE TRIGGER receipt_result_fault BEFORE UPDATE ON system_execution_attempts FOR EACH ROW BEGIN IF NEW.http_state='known_result' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic_receipt_result_failure'; END IF; END");
+    $pdo->exec("CREATE TRIGGER receipt_result_fault BEFORE UPDATE ON system_execution_runs FOR EACH ROW BEGIN IF JSON_EXTRACT(NEW.http_receipt_json,'$.physical_http_known')>JSON_EXTRACT(OLD.http_receipt_json,'$.physical_http_known') THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic_receipt_result_failure'; END IF; END");
     $receipt=$wrap(static function () use ($direct): array {
         $response=$direct(130001);
         k1b_assert(($response['id']??null)===130001,'known client response survives telemetry failure');

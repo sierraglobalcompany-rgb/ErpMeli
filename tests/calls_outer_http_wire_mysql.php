@@ -27,13 +27,20 @@ try {
     $pdo->exec("UPDATE queue_v4_clean_control SET engine_state='ACTIVE',readiness_state='CERTIFIED' WHERE control_key='primary'");
     $pdo->exec("UPDATE queue_engine_control SET active_engine='v4'");
     $settings=new AppSettingsService();
-    foreach (['api.rhythm.profile'=>'maximum','api.rhythm.target_http_per_minute'=>'40','api.rhythm.pause_ms'=>'0','api.rhythm.minimum_interval_ms'=>'1000','api.rhythm.current_adaptive_limit'=>'40','alerts.email.enabled'=>'0','api.guard.jitter_min_ms'=>'0','api.guard.jitter_max_ms'=>'0'] as $key=>$value) { $settings->set($key,$value,'test'); }
+    foreach (['api.rhythm.profile'=>'maximum','api.rhythm.target_http_per_minute'=>'40','api.rhythm.pause_ms'=>'0','api.rhythm.minimum_interval_ms'=>'1000','api.rhythm.short_wait_ceiling_ms'=>'1500','api.rhythm.current_adaptive_limit'=>'40','alerts.email.enabled'=>'0','api.guard.jitter_min_ms'=>'0','api.guard.jitter_max_ms'=>'0'] as $key=>$value) { $settings->set($key,$value,'test'); }
     AppSettingsService::clearCache();
     for ($i=1;$i<=3;$i++) {
         $id=99000+$i;
         Cap2DomainsWire::$responses['/orders/'.$id]=[200,['id'=>$id,'status'=>'paid','total_amount'=>100,'currency_id'=>'COP','order_items'=>[],'payments'=>[]]];
         $pdo->prepare("INSERT INTO queue_v4_clean_jobs(company_id,meli_account_id,job_type,resource_id,idempotency_key,payload_json,state,available_at) VALUES(9001,9011,'order_exact',?,?,'{}','ready','2000-01-01')")->execute([(string)$id,'receipt-order-'.$id]);
     }
+    // The receipt assertion must not depend on a sub-millisecond short-wait
+    // recheck. Let the fake response take longer than the configured interval;
+    // all real pacing/permit/fence code still runs without resetting its state.
+    $rhythm=(new App\Services\ApiRhythmPolicyService())->configuration();
+    k1b_assert($rhythm['minimum_interval_ms']===1000 && $rhythm['short_wait_ceiling_ms']===1500,'explicit receipt fixture pacing');
+    Cap2DomainsWire::$onWire=static function () use ($rhythm): void { usleep(($rhythm['minimum_interval_ms']+100)*1000); };
+    try {
     $result=OuterCronHttpReceipt::within($pdo,['max_calls'=>10,'ceiling'=>55,'max_calls_source'=>'TEST'],static function () use ($pdo): array {
         QueueV4CleanCycleBudget::start(10,'automatic',microtime(true)+45);
         try {
@@ -41,6 +48,7 @@ try {
             return ['status'=>'completed','worker'=>$worker];
         } finally { QueueV4CleanCycleBudget::clear(); }
     });
+    } finally { Cap2DomainsWire::$onWire=null; }
     k1b_assert(count(Cap2DomainsWire::$calls)===3,'fixture must physically simulate exactly 3 HTTP: '.json_encode($result));
     $receipt=OuterCronHttpReceipt::read($pdo,$result['cron_cycle_id']);
     k1b_assert($receipt['physical_http_total']===3,'RED: real worker transport not captured: '.json_encode($receipt));

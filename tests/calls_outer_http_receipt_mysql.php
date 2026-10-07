@@ -40,6 +40,7 @@ try {
     $pdo->exec('CREATE TABLE schema_migrations (version VARCHAR(255) NOT NULL)');
     $pdo->exec("INSERT INTO schema_migrations VALUES ('303_outer_cron_http_receipt.sql')");
     $migration = dirname(__DIR__) . '/database/migrations/303_outer_cron_http_receipt.sql';
+    $pdo->exec('CREATE TABLE system_cold_archives (dataset_key VARCHAR(80) NOT NULL) ENGINE=InnoDB');
     if (is_file($migration)) { $pdo->exec(file_get_contents($migration)); }
     $capacity = ['max_calls'=>10, 'configured_max_calls'=>10, 'ceiling'=>55, 'max_calls_source'=>'erp_setting'];
     k1b_assert(class_exists(OuterCronHttpReceipt::class), 'RED: durable outer Cron receipt authority missing');

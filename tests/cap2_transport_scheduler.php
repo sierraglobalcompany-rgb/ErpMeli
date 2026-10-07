@@ -45,6 +45,7 @@ namespace {
         foreach($tables[0] as $table){$pdo->exec($table);}
         $pdo->exec('CREATE TABLE schema_migrations(version VARCHAR(255))');
         $pdo->exec("INSERT INTO schema_migrations VALUES('303_outer_cron_http_receipt.sql')");
+        $pdo->exec('CREATE TABLE system_cold_archives(dataset_key VARCHAR(80) NOT NULL) ENGINE=InnoDB');
         $pdo->exec(file_get_contents(__DIR__.'/../database/migrations/303_outer_cron_http_receipt.sql'));
         $pdo->exec('CREATE TABLE app_settings(setting_key VARCHAR(190) PRIMARY KEY,setting_value TEXT,is_encrypted TINYINT NOT NULL DEFAULT 0,setting_group VARCHAR(80) NOT NULL DEFAULT "general") ENGINE=InnoDB');
         $pdo->exec("INSERT INTO app_settings(setting_key,setting_value) VALUES('automation.max_api_calls_per_cycle','5'),('automation.max_api_calls_ceiling','55')");

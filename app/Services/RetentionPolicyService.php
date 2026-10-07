@@ -36,6 +36,8 @@ final class RetentionPolicyService
             'manual_campaign_events',
             'api_remote_permits',
             'operational_snapshots',
+            'outer_http_attempts',
+            'outer_http_runs',
         ];
     }
 
@@ -89,7 +91,7 @@ final class RetentionPolicyService
 
         $rollupMonth = $this->oldestArchiveWithoutRollup($dataset);
         if ($rollupMonth !== null) {
-            if (in_array($dataset, ['notification_success', 'notification_incidents'], true)) {
+            if (in_array($dataset, ['notification_success', 'notification_incidents', 'outer_http_attempts', 'outer_http_runs'], true)) {
                 $this->assertLease($leaseGuard);
                 $result = $this->rollupNotificationDayStep(
                     $dataset,
@@ -168,6 +170,13 @@ final class RetentionPolicyService
         $result = ['rollups' => 0, 'deleted' => 0, 'archives' => 0, 'errors' => 0];
         foreach ($this->datasets() as $dataset) {
             try {
+                if (in_array($dataset, ['outer_http_attempts', 'outer_http_runs'], true)) {
+                    $step = $this->runDatasetStep($dataset, min(500, $batchSize));
+                    foreach (['rollups', 'deleted', 'archives'] as $key) {
+                        $result[$key] += $step[$key];
+                    }
+                    continue;
+                }
                 $month = $this->oldestUnarchivedClosedMonth($dataset);
                 if ($month !== null) {
                     (new ColdArchiveService())->create($dataset, $month);
@@ -207,11 +216,22 @@ final class RetentionPolicyService
         }
         [$table, $dateColumn] = $this->source($dataset);
         $cursor = null;
+        $fromTable = '`' . $table . '`';
+        $dateExpression = '`' . $dateColumn . '`';
+        $scope = '';
+        if (in_array($dataset, ['outer_http_attempts', 'outer_http_runs'], true)) {
+            $dateExpression = 'parent_run.finished_at';
+            $fromTable = 'system_execution_runs parent_run';
+            $scope = ' AND ' . ColdArchiveService::outerHttpRunScope('parent_run');
+            if ($dataset === 'outer_http_attempts') {
+                $fromTable .= ' INNER JOIN system_execution_attempts child ON child.system_execution_run_id=parent_run.id';
+                $scope .= ' AND child.http_request_id IS NOT NULL';
+            }
+        }
         $find = Database::connection()->prepare(
-            'SELECT MIN(`' . $dateColumn . '`)
-             FROM `' . $table . '`
-             WHERE `' . $dateColumn . '`<UTC_DATE()-INTERVAL (DAY(UTC_DATE())-1) DAY'
-            . ' AND (:cursor_is_null=1 OR `' . $dateColumn . '`>=:cursor_at)'
+            'SELECT MIN(' . $dateExpression . ') FROM ' . $fromTable
+            . ' WHERE ' . $dateExpression . '<UTC_DATE()-INTERVAL (DAY(UTC_DATE())-1) DAY'
+            . $scope . ' AND (:cursor_is_null=1 OR ' . $dateExpression . '>=:cursor_at)'
         );
         $archive = Database::connection()->prepare(
             'SELECT status FROM system_cold_archives
@@ -352,6 +372,7 @@ final class RetentionPolicyService
             'manual_campaign_events' => $this->rollupTechnical($dataset, $from, $to),
             'api_remote_permits' => $this->rollupTechnical($dataset, $from, $to),
             'operational_snapshots' => $this->rollupTechnical($dataset, $from, $to),
+            'outer_http_attempts', 'outer_http_runs' => $this->rollupTechnical($dataset, $from, $to),
             // El job padre conserva los totales y estados de la ejecución.
             // El archivo cifrado conserva el detalle exacto que se retirará.
             'financial_job_items' => 1,
@@ -486,7 +507,9 @@ final class RetentionPolicyService
             $from = $day->format('Y-m-d 00:00:00');
             $to = $day->modify('+1 day')->format('Y-m-d 00:00:00');
             $this->assertLease($leaseGuard);
-            $rollups = $this->rollupNotifications($dataset, $month, $from, $to, true);
+            $rollups = in_array($dataset, ['outer_http_attempts', 'outer_http_runs'], true)
+                ? $this->rollupTechnical($dataset, $from, $to)
+                : $this->rollupNotifications($dataset, $month, $from, $to, true);
             $this->assertLease($leaseGuard);
             $pdo->prepare(
                 'UPDATE system_cold_archives
@@ -540,7 +563,23 @@ final class RetentionPolicyService
     private function rollupTechnical(string $dataset, string $from, string $to): int
     {
         [$table, $dateColumn] = $this->source($dataset);
+        $dateExpression = '`' . $dateColumn . '`';
+        $fromTable = '`' . $table . '`';
+        $scope = '';
+        if (in_array($dataset, ['outer_http_attempts', 'outer_http_runs'], true)) {
+            $dateExpression = 'parent_run.finished_at';
+            $fromTable = 'system_execution_runs parent_run';
+            $scope = ' AND ' . ColdArchiveService::outerHttpRunScope('parent_run');
+            if ($dataset === 'outer_http_attempts') {
+                $fromTable .= ' INNER JOIN system_execution_attempts child ON child.system_execution_run_id=parent_run.id';
+                $scope .= ' AND child.http_request_id IS NOT NULL';
+            }
+        }
         [$dimension, $outcome, $errors, $remote, $duration, $bytes] = match ($dataset) {
+            'outer_http_attempts' => ['COALESCE(child.http_endpoint,"")', 'COALESCE(child.http_state,"")',
+                'SUM(COALESCE(child.response_status,0)>=400)', 'SUM(child.reached_remote=1)', '0', '0'],
+            'outer_http_runs' => ['"queue_v4_outer_http"', 'parent_run.status',
+                'SUM(parent_run.status="failed")', '0', '0', '0'],
             'cron_run_steps' => [
                 'LEFT(COALESCE(step_name,""),120)',
                 'LEFT(COALESCE(status,""),80)',
@@ -670,11 +709,12 @@ final class RetentionPolicyService
             'INSERT INTO system_technical_daily_rollups
              (rollup_date,dataset_key,dimension_key,outcome_class,records,error_records,
               remote_records,duration_total_ms,bytes_total)
-             SELECT DATE(`' . $dateColumn . '`),:dataset,' . $dimension . ',' . $outcome . ',
+             SELECT DATE(' . $dateExpression . '),:dataset,' . $dimension . ',' . $outcome . ',
                     COUNT(*),' . $errors . ',' . $remote . ',' . $duration . ',' . $bytes . '
-             FROM `' . $table . '`
-             WHERE `' . $dateColumn . '`>=:from_at AND `' . $dateColumn . '`<:to_at
-             GROUP BY DATE(`' . $dateColumn . '`),' . $dimension . ',' . $outcome . '
+             FROM ' . $fromTable . '
+             WHERE ' . $dateExpression . '>=:from_at AND ' . $dateExpression . '<:to_at'
+             . $scope . '
+             GROUP BY DATE(' . $dateExpression . '),' . $dimension . ',' . $outcome . '
              ON DUPLICATE KEY UPDATE
                 records=VALUES(records),error_records=VALUES(error_records),
                 remote_records=VALUES(remote_records),
@@ -698,6 +738,14 @@ final class RetentionPolicyService
         $campaignEventDays = max(7, min(3650, $settings->int('manual_campaign.event_retention_days', 30)));
         [$table, $dateColumn] = $this->source($dataset);
         $classification = match ($dataset) {
+            'outer_http_attempts' =>
+                'src.http_request_id IS NOT NULL AND EXISTS (SELECT 1 FROM system_execution_runs parent_run'
+                . ' WHERE parent_run.id=src.system_execution_run_id AND '
+                . ColdArchiveService::outerHttpRunScope('parent_run')
+                . ' AND parent_run.finished_at<DATE_SUB(UTC_TIMESTAMP(),INTERVAL ' . max(30, $incidentDays) . ' DAY))',
+            'outer_http_runs' => ColdArchiveService::outerHttpRunScope('src')
+                . ' AND src.finished_at<DATE_SUB(UTC_TIMESTAMP(),INTERVAL ' . max(30, $incidentDays) . ' DAY)'
+                . ' AND NOT EXISTS (SELECT 1 FROM system_execution_attempts child WHERE child.system_execution_run_id=src.id)',
             'notification_success' =>
                 '(src.status IN ("processed","ignored","duplicate")'
                 . ' AND src.`' . $dateColumn . '`<DATE_SUB(UTC_TIMESTAMP(),INTERVAL ' . $successDays . ' DAY))',
@@ -936,6 +984,8 @@ final class RetentionPolicyService
     private function source(string $dataset): array
     {
         return match ($dataset) {
+            'outer_http_attempts' => ['system_execution_attempts', 'reserved_at'],
+            'outer_http_runs' => ['system_execution_runs', 'finished_at'],
             'notification_events' => ['meli_notification_events', 'erp_received_at'],
             'notification_success',
             'notification_incidents' => ['meli_notification_events', 'erp_received_at'],

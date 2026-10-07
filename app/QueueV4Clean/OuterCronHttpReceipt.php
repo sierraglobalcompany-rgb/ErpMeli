@@ -105,11 +105,18 @@ final class OuterCronHttpReceipt
 
     public static function read(PDO $pdo, string $cycleId): array
     {
-        $read = $pdo->prepare('SELECT id,http_receipt_json FROM system_execution_runs WHERE run_token=? AND component_key=?');
+        $read = $pdo->prepare('SELECT id,status,finished_at,http_receipt_json FROM system_execution_runs WHERE run_token=? AND component_key=?');
         $read->execute([$cycleId,self::COMPONENT]);
         $row = $read->fetch(PDO::FETCH_ASSOC);
         if (!$row || !is_string($row['http_receipt_json'])) { throw new RuntimeException('outer_http_receipt_not_found'); }
-        return self::aggregate($pdo,(int)$row['id'],json_decode($row['http_receipt_json'],true,512,JSON_THROW_ON_ERROR));
+        $receipt=json_decode($row['http_receipt_json'],true,512,JSON_THROW_ON_ERROR);
+        // Closed aggregates remain authoritative when verified retention archives
+        // their detail. Never turn missing hot children into a fabricated zero.
+        if ($row['status']!=='running' && $row['finished_at']!==null
+            && ($receipt['ended_at']??null)!==null && ($receipt['terminal_status']??'incomplete')!=='incomplete') {
+            return $receipt;
+        }
+        return self::aggregate($pdo,(int)$row['id'],$receipt);
     }
 
     public static function reserve(string $requestId,string $method,string $path,int $companyId,int $accountId,string $source): void

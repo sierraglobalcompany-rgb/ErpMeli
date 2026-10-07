@@ -15,6 +15,21 @@ final class ColdArchiveService
 {
     private const INTERACTIVE_MAX_BATCH = 500;
 
+    /** Closed technical receipts are immutable; incomplete/crashed runs stay hot. */
+    public static function outerHttpRunScope(string $alias): string
+    {
+        if (preg_match('/^[a-z_]+$/D', $alias) !== 1) {
+            throw new RuntimeException('Invalid technical retention alias.');
+        }
+        return $alias . '.component_key="queue_v4_outer_http"'
+            . ' AND ' . $alias . '.manual_campaign_id IS NULL'
+            . ' AND ' . $alias . '.status IN ("completed","failed","skipped")'
+            . ' AND ' . $alias . '.finished_at IS NOT NULL'
+            . ' AND JSON_VALID(' . $alias . '.http_receipt_json)=1'
+            . ' AND JSON_UNQUOTE(JSON_EXTRACT(' . $alias . '.http_receipt_json,"$.terminal_status"))<>"incomplete"'
+            . ' AND JSON_UNQUOTE(JSON_EXTRACT(' . $alias . '.http_receipt_json,"$.ended_at"))<>"null"';
+    }
+
     /**
      * Canonical fingerprint shared by capture and purge validation.
      *
@@ -33,6 +48,8 @@ final class ColdArchiveService
 
     /** @var array<string,array{table:string,date:string,predicate?:string}> */
     private const DATASETS = [
+        'outer_http_attempts' => ['table' => 'system_execution_attempts', 'date' => 'reserved_at', 'outer_http' => true],
+        'outer_http_runs' => ['table' => 'system_execution_runs', 'date' => 'finished_at', 'outer_http' => true],
         'notification_events' => ['table' => 'meli_notification_events', 'date' => 'erp_received_at'],
         'notification_success' => [
             'table' => 'meli_notification_events',
@@ -523,6 +540,26 @@ final class ColdArchiveService
         $predicate = isset($definition['predicate'])
             ? ' AND (' . $definition['predicate'] . ')'
             : '';
+        // Partition details by the parent's actual close month, not reservation
+        // month: a late close can never be omitted from an already-ready archive.
+        if (!empty($definition['outer_http'])) {
+            $children = $definition['table'] === 'system_execution_attempts';
+            $fromTable = $children
+                ? 'system_execution_attempts INNER JOIN system_execution_runs parent_run'
+                    . ' ON parent_run.id=system_execution_attempts.system_execution_run_id'
+                : 'system_execution_runs parent_run';
+            $selected = $children ? 'system_execution_attempts' : 'parent_run';
+            $stmt = Database::connection()->prepare(
+                'SELECT ' . $selected . '.* FROM ' . $fromTable
+                . ' WHERE parent_run.finished_at>=:from AND parent_run.finished_at<:to'
+                . ' AND ' . self::outerHttpRunScope('parent_run')
+                . ($children ? ' AND system_execution_attempts.http_request_id IS NOT NULL' : '')
+                . ' AND ' . $selected . '.id>:last_id ORDER BY ' . $selected . '.id'
+                . ' LIMIT ' . max(1, min(self::INTERACTIVE_MAX_BATCH, $limit))
+            );
+            $stmt->execute(['from' => $from->format('Y-m-d H:i:s'), 'to' => $to->format('Y-m-d H:i:s'), 'last_id' => $lastId]);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
         $stmt = Database::connection()->prepare(
             'SELECT * FROM `' . $definition['table'] . '`
              WHERE `' . $definition['date'] . '`>=:from

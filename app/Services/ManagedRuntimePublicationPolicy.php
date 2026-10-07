@@ -26,7 +26,7 @@ final class ManagedRuntimePublicationPolicy
         'FRONTEND_STATIC',
         'OTHER_EXPLICIT',
     ];
-    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.41.0.json';
+    private const DEPENDENCY_REGISTRY = 'resources/release/managed-runtime-dependencies-2.41.1.json';
     /** @var list<string> */
     private const OPERATOR_RUNTIME_BIN = [
         'bin/create_admin.php',
@@ -41,10 +41,10 @@ final class ManagedRuntimePublicationPolicy
     ];
     public const BASE_COMMIT = 'b9d1644522e7b36d5729c5ba090279b3ffc50fb8';
     public const INSTALLED_BASE_COMMIT = 'b9d1644522e7b36d5729c5ba090279b3ffc50fb8';
-    public const VERSION = '2.41.0';
-    public const BUILD_ID = 'erp-meli-2.41.0-financial-v2-billing-capture-authority-rc1-20261006';
-    public const BUILT_AT = '2026-10-06T00:00:00Z';
-    public const MINIMUM_MIGRATION = '302_financial_v2_billing_capture_authority.sql';
+    public const VERSION = '2.41.1';
+    public const BUILD_ID = 'erp-meli-2.41.1-outer-cron-http-receipt-rc1-20261007';
+    public const BUILT_AT = '2026-10-07T00:00:00Z';
+    public const MINIMUM_MIGRATION = '303_outer_cron_http_receipt.sql';
     private const INVENTORY_MINIMUM_MIGRATION = '295_inventory_warehouse_v1_2_38_0.sql';
     private const QUEUE_V4_MINIMUM_MIGRATION = '294_queue_v4_clean_greenfield_2_37_0.sql';
     private const LEGACY_MINIMUM_MIGRATION = '293_queue_core_runtime_profile_defaults_b2_1.sql';
@@ -269,6 +269,11 @@ final class ManagedRuntimePublicationPolicy
             'build_id' => 'erp-meli-2.40.1-worker-cycle-control-single-truth-rc1-20260827',
             'minimum_migration' => '301_k1d_api_safety_2_40_1.sql',
             'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.40.1.json',
+        ],
+        '2.41.0' => [
+            'build_id' => 'erp-meli-2.41.0-financial-v2-billing-capture-authority-rc1-20261006',
+            'minimum_migration' => '302_financial_v2_billing_capture_authority.sql',
+            'dependency_registry' => 'resources/release/managed-runtime-dependencies-2.41.0.json',
         ],
         self::VERSION => [
             'build_id' => self::BUILD_ID,

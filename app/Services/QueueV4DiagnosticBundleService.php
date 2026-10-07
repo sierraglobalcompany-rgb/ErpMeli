@@ -120,7 +120,7 @@ final class QueueV4DiagnosticBundleService
         $manifest = [
             'generated_at_utc' => $this->now(),
             'bundle_version' => 'Queue V4 Diagnostic Bundle V1',
-            'production_version_expected' => '2.41.0',
+            'production_version_expected' => '2.41.1',
             'schema_changed' => false,
             'new_queue' => false,
             'new_cron' => false,

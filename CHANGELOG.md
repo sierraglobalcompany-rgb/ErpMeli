@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.41.1 - Durable outer Cron HTTP receipt (schema303)
+
+- Publishes the parent-only durable outer Cron physical HTTP receipt under schema303.
+- Keeps the physical contract: one real HTTP request equals one call.
+- Phase2 is not included; release 2.41.0/schema302 remains immutable.
+
 ## 2.24.1 - Procesar ahora con destinos y explicaciones
 
 - Convierte los contadores de trabajos excluidos en enlaces a listas exactas y paginadas.

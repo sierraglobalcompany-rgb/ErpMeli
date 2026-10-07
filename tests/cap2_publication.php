@@ -15,7 +15,7 @@ foreach ($entries as $entry) {
     $path = is_array($entry) ? (string) ($entry['path'] ?? '') : (string) $entry;
     k1b_assert(!str_starts_with($path, '.superpowers/'), 'workflow_evidence_never_in_product');
 }
-$registry = json_decode((string) file_get_contents(__DIR__ . '/../resources/release/managed-runtime-dependencies-2.41.0.json'), true, 64, JSON_THROW_ON_ERROR);
+$registry = json_decode((string) file_get_contents(__DIR__ . '/../resources/release/managed-runtime-dependencies-2.41.1.json'), true, 64, JSON_THROW_ON_ERROR);
 $dependencies = array_column($registry['runtime_dependencies'], null, 'path');
 foreach (['app/Services/CapacityChangeGuard.php', 'app/Services/CapacityPolicyService.php', 'app/Services/ManualPhysicalCallBudget.php', 'app/Views/settings/capacity_confirmation.php'] as $path) {
     k1b_assert(isset($dependencies[$path]) && $dependencies[$path]['required_in_runtime_manifest'] === true, 'capacity_dependency_registered:' . $path);

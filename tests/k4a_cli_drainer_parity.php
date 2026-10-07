@@ -58,6 +58,6 @@ k1b_assert(str_contains($candidate,"->drain('cron_v4', \$requestedMaxCalls, \$ru
 $expected=str_replace('use App\\QueueV4Clean\\QueueV4CleanScheduler;',
     "use App\\Work\\Adapters\\QueueV4CurrentDrainer;\nuse App\\Work\\Contracts\\DrainerContract;", str_replace("\r\n", "\n", $base['stdout']));
 $expected=str_replace('    $result = (new QueueV4CleanScheduler(Database::connectionFresh()))->run($requestedMaxCalls, $runtime);',
-    "    /** @var DrainerContract \$drainer */\n    \$drainer = new QueueV4CurrentDrainer(Database::connectionFresh());\n    \$result = \$drainer->drain('cron_v4', \$requestedMaxCalls, \$runtime)->metadata;", $expected);
+    "    /** @var DrainerContract \$drainer */\n    \$drainer = new QueueV4CurrentDrainer(Database::connectionFresh());\n    \$result = \\App\\QueueV4Clean\\OuterCronHttpReceipt::withCapacitySource(\n        \$budget['max_calls_source'],\n        static fn (): array => \$drainer->drain('cron_v4', \$requestedMaxCalls, \$runtime)->metadata\n    );", $expected);
 k1b_assert($expected === str_replace("\r\n", "\n", $candidate), 'only_agreed_cli_substitution_no_other_semantic_change');
 echo "K4A_CLI_DRAINER_PARITY=PASS\nNO_DATABASE_OR_HTTP=YES\n";

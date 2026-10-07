@@ -127,6 +127,9 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         $reserved = false;
         $requestId = (string) (ApiExecutionMetadataContext::current()['transport_request_id'] ?? '');
         try {
+        $httpMetadata = ApiExecutionMetadataContext::current();
+        \App\QueueV4Clean\OuterCronHttpReceipt::reserve($requestId,$method,(string)(parse_url($url,PHP_URL_PATH)?:'/'),
+            (int)($httpMetadata['company_id']??0),(int)($httpMetadata['transport_meli_account_id']??$httpMetadata['account_id']??$httpMetadata['meli_account_id']??0),$executionSource);
         \App\QueueV4Clean\QueueV4CleanCycleBudget::reserve($requestId, $executionSource);
         $reserved = true;
         if($executionSource==='queue_core'){
@@ -181,6 +184,7 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             CURLOPT_TIMEOUT => max(1, min($timeouts['timeout'], $freshTimeouts['timeout'])),
             CURLOPT_CONNECTTIMEOUT => max(1, min($timeouts['connect_timeout'], $freshTimeouts['connect_timeout'])),
         ])) { throw new RuntimeException('queue_v4_clean_curl_final_timeout_rejected'); }
+        \App\QueueV4Clean\OuterCronHttpReceipt::boundary($requestId);
         if ($billingV2) {
             // Deadline/budget/identity checks are still rejectable and must
             // precede Billing's durable dispatch permission.
@@ -228,6 +232,7 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
                 }
             }
             $released = \App\QueueV4Clean\QueueV4CleanCycleBudget::releaseBeforeTransport($requestId);
+            \App\QueueV4Clean\OuterCronHttpReceipt::cancelBeforeTransport($requestId,$blocked instanceof ApiBudgetExhaustedException);
             if ($executionSource === 'queue_v4_clean_readiness' && $reserved && !$released) {
                 throw new RemoteResultUncertainException($requestId);
             }
@@ -242,12 +247,14 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         );
         \App\QueueV4Clean\QueueV4CleanTransportJournal::enteringCurl((string)(ApiExecutionMetadataContext::current()['transport_request_id']??''));
         \App\QueueCore\QueueCoreDispatchFence::enteringCurl();
+        \App\QueueV4Clean\OuterCronHttpReceipt::enteringWire($requestId);
         $raw = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $wireBytes = defined('CURLINFO_SIZE_DOWNLOAD_T')
             ? (int) curl_getinfo($ch, CURLINFO_SIZE_DOWNLOAD_T)
             : (is_string($raw) ? strlen($raw) : 0);
         $curlError = curl_error($ch);
+        \App\QueueV4Clean\OuterCronHttpReceipt::result($requestId,$status,$curlError);
         unset($ch);
         if ($billingV2 && $status > 0 && $curlError === '' && is_string($raw)) {
             try {

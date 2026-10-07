@@ -133,7 +133,7 @@ final class UpdateManifestService
                 throw new RuntimeException('El inventario de archivos no es válido.');
             }
             $relative = str_replace('\\', '/', ltrim((string) ($file['path'] ?? ''), '/'));
-            if ($relative === '' || str_contains($relative, '..') || str_starts_with($relative, '.')) {
+            if ($relative === '' || str_contains($relative, '..') || ($relative !== '.htaccess' && str_starts_with($relative, '.'))) {
                 throw new RuntimeException('El manifiesto contiene una ruta de archivo insegura.');
             }
             $full = rtrim($releaseDirectory, '/\\') . '/' . $relative;

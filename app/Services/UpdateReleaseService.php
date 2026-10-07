@@ -11,6 +11,18 @@ use Throwable;
 
 final class UpdateReleaseService
 {
+    private const OPERATOR_RUNTIME = [
+        'bin/create_admin.php',
+        'bin/database_growth_audit.php',
+        'bin/database_physical_recovery.php',
+        'bin/db_explain_audit.php',
+        'bin/meli_api_audit.php',
+        'bin/migrate.php',
+        'bin/query_performance_report.php',
+        'bin/queue_core_dependency_check.php',
+        'bin/runtime_process_audit.php',
+    ];
+
     /** @param array<string,mixed> $manifest */
     public function stage(string $sourceDirectory, array $manifest): string
     {
@@ -92,10 +104,13 @@ final class UpdateReleaseService
     /** @return array<string,mixed> */
     public function healthCheck(string $releaseDirectory): array
     {
+        $versionFile = $releaseDirectory . '/VERSION';
+        $version = is_file($versionFile) && is_readable($versionFile)
+            ? trim((string) file_get_contents($versionFile)) : '';
         $checks = [
             'bootstrap' => is_file($releaseDirectory . '/bootstrap.php'),
             'front_controller' => is_file($releaseDirectory . '/public/index.php'),
-            'version' => is_file($releaseDirectory . '/VERSION') && trim((string) file_get_contents($releaseDirectory . '/VERSION')) !== '',
+            'version' => preg_match('/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?$/', $version) === 1,
             'migrations' => is_dir($releaseDirectory . '/database/migrations'),
             'storage' => is_dir(AppPaths::storage()) && is_writable(AppPaths::storage()),
         ];
@@ -104,10 +119,11 @@ final class UpdateReleaseService
         } catch (Throwable) {
             $checks['database'] = false;
         }
-        if ($this->requiresRuntimeManifest($releaseDirectory)) {
+        if ($this->requiresRuntimeManifest($releaseDirectory)
+            || is_file($releaseDirectory . '/resources/runtime-manifest.json')) {
             $runtimeIntegrity = (new ReleaseIntegrityService())->inspectDirectory(
                 $releaseDirectory,
-                true,
+                false,
                 false
             );
             $checks['runtime_integrity'] = (bool) $runtimeIntegrity['ok'];
@@ -201,10 +217,10 @@ final class UpdateReleaseService
         }
         $filesystem = new UpdateFilesystemService();
         foreach ([
-            '.htaccess', 'app', 'bin', 'database', 'jobs', 'launcher', 'public',
+            '.htaccess', 'app', 'database', 'jobs', 'launcher', 'public', 'stop',
             'resources', 'actualizar.php', 'asset.php', 'index.php', 'login.php', 'mantenimiento.php',
             'recuperar.php', 'stop.php', 'bootstrap.php', 'composer.json', 'composer.lock',
-            'config.env.example', 'VERSION',
+            'config.env.example', 'cron-status.php', 'VERSION',
         ] as $entry) {
             $source = $root . '/' . $entry;
             $target = $destination . '/' . $entry;
@@ -214,7 +230,21 @@ final class UpdateReleaseService
                 throw new RuntimeException('No fue posible copiar un archivo de la release de recuperación.');
             }
         }
-        $this->assertReleaseShape($destination);
+        foreach (self::OPERATOR_RUNTIME as $entry) {
+            $source = $root . '/' . $entry;
+            if (is_link($source)) {
+                throw new RuntimeException('El runtime de recuperación contiene un enlace no permitido.');
+            }
+            if (is_file($source)) {
+                if (!is_dir($destination . '/bin') && !mkdir($destination . '/bin', 0770, true)) {
+                    throw new RuntimeException('No fue posible preparar los operadores de recuperación.');
+                }
+                if (!copy($source, $destination . '/' . $entry)) {
+                    throw new RuntimeException('No fue posible copiar un operador de recuperación.');
+                }
+            }
+        }
+        $this->verifyReleaseAgainstManifest($destination, []);
         return [
             'release_id' => $releaseId,
             'version' => $version,
@@ -234,9 +264,9 @@ final class UpdateReleaseService
             '.env',
             'graphify-out',
             'app/graphify-out',
-            'bin',
             'tests',
             'docs',
+            'tools',
             'shared',
             'storage',
             'vendor',
@@ -246,6 +276,18 @@ final class UpdateReleaseService
                 throw new RuntimeException(
                     'La release contiene estado persistente o archivos de desarrollo no permitidos.'
                 );
+            }
+        }
+        $bin = rtrim($directory, '/\\') . '/bin';
+        if (file_exists($bin)) {
+            if (!is_dir($bin) || is_link($bin)) {
+                throw new RuntimeException('La release contiene un directorio de operadores no permitido.');
+            }
+            foreach (new \FilesystemIterator($bin, \FilesystemIterator::SKIP_DOTS) as $entry) {
+                if (!$entry->isFile() || $entry->isLink()
+                    || !in_array('bin/' . $entry->getFilename(), self::OPERATOR_RUNTIME, true)) {
+                    throw new RuntimeException('La release contiene un operador no permitido.');
+                }
             }
         }
         if (isset($manifest['files']) && is_array($manifest['files'])) {

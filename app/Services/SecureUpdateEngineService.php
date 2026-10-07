@@ -329,16 +329,59 @@ final class SecureUpdateEngineService
         if (($manifest['rollback']['code_compatible'] ?? true) !== true) {
             throw new RuntimeException('El manifiesto bloquea el rollback de código sin restaurar la base de datos.');
         }
+        $owner = $this->acquireLock($runId);
+        try {
         $releaseService = new UpdateReleaseService();
         $releaseService->startMaintenance((string) $run['version_from']);
+        $this->transition($runId, 'rollback_pending', 92, 'Revertir código y metadata', 'Completar rollback');
         try {
-            $pointer = $releaseService->rollback();
-        } finally {
-            $releaseService->stopMaintenance();
+            $currentPointer = $releaseService->pointer();
+            if (($currentPointer['version'] ?? '') === (string) $run['version_to']
+                && ($currentPointer['release_id'] ?? '') === (string) $run['release_code']) {
+                if (empty($run['previous_release_id'])
+                    || ($currentPointer['previous_release_id'] ?? '') !== (string) $run['previous_release_id']) {
+                    throw new RuntimeException('update_rollback_pointer_version_mismatch');
+                }
+                $pointer = $releaseService->rollback();
+            } elseif (($currentPointer['version'] ?? '') === (string) $run['version_from']
+                && !empty($run['previous_release_id'])
+                && ($currentPointer['release_id'] ?? '') === (string) $run['previous_release_id']) {
+                // A previous rollback attempt switched code but could not finish metadata.
+                $pointer = $currentPointer;
+            } else {
+                throw new RuntimeException('update_rollback_pointer_version_mismatch');
+            }
+            $pdo = Database::connectionFresh();
+            $currentVersion = $pdo->query("SELECT setting_value FROM app_settings WHERE setting_key='app.version' LIMIT 1")->fetchColumn();
+            if ($currentVersion !== (string) $pointer['version']) {
+                (new DirectUpdateMetadataPromotionService())->restoreForRollback(
+                    $pdo,
+                    (string) $run['version_to'],
+                    (string) $pointer['version'],
+                    $this->lastAppliedMigration($pdo),
+                    'Rollback seguro de código; esquema conservado.'
+                );
+            }
+            $path = AppPaths::installationRoot() . '/' . $pointer['path'];
+            $marker = (new InstalledVersionMarkerService())->read();
+            if (!$releaseService->healthCheck($path)['ok']
+                || !(new ReleaseIntegrityService())->inspectDirectory($path, true, false)['ok']
+                || !$marker['valid']
+                || $marker['version'] !== (string) $pointer['version']
+                || $marker['last_migration'] !== $this->lastAppliedMigration($pdo)) {
+                throw new RuntimeException('update_rollback_integrity_failed');
+            }
+        } catch (Throwable $failure) {
+            $this->event($runId, 'error', 'rollback_incomplete', 'Rollback sin cierre: se conserva mantenimiento.');
+            throw $failure;
         }
         $this->transition($runId, 'rolled_back', 100, 'Rollback completado', null);
         $this->event($runId, 'warning', 'rollback_completed', 'Se activó la release anterior.', ['pointer' => $pointer]);
+        $releaseService->stopMaintenance();
         return $pointer;
+        } finally {
+            $this->releaseLock($runId, $owner);
+        }
     }
 
     /** @return array<string,mixed>|null */
@@ -547,6 +590,18 @@ final class SecureUpdateEngineService
     private function stepHealth(array $run): void
     {
         $releaseService = new UpdateReleaseService();
+        $pointer = $releaseService->pointer();
+        $expectedPath = 'releases/' . (string) $run['release_code'];
+        $activePath = realpath(AppPaths::installationRoot() . '/' . (string) ($pointer['path'] ?? ''));
+        $stagingPath = realpath((string) $run['staging_path']);
+        if (($pointer['release_id'] ?? '') !== (string) $run['release_code']
+            || ($pointer['version'] ?? '') !== (string) $run['version_to']
+            || ($pointer['path'] ?? '') !== $expectedPath
+            || $stagingPath === false || $activePath !== $stagingPath) {
+            $this->transition((int) $run['id'], 'rollback_pending', 92, 'Identidad activa no concordante', 'Ejecutar rollback');
+            $this->event((int) $run['id'], 'error', 'active_release_identity_mismatch', 'La release activa no corresponde a la ejecución.');
+            return;
+        }
         $health = $releaseService->healthCheck((string) $run['staging_path']);
         if (!$health['ok']) {
             $this->transition((int) $run['id'], 'rollback_pending', 92, 'Health check fallido', 'Ejecutar rollback');
@@ -554,6 +609,17 @@ final class SecureUpdateEngineService
             return;
         }
         $pdo = Database::connectionFresh();
+        (new DirectUpdateMetadataPromotionService())->promote(
+            $pdo,
+            (string) $run['version_to'],
+            $this->lastAppliedMigration($pdo),
+            'Actualización segura completada.'
+        );
+        if (!(new ReleaseIntegrityService())->inspectDirectory((string) $run['staging_path'], true, false)['ok']) {
+            $this->transition((int) $run['id'], 'rollback_pending', 92, 'Integridad canónica fallida', 'Ejecutar rollback');
+            $this->event((int) $run['id'], 'error', 'canonical_integrity_failed', 'La release activa no supera la integridad con DB.');
+            return;
+        }
         $stmt = $pdo->prepare(
             "UPDATE system_update_runs SET state='completed',progress_percent=100,current_step='Actualización completa',
              next_action=NULL,completed_at=UTC_TIMESTAMP(),safe_error_code=NULL,safe_error_message=NULL WHERE id=:id"
@@ -564,7 +630,6 @@ final class SecureUpdateEngineService
              activated_at=UTC_TIMESTAMP() WHERE id=:id"
         );
         $release->execute(['id' => (int) $run['release_id']]);
-        (new AppVersionService())->registerVersion((string) $run['version_to'], 'Actualización segura completada.');
         $this->finishStep((int) $run['id'], 'health_check', 'Health checks aprobados.');
         $this->event((int) $run['id'], 'info', 'update_completed', 'Actualización completada correctamente.');
         try {
@@ -578,6 +643,17 @@ final class SecureUpdateEngineService
         }
         $releaseService->cleanup();
         $releaseService->stopMaintenance();
+    }
+
+    private function lastAppliedMigration(PDO $pdo): string
+    {
+        $migration = $pdo->query(
+            'SELECT version FROM schema_migrations ORDER BY CAST(SUBSTRING_INDEX(version, "_", 1) AS UNSIGNED) DESC LIMIT 1'
+        )->fetchColumn();
+        if (!is_string($migration) || $migration === '') {
+            throw new RuntimeException('update_last_migration_missing');
+        }
+        return $migration;
     }
 
     /** @param array<string,mixed> $manifest */

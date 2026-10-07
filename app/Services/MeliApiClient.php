@@ -218,6 +218,7 @@ final class MeliApiClient implements MeliReadClientInterface
             $budgetReservation = [];
             $rhythmPermit = [];
             try {
+                \App\QueueV4Clean\OuterCronHttpReceipt::reserve($requestId,$method,$path,(int)($meta['company_id']??0),$this->accountId,(string)($meta['source']??''));
                 ApiExecutionMetadataContext::claimRemoteCall();
                 // Ritmo antes de presupuesto: una espera local no consume
                 // presupuesto ni se presenta como transporte remoto.
@@ -261,6 +262,7 @@ final class MeliApiClient implements MeliReadClientInterface
                     (new ExecutionJournalService())->budgetReserved($executionAttemptId);
                 }
             } catch (ApiRhythmDeferredException $rhythmError) {
+                \App\QueueV4Clean\OuterCronHttpReceipt::cancelBeforeTransport($requestId);
                 $rhythm->release($rhythmPermit);
                 ApiExecutionMetadataContext::markRemoteBlocked();
                 $classification = [
@@ -276,6 +278,7 @@ final class MeliApiClient implements MeliReadClientInterface
                 $guard->recordRequest($this->accountId, $requestId, $method, $path, null, null, null, $attempt, true, $rhythmError->getMessage(), $classification, 'api_rhythm_deferred', $meta);
                 throw $rhythmError;
             } catch (ApiBudgetExhaustedException $budgetError) {
+                \App\QueueV4Clean\OuterCronHttpReceipt::cancelBeforeTransport($requestId, true);
                 $rhythm->release($rhythmPermit);
                 ApiExecutionMetadataContext::markRemoteBlocked();
                 $classification = [
@@ -289,6 +292,7 @@ final class MeliApiClient implements MeliReadClientInterface
                 $guard->recordRequest($this->accountId, $requestId, $method, $path, null, null, null, $attempt, true, $budgetError->getMessage(), $classification, 'api_budget_exhausted', $meta);
                 throw $budgetError;
             } catch (ApiBudgetInfrastructureException $budgetError) {
+                \App\QueueV4Clean\OuterCronHttpReceipt::cancelBeforeTransport($requestId);
                 $rhythm->release($rhythmPermit);
                 ApiExecutionMetadataContext::markRemoteBlocked();
                 $classification = [
@@ -302,6 +306,7 @@ final class MeliApiClient implements MeliReadClientInterface
                 $guard->recordRequest($this->accountId, $requestId, $method, $path, null, null, null, $attempt, true, $budgetError->getMessage(), $classification, 'api_budget_infrastructure', $meta);
                 throw $budgetError;
             } catch (\Throwable $blocked) {
+                \App\QueueV4Clean\OuterCronHttpReceipt::cancelBeforeTransport($requestId);
                 $rhythm->release($rhythmPermit);
                 ApiExecutionMetadataContext::markRemoteBlocked();
                 throw $blocked;
@@ -387,6 +392,9 @@ final class MeliApiClient implements MeliReadClientInterface
                     )
                 );
             } catch (Throwable $transportBlocked) {
+                if (!$transportBlocked instanceof RemoteResultUncertainException) {
+                    \App\QueueV4Clean\OuterCronHttpReceipt::cancelBeforeTransport($requestId,$transportBlocked instanceof ApiBudgetExhaustedException);
+                }
                 // A failed certification cannot be downgraded by a later row
                 // read (for example a rollback whose acknowledgement was lost).
                 if ($transportBlocked instanceof RemoteResultUncertainException) {

@@ -44,7 +44,10 @@ try {
     CronDeadlineContext::start($runtime, max(1, $runtime - 5), 8, 3);
     /** @var DrainerContract $drainer */
     $drainer = new QueueV4CurrentDrainer(Database::connectionFresh());
-    $result = $drainer->drain('cron_v4', $requestedMaxCalls, $runtime)->metadata;
+    $result = \App\QueueV4Clean\OuterCronHttpReceipt::withCapacitySource(
+        $budget['max_calls_source'],
+        static fn (): array => $drainer->drain('cron_v4', $requestedMaxCalls, $runtime)->metadata
+    );
     $result['control_unit'] = 'PHYSICAL_API_CALL';
     $result['max_calls_source'] = $budget['max_calls_source'];
     $result['canonical_max_calls_input_used'] = $hasCanonicalMaxCalls;

@@ -27,6 +27,16 @@ final class QueueV4CleanScheduler
         if (QueueV4CleanCycleBudget::snapshot()['limit'] > 0) {
             throw new \RuntimeException('physical_budget_already_owned');
         }
+        $capacity = (new AutomationCallBudgetService(new AppSettingsService(),new CapacityPolicyService($this->pdo)))->resolve($maxCalls);
+        return OuterCronHttpReceipt::within($this->pdo,$capacity,fn (): array => $this->runCycle($maxCalls,$runtimeSeconds));
+    }
+
+    /** @return array<string,mixed> */
+    private function runCycle(?int $maxCalls, int $runtimeSeconds): array
+    {
+        if (QueueV4CleanCycleBudget::snapshot()['limit'] > 0) {
+            throw new \RuntimeException('physical_budget_already_owned');
+        }
         $capacityService = new AutomationCallBudgetService(
             new AppSettingsService(),
             new CapacityPolicyService($this->pdo),
@@ -99,6 +109,7 @@ final class QueueV4CleanScheduler
             // The lease wait is a concurrency boundary. Re-read the ERP pair
             // immediately before beginning physical work so saved reductions win.
             $capacity = $capacityService->resolve($requestedMaxCalls);
+            OuterCronHttpReceipt::capacity($capacity);
             $maxCalls = $capacity['max_calls'];
             $outerDeadline = CronDeadlineContext::deadline();
             QueueV4CleanCycleBudget::start($maxCalls, 'automatic', $outerDeadline === null ? $deadline : min($deadline,$outerDeadline));

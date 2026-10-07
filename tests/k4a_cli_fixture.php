@@ -14,11 +14,17 @@ namespace App\Services {
         public const HARD_MAX = 100;
         public function resolve(?int $requested = null): array {
             return ['requested_max_calls' => $requested === null ? 10 : min(10, $requested),
-                'max_calls_source' => $requested === null ? 'configuration' : 'cli_reduction'];
+                'max_calls_source' => $requested === null ? 'ERP_SETTINGS' : 'CLI_MAX_CALLS_OVERRIDE'];
         }
     }
 }
 namespace App\QueueV4Clean {
+    final class OuterCronHttpReceipt {
+        public static function withCapacitySource(string $source,callable $operation):array {
+            if(!in_array($source,['ERP_SETTINGS','SAFE_DEFAULT','CLI_MAX_CALLS_OVERRIDE'],true)){throw new \RuntimeException('invalid source');}
+            return $operation();
+        }
+    }
     final class QueueV4CleanScheduler {
         public function __construct(\PDO $pdo) {}
         public function run(int $calls, int $runtime): array {

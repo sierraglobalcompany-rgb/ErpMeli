@@ -41,6 +41,7 @@ final class QueueV4CleanCycleBudget
 
     public static function clear(): void
     {
+        OuterCronHttpReceipt::budgetClosed(self::snapshot());
         self::$limit = null;
         self::$used = 0;
         self::$owner = null;
@@ -124,6 +125,7 @@ final class QueueV4CleanCycleBudget
             || self::$attempts[$attemptId]['identity'] !== ApiExecutionMetadataContext::current()) { return false; }
         self::$attempts[$attemptId]['state'] = 'cancelled';
         self::$used--;
+        OuterCronHttpReceipt::released($attemptId);
         return true;
     }
 

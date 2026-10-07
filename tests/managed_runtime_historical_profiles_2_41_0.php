@@ -36,6 +36,10 @@ $profiles = [
         'build_id' => 'erp-meli-2.41.0-financial-v2-billing-capture-authority-rc1-20261006',
         'minimum_migration' => '302_financial_v2_billing_capture_authority.sql',
     ],
+    '2.41.1' => [
+        'build_id' => 'erp-meli-2.41.1-outer-cron-http-receipt-rc1-20261007',
+        'minimum_migration' => '303_outer_cron_http_receipt.sql',
+    ],
 ];
 
 foreach ($profiles as $version => $expected) {
@@ -56,4 +60,17 @@ historicalProfileAssert(
     'profile_2_40_0_rejects_current_schema_302'
 );
 
-echo "HISTORICAL_RELEASE_PROFILES=4/4_PASS\n";
+$wrong2410 = ['version' => '2.41.0', 'build_id' => $profiles['2.41.0']['build_id'],
+    'minimum_migration' => $profiles['2.41.1']['minimum_migration']];
+historicalProfileAssert(!ManagedRuntimePublicationPolicy::recognizesInstalledManifest($wrong2410),
+    'profile_2_41_0_rejects_schema_303');
+$wrong2411 = ['version' => '2.41.1', 'build_id' => $profiles['2.41.1']['build_id'],
+    'minimum_migration' => $profiles['2.41.0']['minimum_migration']];
+historicalProfileAssert(!ManagedRuntimePublicationPolicy::recognizesInstalledManifest($wrong2411),
+    'profile_2_41_1_rejects_schema_302');
+echo "HISTORICAL_RELEASE_PROFILES=7/7_PASS\n";
+$diagnostics = (string) file_get_contents(__DIR__ . '/../app/Services/QueueV4DiagnosticBundleService.php');
+historicalProfileAssert(str_contains($diagnostics, "'production_version_expected' => '2.41.1'"),
+    'diagnostic_bundle_current_release_2411');
+historicalProfileAssert(str_contains($diagnostics, "if (\$versionFile !== '2.41.0')"),
+    'legacy_429_reconciliation_guard_remains_2410_fail_closed');

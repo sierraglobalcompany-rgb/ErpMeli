@@ -336,7 +336,7 @@ function cap2UpdaterAuthority(string $root, string $commit, array $additionalPat
     if (trim(cap2Git($root, ['cat-file', '-t', $commit])['stdout']) !== 'commit') {
         throw new RuntimeException('updater_authority_commit_required');
     }
-    $authorityPath = 'resources/release/updater-authority-2.41.0.json';
+    $authorityPath = 'resources/release/updater-authority-2.41.1.json';
     // Decode objects as objects so metadata such as {} is not silently converted to [].
     $authority = json_decode(cap2GitBlob($root, $commit, $authorityPath), false, 64, JSON_THROW_ON_ERROR);
     if (!$authority instanceof stdClass || !isset($authority->new_runtime_dependencies)
@@ -385,10 +385,10 @@ function cap2UpdaterAuthority(string $root, string $commit, array $additionalPat
 }
 
 /** Seed new release metadata from the immediately previous authority; hashes are regenerated separately from Git blobs. */
-function cap2SeedRelease2410(string $root): void
+function cap2SeedRelease2411(string $root): void
 {
     $previousAuthority = json_decode(
-        (string) file_get_contents($root . '/resources/release/updater-authority-2.40.1.json'),
+        (string) file_get_contents($root . '/resources/release/updater-authority-2.41.0.json'),
         false,
         64,
         JSON_THROW_ON_ERROR
@@ -396,15 +396,15 @@ function cap2SeedRelease2410(string $root): void
     if (!$previousAuthority instanceof stdClass) {
         throw new RuntimeException('previous_updater_authority_invalid');
     }
-    $previousAuthority->target_version = '2.41.0';
-    $previousAuthority->contract = 'The 2.40.1/schema301 to 2.41.0/schema302 release adds the Financial V2 Billing capture authority: one unresolved automatic physical flight per remote order, a final Financial fence before transport, durable Billing results independent of later Financial leases, certainty-aware recovery, offline reconciliation of durable results, and preserved multi-order, recapture, and input_version behavior. Applies migration 302 exactly once. The update itself performs no recovery, OAuth, Billing, Cron, or Mercado Libre HTTP and does not mutate existing production data.';
+    $previousAuthority->target_version = '2.41.1';
+    $previousAuthority->contract = 'The 2.41.0/schema302 to 2.41.1/schema303 release binds the durable outer Cron physical HTTP receipt to a parent-only receipt and migration 303. One real HTTP request remains one physical call. Phase2 is not included. The update itself performs no recovery, OAuth, Billing, Cron, or Mercado Libre HTTP and does not mutate existing production data.';
     cap2WriteFile(
-        $root . '/resources/release/updater-authority-2.41.0.json',
+        $root . '/resources/release/updater-authority-2.41.1.json',
         cap2Json(get_object_vars($previousAuthority))
     );
 
     $previousRegistry = json_decode(
-        (string) file_get_contents($root . '/resources/release/managed-runtime-dependencies-2.40.1.json'),
+        (string) file_get_contents($root . '/resources/release/managed-runtime-dependencies-2.41.0.json'),
         true,
         64,
         JSON_THROW_ON_ERROR
@@ -412,9 +412,9 @@ function cap2SeedRelease2410(string $root): void
     if (!is_array($previousRegistry)) {
         throw new RuntimeException('previous_dependency_registry_invalid');
     }
-    $previousRegistry['authority_id'] = 'financial-v2-release-2.41.0-runtime-dependencies';
+    $previousRegistry['authority_id'] = 'outer-cron-http-release-2.41.1-runtime-dependencies';
     cap2WriteFile(
-        $root . '/resources/release/managed-runtime-dependencies-2.41.0.json',
+        $root . '/resources/release/managed-runtime-dependencies-2.41.1.json',
         cap2Json($previousRegistry)
     );
 }
@@ -423,21 +423,21 @@ function cap2ArtifactMain(array $argv): int
 {
     $root = dirname(__DIR__);
     $mode = $argv[1] ?? '';
-    if ($mode === 'seed-release-2410') {
-        cap2SeedRelease2410($root);
-        echo "RELEASE_2_41_0_METADATA_SEEDED=YES\n";
+    if ($mode === 'seed-release-2411') {
+        cap2SeedRelease2411($root);
+        echo "RELEASE_2_41_1_METADATA_SEEDED=YES\n";
         return 0;
     }
     if ($mode === 'updater-authority') {
         $authority = cap2UpdaterAuthority($root, $argv[2] ?? '', array_slice($argv, 3));
         // Validate/read every blob before any write: malformed input leaves the file unchanged.
-        cap2WriteFile($root . '/resources/release/updater-authority-2.41.0.json', cap2Json($authority));
+        cap2WriteFile($root . '/resources/release/updater-authority-2.41.1.json', cap2Json($authority));
         echo 'UPDATER_AUTHORITY_DEPENDENCIES=' . count($authority['new_runtime_dependencies']) . "\n";
         return 0;
     }
     require_once __DIR__ . '/k1b_bootstrap.php';
     $ref = $argv[2] ?? 'HEAD';
-    $registryPath = 'resources/release/managed-runtime-dependencies-2.41.0.json';
+    $registryPath = 'resources/release/managed-runtime-dependencies-2.41.1.json';
     if ($mode === 'registry') {
         $paths = App\Services\ManagedRuntimePublicationPolicy::manifestPaths($root, $ref);
         $registry = json_decode(App\Services\ManagedRuntimePublicationPolicy::gitBlob($root, $ref, $registryPath), true, 64, JSON_THROW_ON_ERROR);

@@ -50,6 +50,7 @@ $allowedRootFiles = [
     'composer.json',
     'composer.lock',
     'config.env.example',
+    'cron-status.php',
     'index.php',
     'login.php',
     'mantenimiento.php',
@@ -58,6 +59,17 @@ $allowedRootFiles = [
     'VERSION',
 ];
 $allowedRoots = ['app', 'database', 'jobs', 'launcher', 'public', 'resources', 'stop'];
+$allowedOperatorRuntime = [
+    'bin/create_admin.php',
+    'bin/database_growth_audit.php',
+    'bin/database_physical_recovery.php',
+    'bin/db_explain_audit.php',
+    'bin/meli_api_audit.php',
+    'bin/migrate.php',
+    'bin/query_performance_report.php',
+    'bin/queue_core_dependency_check.php',
+    'bin/runtime_process_audit.php',
+];
 $forbiddenSegments = [
     '.git', '.github', '.idea', '.vscode', 'audits', 'docs', 'graphify-out',
     'node_modules', 'tests', 'tmp', 'tools', 'vendor',
@@ -65,12 +77,16 @@ $forbiddenSegments = [
 $isAllowedRuntimePath = static function (string $relative) use (
     $allowedRootFiles,
     $allowedRoots,
+    $allowedOperatorRuntime,
     $forbiddenSegments
 ): bool {
     $segments = explode('/', $relative);
     $top = $segments[0];
     if (count($segments) === 1) {
         return in_array($relative, $allowedRootFiles, true);
+    }
+    if ($top === 'bin') {
+        return in_array($relative, $allowedOperatorRuntime, true);
     }
     if (!in_array($top, $allowedRoots, true)) {
         return false;

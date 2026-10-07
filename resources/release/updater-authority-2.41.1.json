@@ -28,7 +28,7 @@
     "new_runtime_dependencies": [
         {
             "path": "VERSION",
-            "sha256": "cf4e24156f2593439ad1fd6b7cc9c5b7f61ed4036d30a936b947968fa72c6eca"
+            "sha256": "8d55b691fb06128de32c03f0c33656e866027d350e71b4462d0801386eb81e02"
         },
         {
             "path": "app/Controllers/ClaimController.php",
@@ -103,6 +103,10 @@
             "sha256": "fff6b8d6cd6eef032940bff689052a0501398c3a2532a39a5b24f71f1b8eef23"
         },
         {
+            "path": "app/QueueV4Clean/OuterCronHttpReceipt.php",
+            "sha256": "aaf70e0dc63092edea8fea78cf64f6874ab41b5678d73de51d06625d4e255f92"
+        },
+        {
             "path": "app/QueueV4Clean/PackDiscoveryOccupancyPolicy.php",
             "sha256": "8e2a09230c862103045b3de44877480a8dde5c26be391313707e58d615543930"
         },
@@ -112,7 +116,7 @@
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanCycleBudget.php",
-            "sha256": "d9a22f8cf389d464bed3392de276d6fe1b1da11128f1eb182241e9f7b5867bf3"
+            "sha256": "a69b68211bf682136ebdd3d6ef6aed18cfa0493e370d610d7520a0af754a5f4a"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanDatabaseContract.php",
@@ -128,7 +132,7 @@
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanMaintenanceService.php",
-            "sha256": "0cd180496a2911589e849ba424833b6c1974e8b799745f1fb33820a3ef3d49be"
+            "sha256": "453a2b9bc8733bc5382e92b2b87223a2df69a7172a491cdc23d4318e1b7a710b"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanOAuthDispatchFence.php",
@@ -172,7 +176,7 @@
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanScheduler.php",
-            "sha256": "a4718d952ad9f4d6a58d07c1e80cdb6a1f45b8b8019c57b1e95a8edb638448f4"
+            "sha256": "384b202ea22f5405e2f7494e188d924061129c3d25491ce6673f623986666b62"
         },
         {
             "path": "app/QueueV4Clean/QueueV4CleanTransportJournal.php",
@@ -276,7 +280,7 @@
         },
         {
             "path": "app/Services/CurlMeliHttpTransport.php",
-            "sha256": "4bfa7b6367d5d335080d98fbae9ac7d386474e1170c5c98776a9250d2da2879e"
+            "sha256": "2c005d801e6eafca0cc23b8a0aa5d105fec5548555ee8d3a87c02ef9fc8541b2"
         },
         {
             "path": "app/Services/DiagnosticService.php",
@@ -288,7 +292,7 @@
         },
         {
             "path": "app/Services/ManagedRuntimePublicationPolicy.php",
-            "sha256": "59129f9c94f52c4559a5546ff4c8f18d74ba60ba39854bec02692f976c11a5c9"
+            "sha256": "bb3ac0e59e563b83d516215acd2a8e89f393d3d721cc8a864b3078b325331670"
         },
         {
             "path": "app/Services/ManualProcessingService.php",
@@ -300,7 +304,7 @@
         },
         {
             "path": "app/Services/MeliApiClient.php",
-            "sha256": "d5ac04bb1038a136fef643ed6a0b5f7079a8729befab30ddb7c36aeb72339b12"
+            "sha256": "7cbcd4f51f62d60ea159eb10284668e9eb691f9bc141c4296ed59042c5f2b1d6"
         },
         {
             "path": "app/Services/MeliCliRuntimeCapabilityService.php",
@@ -333,6 +337,10 @@
         {
             "path": "app/Services/QueueOAuthDurableRecoveryStore.php",
             "sha256": "681cfcb83f86237851b6d31f99cd0631f735cced348dc4fe7f8b7dc0070c8e81"
+        },
+        {
+            "path": "app/Services/QueueV4DiagnosticBundleService.php",
+            "sha256": "06f7f5e6954f119142c893ccf3977b4dea3aff0ecc24328f043f6de9d601c1b2"
         },
         {
             "path": "app/Services/QueueV4PreTransportDeferredException.php",
@@ -523,6 +531,10 @@
             "sha256": "3ebbab920f772f3529316ce8b707e00dd49740965e2eafaeaf1ab633a6777273"
         },
         {
+            "path": "database/migrations/303_outer_cron_http_receipt.sql",
+            "sha256": "675af24081b45e2e6bf679493635bc9a359f07d777ef75ac14ee7628e0192e6f"
+        },
+        {
             "path": "jobs/_retired_job.php",
             "sha256": "8917705e4eda4e631e930e5bb22780dd986cb1a62184805992e6d209bffb3e96"
         },
@@ -532,7 +544,7 @@
         },
         {
             "path": "jobs/queue_v4_clean.php",
-            "sha256": "c2b660b8d29b2ae660a942a78b9039cc7788e4f647ef8c952fc9d0706786521e"
+            "sha256": "a1054f82df257bb9cdd6263713140086ee9ce597c14343ce4cd825daf6cbcad5"
         },
         {
             "path": "jobs/queue_v4_clean_review_recovery.php",

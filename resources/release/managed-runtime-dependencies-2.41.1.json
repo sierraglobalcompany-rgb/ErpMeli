@@ -1,7 +1,7 @@
 {
     "schema_version": 1,
     "authority_id": "outer-cron-http-release-2.41.1-runtime-dependencies",
-    "runtime_manifest_paths_sha256": "ea9b6e2c01c0f6c32d16ff68013cd09e84a8e862e434ee69be3eb1079c255aa9",
+    "runtime_manifest_paths_sha256": "efe41f00542d07d9d8f5692d413fdd7d39fd0c3012dc384fc478fdd4b69fd551",
     "coverage_base_commit": "6cb102595d0f2e5d47b07fa868aec8bbc22f8653",
     "classifications": {
         "RUNTIME_REQUIRED": "Must be packaged and covered by the runtime manifest.",

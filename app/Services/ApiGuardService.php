@@ -94,16 +94,31 @@ final class ApiGuardService
         );
         $profile = (new MeliOperationProfileRegistry())->resolve($method, $path, $meta);
         $requestScope = $this->requestScope($accountId, $meta);
+        $flightRecorderMode = in_array(($meta['flight_recorder_mode'] ?? ''), ['basic', 'diagnostic'], true)
+            ? (string) $meta['flight_recorder_mode']
+            : 'off';
+        $traceId = $flightRecorderMode === 'off'
+            ? null
+            : ApiFlightRecorderMetadata::normalizeTraceId($meta['trace_id'] ?? null);
+        $physicalStartedAt = $flightRecorderMode === 'off'
+            ? null
+            : ApiFlightRecorderMetadata::normalizePhysicalStart($meta['physical_started_at_process'] ?? null);
+        $safeRateLimitHeaders = $flightRecorderMode === 'off'
+            ? null
+            : ApiFlightRecorderMetadata::safeResponseHeadersJson($meta['rate_limit_headers_json'] ?? null);
         try {
             Database::connection()->prepare(
                 'INSERT INTO api_request_logs
-                 (meli_account_id,company_id,scope_kind,request_id,method,endpoint_path,http_status,duration_ms,retry_after_seconds,attempt,was_blocked,safe_message,diagnostic_id,error_type,error_code,is_retryable,is_app_blocked_signal,outcome_class,reached_remote,actionable,risk_signal,incident_key,execution_source,job_type,source_queue_key,source_work_id,operation_key,load_class,workload_units)
-                 VALUES (:account,:company,:scope_kind,:request,:method,:path,:status,:duration,:retry_after,:attempt,:blocked,:message,:diagnostic_id,:error_type,:error_code,:retryable,:app_blocked,:outcome_class,:reached_remote,:actionable,:risk_signal,:incident_key,:execution_source,:job_type,:source_queue_key,:source_work_id,:operation_key,:load_class,:workload_units)'
+                 (meli_account_id,company_id,scope_kind,request_id,trace_id,physical_started_at_process,rate_limit_headers_json,method,endpoint_path,http_status,duration_ms,retry_after_seconds,attempt,was_blocked,safe_message,diagnostic_id,error_type,error_code,is_retryable,is_app_blocked_signal,outcome_class,reached_remote,actionable,risk_signal,incident_key,execution_source,job_type,source_queue_key,source_work_id,operation_key,load_class,workload_units)
+                 VALUES (:account,:company,:scope_kind,:request,:trace_id,:physical_started_at_process,:rate_limit_headers_json,:method,:path,:status,:duration,:retry_after,:attempt,:blocked,:message,:diagnostic_id,:error_type,:error_code,:retryable,:app_blocked,:outcome_class,:reached_remote,:actionable,:risk_signal,:incident_key,:execution_source,:job_type,:source_queue_key,:source_work_id,:operation_key,:load_class,:workload_units)'
             )->execute([
                 'account' => $accountId ?: null,
                 'company' => $requestScope['company_id'],
                 'scope_kind' => $requestScope['scope_kind'],
                 'request' => $requestId,
+                'trace_id' => $traceId,
+                'physical_started_at_process' => $physicalStartedAt,
+                'rate_limit_headers_json' => $safeRateLimitHeaders,
                 'method' => strtoupper($method),
                 'path' => $path,
                 'status' => $status,
@@ -131,8 +146,70 @@ final class ApiGuardService
                 'workload_units' => (int) $profile['workload_units'],
             ]);
         } catch (Throwable) {
-            $this->recordRequestCurrentSchema($accountId, $requestId, $method, $path, $status, $durationMs, $retryAfter, $attempt, $blocked, $message, $classification, $errorCode);
+            try {
+                $this->recordRequestWithoutFlightRecorder(
+                    $accountId,
+                    $requestId,
+                    $method,
+                    $path,
+                    $status,
+                    $durationMs,
+                    $retryAfter,
+                    $attempt,
+                    $blocked,
+                    $message,
+                    $classification,
+                    $errorCode,
+                    $requestScope,
+                    $safe['diagnostic_id'],
+                    $outcome,
+                    $meta,
+                    $profile
+                );
+            } catch (Throwable) {
+                $this->recordRequestCurrentSchema($accountId, $requestId, $method, $path, $status, $durationMs, $retryAfter, $attempt, $blocked, $message, $classification, $errorCode);
+            }
         }
+    }
+
+    /** @param array{company_id:?int,scope_kind:string} $requestScope @param array<string,mixed> $outcome @param array<string,mixed> $meta @param array<string,mixed> $profile */
+    private function recordRequestWithoutFlightRecorder(?int $accountId, ?string $requestId, string $method, string $path, ?int $status, ?int $durationMs, ?int $retryAfter, int $attempt, bool $blocked, ?string $message, ?array $classification, ?string $errorCode, array $requestScope, ?string $diagnosticId, array $outcome, array $meta, array $profile): void
+    {
+        Database::connection()->prepare(
+            'INSERT INTO api_request_logs
+             (meli_account_id,company_id,scope_kind,request_id,method,endpoint_path,http_status,duration_ms,retry_after_seconds,attempt,was_blocked,safe_message,diagnostic_id,error_type,error_code,is_retryable,is_app_blocked_signal,outcome_class,reached_remote,actionable,risk_signal,incident_key,execution_source,job_type,source_queue_key,source_work_id,operation_key,load_class,workload_units)
+             VALUES (:account,:company,:scope_kind,:request,:method,:path,:status,:duration,:retry_after,:attempt,:blocked,:message,:diagnostic_id,:error_type,:error_code,:retryable,:app_blocked,:outcome_class,:reached_remote,:actionable,:risk_signal,:incident_key,:execution_source,:job_type,:source_queue_key,:source_work_id,:operation_key,:load_class,:workload_units)'
+        )->execute([
+            'account' => $accountId ?: null,
+            'company' => $requestScope['company_id'],
+            'scope_kind' => $requestScope['scope_kind'],
+            'request' => $requestId,
+            'method' => strtoupper($method),
+            'path' => $path,
+            'status' => $status,
+            'duration' => $durationMs,
+            'retry_after' => $retryAfter,
+            'attempt' => $attempt,
+            'blocked' => $blocked ? 1 : 0,
+            'message' => $message ? mb_substr($message, 0, 500) : null,
+            'diagnostic_id' => $diagnosticId,
+            'error_type' => $classification['type'] ?? null,
+            'error_code' => $errorCode ? mb_substr($errorCode, 0, 120) : null,
+            'retryable' => !empty($classification['is_retryable']) ? 1 : 0,
+            'app_blocked' => !empty($classification['is_app_blocked_signal']) ? 1 : 0,
+            'outcome_class' => $outcome['outcome_class'],
+            'reached_remote' => $outcome['reached_remote'],
+            'actionable' => $outcome['actionable'],
+            'risk_signal' => $outcome['risk_signal'],
+            'incident_key' => $outcome['incident_key'],
+            'execution_source' => mb_substr((string) ($meta['source'] ?? ''), 0, 40) ?: null,
+            'job_type' => mb_substr((string) ($meta['job_type'] ?? ''), 0, 80) ?: null,
+            'source_queue_key' => mb_substr((string) ($meta['source_queue_key'] ?? ''), 0, 80) ?: null,
+            'source_work_id' => mb_substr((string) ($meta['source_work_id'] ?? ''), 0, 100) ?: null,
+            'operation_key' => (string) $profile['key'],
+            'load_class' => (string) $profile['load_class'],
+            'workload_units' => (int) $profile['workload_units'],
+        ]);
     }
 
     /** @param array<string,mixed> $meta @return array{company_id:?int,scope_kind:string} */

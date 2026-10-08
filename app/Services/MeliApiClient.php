@@ -159,6 +159,9 @@ final class MeliApiClient implements MeliReadClientInterface
         // El contexto del worker prevalece sobre etiquetas genéricas como
         // source=cron. Así cada llamada real puede atribuirse a su campaña.
         $meta = array_replace($meta, ApiExecutionMetadataContext::current());
+        $flightRecorderMode = ApiFlightRecorderConfig::current()->effectiveMode();
+        $meta['flight_recorder_mode'] = $flightRecorderMode;
+        $meta['trace_id'] = ApiFlightRecorderMetadata::normalizeTraceId($meta['trace_id'] ?? null);
         $billingV2 = ($meta['billing_v2'] ?? false) === true;
         if ($billingV2 && preg_match('/^[a-f0-9]{40}$/D', (string) ($meta['request_id'] ?? '')) !== 1) {
             throw new RuntimeException('billing_v2_request_id_invalid');
@@ -211,6 +214,9 @@ final class MeliApiClient implements MeliReadClientInterface
         $queueCoreContext = (string) ($meta['source'] ?? '') === 'queue_core';
         $attempts = ($singleDispatchAttempt || $billingV2) ? 1 : $guard->maxAttempts($mutation, $method);
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
+            // Physical evidence belongs to this attempt only. A retry blocked
+            // before transport must never inherit the preceding wire result.
+            unset($meta['physical_started_at_process'], $meta['rate_limit_headers_json']);
             // One server-owned identity per physical attempt, never per work item.
             $requestId = $billingV2 ? (string) $meta['request_id'] : bin2hex(random_bytes(20));
             $meta['transport_request_id'] = $requestId;
@@ -377,6 +383,8 @@ final class MeliApiClient implements MeliReadClientInterface
                         'transport_method' => $method,
                         'transport_endpoint' => $path,
                         'transport_request_id' => $requestId,
+                        'flight_recorder_mode' => $flightRecorderMode,
+                        'trace_id' => $meta['trace_id'],
                     ],
                     fn (): array => $this->transport->request(
                         $method,
@@ -391,6 +399,12 @@ final class MeliApiClient implements MeliReadClientInterface
                         $timeouts
                     )
                 );
+                $meta['physical_started_at_process'] = $flightRecorderMode === 'off'
+                    ? null
+                    : ApiFlightRecorderMetadata::normalizePhysicalStart($transportResult['physical_started_at_process'] ?? null);
+                $meta['rate_limit_headers_json'] = $flightRecorderMode === 'off'
+                    ? null
+                    : ApiFlightRecorderMetadata::safeResponseHeadersJson($transportResult['rate_limit_headers_json'] ?? null);
             } catch (Throwable $transportBlocked) {
                 if (!$transportBlocked instanceof RemoteResultUncertainException) {
                     \App\QueueV4Clean\OuterCronHttpReceipt::cancelBeforeTransport($requestId,$transportBlocked instanceof ApiBudgetExhaustedException);

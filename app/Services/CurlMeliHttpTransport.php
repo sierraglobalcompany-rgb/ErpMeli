@@ -31,6 +31,9 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
     private function executeRequest(string $method, string $url, array $data, array $headers, bool $form, array $timeouts): array
     {
         $billingMetadata = ApiExecutionMetadataContext::current();
+        $flightRecorderMode = in_array(($billingMetadata['flight_recorder_mode'] ?? ''), ['basic', 'diagnostic'], true)
+            ? (string) $billingMetadata['flight_recorder_mode']
+            : 'off';
         $billingV2 = ($billingMetadata['billing_v2'] ?? false) === true;
         if ($billingV2 && $this->billingAuthority === null) {
             throw new RuntimeException('billing_v2_transport_authority_unavailable');
@@ -248,12 +251,18 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
         \App\QueueV4Clean\QueueV4CleanTransportJournal::enteringCurl((string)(ApiExecutionMetadataContext::current()['transport_request_id']??''));
         \App\QueueCore\QueueCoreDispatchFence::enteringCurl();
         \App\QueueV4Clean\OuterCronHttpReceipt::enteringWire($requestId);
+        $physicalStartedAtProcess = $flightRecorderMode === 'off'
+            ? null
+            : ApiFlightRecorderMetadata::physicalStartUtcMilliseconds(microtime(true));
         $raw = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $wireBytes = defined('CURLINFO_SIZE_DOWNLOAD_T')
             ? (int) curl_getinfo($ch, CURLINFO_SIZE_DOWNLOAD_T)
             : (is_string($raw) ? strlen($raw) : 0);
         $curlError = curl_error($ch);
+        $rateLimitHeadersJson = $flightRecorderMode === 'off'
+            ? null
+            : ApiFlightRecorderMetadata::safeResponseHeaders($responseHeaders);
         \App\QueueV4Clean\OuterCronHttpReceipt::result($requestId,$status,$curlError);
         unset($ch);
         if ($billingV2 && $status > 0 && $curlError === '' && is_string($raw)) {
@@ -303,6 +312,8 @@ final class CurlMeliHttpTransport implements MeliHttpTransportInterface
             'wire_bytes' => max(0, $wireBytes),
             'decoded_bytes' => is_string($raw) ? strlen($raw) : 0,
             'raw_body' => is_string($raw) ? $raw : null,
+            'physical_started_at_process' => $physicalStartedAtProcess,
+            'rate_limit_headers_json' => $rateLimitHeadersJson,
         ];
     }
 }

@@ -117,7 +117,7 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
     <div>
       <p class="eyebrow">5 · Resultado</p>
       <h2>Pendientes disponibles atendidos</h2>
-      <p>La petición terminó. No quedó continuación manual en segundo plano.</p>
+      <p>La petición manual terminó y no quedó un proceso manual en segundo plano. Si un descubrimiento generó trabajo durable para otra página, éste puede continuar mediante la automatización normal. Cerrar o salir de esta pantalla no cancela ese trabajo durable.</p>
     </div>
   </div>
   <div class="panel-body">
@@ -274,6 +274,7 @@ $hasAnyManualResult = $manualResult !== null || $manualAvailableQueueResult !== 
         <input type="hidden" name="physical_api_call_budget" value="<?= $previewLimit ?>">
         <?php if ($isAvailableQueuePreview): ?>
           <p><strong>Confirmación:</strong> usar hasta <?= $previewLimit ?> llamada<?= $previewLimit === 1 ? '' : 's' ?> API en pendientes que continúen disponibles.</p>
+          <p>Esta petición procesa un paso acotado y termina al mostrar el resultado. Si un descubrimiento necesita otra página, esa continuación puede quedar en la cola automática para el Cron normal; no queda un proceso manual ejecutándose en segundo plano. Cerrar o salir de esta pantalla no cancela ese trabajo durable.</p>
         <?php else: ?>
           <p><strong>Confirmación:</strong> usar máximo <?= $previewLimit ?> llamada(s) API sobre elementos exactos del preview. Sin campaña, sin sesión, sin continuación oculta.</p>
         <?php endif; ?>

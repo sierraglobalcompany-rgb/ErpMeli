@@ -42,14 +42,22 @@ cap2Git($root, ['config', 'user.name', 'Synthetic Authority Test']);
 cap2Git($root, ['config', 'user.email', 'authority-test@example.invalid']);
 
 $authorityPath = 'resources/release/updater-authority-2.41.1.json';
-$raw = ['app/Synthetic.php' => "<?php\n// Raw LF Git blob.\n", 'VERSION' => "2.41.1\n"];
+$raw = ['app/Synthetic.php' => "<?php\n// Raw LF Git blob.\n", 'VERSION' => "2.41.1\n",
+    'app/Locked.php' => "<?php\n// Authorized target.\n", 'app/Unchanged.php' => "<?php\n// Historical intact.\n"];
+$previousLockedHash = hash('sha256', "<?php\n// Historical locked baseline.\n");
+$unchangedHash = hash('sha256', $raw['app/Unchanged.php']);
+$inventoryBytes = cap2Json(['files' => [
+    ['path' => 'app/Locked.php', 'final_sha256' => $previousLockedHash],
+    ['path' => 'app/Unchanged.php', 'final_sha256' => $unchangedHash],
+]]);
 $source = [
     'schema_version' => 1,
     'target_version' => '2.41.1',
     'contract' => 'Synthetic metadata remains unchanged.',
-    'supersedes_inventory' => ['path' => 'original.json', 'sha256' => str_repeat('a', 64), 'file_count' => 29],
-    'unchanged_locked' => ['file_count' => 27, 'sorted_path_hash_lines_sha256' => str_repeat('b', 64)],
-    'intentional_locked_changes' => [['path' => 'app/Locked.php', 'target_sha256' => str_repeat('c', 64)]],
+    'supersedes_inventory' => ['path' => 'original.json', 'sha256' => hash('sha256', $inventoryBytes), 'file_count' => 2],
+    'unchanged_locked' => ['file_count' => 1, 'sorted_path_hash_lines_sha256' => hash('sha256', 'app/Unchanged.php' . "\t" . $unchangedHash . "\n")],
+    'intentional_locked_changes' => [['path' => 'app/Locked.php', 'previous_sha256' => $previousLockedHash,
+        'target_sha256' => hash('sha256', $raw['app/Locked.php']), 'reason' => 'Explicit synthetic locked authorization.']],
     'extra_metadata' => (object) ['empty_object' => new stdClass(), 'empty_list' => [], 'unicode' => 'sin cambios'],
     'new_runtime_dependencies' => [
         ['path' => 'app/Synthetic.php', 'sha256' => str_repeat('0', 64), 'reason' => 'Preserve entry metadata.'],
@@ -59,6 +67,7 @@ $source = [
 foreach ($raw as $path => $bytes) {
     cap2WriteFile($root . '/' . $path, $bytes);
 }
+cap2WriteFile($root . '/original.json', $inventoryBytes);
 cap2WriteFile($root . '/public/assets/probe.txt', "Synthetic tree-path rejection fixture.\n");
 cap2WriteFile($root . '/' . $authorityPath, cap2Json($source));
 cap2Git($root, ['add', '--all']);
@@ -113,4 +122,71 @@ foreach (['../outside.php', '/outside.php', 'D:/outside.php', 'app\\Synthetic.ph
     r1AuthorityAssert($result['exit'] !== 0, 'invalid_path_rejected:' . $badPath);
     r1AuthorityAssert(file_get_contents($root . '/' . $authorityPath) === $before, 'invalid_path_no_partial_write');
 }
-echo "UNSAFE_NONRUNTIME_MISSING_PATHS=PASS\nNO_PARTIAL_WRITES=PASS\nERP_BOOTSTRAP=NO\nDB_CALLS=0\nDEPLOY=NO\nAUTHORITY_GENERATOR=PASS\n";
+echo "UNSAFE_NONRUNTIME_MISSING_PATHS=PASS\nNO_PARTIAL_WRITES=PASS\n";
+
+// Independent synthetic target requiring an explicit supplementary authorization.
+foreach ($raw as $path => $bytes) { cap2WriteFile($root . '/' . $path, $bytes); }
+cap2WriteFile($root . '/app/Unchanged.php', "<?php\n// Newly authorized target.\n");
+cap2WriteFile($root . '/app/Additional.php', "<?php\n// Additional dependency.\n");
+cap2WriteFile($root . '/' . $authorityPath, cap2Json($source));
+cap2Git($root, ['add', '--all']);
+cap2Git($root, ['commit', '--quiet', '-m', 'Synthetic supplementary reason target']);
+$cliSha = trim(cap2Git($root, ['rev-parse', 'HEAD'])['stdout']);
+$reason = 'Explicit supplemental authorization; bytes preserved.';
+$reasonFile = $root . '/storage/reasons.json';
+cap2WriteFile($reasonFile, cap2Json([['path' => 'app/Unchanged.php', 'reason' => $reason]]));
+$before = (string) file_get_contents($root . '/' . $authorityPath);
+$without = r1AuthorityRun($root, ['updater-authority', $cliSha]);
+r1AuthorityAssert($without['exit'] !== 0 && file_get_contents($root . '/' . $authorityPath) === $before, 'RED_CLI_1_without_reason_fail_closed');
+echo "RED_CLI_1=FAIL_CLOSED_NO_WRITE\n";
+$args = ['updater-authority', $cliSha, '--locked-reasons-file=' . $reasonFile, 'app/Additional.php'];
+$with = r1AuthorityRun($root, $args);
+echo 'CLI_REASON_EXIT=' . $with['exit'] . "\n" . $with['stdout'] . $with['stderr'];
+if ($with['exit'] !== 0) {
+    r1AuthorityAssert(file_get_contents($root . '/' . $authorityPath) === $before, 'RED_CLI_2_no_write');
+    echo "CURRENT_CLI_REASON_CHANNEL=ABSENT\nRED_CLI_2_AUTHORITY_UNCHANGED=YES\n";
+}
+r1AuthorityAssert($with['exit'] === 0, 'canonical_cli_reason_channel_required');
+$actualCli = (string) file_get_contents($root . '/' . $authorityPath);
+$decoded = json_decode($actualCli, true, 512, JSON_THROW_ON_ERROR);
+$changes = array_column($decoded['intentional_locked_changes'], null, 'path');
+r1AuthorityAssert($changes['app/Unchanged.php']['previous_sha256'] === $unchangedHash, 'CLI_previous_RAW');
+r1AuthorityAssert($changes['app/Unchanged.php']['target_sha256'] === hash('sha256', cap2GitBlob($root, $cliSha, 'app/Unchanged.php')), 'CLI_target_RAW');
+r1AuthorityAssert($changes['app/Unchanged.php']['reason'] === $reason, 'CLI_reason_bytes');
+r1AuthorityAssert($decoded['unchanged_locked']['file_count'] === 0, 'CLI_unchanged_locked');
+foreach ($decoded['new_runtime_dependencies'] as $entry) {
+    r1AuthorityAssert($entry['sha256'] === hash('sha256', cap2GitBlob($root, $cliSha, $entry['path'])), 'CLI_dependency_RAW');
+}
+r1AuthorityAssert(in_array('app/Additional.php', array_column($decoded['new_runtime_dependencies'], 'path'), true), 'CLI_additional_path');
+$repeat = r1AuthorityRun($root, $args);
+r1AuthorityAssert($repeat['exit'] === 0 && file_get_contents($root . '/' . $authorityPath) === $actualCli, 'CLI_determinism');
+echo "CLI_WITH_REASON_FILE=PASS\nCLI_DETERMINISTIC=PASS\n";
+cap2WriteFile($root . '/outside.json', '[]');
+cap2WriteFile($root . '/storage/malformed.json', '{');
+cap2WriteFile($root . '/storage/object.json', '{}');
+cap2WriteFile($root . '/storage/large.json', str_repeat(' ', 65537));
+$negative = [
+    'C1_MISSING_FILE' => [$root . '/storage/missing.json'],
+    'C2_RELATIVE_FILE' => ['storage/reasons.json'],
+    'C3_OUTSIDE_STORAGE' => [$root . '/outside.json'],
+    'C4_DIRECTORY' => [$root . '/storage'],
+    'C5_MALFORMED_JSON' => [$root . '/storage/malformed.json'],
+    'C6_NOT_LIST' => [$root . '/storage/object.json'],
+    'C7_DUPLICATE_FLAG' => [$reasonFile, $reasonFile],
+    'C8_TOO_LARGE' => [$root . '/storage/large.json'],
+    'C10_DOTDOT' => [$root . '/storage/../storage/reasons.json'],
+];
+$link = $root . '/storage/link.json';
+if (@symlink($reasonFile, $link)) { $negative['C9_SYMLINK'] = [$link]; }
+else {
+    echo "C9_SYMLINK=SKIP_ENVIRONMENT_UNSUPPORTED; loader is_link rejection inspected\n";
+    echo 'C9_ENVIRONMENT=' . json_encode(error_get_last(), JSON_UNESCAPED_SLASHES) . "\n";
+}
+foreach ($negative as $name => $files) {
+    $badArgs = ['updater-authority', $cliSha];
+    foreach ($files as $file) { $badArgs[] = '--locked-reasons-file=' . $file; }
+    $bad = r1AuthorityRun($root, $badArgs);
+    r1AuthorityAssert($bad['exit'] !== 0 && file_get_contents($root . '/' . $authorityPath) === $actualCli, $name . '_reject_no_write');
+    echo $name . "=PASS\n";
+}
+echo "ERP_BOOTSTRAP=NO\nDB_CALLS=0\nDEPLOY=NO\nAUTHORITY_GENERATOR=PASS\n";

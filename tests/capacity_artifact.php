@@ -328,7 +328,125 @@ function cap2BuildRawArtifact(
 }
 
 /** Rehash existing entries and add explicitly named runtime blobs from one immutable commit. */
-function cap2UpdaterAuthority(string $root, string $commit, array $additionalPaths = []): array
+/**
+ * Reconstruct locked sections in memory from immutable Git blobs.
+ * Reasons are external authorization data, never inferred from paths or diffs.
+ *
+ * @param array{path:string,sha256:string,file_count:int} $inventoryReference
+ * @param list<array{path:string,reason:string}> $authorizedReasons
+ * @return array{unchanged_locked:array,intentional_locked_changes:array,diagnostics:array}
+ */
+function cap2ReconstructLockedAuthority(string $root, string $commit, array $inventoryReference, array $authorizedReasons): array
+{
+    if (preg_match('/^[0-9a-fA-F]{40}$/D', $commit) !== 1
+        || trim(cap2Git($root, ['cat-file', '-t', $commit])['stdout']) !== 'commit') {
+        throw new RuntimeException('locked_authority_explicit_commit_required');
+    }
+    $path = $inventoryReference['path'] ?? null;
+    $sha = $inventoryReference['sha256'] ?? null;
+    $count = $inventoryReference['file_count'] ?? null;
+    if (!is_string($path) || !is_string($sha) || preg_match('/^[0-9a-f]{64}$/D', $sha) !== 1
+        || !is_int($count) || $count < 1) {
+        throw new RuntimeException('locked_inventory_reference_invalid');
+    }
+    cap2AssertSafePackagePath($path);
+    $inventoryBytes = cap2LockedGitBlob($root, $commit, $path);
+    if (!hash_equals($sha, hash('sha256', $inventoryBytes))) {
+        throw new RuntimeException('locked_inventory_hash_mismatch');
+    }
+    $inventory = json_decode($inventoryBytes, true, 64, JSON_THROW_ON_ERROR);
+    if (!is_array($inventory) || !isset($inventory['files']) || !is_array($inventory['files'])
+        || !array_is_list($inventory['files']) || count($inventory['files']) !== $count) {
+        throw new RuntimeException('locked_inventory_count_or_structure_mismatch');
+    }
+    if (!array_is_list($authorizedReasons)) {
+        throw new RuntimeException('locked_reasons_list_required');
+    }
+    $reasons = [];
+    foreach ($authorizedReasons as $entry) {
+        if (!is_array($entry) || !isset($entry['path'], $entry['reason'])
+            || !is_string($entry['path']) || !is_string($entry['reason']) || trim($entry['reason']) === '') {
+            throw new RuntimeException('locked_reason_invalid');
+        }
+        cap2AssertSafePackagePath($entry['path']);
+        if (isset($reasons[$entry['path']])) {
+            throw new RuntimeException('locked_reason_duplicate:' . $entry['path']);
+        }
+        $reasons[$entry['path']] = $entry['reason'];
+    }
+    $files = [];
+    foreach ($inventory['files'] as $entry) {
+        if (!is_array($entry) || !isset($entry['path'], $entry['final_sha256'])
+            || !is_string($entry['path']) || !is_string($entry['final_sha256'])
+            || preg_match('/^[0-9a-f]{64}$/D', $entry['final_sha256']) !== 1) {
+            throw new RuntimeException('locked_inventory_entry_invalid');
+        }
+        cap2AssertSafePackagePath($entry['path']);
+        if (isset($files[$entry['path']])) {
+            throw new RuntimeException('locked_inventory_duplicate_path:' . $entry['path']);
+        }
+        $files[$entry['path']] = $entry['final_sha256'];
+    }
+    foreach ($reasons as $reasonPath => $reason) {
+        if (!isset($files[$reasonPath])) {
+            throw new RuntimeException('locked_reason_orphan:' . $reasonPath);
+        }
+    }
+    $unchanged = [];
+    $changed = [];
+    foreach ($files as $filePath => $historicalHash) {
+        $targetHash = hash('sha256', cap2LockedGitBlob($root, $commit, $filePath));
+        if (hash_equals($historicalHash, $targetHash)) {
+            if (isset($reasons[$filePath])) {
+                throw new RuntimeException('locked_reason_for_unchanged_path:' . $filePath);
+            }
+            $unchanged[$filePath] = $historicalHash;
+            continue;
+        }
+        if (!isset($reasons[$filePath])) {
+            throw new RuntimeException('locked_changed_without_reason:' . $filePath);
+        }
+        // Stable inventory order; hashes are mechanical, reason bytes are preserved.
+        $changed[] = [
+            'path' => $filePath,
+            'previous_sha256' => $historicalHash,
+            'target_sha256' => $targetHash,
+            'reason' => $reasons[$filePath],
+        ];
+    }
+    ksort($unchanged, SORT_STRING);
+    $lines = [];
+    foreach ($unchanged as $filePath => $historicalHash) {
+        $lines[] = $filePath . "\t" . $historicalHash;
+    }
+    return [
+        'unchanged_locked' => [
+            'file_count' => count($unchanged),
+            'sorted_path_hash_lines_sha256' => hash('sha256', implode("\n", $lines) . "\n"),
+        ],
+        'intentional_locked_changes' => $changed,
+        'diagnostics' => [
+            'inventory_count' => count($files),
+            'raw_unchanged' => count($unchanged),
+            'raw_changed' => count($changed),
+            'raw_changed_with_reason' => count($changed),
+            'raw_changed_without_reason' => 0,
+        ],
+    ];
+}
+
+/** Read only a regular Git blob, rejecting symlink/tree/submodule inventory members. */
+function cap2LockedGitBlob(string $root, string $commit, string $path): string
+{
+    cap2AssertSafePackagePath($path);
+    $entry = cap2Git($root, ['ls-tree', '-z', $commit, '--', $path])['stdout'];
+    if (preg_match('/^100(?:644|755) blob [0-9a-f]{40}\\t' . preg_quote($path, '/') . '\\x00$/D', $entry) !== 1) {
+        throw new RuntimeException('locked_regular_blob_required:' . $path);
+    }
+    return cap2GitBlob($root, $commit, $path);
+}
+
+function cap2UpdaterAuthority(string $root, string $commit, array $additionalPaths = [], array $lockedReasons = []): array
 {
     if (preg_match('/^[0-9a-fA-F]{40}$/D', $commit) !== 1) {
         throw new RuntimeException('updater_authority_explicit_40_hex_commit_required');
@@ -343,6 +461,23 @@ function cap2UpdaterAuthority(string $root, string $commit, array $additionalPat
         || !is_array($authority->new_runtime_dependencies) || !array_is_list($authority->new_runtime_dependencies)) {
         throw new RuntimeException('updater_authority_dependencies_invalid');
     }
+    if (!isset($authority->supersedes_inventory, $authority->intentional_locked_changes)
+        || !$authority->supersedes_inventory instanceof stdClass || !is_array($authority->intentional_locked_changes)
+        || !array_is_list($authority->intentional_locked_changes) || !array_is_list($lockedReasons)) {
+        throw new RuntimeException('updater_locked_authority_invalid');
+    }
+    $reasons = [];
+    foreach ($authority->intentional_locked_changes as $entry) {
+        if (!$entry instanceof stdClass || !isset($entry->path, $entry->reason)) {
+            throw new RuntimeException('updater_locked_reason_invalid');
+        }
+        $reasons[] = ['path' => $entry->path, 'reason' => $entry->reason];
+    }
+    $locked = cap2ReconstructLockedAuthority(
+        $root, $commit, get_object_vars($authority->supersedes_inventory), array_merge($reasons, $lockedReasons)
+    );
+    $authority->unchanged_locked = (object) $locked['unchanged_locked'];
+    $authority->intentional_locked_changes = array_map(static fn(array $entry): stdClass => (object) $entry, $locked['intentional_locked_changes']);
     $seen = [];
     foreach ($authority->new_runtime_dependencies as $entry) {
         if (!$entry instanceof stdClass || !isset($entry->path, $entry->sha256)
@@ -419,6 +554,31 @@ function cap2SeedRelease2411(string $root): void
     );
 }
 
+function cap2LoadLockedReasons(string $root, string $path): array
+{
+    $normalized = str_replace('\\', '/', $path);
+    if (!preg_match('~^(?:[A-Za-z]:/|/)~', $normalized) || in_array('..', explode('/', $normalized), true)) {
+        throw new RuntimeException('locked_reasons_absolute_safe_path_required');
+    }
+    if (is_link($path) || !is_file($path)) {
+        throw new RuntimeException('locked_reasons_regular_nonlink_file_required');
+    }
+    $storage = realpath($root . '/storage');
+    $resolved = realpath($path);
+    if ($storage === false || $resolved === false) { throw new RuntimeException('locked_reasons_realpath_required'); }
+    $prefix = str_replace('\\', '/', $storage) . '/';
+    $resolved = str_replace('\\', '/', $resolved);
+    if (PHP_OS_FAMILY === 'Windows') { $prefix = strtolower($prefix); $resolved = strtolower($resolved); }
+    if (!str_starts_with($resolved, $prefix)) { throw new RuntimeException('locked_reasons_storage_required'); }
+    $size = filesize($path);
+    if ($size === false || $size < 1 || $size > 65536) { throw new RuntimeException('locked_reasons_size_invalid'); }
+    $bytes = file_get_contents($path);
+    if ($bytes === false || strlen($bytes) !== $size) { throw new RuntimeException('locked_reasons_read_failed'); }
+    $list = json_decode($bytes, false, 512, JSON_THROW_ON_ERROR);
+    if (!is_array($list) || !array_is_list($list)) { throw new RuntimeException('locked_reasons_json_list_required'); }
+    return array_map(static fn ($entry) => $entry instanceof stdClass ? get_object_vars($entry) : $entry, $list);
+}
+
 function cap2ArtifactMain(array $argv): int
 {
     $root = dirname(__DIR__);
@@ -429,7 +589,15 @@ function cap2ArtifactMain(array $argv): int
         return 0;
     }
     if ($mode === 'updater-authority') {
-        $authority = cap2UpdaterAuthority($root, $argv[2] ?? '', array_slice($argv, 3));
+        $additional = []; $reasonFile = null;
+        foreach (array_slice($argv, 3) as $argument) {
+            if (str_starts_with($argument, '--locked-reasons-file=')) {
+                if ($reasonFile !== null) { throw new RuntimeException('locked_reasons_duplicate_flag'); }
+                $reasonFile = substr($argument, strlen('--locked-reasons-file='));
+            } else { $additional[] = $argument; }
+        }
+        $reasons = $reasonFile === null ? [] : cap2LoadLockedReasons($root, $reasonFile);
+        $authority = cap2UpdaterAuthority($root, $argv[2] ?? '', $additional, $reasons);
         // Validate/read every blob before any write: malformed input leaves the file unchanged.
         cap2WriteFile($root . '/resources/release/updater-authority-2.41.1.json', cap2Json($authority));
         echo 'UPDATER_AUTHORITY_DEPENDENCIES=' . count($authority['new_runtime_dependencies']) . "\n";

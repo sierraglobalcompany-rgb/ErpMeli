@@ -16,6 +16,23 @@ final class DirectUpdateMetadataPromotionService
     /** @return array{previous_version:string,target_version:string,marker_version:string} */
     public function promote(PDO $pdo, string $targetVersion, string $lastMigration, ?string $notes = null): array
     {
+        return $this->transition($pdo, $targetVersion, $lastMigration, $notes, null);
+    }
+
+    /** @return array{previous_version:string,target_version:string,marker_version:string} */
+    public function restoreForRollback(PDO $pdo, string $expectedCurrentVersion, string $targetVersion, string $lastMigration, ?string $notes = null): array
+    {
+        if (preg_match('/^\d+\.\d+\.\d+$/D', $expectedCurrentVersion) !== 1
+            || preg_match('/^\d+\.\d+\.\d+$/D', $targetVersion) !== 1
+            || !version_compare($targetVersion, $expectedCurrentVersion, '<')) {
+            throw new RuntimeException('direct_update_rollback_target_invalid');
+        }
+        return $this->transition($pdo, $targetVersion, $lastMigration, $notes, $expectedCurrentVersion);
+    }
+
+    /** @return array{previous_version:string,target_version:string,marker_version:string} */
+    private function transition(PDO $pdo, string $targetVersion, string $lastMigration, ?string $notes, ?string $expectedCurrentVersion): array
+    {
         $targetVersion = trim($targetVersion);
         if (preg_match('/^\d+\.\d+\.\d+$/D', $targetVersion) !== 1 || trim($lastMigration) === '') {
             throw new RuntimeException('direct_update_target_invalid');
@@ -30,9 +47,10 @@ final class DirectUpdateMetadataPromotionService
             throw new RuntimeException('direct_update_lock_busy');
         }
 
-        $markerSnapshot = $this->markerSnapshot();
+        $markerSnapshot = null;
         $markerWritten = false;
         try {
+            $markerSnapshot = $this->markerSnapshot();
             $pdo->exec('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
             $pdo->beginTransaction();
             $setting = $pdo->query(
@@ -42,7 +60,10 @@ final class DirectUpdateMetadataPromotionService
             if (preg_match('/^\d+\.\d+\.\d+$/D', $previousVersion) !== 1) {
                 throw new RuntimeException('direct_update_installed_version_invalid');
             }
-            if (version_compare($previousVersion, $targetVersion, '>')) {
+            if ($expectedCurrentVersion !== null && !hash_equals($expectedCurrentVersion, $previousVersion)) {
+                throw new RuntimeException('direct_update_version_cas_miss');
+            }
+            if ($expectedCurrentVersion === null && version_compare($previousVersion, $targetVersion, '>')) {
                 throw new RuntimeException('direct_update_downgrade_refused');
             }
 
@@ -64,6 +85,9 @@ final class DirectUpdateMetadataPromotionService
                     'INSERT INTO app_versions(version,notes,installed_at) VALUES(:version,:notes,CURRENT_TIMESTAMP)'
                 );
                 $insert->execute(['version' => $targetVersion, 'notes' => $notes]);
+            } elseif ($expectedCurrentVersion !== null) {
+                $historyUpdate = $pdo->prepare('UPDATE app_versions SET notes=?,installed_at=CURRENT_TIMESTAMP WHERE id=?');
+                $historyUpdate->execute([$notes, $targetHistoryId]);
             }
 
             $marker = new InstalledVersionMarkerService();

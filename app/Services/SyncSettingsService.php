@@ -20,7 +20,7 @@ final class SyncSettingsService
     public function __construct(private readonly AppSettingsService $settings = new AppSettingsService()) {}
 
     public function maxManualRangeDays(): int { return max(1, $this->settings->int('sync.max_manual_range_days', 7)); }
-    public function pageLimit(): int { return min(100, max(1, $this->settings->int('sync.page_limit', 50))); }
+    public function pageLimit(): int { return min(50, max(1, $this->settings->int('sync.page_limit', 50))); }
     public function pauseMs(): int { return max(0, $this->settings->int('sync.pause_between_pages_ms', 400)); }
     public function maxOrdersPerRun(): int
     {

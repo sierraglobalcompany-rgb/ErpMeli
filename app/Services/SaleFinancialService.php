@@ -985,13 +985,13 @@ final class SaleFinancialService
                  ON DUPLICATE KEY UPDATE
                     priority_tier=LEAST(priority_tier,VALUES(priority_tier)),
                     origin_type=VALUES(origin_type),origin_id=VALUES(origin_id),
-                    next_run_at=IF(status IN ("running","complete"),next_run_at,UTC_TIMESTAMP()),
-                    remote_pending_since=IF(status="running",remote_pending_since,NULL),
-                    retry_until=IF(status IN ("running","complete"),retry_until,NULL),
-                    last_remote_state=IF(status IN ("running","complete"),last_remote_state,NULL),
-                    safe_message=IF(status IN ("running","complete"),safe_message,NULL),
-                    completed_at=IF(status IN ("running","complete"),completed_at,NULL),
-                    status=IF(status IN ("running","complete"),status,"pending"),
+                    next_run_at=IF(status IN ("running","complete","review","error","partial"),next_run_at,UTC_TIMESTAMP()),
+                    remote_pending_since=IF(status IN ("running","complete","review","error","partial"),remote_pending_since,NULL),
+                    retry_until=IF(status IN ("running","complete","review","error","partial"),retry_until,NULL),
+                    last_remote_state=IF(status IN ("running","complete","review","error","partial"),last_remote_state,NULL),
+                    safe_message=IF(status IN ("running","complete","review","error","partial"),safe_message,NULL),
+                    completed_at=IF(status IN ("running","complete","review","error","partial"),completed_at,NULL),
+                    status=IF(status IN ("running","complete","review","error","partial"),status,"pending"),
                     id=LAST_INSERT_ID(id)'
             );
             $stmt->execute([
@@ -1006,7 +1006,13 @@ final class SaleFinancialService
                  WHERE company_id=? AND meli_account_id=? AND sale_key=? AND input_version=?'
             )->execute([$companyId, $accountId, $saleKey, $inputVersion]);
             $domainOrigin = in_array($originType, ['financial_recalc_local', 'domain_input_changed'], true);
-            if ($domainOrigin && $created) {
+            $source = $pdo->prepare(
+                'SELECT status FROM sale_financial_reconciliation_jobs
+                 WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1 FOR UPDATE'
+            );
+            $source->execute([$jobId, $companyId, $accountId]);
+            $sourceStatus = strtolower(trim((string) ($source->fetchColumn() ?: '')));
+            if ($domainOrigin && in_array($sourceStatus, ['pending', 'retry', 'awaiting_remote'], true)) {
                 $receipt = (new CronAdmissionService($pdo))->submit(
                     'financial_reconciliation',
                     $companyId,

@@ -40,8 +40,10 @@ final class OrderEnrichmentService
 
         $queued = 0;
         if ($packExternalId !== null && $packExternalId !== '') {
-            $this->enqueue($accountId, $orderId, 'pack', $packExternalId, 10);
-            $queued++;
+            if (!$this->packExpectationAlreadyComplete($accountId, $packExternalId)) {
+                $this->enqueue($accountId, $orderId, 'pack', $packExternalId, 10);
+                $queued++;
+            }
         }
         if ($shipmentExternalId !== null && $shipmentExternalId !== '') {
             $this->enqueue($accountId, $orderId, 'shipment', $shipmentExternalId, 20);
@@ -68,39 +70,108 @@ final class OrderEnrichmentService
         if (!in_array($resourceType, ['pack', 'shipment'], true) || $externalId === '') {
             return 0;
         }
-        if (!$this->orderBelongsToAccountCompany($accountId, $orderId)) {
-            throw new \InvalidArgumentException('La orden no pertenece a la empresa y cuenta indicadas.');
+        $pdo = Database::connection();
+        $ownsTransaction = !$pdo->inTransaction();
+        if ($ownsTransaction) {
+            $pdo->beginTransaction();
         }
-        $stmt = Database::connection()->prepare(
-            'INSERT INTO order_resource_enrichment_jobs
-             (meli_account_id,meli_order_id,resource_type,external_resource_id,status,priority,next_run_at)
-             VALUES (:account,:order_id,:resource_type,:external_id,"pending",:priority,UTC_TIMESTAMP())
-             ON DUPLICATE KEY UPDATE
-                priority=LEAST(priority,VALUES(priority)),
-                status=IF(status IN ("complete","running"),status,"pending"),
-                next_run_at=IF(status IN ("complete","running"),next_run_at,UTC_TIMESTAMP()),
-                last_error_message=IF(status IN ("complete","running"),last_error_message,NULL),
-                last_error_diagnostic_id=IF(status IN ("complete","running"),last_error_diagnostic_id,NULL),
-                last_error_code=IF(status IN ("complete","running"),last_error_code,NULL),
-                failure_class=IF(status IN ("complete","running"),failure_class,NULL),
-                reached_remote=IF(status IN ("complete","running"),reached_remote,NULL),
-                updated_at=UTC_TIMESTAMP(),
-                id=LAST_INSERT_ID(id)'
-        );
-        $stmt->execute([
-            'account' => $accountId,
-            'order_id' => $orderId,
-            'resource_type' => $resourceType,
-            'external_id' => $externalId,
-            'priority' => $priority,
-        ]);
-        $jobId = (int) Database::connection()->lastInsertId();
-        Database::connection()->prepare(
-            'INSERT IGNORE INTO order_resource_enrichment_job_orders
-             (order_resource_enrichment_job_id,meli_order_id)
-             VALUES (:job_id,:order_id)'
-        )->execute(['job_id' => $jobId, 'order_id' => $orderId]);
-        return $jobId;
+        try {
+            $companyId = $this->companyIdForAccount($accountId);
+            if (!$this->orderBelongsToAccountCompany($accountId, $orderId)) {
+                throw new \InvalidArgumentException('La orden no pertenece a la empresa y cuenta indicadas.');
+            }
+            if ($resourceType === 'pack' && $this->packExpectationAlreadyComplete($accountId, $externalId)) {
+                if ($ownsTransaction) {
+                    $pdo->commit();
+                }
+                return 0;
+            }
+
+            $existing = $pdo->prepare(
+                'SELECT id,status
+                 FROM order_resource_enrichment_jobs
+                 WHERE meli_account_id=:account
+                   AND resource_type=:resource_type
+                   AND external_resource_id=:external_id
+                 ORDER BY id ASC
+                 LIMIT 1 FOR UPDATE'
+            );
+            $existing->execute([
+                'account' => $accountId,
+                'resource_type' => $resourceType,
+                'external_id' => $externalId,
+            ]);
+            $row = $existing->fetch(PDO::FETCH_ASSOC);
+            if (is_array($row)) {
+                $jobId = (int) $row['id'];
+                $pdo->prepare(
+                    'UPDATE order_resource_enrichment_jobs
+                     SET priority=LEAST(priority,:priority),
+                         status=IF(status IN ("complete","running"),status,"pending"),
+                         next_run_at=IF(status IN ("complete","running"),next_run_at,UTC_TIMESTAMP()),
+                         last_error_message=IF(status IN ("complete","running"),last_error_message,NULL),
+                         last_error_diagnostic_id=IF(status IN ("complete","running"),last_error_diagnostic_id,NULL),
+                         last_error_code=IF(status IN ("complete","running"),last_error_code,NULL),
+                         failure_class=IF(status IN ("complete","running"),failure_class,NULL),
+                         reached_remote=IF(status IN ("complete","running"),reached_remote,NULL),
+                         updated_at=UTC_TIMESTAMP()
+                     WHERE id=:id AND meli_account_id=:account'
+                )->execute(['priority' => $priority, 'id' => $jobId, 'account' => $accountId]);
+            } else {
+                $stmt = $pdo->prepare(
+                    'INSERT INTO order_resource_enrichment_jobs
+                     (meli_account_id,meli_order_id,resource_type,external_resource_id,status,priority,next_run_at)
+                     VALUES (:account,:order_id,:resource_type,:external_id,"pending",:priority,UTC_TIMESTAMP())'
+                );
+                $stmt->execute([
+                    'account' => $accountId,
+                    'order_id' => $orderId,
+                    'resource_type' => $resourceType,
+                    'external_id' => $externalId,
+                    'priority' => $priority,
+                ]);
+                $jobId = (int) $pdo->lastInsertId();
+            }
+
+            $pdo->prepare(
+                'INSERT IGNORE INTO order_resource_enrichment_job_orders
+                 (order_resource_enrichment_job_id,meli_order_id)
+                 VALUES (:job_id,:order_id)'
+            )->execute(['job_id' => $jobId, 'order_id' => $orderId]);
+
+            $source = $pdo->prepare(
+                'SELECT status FROM order_resource_enrichment_jobs
+                 WHERE id=? AND meli_account_id=? LIMIT 1 FOR UPDATE'
+            );
+            $source->execute([$jobId, $accountId]);
+            $status = strtolower(trim((string) ($source->fetchColumn() ?: '')));
+            if (in_array($status, ['pending', 'retry'], true)) {
+                $receipt = (new CronAdmissionService($pdo))->submit(
+                    'order_enrichment',
+                    $companyId,
+                    $accountId,
+                    $jobId,
+                    'source:' . $jobId,
+                    ['resource_type' => $resourceType]
+                );
+                if (($receipt['accepted'] ?? false) !== true) {
+                    throw new \RuntimeException(
+                        'order_enrichment_cron_admission_failed:'
+                        . (string) ($receipt['reason'] ?? 'UNKNOWN')
+                    );
+                }
+            }
+
+            if ($ownsTransaction) {
+                $pdo->commit();
+            }
+            return $jobId;
+        } catch (Throwable $error) {
+            if ($ownsTransaction && $pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
+        }
     }
 
     /**
@@ -587,5 +658,42 @@ final class OrderEnrichmentService
             throw new \InvalidArgumentException('La cuenta no pertenece a una empresa activa.');
         }
         return $companyId;
+    }
+
+    private function packExpectationAlreadyComplete(int $accountId, string $externalPackId): bool
+    {
+        if (!$this->schema->hasColumn('meli_packs', 'expected_orders_json')
+            || !$this->schema->hasColumn('meli_packs', 'integrity_status')) {
+            return false;
+        }
+        $stmt = Database::connection()->prepare(
+            'SELECT expected_orders_json,integrity_status
+             FROM meli_packs
+             WHERE meli_account_id=:account_id AND external_pack_id=:external_pack_id
+             LIMIT 1'
+        );
+        $stmt->execute(['account_id' => $accountId, 'external_pack_id' => $externalPackId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row) || strtolower(trim((string) ($row['integrity_status'] ?? ''))) !== 'complete') {
+            return false;
+        }
+        $raw = trim((string) ($row['expected_orders_json'] ?? ''));
+        if ($raw === '') {
+            return false;
+        }
+        try {
+            $decoded = json_decode($raw, true, 64, JSON_THROW_ON_ERROR);
+        } catch (Throwable) {
+            return false;
+        }
+        if (!is_array($decoded) || $decoded === []) {
+            return false;
+        }
+        foreach ($decoded as $value) {
+            if (!is_scalar($value) || trim((string) $value) === '') {
+                return false;
+            }
+        }
+        return true;
     }
 }

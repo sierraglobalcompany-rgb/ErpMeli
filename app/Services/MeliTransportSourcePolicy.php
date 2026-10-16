@@ -75,7 +75,11 @@ final class MeliTransportSourcePolicy
         }
         if ($source === self::QUEUE_V4_DOMAIN_EXACT) {
             if (strtoupper($method) !== 'GET'
-                || !hash_equals('/billing/integration/group/ML/order/details', $path)) {
+                || (
+                    !hash_equals('/billing/integration/group/ML/order/details', $path)
+                    && preg_match('#^/packs/[0-9]+$#D', $path) !== 1
+                    && preg_match('#^/shipments/[0-9]+$#D', $path) !== 1
+                )) {
                 throw new RuntimeException('queue_v4_clean_domain_transport_capability_denied');
             }
             return;

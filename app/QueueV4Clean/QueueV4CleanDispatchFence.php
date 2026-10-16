@@ -357,7 +357,9 @@ final class QueueV4CleanDispatchFence
     private static function allowedPath(string $source, string $path): bool
     {
         if ($source === MeliTransportSourcePolicy::QUEUE_V4_DOMAIN_EXACT) {
-            return hash_equals('/billing/integration/group/ML/order/details', $path);
+            return hash_equals('/billing/integration/group/ML/order/details', $path)
+                || preg_match('#^/packs/[0-9]+$#D', $path) === 1
+                || preg_match('#^/shipments/[0-9]+$#D', $path) === 1;
         }
         return hash_equals('/orders/search', $path) || preg_match('#^/orders/[0-9]+$#D', $path) === 1;
     }
@@ -367,6 +369,8 @@ final class QueueV4CleanDispatchFence
         return match (true) {
             hash_equals('/orders/search', $path) => 'orders_search',
             hash_equals('/billing/integration/group/ML/order/details', $path) => 'billing_orders',
+            preg_match('#^/packs/[0-9]+$#D', $path) === 1 => 'pack_exact',
+            preg_match('#^/shipments/[0-9]+$#D', $path) === 1 => 'shipment_exact',
             default => 'order_exact',
         };
     }

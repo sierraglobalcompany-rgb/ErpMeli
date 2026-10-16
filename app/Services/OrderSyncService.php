@@ -173,6 +173,14 @@ final class OrderSyncService
             throw new \RuntimeException('Queue V4 no entregó una autoridad tenant válida para inventario.');
         }
         (new OrderInventoryService(Database::connection()))->project($companyId, $accountId, $orderId);
+        $shipmentId = !empty($order['shipping']['id']) ? (string) $order['shipping']['id'] : null;
+        $packId = !empty($order['pack_id']) ? (string) $order['pack_id'] : null;
+        if ($packId !== null || $shipmentId !== null) {
+            $enrichment = new OrderEnrichmentService();
+            if ($enrichment->isAvailable()) {
+                $enrichment->enqueueOrder($accountId, $orderId, $packId, $shipmentId);
+            }
+        }
         return $orderId;
     }
 

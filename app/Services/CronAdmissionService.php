@@ -13,6 +13,7 @@ final class CronAdmissionService
     private const SOURCES = [
         'financial_recalc' => 'order_financial_recalc_jobs',
         'financial_reconciliation' => 'sale_financial_reconciliation_jobs',
+        'order_enrichment' => 'order_resource_enrichment_jobs',
     ];
 
     public function __construct(private readonly PDO $pdo)
@@ -55,10 +56,7 @@ final class CronAdmissionService
             return $this->receipt(false, null, false, 'INVALID_TENANT');
         }
 
-        $source = $this->pdo->prepare(
-            'SELECT 1 FROM ' . self::SOURCES[$capability] . '
-             WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1 FOR UPDATE'
-        );
+        $source = $this->pdo->prepare($this->sourceLockSql($capability));
         $source->execute([$sourceId, $companyId, $accountId]);
         if ($source->fetchColumn() === false) {
             return $this->receipt(false, null, false, 'INVALID_SOURCE');
@@ -112,6 +110,23 @@ final class CronAdmissionService
             'review' => $this->receipt(false, $jobId, true, 'REVIEW_HELD'),
             default => $this->receipt(false, $jobId, true, 'DEAD_HELD'),
         };
+    }
+
+    private function sourceLockSql(string $capability): string
+    {
+        if ($capability === 'order_enrichment') {
+            return 'SELECT 1
+                    FROM order_resource_enrichment_jobs source
+                    JOIN meli_accounts account
+                      ON account.id=source.meli_account_id
+                    WHERE source.id=?
+                      AND account.company_id=?
+                      AND source.meli_account_id=?
+                    LIMIT 1 FOR UPDATE';
+        }
+
+        return 'SELECT 1 FROM ' . self::SOURCES[$capability] . '
+                WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1 FOR UPDATE';
     }
 
     /** @return array{accepted:bool,job_id:?int,deduplicated:bool,reason:string} */

@@ -15,6 +15,7 @@ use App\Services\MeliApiException;
 use App\Services\MeliReadClientInterface;
 use App\Services\MeliTransportSourcePolicy;
 use App\Services\OAuthRefreshRequiredException;
+use App\Services\OrderEnrichmentService;
 use App\Services\OrderFinancialRecalcJobService;
 use App\Services\OrderSyncService;
 use App\Services\QueueV4PreTransportDeferredException;
@@ -334,7 +335,7 @@ final class QueueV4CleanWorker
     {
         $capability = trim((string) ($payload['capability'] ?? ''));
         $sourceId = (int) ($payload['source_id'] ?? $job['resource_id'] ?? 0);
-        if (!in_array($capability, ['financial_recalc', 'financial_reconciliation'], true) || $sourceId < 1) {
+        if (!in_array($capability, ['financial_recalc', 'financial_reconciliation', 'order_enrichment'], true) || $sourceId < 1) {
             return ['state' => 'review', 'classification' => 'domain_payload_invalid'];
         }
         $resourceId = trim((string) ($job['resource_id'] ?? ''));
@@ -373,6 +374,10 @@ final class QueueV4CleanWorker
                     (new OrderFinancialRecalcJobService())->processExact($sourceId, $accountId, 1);
                     return;
                 }
+                if ($capability === 'order_enrichment') {
+                    (new OrderEnrichmentService())->processExact($sourceId);
+                    return;
+                }
                 (new SaleFinancialService())->processExact($sourceId);
             }
         );
@@ -387,13 +392,18 @@ final class QueueV4CleanWorker
     /** @return array<string,mixed>|null */
     private function domainSource(string $capability, int $sourceId, int $companyId, int $accountId): ?array
     {
-        $sql = $capability === 'financial_recalc'
-            ? 'SELECT id,company_id,meli_account_id,status,NULL next_run_at
+        $sql = match ($capability) {
+            'financial_recalc' => 'SELECT id,company_id,meli_account_id,status,NULL next_run_at
                FROM order_financial_recalc_jobs
-               WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1'
-            : 'SELECT id,company_id,meli_account_id,status,next_run_at
+               WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1',
+            'order_enrichment' => 'SELECT source.id,account.company_id,source.meli_account_id,source.status,source.next_run_at
+               FROM order_resource_enrichment_jobs source
+               JOIN meli_accounts account ON account.id=source.meli_account_id
+               WHERE source.id=? AND account.company_id=? AND source.meli_account_id=? LIMIT 1',
+            default => 'SELECT id,company_id,meli_account_id,status,next_run_at
                FROM sale_financial_reconciliation_jobs
-               WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1';
+               WHERE id=? AND company_id=? AND meli_account_id=? LIMIT 1',
+        };
         $statement = $this->pdo->prepare($sql);
         $statement->execute([$sourceId, $companyId, $accountId]);
         $row = $statement->fetch(PDO::FETCH_ASSOC);
